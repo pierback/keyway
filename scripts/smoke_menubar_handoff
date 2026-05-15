@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PACKAGE_DIR="$ROOT_DIR/packages/SonosHandoffCore"
+APP_DIR="${SONOS_HANDOFF_APP:-$HOME/Applications/Sonos Handoff.app}"
+ROOM="${1:-${SONOS_HANDOFF_ROOM:-Port}}"
+RELAUNCH="${SONOS_HANDOFF_RELAUNCH:-1}"
+PREPARE_ROOM="${SONOS_HANDOFF_PREPARE_ROOM:-}"
+BUTTON_ID="transfer-to-${ROOM}"
+STATUS_FILE="$(mktemp -t sonos-handoff-ui-handoff.XXXXXX)"
+LOG_FILE="$(mktemp -t sonos-handoff-ui-handoff-log.XXXXXX)"
+
+cleanup() {
+  rm -f "$STATUS_FILE" "$LOG_FILE"
+}
+trap cleanup EXIT
+
+if [[ ! -d "$APP_DIR" ]]; then
+  echo "smoke_menubar_handoff: missing app bundle: $APP_DIR" >&2
+  echo "Run scripts/install_menubar_app first." >&2
+  exit 1
+fi
+
+cli() {
+  swift run --package-path "$PACKAGE_DIR" sonos-handoff-port "$@"
+}
+
+open_menu() {
+  osascript -e 'tell application "System Events" to tell process "SonosHandoffMenuBar" to click menu bar item 1 of menu bar 2'
+}
+
+press_transfer_button() {
+  local pid="$1"
+  /usr/bin/swift -e '
+import ApplicationServices
+import Foundation
+
+let pid = pid_t(CommandLine.arguments[1])!
+let identifier = CommandLine.arguments[2]
+let app = AXUIElementCreateApplication(pid)
+
+func copyAttribute(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
+    var value: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else {
+        return nil
+    }
+    return value
+}
+
+func stringAttribute(_ element: AXUIElement, _ attribute: String) -> String {
+    copyAttribute(element, attribute).map { String(describing: $0) } ?? ""
+}
+
+func children(_ element: AXUIElement) -> [AXUIElement] {
+    copyAttribute(element, kAXChildrenAttribute as String) as? [AXUIElement] ?? []
+}
+
+func findByIdentifier(_ element: AXUIElement, depth: Int = 0) -> AXUIElement? {
+    if depth > 10 {
+        return nil
+    }
+    if stringAttribute(element, kAXIdentifierAttribute as String) == identifier {
+        return element
+    }
+    for child in children(element) {
+        if let match = findByIdentifier(child, depth: depth + 1) {
+            return match
+        }
+    }
+    return nil
+}
+
+for _ in 0 ..< 60 {
+    if let button = findByIdentifier(app) {
+        let description = stringAttribute(button, kAXDescriptionAttribute as String)
+        let status = AXUIElementPerformAction(button, kAXPressAction as CFString)
+        guard status == .success else {
+            fputs("press_transfer_button: AXPress failed: \(status.rawValue)\n", stderr)
+            exit(3)
+        }
+        print("pressed_button=\(identifier) description=\(description)")
+        exit(0)
+    }
+    usleep(200_000)
+}
+
+fputs("press_transfer_button: button not found: \(identifier)\n", stderr)
+exit(2)
+' "$pid" "$BUTTON_ID"
+}
+
+show_recent_logs() {
+  /usr/bin/log show --last 3m --info --debug --style compact \
+    --predicate 'subsystem == "com.fpieringer.SonosHandoffMenuBar" && category == "Transfer"' \
+    | tee "$LOG_FILE" \
+    | tail -n 40 || true
+}
+
+wait_for_transfer_logs() {
+  local pid="$1"
+  for _ in {1..12}; do
+    /usr/bin/log show --last 3m --info --debug --style compact \
+      --predicate 'subsystem == "com.fpieringer.SonosHandoffMenuBar" && category == "Transfer"' \
+      >"$LOG_FILE" || true
+    if grep -F "SonosHandoffMenuBar[$pid:" "$LOG_FILE" | grep -q "state=started room=${ROOM}" \
+      && grep -F "SonosHandoffMenuBar[$pid:" "$LOG_FILE" | grep -q "state=succeeded room=${ROOM}"; then
+      return 0
+    fi
+    sleep 0.5
+  done
+  return 1
+}
+
+verify_playback_room() {
+  local expected_room="$1"
+  local output_file="$2"
+  cli sonos-status "$expected_room" >"$output_file"
+  grep -q '^current_uri=x-sonos-vli:.*spotify:' "$output_file" \
+    && grep -Eq '^transport_state=(PLAYING|TRANSITIONING)$' "$output_file"
+}
+
+if [[ "$RELAUNCH" == "1" ]]; then
+  pkill -x SonosHandoffMenuBar >/dev/null 2>&1 || true
+  sleep 0.5
+fi
+
+if [[ -n "$PREPARE_ROOM" && "$PREPARE_ROOM" != "$ROOM" ]]; then
+  echo "prepare_room=$PREPARE_ROOM"
+  cli handoff "$PREPARE_ROOM" >/dev/null
+  for _ in {1..20}; do
+    sleep 0.5
+    if verify_playback_room "$PREPARE_ROOM" "$STATUS_FILE"; then
+      break
+    fi
+  done
+  if ! verify_playback_room "$PREPARE_ROOM" "$STATUS_FILE"; then
+    cat "$STATUS_FILE" || true
+    echo "smoke_menubar_handoff: could not prepare playback on $PREPARE_ROOM" >&2
+    exit 1
+  fi
+fi
+
+open "$APP_DIR"
+sleep 1.5
+
+open_menu
+sleep 1.5
+
+pid="$(pgrep -x SonosHandoffMenuBar | head -n 1)"
+if [[ -z "$pid" ]]; then
+  echo "smoke_menubar_handoff: SonosHandoffMenuBar is not running" >&2
+  exit 1
+fi
+
+echo "room=$ROOM"
+echo "button_id=$BUTTON_ID"
+press_transfer_button "$pid"
+
+for _ in {1..30}; do
+  sleep 0.5
+  if verify_playback_room "$ROOM" "$STATUS_FILE" 2>/dev/null; then
+    if wait_for_transfer_logs "$pid"; then
+      cat "$STATUS_FILE"
+      show_recent_logs
+      echo "smoke_menubar_handoff=ok"
+      exit 0
+    fi
+  fi
+done
+
+cat "$STATUS_FILE" || true
+show_recent_logs
+echo "smoke_menubar_handoff: Sonos local playback or transfer logs did not prove handoff to $ROOM" >&2
+exit 1

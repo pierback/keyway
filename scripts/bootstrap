@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CORE_DIR="$ROOT/packages/SonosHandoffCore"
+WORKSPACE="$ROOT/SonosHandoff.xcworkspace"
+
+require_command() {
+  local command_name="$1"
+  if ! command -v "$command_name" >/dev/null 2>&1; then
+    echo "Missing required command: $command_name" >&2
+    exit 1
+  fi
+}
+
+ensure_xcodeproj_gem() {
+  if ruby -e "require 'xcodeproj'" >/dev/null 2>&1; then
+    return
+  fi
+
+  echo "Installing Ruby gem: xcodeproj"
+  gem install --user-install xcodeproj
+}
+
+require_command ruby
+require_command swift
+require_command xcodebuild
+require_command gem
+
+ensure_xcodeproj_gem
+
+echo "Generating Xcode projects"
+ruby "$ROOT/scripts/generate_xcode_projects.rb"
+
+echo "Building shared package"
+swift build --package-path "$CORE_DIR"
+
+echo "Running shared package tests"
+swift test --package-path "$CORE_DIR"
+
+echo "Building CLI target"
+xcodebuild \
+  -workspace "$WORKSPACE" \
+  -scheme SonosHandoffCLI \
+  -destination "platform=macOS" \
+  build
+
+echo "Running CLI tests"
+xcodebuild \
+  -workspace "$WORKSPACE" \
+  -scheme SonosHandoffCLI \
+  -destination "platform=macOS" \
+  test
+
+echo "Building menu bar target"
+xcodebuild \
+  -workspace "$WORKSPACE" \
+  -scheme SonosHandoffMenuBar \
+  -destination "platform=macOS" \
+  build
+
+echo
+echo "Bootstrap complete."
+echo "Open the workspace with:"
+echo "open \"$WORKSPACE\""

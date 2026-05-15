@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PACKAGE_DIR="$ROOT_DIR/packages/SonosHandoffCore"
+APP_DIR="${SONOS_HANDOFF_APP:-$HOME/Applications/Sonos Handoff.app}"
+ROOM="${1:-${SONOS_HANDOFF_ROOM:-Port}}"
+STEP="${SONOS_HANDOFF_STEP:-5}"
+RELAUNCH="${SONOS_HANDOFF_RELAUNCH:-1}"
+
+if [[ ! -d "$APP_DIR" ]]; then
+  echo "smoke_menubar_hotkey: missing app bundle: $APP_DIR" >&2
+  echo "Run scripts/install_menubar_app first." >&2
+  exit 1
+fi
+
+cli() {
+  swift run --package-path "$PACKAGE_DIR" sonos-handoff-port "$@"
+}
+
+volume_status() {
+  cli volume-status "$ROOM" \
+    | awk -F= '/^volume=/{ print $2; exit }'
+}
+
+set_volume() {
+  cli volume-set "$ROOM" --volume "$1" >/dev/null
+}
+
+post_shift_fn_key() {
+  local direction="$1"
+  local key_code
+  case "$direction" in
+    down) key_code=103 ;;
+    up) key_code=111 ;;
+    *) echo "smoke_menubar_hotkey: invalid direction: $direction" >&2; exit 1 ;;
+  esac
+
+  /usr/bin/swift -e "
+import CoreGraphics
+import Foundation
+
+let keyCode: CGKeyCode = ${key_code}
+let flags = CGEventFlags(rawValue: CGEventFlags.maskShift.rawValue | CGEventFlags.maskSecondaryFn.rawValue)
+guard let down = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true),
+      let up = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: false)
+else {
+    exit(2)
+}
+down.flags = flags
+down.post(tap: .cghidEventTap)
+usleep(160_000)
+up.flags = flags
+up.post(tap: .cghidEventTap)
+"
+}
+
+show_recent_logs() {
+  /usr/bin/log show --last 2m --info --debug --style compact \
+    --predicate 'subsystem == "com.fpieringer.SonosHandoffMenuBar" && category == "Hotkeys"' \
+    | tail -n 30 || true
+}
+
+initial_volume="$(volume_status)"
+if [[ -z "$initial_volume" ]]; then
+  echo "smoke_menubar_hotkey: could not read initial $ROOM volume" >&2
+  exit 1
+fi
+
+restore_done=0
+restore_volume() {
+  if [[ "$restore_done" == "0" ]]; then
+    set_volume "$initial_volume" || true
+  fi
+}
+trap restore_volume EXIT
+
+if [[ "$RELAUNCH" == "1" ]]; then
+  pkill -x SonosHandoffMenuBar >/dev/null 2>&1 || true
+  sleep 0.5
+fi
+open "$APP_DIR"
+sleep 1.5
+
+if (( initial_volume >= STEP )); then
+  direction="down"
+  expected_volume=$((initial_volume - STEP))
+else
+  direction="up"
+  expected_volume=$((initial_volume + STEP))
+fi
+
+echo "room=$ROOM"
+echo "initial_volume=$initial_volume"
+echo "shortcut=Shift+fn+F$( [[ "$direction" == "down" ]] && echo 11 || echo 12 )"
+echo "expected_volume=$expected_volume"
+
+post_shift_fn_key "$direction"
+
+observed_volume=""
+for _ in {1..12}; do
+  sleep 0.35
+  observed_volume="$(volume_status)"
+  if [[ "$observed_volume" == "$expected_volume" ]]; then
+    break
+  fi
+done
+
+echo "observed_volume=$observed_volume"
+show_recent_logs
+
+if [[ "$observed_volume" != "$expected_volume" ]]; then
+  echo "smoke_menubar_hotkey: expected $ROOM volume $expected_volume, observed $observed_volume" >&2
+  exit 1
+fi
+
+set_volume "$initial_volume"
+restore_done=1
+trap - EXIT
+
+restored_volume="$(volume_status)"
+if [[ "$restored_volume" != "$initial_volume" ]]; then
+  echo "smoke_menubar_hotkey: restore expected $initial_volume, observed $restored_volume" >&2
+  exit 1
+fi
+
+echo "restored_volume=$restored_volume"
+echo "smoke_menubar_hotkey=ok"

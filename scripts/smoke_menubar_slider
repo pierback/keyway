@@ -1,0 +1,356 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PACKAGE_DIR="$ROOT_DIR/packages/SonosHandoffCore"
+APP_DIR="${SONOS_HANDOFF_APP:-$HOME/Applications/Sonos Handoff.app}"
+ROOM="${1:-${SONOS_HANDOFF_ROOM:-Port}}"
+DELTA="${SONOS_HANDOFF_SLIDER_DELTA:-10}"
+RELAUNCH="${SONOS_HANDOFF_RELAUNCH:-1}"
+PREPARE_PLAYBACK="${SONOS_HANDOFF_PREPARE_PLAYBACK:-1}"
+
+if [[ ! -d "$APP_DIR" ]]; then
+  echo "smoke_menubar_slider: missing app bundle: $APP_DIR" >&2
+  echo "Run scripts/install_menubar_app first." >&2
+  exit 1
+fi
+
+cli() {
+  swift run --package-path "$PACKAGE_DIR" sonos-handoff-port "$@"
+}
+
+volume_status() {
+  cli volume-status "$ROOM" \
+    | awk -F= '/^volume=/{ print $2; exit }'
+}
+
+set_volume() {
+  cli volume-set "$ROOM" --volume "$1" >/dev/null
+}
+
+playback_is_on_room() {
+  cli playback-status 2>/dev/null | grep -qi "^spotify_device=${ROOM}[[:space:]]"
+}
+
+playback_status_available() {
+  cli playback-status >/dev/null 2>&1
+}
+
+spotify_volume() {
+  local output
+  if ! output="$(cli playback-status 2>/dev/null)"; then
+    echo "unavailable"
+    return
+  fi
+  awk -F= '/^spotify_device_volume=/{ print $2; exit }' <<<"$output"
+}
+
+spotify_restricted() {
+  local output
+  if ! output="$(cli playback-status 2>/dev/null)"; then
+    echo "unavailable"
+    return
+  fi
+  awk '/^spotify_device=/{ for (i = 1; i <= NF; i++) if ($i ~ /^restricted=/) { split($i, value, "="); print value[2]; exit } }' <<<"$output"
+}
+
+open_menu() {
+  osascript -e 'tell application "System Events" to tell process "SonosHandoffMenuBar" to click menu bar item 1 of menu bar 2'
+}
+
+press_transfer_button() {
+  local pid="$1"
+  local button_id="transfer-to-${ROOM}"
+
+  /usr/bin/swift -e '
+import ApplicationServices
+import Foundation
+
+let pid = pid_t(CommandLine.arguments[1])!
+let identifier = CommandLine.arguments[2]
+let app = AXUIElementCreateApplication(pid)
+
+func copyAttribute(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
+    var value: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else {
+        return nil
+    }
+    return value
+}
+
+func stringAttribute(_ element: AXUIElement, _ attribute: String) -> String {
+    copyAttribute(element, attribute).map { String(describing: $0) } ?? ""
+}
+
+func children(_ element: AXUIElement) -> [AXUIElement] {
+    copyAttribute(element, kAXChildrenAttribute as String) as? [AXUIElement] ?? []
+}
+
+func findByIdentifier(_ element: AXUIElement, depth: Int = 0) -> AXUIElement? {
+    if depth > 12 {
+        return nil
+    }
+    if stringAttribute(element, kAXIdentifierAttribute as String) == identifier {
+        return element
+    }
+    for child in children(element) {
+        if let match = findByIdentifier(child, depth: depth + 1) {
+            return match
+        }
+    }
+    return nil
+}
+
+for _ in 0 ..< 80 {
+    if let button = findByIdentifier(app) {
+        let status = AXUIElementPerformAction(button, kAXPressAction as CFString)
+        guard status == .success else {
+            fputs("press_transfer_button: AXPress failed: \(status.rawValue)\n", stderr)
+            exit(3)
+        }
+        print("pressed_button=\(identifier)")
+        exit(0)
+    }
+    usleep(200_000)
+}
+
+fputs("press_transfer_button: button not found: \(identifier)\n", stderr)
+exit(2)
+' "$pid" "$button_id"
+}
+
+drag_slider_to_volume() {
+  local pid="$1"
+  local start_volume="$2"
+  local target_volume="$3"
+
+  /usr/bin/swift -e '
+import ApplicationServices
+import CoreGraphics
+import Foundation
+
+let pid = pid_t(CommandLine.arguments[1])!
+let startVolume = Double(CommandLine.arguments[2])!
+let targetVolume = Double(CommandLine.arguments[3])!
+let identifier = "sonos-volume-slider"
+let app = AXUIElementCreateApplication(pid)
+
+func copyAttribute(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
+    var value: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else {
+        return nil
+    }
+    return value
+}
+
+func stringAttribute(_ element: AXUIElement, _ attribute: String) -> String {
+    copyAttribute(element, attribute).map { String(describing: $0) } ?? ""
+}
+
+func children(_ element: AXUIElement) -> [AXUIElement] {
+    copyAttribute(element, kAXChildrenAttribute as String) as? [AXUIElement] ?? []
+}
+
+func findByIdentifier(_ element: AXUIElement, depth: Int = 0) -> AXUIElement? {
+    if depth > 12 {
+        return nil
+    }
+    if stringAttribute(element, kAXIdentifierAttribute as String) == identifier {
+        return element
+    }
+    for child in children(element) {
+        if let match = findByIdentifier(child, depth: depth + 1) {
+            return match
+        }
+    }
+    return nil
+}
+
+func pointAttribute(_ element: AXUIElement, _ attribute: String) -> CGPoint? {
+    guard let value = copyAttribute(element, attribute) else {
+        return nil
+    }
+    var point = CGPoint.zero
+    guard AXValueGetValue(value as! AXValue, .cgPoint, &point) else {
+        return nil
+    }
+    return point
+}
+
+func sizeAttribute(_ element: AXUIElement, _ attribute: String) -> CGSize? {
+    guard let value = copyAttribute(element, attribute) else {
+        return nil
+    }
+    var size = CGSize.zero
+    guard AXValueGetValue(value as! AXValue, .cgSize, &size) else {
+        return nil
+    }
+    return size
+}
+
+func postMouse(_ type: CGEventType, at point: CGPoint) {
+    guard let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left) else {
+        exit(4)
+    }
+    event.post(tap: .cghidEventTap)
+}
+
+for _ in 0 ..< 60 {
+    if let slider = findByIdentifier(app),
+       let position = pointAttribute(slider, kAXPositionAttribute as String),
+       let size = sizeAttribute(slider, kAXSizeAttribute as String),
+       size.width > 20,
+       size.height > 4 {
+        let y = position.y + (size.height / 2.0)
+        let startX = position.x + (size.width * min(max(startVolume, 0), 100) / 100.0)
+        let targetX = position.x + (size.width * min(max(targetVolume, 0), 100) / 100.0)
+        let start = CGPoint(x: startX, y: y)
+        let target = CGPoint(x: targetX, y: y)
+
+        print("slider_frame=\(Int(position.x)),\(Int(position.y)),\(Int(size.width)),\(Int(size.height))")
+        print("drag_start=\(Int(start.x)),\(Int(start.y))")
+        print("drag_target=\(Int(target.x)),\(Int(target.y))")
+
+        postMouse(.leftMouseDown, at: start)
+        usleep(80_000)
+        for step in 1 ... 10 {
+            let t = Double(step) / 10.0
+            let point = CGPoint(
+                x: start.x + ((target.x - start.x) * t),
+                y: start.y + ((target.y - start.y) * t)
+            )
+            postMouse(.leftMouseDragged, at: point)
+            usleep(35_000)
+        }
+        postMouse(.leftMouseUp, at: target)
+        exit(0)
+    }
+    usleep(200_000)
+}
+
+fputs("drag_slider_to_volume: slider not found: \(identifier)\n", stderr)
+exit(2)
+' "$pid" "$start_volume" "$target_volume"
+}
+
+show_recent_logs() {
+  /usr/bin/log show --last 2m --info --debug --style compact \
+    --predicate 'subsystem == "com.fpieringer.SonosHandoffMenuBar" && category == "Shortcuts"' \
+    | grep 'SonosHandoffVolumeSet' \
+    | tail -n 20 || true
+}
+
+initial_volume="$(volume_status)"
+if [[ -z "$initial_volume" ]]; then
+  echo "smoke_menubar_slider: could not read initial $ROOM volume" >&2
+  exit 1
+fi
+
+restore_done=0
+restore_volume() {
+  if [[ "$restore_done" == "0" ]]; then
+    set_volume "$initial_volume" || true
+  fi
+}
+trap restore_volume EXIT
+
+if (( initial_volume + DELTA <= 100 )); then
+  target_volume=$((initial_volume + DELTA))
+else
+  target_volume=$((initial_volume - DELTA))
+fi
+
+if [[ "$RELAUNCH" == "1" ]]; then
+  pkill -x SonosHandoffMenuBar >/dev/null 2>&1 || true
+  sleep 0.5
+fi
+
+if [[ "$PREPARE_PLAYBACK" == "1" ]] && ! playback_is_on_room; then
+  if ! playback_status_available; then
+    echo "prepare_playback=skipped_spotify_status_unavailable"
+  else
+    echo "prepare_playback=$ROOM"
+    cli handoff "$ROOM" >/dev/null
+    for _ in {1..30}; do
+      sleep 0.5
+      if playback_is_on_room; then
+        break
+      fi
+    done
+    if ! playback_is_on_room; then
+      echo "smoke_menubar_slider: could not prepare active Spotify playback on $ROOM" >&2
+      exit 1
+    fi
+  fi
+fi
+
+open "$APP_DIR"
+sleep 1.5
+open_menu
+sleep 1.0
+
+pid="$(pgrep -x SonosHandoffMenuBar | head -n 1)"
+if [[ -z "$pid" ]]; then
+  echo "smoke_menubar_slider: SonosHandoffMenuBar is not running" >&2
+  exit 1
+fi
+
+echo "room=$ROOM"
+echo "initial_volume=$initial_volume"
+echo "target_volume=$target_volume"
+press_transfer_button "$pid"
+for _ in {1..20}; do
+  sleep 0.35
+  if cli sonos-status "$ROOM" 2>/dev/null | grep -Eq '^transport_state=(PLAYING|TRANSITIONING)$'; then
+    break
+  fi
+done
+drag_slider_to_volume "$pid" "$initial_volume" "$target_volume"
+
+observed_volume=""
+observed_spotify_volume=""
+observed_spotify_restricted=""
+for _ in {1..20}; do
+  sleep 0.25
+  observed_volume="$(volume_status)"
+  observed_spotify_volume="$(spotify_volume || true)"
+  observed_spotify_restricted="$(spotify_restricted || true)"
+  if [[ "$observed_volume" == "$target_volume" \
+    && ( "$observed_spotify_volume" == "$target_volume" \
+      || "$observed_spotify_restricted" == "true" \
+      || "$observed_spotify_volume" == "unavailable" \
+      || "$observed_spotify_restricted" == "unavailable" ) ]]; then
+    break
+  fi
+done
+
+echo "observed_volume=$observed_volume"
+echo "observed_spotify_volume=$observed_spotify_volume"
+echo "observed_spotify_restricted=$observed_spotify_restricted"
+show_recent_logs
+
+if [[ "$observed_volume" != "$target_volume" ]]; then
+  echo "smoke_menubar_slider: expected $ROOM volume $target_volume, observed $observed_volume" >&2
+  exit 1
+fi
+if [[ "$observed_spotify_volume" == "unavailable" || "$observed_spotify_restricted" == "unavailable" ]]; then
+  echo "spotify_volume_check=skipped_unavailable"
+elif [[ "$observed_spotify_restricted" == "true" ]]; then
+  echo "spotify_volume_check=skipped_restricted_device"
+elif [[ "$observed_spotify_volume" != "$target_volume" ]]; then
+  echo "smoke_menubar_slider: expected Spotify active-device volume $target_volume, observed $observed_spotify_volume" >&2
+  exit 1
+fi
+
+set_volume "$initial_volume"
+restore_done=1
+trap - EXIT
+
+restored_volume="$(volume_status)"
+if [[ "$restored_volume" != "$initial_volume" ]]; then
+  echo "smoke_menubar_slider: restore expected $initial_volume, observed $restored_volume" >&2
+  exit 1
+fi
+
+echo "restored_volume=$restored_volume"
+echo "smoke_menubar_slider=ok"
