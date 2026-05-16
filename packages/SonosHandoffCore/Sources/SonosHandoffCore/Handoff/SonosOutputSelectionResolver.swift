@@ -15,13 +15,7 @@ public struct SonosOutputSelectionResolver: Sendable {
             return visibleCurrent.roomName
         }
 
-        if let matchingGroup = groups.first(where: { group in
-            guard group.members.count > 1, let coordinator = group.coordinator else {
-                return false
-            }
-            return SonosRoomName.matches(group.displayName, currentRoomName)
-                || SonosRoomName.matchesSpotifyDeviceName(currentRoomName, roomName: coordinator.roomName)
-        }) {
+        if let matchingGroup = groups.first(where: { $0.contains(roomName: currentRoomName) }) {
             return matchingGroup.coordinator?.roomName
         }
 

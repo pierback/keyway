@@ -79,11 +79,20 @@ public struct SonosSpeakerGroup: Identifiable, Equatable, Sendable {
     }
 
     public func contains(roomName: String?) -> Bool {
-        guard let roomName else {
+        guard let roomName = SonosRoomName.normalized(roomName) else {
             return false
         }
 
-        return members.contains { SonosRoomName.matches($0.roomName, roomName) }
+        if members.contains(where: { SonosRoomName.matches($0.roomName, roomName) }) {
+            return true
+        }
+
+        guard members.count > 1, let coordinator else {
+            return false
+        }
+
+        return SonosRoomName.matches(displayName, roomName)
+            || SonosRoomName.matchesSpotifyDeviceName(roomName, roomName: coordinator.roomName)
     }
 }
 

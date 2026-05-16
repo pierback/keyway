@@ -227,9 +227,9 @@ final class PlaybackSyncController: ObservableObject {
 
             activeSpotifyRoomName = roomName
             clearSpotifyAuthRequired()
-            if speakers.contains(where: { SonosRoomName.matches($0.roomName, roomName) }) {
-                selectRoomName(roomName)
-                refreshVolumeStatus(roomName: roomName)
+            if let selectedRoomName = selectedRoomName(forActiveSpotifyRoomName: roomName) {
+                selectRoomName(selectedRoomName)
+                refreshVolumeStatus(roomName: selectedRoomName)
             }
         } catch {
             if SpotifyAuthRecovery.isAuthRequired(error) {
@@ -260,6 +260,17 @@ final class PlaybackSyncController: ObservableObject {
 
     private func preferredCurrentRoomName() -> String? {
         activeSpotifyRoomName
+    }
+
+    private func selectedRoomName(forActiveSpotifyRoomName roomName: String) -> String? {
+        if let exactSpeaker = speakers.first(where: { SonosRoomName.matches($0.roomName, roomName) }) {
+            return exactSpeaker.roomName
+        }
+
+        return outputRows
+            .first(where: { $0.contains(roomName: roomName) })?
+            .coordinator
+            .roomName
     }
 
     func adjustVolume(_ direction: VolumeDirection) {
