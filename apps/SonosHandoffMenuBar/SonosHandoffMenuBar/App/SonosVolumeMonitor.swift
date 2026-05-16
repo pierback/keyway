@@ -1,0 +1,136 @@
+import Combine
+import Foundation
+import os
+import SonosHandoffCore
+
+@MainActor
+final class SonosVolumeMonitor: ObservableObject {
+    static let shared = SonosVolumeMonitor()
+
+    @Published private(set) var snapshot: SpeakerVolumeSnapshot?
+
+    private let logger = Logger(subsystem: "com.fpieringer.SonosHandoffMenuBar", category: "VolumeMonitor")
+    private var volumeService: (any SpeakerVolumeAdjusting)?
+    private var volumeCommands: SpeakerVolumeCommandQueue = .shared
+    private var pollTask: Task<Void, Never>?
+    private var selectedRoomName: String?
+    private var pollInFlight = false
+    private var suppressUntil = Date.distantPast
+    private var suppressedRoomName: String?
+    private let reconciler = SpeakerVolumeMonitorReconciler()
+    private static let pollIntervalNanoseconds: UInt64 = 450_000_000
+    private static let localChangeSuppressionSeconds: TimeInterval = 1.25
+
+    private init() {}
+
+    func start(
+        volumeService: any SpeakerVolumeAdjusting,
+        volumeCommands: SpeakerVolumeCommandQueue = .shared
+    ) {
+        self.volumeService = volumeService
+        self.volumeCommands = volumeCommands
+
+        guard pollTask == nil else {
+            return
+        }
+
+        pollTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.pollOnce()
+                try? await Task.sleep(nanoseconds: Self.pollIntervalNanoseconds)
+            }
+        }
+    }
+
+    func setRoomName(_ roomName: String?) {
+        let normalizedRoomName = SonosRoomName.normalized(roomName)
+        guard !SonosRoomName.matches(selectedRoomName, normalizedRoomName) else {
+            return
+        }
+
+        selectedRoomName = normalizedRoomName
+        snapshot = nil
+    }
+
+    func noteLocalChange(roomName: String, volume: Int? = nil, muted: Bool? = nil) {
+        suppressUntil = Date().addingTimeInterval(Self.localChangeSuppressionSeconds)
+        suppressedRoomName = roomName
+
+        guard let nextSnapshot = reconciler.snapshotAfterLocalChange(
+            previousSnapshot: snapshot,
+            roomName: roomName,
+            volume: volume,
+            muted: muted
+        ) else { return }
+
+        snapshot = nextSnapshot
+    }
+
+    private func pollOnce() async {
+        guard !pollInFlight,
+              let volumeService,
+              let roomName = selectedRoomName
+        else {
+            return
+        }
+
+        pollInFlight = true
+        defer { pollInFlight = false }
+
+        let result: Result<SpeakerVolumeStatus, Error>
+        do {
+            result = .success(try await volumeCommands.volumeStatus(using: volumeService, roomName: roomName))
+        } catch {
+            result = .failure(error)
+        }
+
+        switch result {
+        case .success(let status):
+            guard SonosRoomName.matches(selectedRoomName, roomName) else {
+                logger.info("SonosHandoffVolumeMonitor state=stale_ignored room=\(roomName, privacy: .public)")
+                return
+            }
+            apply(status: status)
+        case .failure(let error):
+            logger.error("SonosHandoffVolumeMonitor result=failure room=\(roomName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func apply(status: SpeakerVolumeStatus) {
+        let decision = reconciler.reconcile(
+            previousSnapshot: snapshot,
+            status: status,
+            suppressFeedback: isFeedbackSuppressed(status: status)
+        )
+        snapshot = decision.snapshot
+
+        switch decision.logEvent {
+        case .some(.primed):
+            logger.info("SonosHandoffVolumeMonitor state=primed room=\(status.roomName, privacy: .public) volume=\(status.volume, privacy: .public) muted=\(status.muted, privacy: .public)")
+        case .some(.changed):
+            logger.info("SonosHandoffVolumeMonitor state=changed room=\(status.roomName, privacy: .public) volume=\(status.volume, privacy: .public) muted=\(status.muted, privacy: .public)")
+        case nil:
+            break
+        }
+
+        switch decision.feedback {
+        case .some(.volume(let direction)):
+            StatusHUD.shared.showVolume(roomName: status.roomName, volume: status.volume, direction: direction, dismissAfter: 1.6)
+        case .some(.mute):
+            StatusHUD.shared.showMute(roomName: status.roomName, muted: status.muted, dismissAfter: 1.6)
+        case nil:
+            break
+        }
+    }
+
+    private func isFeedbackSuppressed(status: SpeakerVolumeStatus) -> Bool {
+        guard Date() < suppressUntil,
+              let suppressedRoomName,
+              SonosRoomName.matches(suppressedRoomName, status.roomName)
+        else {
+            return false
+        }
+
+        return true
+    }
+}

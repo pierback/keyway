@@ -9,9 +9,13 @@ struct AppEnvironment: @unchecked Sendable {
     let roomHandoffService: any RoomHandoffPerforming
     let speakerDiscovery: any SonosSpeakerDiscovering
     let volumeService: any SpeakerVolumeAdjusting
+    let activePlaybackObserver: any SpotifyActivePlaybackObserving
     let doctorService: any DoctorPerforming
     let accessibilityAutomator: any AccessibilityAutomating
+    let outputSelection: PlaybackOutputSelection
+    let outputDirectory: PlaybackOutputDirectory
 
+    @MainActor
     static func live() -> AppEnvironment {
         let configStore = ConfigStore()
         let tokenStore = KeychainTokenStore()
@@ -19,6 +23,11 @@ struct AppEnvironment: @unchecked Sendable {
         let authCoordinator = SpotifyAuthCoordinator(tokenStore: tokenStore, configStore: configStore)
         let accessibilityAutomator = SpotifyUIAutomator()
         let spotifyConnectService = SpotifyConnectHandoffService(configStore: configStore)
+        let outputSelection = PlaybackOutputSelection()
+        let outputDirectory = PlaybackOutputDirectory(
+            speakerDiscovery: spotifyConnectService,
+            configStore: configStore
+        )
 
         return AppEnvironment(
             configStore: configStore,
@@ -29,12 +38,15 @@ struct AppEnvironment: @unchecked Sendable {
             roomHandoffService: spotifyConnectService,
             speakerDiscovery: spotifyConnectService,
             volumeService: spotifyConnectService,
+            activePlaybackObserver: spotifyConnectService,
             doctorService: DoctorService(
                 configStore: configStore,
                 connectTokenStatusStore: connectTokenStatusStore,
                 accessibilityAutomator: accessibilityAutomator
             ),
-            accessibilityAutomator: accessibilityAutomator
+            accessibilityAutomator: accessibilityAutomator,
+            outputSelection: outputSelection,
+            outputDirectory: outputDirectory
         )
     }
 }

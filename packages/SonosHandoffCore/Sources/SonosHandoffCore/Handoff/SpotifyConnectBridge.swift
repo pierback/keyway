@@ -1,0 +1,180 @@
+import Foundation
+import os
+
+enum SpotifyVolumeMirrorResult: Equatable, Sendable {
+    case applied
+    case skipped(SpotifyVolumeMirrorSkipReason)
+}
+
+enum SpotifyVolumeMirrorSkipReason: Equatable, Sendable {
+    case activeDeviceMismatch(lastDeviceName: String?)
+    case restrictedDevice(deviceName: String)
+    case spotifyHTTPStatus(Int)
+    case error(String)
+}
+
+struct SpotifyConnectBridge: Sendable {
+    private static let volumeMirrorLogger = os.Logger(
+        subsystem: "com.fpieringer.SonosHandoffCore",
+        category: "SpotifyVolumeMirror"
+    )
+
+    private let urlSession: URLSession
+    private let tokenClient: SpotifyConnectTokenClient
+    private let desktopCredentialProvider: SpotifyDesktopCredentialProvider
+    private let projectAccessTokenProvider: SpotifyProjectAccessTokenProvider
+
+    init(
+        loginID: String?,
+        appSupport: URL,
+        urlSession: URLSession
+    ) {
+        self.urlSession = urlSession
+        let tokenClient = SpotifyConnectTokenClient(urlSession: urlSession)
+        self.tokenClient = tokenClient
+        self.desktopCredentialProvider = SpotifyDesktopCredentialProvider(
+            preferredLoginID: loginID,
+            applicationSupportDirectory: appSupport,
+            tokenClient: tokenClient
+        )
+        self.projectAccessTokenProvider = SpotifyProjectAccessTokenProvider(
+            applicationSupportDirectory: appSupport,
+            tokenClient: tokenClient
+        )
+    }
+
+    func refreshedDesktopCredential() async throws -> ConnectDesktopCredential {
+        try await desktopCredentialProvider.credential()
+    }
+
+    func spotifyConnectAuthorizationCode(from desktopAccessToken: String) async throws -> String {
+        try await tokenClient.spotifyConnectAuthorizationCode(from: desktopAccessToken)
+    }
+
+    func verifyActiveDeviceIfAvailable(named roomName: String) async {
+        do {
+            _ = try await verifyActiveDevice(named: roomName)
+        } catch {
+            return
+        }
+    }
+
+    func verifyActiveDevice(named roomName: String) async throws -> ConnectPlayerState {
+        try await waitForActiveDevice(named: roomName)
+    }
+
+    func activePlaybackDeviceStatus() async throws -> SpotifyPlaybackDeviceStatus? {
+        let accessToken = try await projectAccessTokenProvider.accessToken()
+        guard let state = try await currentPlayerStateWithAuthRetry(accessToken: accessToken) else {
+            return nil
+        }
+
+        return SpotifyPlaybackDeviceStatus(
+            deviceName: state.device.name,
+            isPlaying: state.isPlaying,
+            volumePercent: state.device.volumePercent
+        )
+    }
+
+    @discardableResult
+    func setActiveDeviceVolumeIfNeeded(roomName: String, volume: Int) async -> SpotifyVolumeMirrorResult {
+        do {
+            let accessToken = try await projectAccessTokenProvider.accessToken()
+            let waiter = activeDeviceWaiter()
+            let result = try await waiter.waitForRoom(
+                named: roomName,
+                accessToken: accessToken,
+                policy: .volumeMirror
+            )
+            guard let state = result.state else {
+                let lastDeviceName = result.lastDeviceName ?? "none"
+                Self.volumeMirrorLogger.info("SpotifyVolumeMirror result=skipped reason=active_device_mismatch room=\(roomName, privacy: .public) volume=\(volume, privacy: .public) lastDevice=\(lastDeviceName, privacy: .public)")
+                return .skipped(.activeDeviceMismatch(lastDeviceName: result.lastDeviceName))
+            }
+            guard !state.device.isRestricted else {
+                Self.volumeMirrorLogger.info("SpotifyVolumeMirror result=skipped reason=restricted_device room=\(roomName, privacy: .public) device=\(state.device.name, privacy: .public) volume=\(volume, privacy: .public)")
+                return .skipped(.restrictedDevice(deviceName: state.device.name))
+            }
+
+            var components = URLComponents(string: "https://api.spotify.com/v1/me/player/volume")!
+            components.queryItems = [URLQueryItem(name: "volume_percent", value: String(volume))]
+            var request = URLRequest(url: components.url!)
+            request.httpMethod = "PUT"
+            let volumeAccessToken = try await projectAccessTokenProvider.accessToken()
+            request.setValue("Bearer \(volumeAccessToken)", forHTTPHeaderField: "Authorization")
+
+            var (data, response) = try await urlSession.data(for: request)
+            if let http = response as? HTTPURLResponse,
+               http.statusCode == 401 || http.statusCode == 403 {
+                let refreshedAccessToken = try await projectAccessTokenProvider.refreshAccessTokenAfterAuthFailure()
+                request.setValue("Bearer \(refreshedAccessToken)", forHTTPHeaderField: "Authorization")
+                (data, response) = try await urlSession.data(for: request)
+            }
+            guard let http = response as? HTTPURLResponse,
+                  http.statusCode == 204 || (200 ..< 300).contains(http.statusCode)
+            else {
+                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+                let body = String(data: data, encoding: .utf8) ?? ""
+                Self.volumeMirrorLogger.info("SpotifyVolumeMirror result=skipped reason=spotify_http_status room=\(roomName, privacy: .public) volume=\(volume, privacy: .public) status=\(statusCode, privacy: .public) body=\(body, privacy: .public)")
+                return .skipped(.spotifyHTTPStatus(statusCode))
+            }
+
+            Self.volumeMirrorLogger.info("SpotifyVolumeMirror result=applied room=\(roomName, privacy: .public) volume=\(volume, privacy: .public)")
+            return .applied
+        } catch {
+            Self.volumeMirrorLogger.info("SpotifyVolumeMirror result=skipped reason=error room=\(roomName, privacy: .public) volume=\(volume, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+            return .skipped(.error(error.localizedDescription))
+        }
+    }
+
+    private func waitForActiveDevice(named roomName: String) async throws -> ConnectPlayerState {
+        let accessToken = try await projectAccessTokenProvider.accessToken()
+        let waiter = activeDeviceWaiter()
+        let result = try await waiter.waitForRoom(
+            named: roomName,
+            accessToken: accessToken,
+            policy: .transferVerification
+        )
+        guard let state = result.state else {
+            throw ConnectHandoffError(.transferVerificationFailed, "Spotify active device is not \(roomName); last=\(result.lastDeviceName ?? "none")")
+        }
+
+        return state
+    }
+
+    private func currentPlayerState(accessToken: String) async throws -> ConnectPlayerState? {
+        var request = URLRequest(url: URL(string: "https://api.spotify.com/v1/me/player")!)
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await urlSession.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw ConnectHandoffError(.transferVerificationFailed, "Spotify returned a non-HTTP player response.")
+        }
+        if http.statusCode == 204 {
+            return nil
+        }
+        if http.statusCode == 401 || http.statusCode == 403 {
+            throw ConnectHandoffError(.authRequired, String(data: data, encoding: .utf8) ?? "Spotify player HTTP \(http.statusCode)")
+        }
+        guard (200 ..< 300).contains(http.statusCode) else {
+            throw ConnectHandoffError(.transferVerificationFailed, String(data: data, encoding: .utf8) ?? "Spotify player HTTP \(http.statusCode)")
+        }
+
+        return try JSONDecoder().decode(ConnectPlayerState.self, from: data)
+    }
+
+    private func currentPlayerStateWithAuthRetry(accessToken: String) async throws -> ConnectPlayerState? {
+        do {
+            return try await currentPlayerState(accessToken: accessToken)
+        } catch let error as ConnectHandoffError where error.code == .authRequired {
+            let refreshedAccessToken = try await projectAccessTokenProvider.refreshAccessTokenAfterAuthFailure()
+            return try await currentPlayerState(accessToken: refreshedAccessToken)
+        }
+    }
+
+    private func activeDeviceWaiter() -> SpotifyActiveDeviceWaiter {
+        SpotifyActiveDeviceWaiter { accessToken in
+            try await currentPlayerStateWithAuthRetry(accessToken: accessToken)
+        }
+    }
+}

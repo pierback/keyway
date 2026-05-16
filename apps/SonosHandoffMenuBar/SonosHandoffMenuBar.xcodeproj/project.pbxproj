@@ -12,24 +12,66 @@
 		3FC0D59FDCF9F41CCBB12AC6 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2C88552588ED36CC860BF3B /* Cocoa.framework */; };
 		55A8E14353DDBE893D4419EE /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C4A655F1D071E85CE3FCB21 /* AppEnvironment.swift */; };
 		6CF8ED1699448E9CAEF21CCD /* MenuBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B6133A39F7C24248F9CF7FF /* MenuBarController.swift */; };
-		98C2DCAB5EA39209C84E179C /* TransferMenuFeature.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41CEE99686DD976D22F56EF7 /* TransferMenuFeature.swift */; };
+		6E81F9507A9144909C894E21 /* MenuBarOutputSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E81F94F7A9144909C894E21 /* MenuBarOutputSection.swift */; };
+		6E81F9527A9144909C894E21 /* MenuBarVolumeControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E81F9517A9144909C894E21 /* MenuBarVolumeControl.swift */; };
+		70D5E71248B742B0B4A174E3 /* PlaybackOutputSelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70D5E71148B742B0B4A174E3 /* PlaybackOutputSelection.swift */; };
+		77D58B13164D4B7195A1ED3B /* PlaybackOutputDirectory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77D58B12164D4B7195A1ED3B /* PlaybackOutputDirectory.swift */; };
+		77D58B17164D4B7195A1ED3B /* PlaybackTransferActionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77D58B16164D4B7195A1ED3B /* PlaybackTransferActionController.swift */; };
+		77D58B15164D4B7195A1ED3B /* PlaybackVolumeActionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77D58B14164D4B7195A1ED3B /* PlaybackVolumeActionController.swift */; };
+		79B30C7CE63C9E6208B01244 /* PlaybackSyncController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79B30C7BE63C9E6208B01244 /* PlaybackSyncController.swift */; };
+		7A7C9B322B3F32EDB9656C17 /* PlaybackVolumeTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A7C9B312B3F32EDB9656C17 /* PlaybackVolumeTypes.swift */; };
+		4A6D3C11D7F84385A5E21801 /* PlaybackOperationGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A6D3C10D7F84385A5E21801 /* PlaybackOperationGate.swift */; };
+		4A6D3C13D7F84385A5E21801 /* PlaybackSliderCommitter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A6D3C12D7F84385A5E21801 /* PlaybackSliderCommitter.swift */; };
+		7F91EC90B3C24EE493F777D1 /* ShortcutRuntimeReporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F91EC8FB3C24EE493F777D1 /* ShortcutRuntimeReporter.swift */; };
+			846A9C9646C04CDB9D64EDC8 /* ShortcutRuntimeStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 846A9C9546C04CDB9D64EDC8 /* ShortcutRuntimeStatus.swift */; };
+			88D43E74F4E0450E90BDF58B /* StatusHUD.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88D43E73F4E0450E90BDF58B /* StatusHUD.swift */; };
+			88D43E76F4E0450E90BDF58B /* StatusHUDPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88D43E75F4E0450E90BDF58B /* StatusHUDPanel.swift */; };
+			8FEF6B492DA3449FB34D198A /* ShortcutEventParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FEF6B482DA3449FB34D198A /* ShortcutEventParser.swift */; };
+			8FEF6B4D2DA3449FB34D198A /* ShortcutCarbonHotKeyRegistrar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FEF6B4C2DA3449FB34D198A /* ShortcutCarbonHotKeyRegistrar.swift */; };
+			8FEF6B4F2DA3449FB34D198A /* ShortcutEventTap.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FEF6B4E2DA3449FB34D198A /* ShortcutEventTap.swift */; };
+		8FEF6B4B2DA3449FB34D198A /* ShortcutVolumeActionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FEF6B4A2DA3449FB34D198A /* ShortcutVolumeActionController.swift */; };
+		921C4DE67C9230B2D66D63AA /* StatusHUDAnchor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 921C4DE57C9230B2D66D63AA /* StatusHUDAnchor.swift */; };
+		921C4DE87C9230B2D66D63AA /* StatusHUDViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 921C4DE77C9230B2D66D63AA /* StatusHUDViews.swift */; };
+		9A79569E5F0C40A5B1F0377A /* SonosVolumeMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A79569D5F0C40A5B1F0377A /* SonosVolumeMonitor.swift */; };
 		9DEFC380643AD0B6A7828F9E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 787DBBF0915E0689AC1ACC9B /* Assets.xcassets */; };
 		AA330E5DA6262030A498903B /* SonosHandoffApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FDDC3093E7C25C9614553B5 /* SonosHandoffApp.swift */; };
 		B604B667AFA69C7B97537FE9 /* SonosHandoffCore in Frameworks */ = {isa = PBXBuildFile; productRef = FAFE3AF25C8577252A119443 /* SonosHandoffCore */; };
+		D5E7713E3E18444490BA13FE /* VolumeHotkeyController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5E7713D3E18444490BA13FE /* VolumeHotkeyController.swift */; };
 		FA8E732D6C4DF491562B2720 /* DoctorFeature.swift in Sources */ = {isa = PBXBuildFile; fileRef = 600C5740E614B2D048B9F00F /* DoctorFeature.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		1B6133A39F7C24248F9CF7FF /* MenuBarController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MenuBarController.swift; sourceTree = "<group>"; };
-		41CEE99686DD976D22F56EF7 /* TransferMenuFeature.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TransferMenuFeature.swift; sourceTree = "<group>"; };
 		51654BE1FA9A1C54DD31384F /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		600C5740E614B2D048B9F00F /* DoctorFeature.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DoctorFeature.swift; sourceTree = "<group>"; };
+		6E81F94F7A9144909C894E21 /* MenuBarOutputSection.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MenuBarOutputSection.swift; sourceTree = "<group>"; };
+		6E81F9517A9144909C894E21 /* MenuBarVolumeControl.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MenuBarVolumeControl.swift; sourceTree = "<group>"; };
+		70D5E71148B742B0B4A174E3 /* PlaybackOutputSelection.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlaybackOutputSelection.swift; sourceTree = "<group>"; };
 		787DBBF0915E0689AC1ACC9B /* Assets.xcassets */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		8AB614A589EDD25AB3051CE2 /* SettingsFeature.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SettingsFeature.swift; sourceTree = "<group>"; };
-		8C4A655F1D071E85CE3FCB21 /* AppEnvironment.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
+		77D58B12164D4B7195A1ED3B /* PlaybackOutputDirectory.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlaybackOutputDirectory.swift; sourceTree = "<group>"; };
+		77D58B16164D4B7195A1ED3B /* PlaybackTransferActionController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlaybackTransferActionController.swift; sourceTree = "<group>"; };
+		77D58B14164D4B7195A1ED3B /* PlaybackVolumeActionController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlaybackVolumeActionController.swift; sourceTree = "<group>"; };
+		79B30C7BE63C9E6208B01244 /* PlaybackSyncController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlaybackSyncController.swift; sourceTree = "<group>"; };
+		7A7C9B312B3F32EDB9656C17 /* PlaybackVolumeTypes.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlaybackVolumeTypes.swift; sourceTree = "<group>"; };
+		4A6D3C10D7F84385A5E21801 /* PlaybackOperationGate.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlaybackOperationGate.swift; sourceTree = "<group>"; };
+		4A6D3C12D7F84385A5E21801 /* PlaybackSliderCommitter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlaybackSliderCommitter.swift; sourceTree = "<group>"; };
+		7F91EC8FB3C24EE493F777D1 /* ShortcutRuntimeReporter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ShortcutRuntimeReporter.swift; sourceTree = "<group>"; };
+		846A9C9546C04CDB9D64EDC8 /* ShortcutRuntimeStatus.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ShortcutRuntimeStatus.swift; sourceTree = "<group>"; };
+			8AB614A589EDD25AB3051CE2 /* SettingsFeature.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SettingsFeature.swift; sourceTree = "<group>"; };
+			88D43E73F4E0450E90BDF58B /* StatusHUD.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = StatusHUD.swift; sourceTree = "<group>"; };
+			88D43E75F4E0450E90BDF58B /* StatusHUDPanel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = StatusHUDPanel.swift; sourceTree = "<group>"; };
+			8C4A655F1D071E85CE3FCB21 /* AppEnvironment.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
+		8FEF6B482DA3449FB34D198A /* ShortcutEventParser.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ShortcutEventParser.swift; sourceTree = "<group>"; };
+		8FEF6B4A2DA3449FB34D198A /* ShortcutVolumeActionController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ShortcutVolumeActionController.swift; sourceTree = "<group>"; };
+		8FEF6B4C2DA3449FB34D198A /* ShortcutCarbonHotKeyRegistrar.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ShortcutCarbonHotKeyRegistrar.swift; sourceTree = "<group>"; };
+		8FEF6B4E2DA3449FB34D198A /* ShortcutEventTap.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ShortcutEventTap.swift; sourceTree = "<group>"; };
+		9A79569D5F0C40A5B1F0377A /* SonosVolumeMonitor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SonosVolumeMonitor.swift; sourceTree = "<group>"; };
+		921C4DE57C9230B2D66D63AA /* StatusHUDAnchor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = StatusHUDAnchor.swift; sourceTree = "<group>"; };
+		921C4DE77C9230B2D66D63AA /* StatusHUDViews.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = StatusHUDViews.swift; sourceTree = "<group>"; };
 		9FDDC3093E7C25C9614553B5 /* SonosHandoffApp.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SonosHandoffApp.swift; sourceTree = "<group>"; };
 		A2C88552588ED36CC860BF3B /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = System/Library/Frameworks/Cocoa.framework; sourceTree = SDKROOT; };
 		C33C95EDF50BB5F8CC5859DE /* SonosHandoffMenuBar.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SonosHandoffMenuBar.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		D5E7713D3E18444490BA13FE /* VolumeHotkeyController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VolumeHotkeyController.swift; sourceTree = "<group>"; };
 		E56C9495FF94F0684B95A54A /* AppDelegate.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -49,7 +91,6 @@
 		4BD6C3F488CBF4F3C4A487E9 /* Features */ = {
 			isa = PBXGroup;
 			children = (
-				41CEE99686DD976D22F56EF7 /* TransferMenuFeature.swift */,
 				600C5740E614B2D048B9F00F /* DoctorFeature.swift */,
 				8AB614A589EDD25AB3051CE2 /* SettingsFeature.swift */,
 			);
@@ -127,6 +168,28 @@
 				9FDDC3093E7C25C9614553B5 /* SonosHandoffApp.swift */,
 				E56C9495FF94F0684B95A54A /* AppDelegate.swift */,
 				1B6133A39F7C24248F9CF7FF /* MenuBarController.swift */,
+				6E81F94F7A9144909C894E21 /* MenuBarOutputSection.swift */,
+				6E81F9517A9144909C894E21 /* MenuBarVolumeControl.swift */,
+				77D58B12164D4B7195A1ED3B /* PlaybackOutputDirectory.swift */,
+				70D5E71148B742B0B4A174E3 /* PlaybackOutputSelection.swift */,
+				77D58B16164D4B7195A1ED3B /* PlaybackTransferActionController.swift */,
+				77D58B14164D4B7195A1ED3B /* PlaybackVolumeActionController.swift */,
+				79B30C7BE63C9E6208B01244 /* PlaybackSyncController.swift */,
+				7A7C9B312B3F32EDB9656C17 /* PlaybackVolumeTypes.swift */,
+				4A6D3C10D7F84385A5E21801 /* PlaybackOperationGate.swift */,
+				4A6D3C12D7F84385A5E21801 /* PlaybackSliderCommitter.swift */,
+				9A79569D5F0C40A5B1F0377A /* SonosVolumeMonitor.swift */,
+				D5E7713D3E18444490BA13FE /* VolumeHotkeyController.swift */,
+				8FEF6B482DA3449FB34D198A /* ShortcutEventParser.swift */,
+				8FEF6B4C2DA3449FB34D198A /* ShortcutCarbonHotKeyRegistrar.swift */,
+				8FEF6B4E2DA3449FB34D198A /* ShortcutEventTap.swift */,
+				8FEF6B4A2DA3449FB34D198A /* ShortcutVolumeActionController.swift */,
+				7F91EC8FB3C24EE493F777D1 /* ShortcutRuntimeReporter.swift */,
+					846A9C9546C04CDB9D64EDC8 /* ShortcutRuntimeStatus.swift */,
+					88D43E73F4E0450E90BDF58B /* StatusHUD.swift */,
+					88D43E75F4E0450E90BDF58B /* StatusHUDPanel.swift */,
+					921C4DE57C9230B2D66D63AA /* StatusHUDAnchor.swift */,
+					921C4DE77C9230B2D66D63AA /* StatusHUDViews.swift */,
 			);
 			name = App;
 			path = App;
@@ -206,7 +269,28 @@
 				AA330E5DA6262030A498903B /* SonosHandoffApp.swift in Sources */,
 				0D46093191D9E4A8FF0D009A /* AppDelegate.swift in Sources */,
 				6CF8ED1699448E9CAEF21CCD /* MenuBarController.swift in Sources */,
-				98C2DCAB5EA39209C84E179C /* TransferMenuFeature.swift in Sources */,
+				6E81F9507A9144909C894E21 /* MenuBarOutputSection.swift in Sources */,
+				6E81F9527A9144909C894E21 /* MenuBarVolumeControl.swift in Sources */,
+				77D58B13164D4B7195A1ED3B /* PlaybackOutputDirectory.swift in Sources */,
+				70D5E71248B742B0B4A174E3 /* PlaybackOutputSelection.swift in Sources */,
+				77D58B17164D4B7195A1ED3B /* PlaybackTransferActionController.swift in Sources */,
+				77D58B15164D4B7195A1ED3B /* PlaybackVolumeActionController.swift in Sources */,
+				79B30C7CE63C9E6208B01244 /* PlaybackSyncController.swift in Sources */,
+				7A7C9B322B3F32EDB9656C17 /* PlaybackVolumeTypes.swift in Sources */,
+				4A6D3C11D7F84385A5E21801 /* PlaybackOperationGate.swift in Sources */,
+				4A6D3C13D7F84385A5E21801 /* PlaybackSliderCommitter.swift in Sources */,
+				9A79569E5F0C40A5B1F0377A /* SonosVolumeMonitor.swift in Sources */,
+				D5E7713E3E18444490BA13FE /* VolumeHotkeyController.swift in Sources */,
+				8FEF6B492DA3449FB34D198A /* ShortcutEventParser.swift in Sources */,
+				8FEF6B4D2DA3449FB34D198A /* ShortcutCarbonHotKeyRegistrar.swift in Sources */,
+				8FEF6B4F2DA3449FB34D198A /* ShortcutEventTap.swift in Sources */,
+				8FEF6B4B2DA3449FB34D198A /* ShortcutVolumeActionController.swift in Sources */,
+					7F91EC90B3C24EE493F777D1 /* ShortcutRuntimeReporter.swift in Sources */,
+					846A9C9646C04CDB9D64EDC8 /* ShortcutRuntimeStatus.swift in Sources */,
+					88D43E74F4E0450E90BDF58B /* StatusHUD.swift in Sources */,
+					88D43E76F4E0450E90BDF58B /* StatusHUDPanel.swift in Sources */,
+					921C4DE67C9230B2D66D63AA /* StatusHUDAnchor.swift in Sources */,
+					921C4DE87C9230B2D66D63AA /* StatusHUDViews.swift in Sources */,
 				FA8E732D6C4DF491562B2720 /* DoctorFeature.swift in Sources */,
 				0DF48BBDC0677673936EBEAB /* SettingsFeature.swift in Sources */,
 				55A8E14353DDBE893D4419EE /* AppEnvironment.swift in Sources */,

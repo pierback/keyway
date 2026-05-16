@@ -21,11 +21,13 @@ public protocol ConnectTokenStatusChecking: Sendable {
 
 public struct ConnectTokenStatusStore: ConnectTokenStatusChecking, @unchecked Sendable {
     private let applicationSupportDirectory: URL
+    private let projectTokenStore: ProjectWebAPITokenStore
 
     public init(
         applicationSupportDirectory: URL = ConfigPaths.applicationSupportDirectory
     ) {
         self.applicationSupportDirectory = applicationSupportDirectory
+        self.projectTokenStore = ProjectWebAPITokenStore(applicationSupportDirectory: applicationSupportDirectory)
     }
 
     public var desktopTokenURL: URL {
@@ -33,7 +35,7 @@ public struct ConnectTokenStatusStore: ConnectTokenStatusChecking, @unchecked Se
     }
 
     public var projectTokenURL: URL {
-        applicationSupportDirectory.appendingPathComponent("project-webapi-token.json")
+        projectTokenStore.tokenURL
     }
 
     public func status() -> ConnectTokenStatus {
@@ -44,36 +46,10 @@ public struct ConnectTokenStatusStore: ConnectTokenStatusChecking, @unchecked Se
     }
 
     public func deleteProjectToken() throws {
-        guard FileManager.default.fileExists(atPath: projectTokenURL.path) else {
-            return
-        }
-
-        try FileManager.default.removeItem(at: projectTokenURL)
+        try projectTokenStore.delete()
     }
 
     private func hasCompleteProjectToken() -> Bool {
-        guard
-            FileManager.default.fileExists(atPath: projectTokenURL.path),
-            let data = try? Data(contentsOf: projectTokenURL),
-            let token = try? JSONDecoder().decode(ProjectWebAPITokenStatusFile.self, from: data)
-        else {
-            return false
-        }
-
-        return !token.accessToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !token.refreshToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !(token.clientID ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-}
-
-private struct ProjectWebAPITokenStatusFile: Decodable {
-    let accessToken: String
-    let refreshToken: String
-    let clientID: String?
-
-    enum CodingKeys: String, CodingKey {
-        case accessToken = "access_token"
-        case refreshToken = "refresh_token"
-        case clientID = "client_id"
+        projectTokenStore.hasCompleteToken()
     }
 }

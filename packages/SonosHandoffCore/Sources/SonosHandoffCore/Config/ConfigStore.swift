@@ -1,6 +1,6 @@
 import Foundation
 
-public protocol ConfigStoring {
+public protocol ConfigStoring: Sendable {
     func load() throws -> AppConfig
     func save(_ config: AppConfig) throws
 }

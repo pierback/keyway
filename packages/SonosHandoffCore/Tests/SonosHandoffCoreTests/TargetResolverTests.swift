@@ -3,10 +3,10 @@ import Testing
 
 struct TargetResolverTests {
     @Test
-    func resolveFindsAliasCaseInsensitively() {
+    func resolveUsesSharedAliasPolicy() {
         let resolver = TargetResolver()
         let config = AppConfig(targets: [
-            SavedTarget(alias: "Office", spotifyDeviceName: "Office Speaker"),
+            SavedTarget(alias: " Office ", spotifyDeviceName: "Office Speaker"),
         ])
 
         let target = resolver.resolve(alias: "office", in: config)

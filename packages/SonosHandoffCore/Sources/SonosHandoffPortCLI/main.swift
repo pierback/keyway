@@ -20,11 +20,10 @@ private let explicitHost = optionValue("--host")
 private let explicitLoginID = optionValue("--login-id")
 private let desktopClientID = "65b708073fc0480ea92a077233ca87bd"
 private let sonosClientID = "9b377073ea334637b1406f329ce005de"
-private let projectClientID = "f8bd8fc9a72a458eb359333b4f3cda14"
 private let appSupport = URL(fileURLWithPath: NSHomeDirectory())
     .appendingPathComponent("Library/Application Support/sonos-handoff", isDirectory: true)
 private let desktopTokenURL = appSupport.appendingPathComponent("spotify-desktop-connect-tokens.json")
-private let projectTokenURL = appSupport.appendingPathComponent("project-webapi-token.json")
+private let projectTokenStore = ProjectWebAPITokenStore(applicationSupportDirectory: appSupport)
 
 struct SonosTarget {
     let roomName: String
@@ -89,22 +88,6 @@ struct DesktopToken: Codable {
 struct DesktopCredential {
     let loginID: String
     let token: DesktopToken
-}
-
-struct ProjectToken: Codable {
-    var accessToken: String
-    var refreshToken: String
-    var clientID: String?
-
-    enum CodingKeys: String, CodingKey {
-        case accessToken = "access_token"
-        case refreshToken = "refresh_token"
-        case clientID = "client_id"
-    }
-}
-
-struct PortCLIConfig: Decodable {
-    let spotifyClientID: String?
 }
 
 struct PlayerState: Decodable {
@@ -604,18 +587,28 @@ func spotifyConnectAuthorizationCode(from desktopAccessToken: String) async thro
 }
 
 func refreshedProjectAccessToken() async throws -> String {
-    guard FileManager.default.fileExists(atPath: projectTokenURL.path) else {
-        throw CLIError.missingToken("Missing project Web API token at \(projectTokenURL.path). Run Spotify Web API auth first.")
+    var token: ProjectWebAPIToken
+    do {
+        guard let loadedToken = try projectTokenStore.load() else {
+            throw CLIError.missingToken("Missing project Web API token at \(projectTokenStore.tokenURL.path). Run Spotify Web API auth first.")
+        }
+        token = loadedToken
+    } catch let error as CLIError {
+        throw error
+    } catch {
+        throw CLIError.missingToken("Project Web API token is incomplete or unreadable. Run Spotify Web API auth again.")
     }
 
-    var token = try JSONDecoder().decode(ProjectToken.self, from: Data(contentsOf: projectTokenURL))
-    let clientID = projectTokenClientID(from: token)
+    guard token.isComplete else {
+        throw CLIError.missingToken("Project Web API token is incomplete. Run Spotify Web API auth again.")
+    }
+
     var request = URLRequest(url: URL(string: "https://accounts.spotify.com/api/token")!)
     request.httpMethod = "POST"
     request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
     request.httpBody = formBody([
         "grant_type": "refresh_token",
-        "client_id": clientID,
+        "client_id": token.clientID,
         "refresh_token": token.refreshToken,
     ])
 
@@ -628,25 +621,8 @@ func refreshedProjectAccessToken() async throws -> String {
     if let refreshToken = payload["refresh_token"] as? String {
         token.refreshToken = refreshToken
     }
-    try JSONEncoder.pretty.encode(token).write(to: projectTokenURL)
+    try projectTokenStore.save(token)
     return accessToken
-}
-
-func projectTokenClientID(from token: ProjectToken) -> String {
-    if let clientID = token.clientID?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty {
-        return clientID
-    }
-
-    let configURL = appSupport.appendingPathComponent("config.json")
-    if
-        let data = try? Data(contentsOf: configURL),
-        let config = try? JSONDecoder().decode(PortCLIConfig.self, from: data),
-        let clientID = config.spotifyClientID?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-    {
-        return clientID
-    }
-
-    return projectClientID
 }
 
 func waitForSpotifyActiveDevice(named roomName: String) async throws -> PlayerState {

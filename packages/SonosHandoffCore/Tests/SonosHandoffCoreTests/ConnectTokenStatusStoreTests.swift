@@ -19,13 +19,28 @@ struct ConnectTokenStatusStoreTests {
     }
 
     @Test
-    func statusAcceptsCompleteProjectToken() throws {
+    func statusRejectsProjectTokenWithoutExpiry() throws {
         let directory = try temporaryApplicationSupportDirectory()
         defer {
             try? FileManager.default.removeItem(at: directory)
         }
 
         try Data(#"{"access_token":"access-token","refresh_token":"refresh-token","client_id":"client-id"}"#.utf8)
+            .write(to: directory.appendingPathComponent("project-webapi-token.json"))
+
+        let status = ConnectTokenStatusStore(applicationSupportDirectory: directory).status()
+
+        #expect(status.projectTokenAvailable == false)
+    }
+
+    @Test
+    func statusAcceptsCompleteProjectToken() throws {
+        let directory = try temporaryApplicationSupportDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        try Data(#"{"access_token":"access-token","refresh_token":"refresh-token","client_id":"client-id","expires_at":9999999999}"#.utf8)
             .write(to: directory.appendingPathComponent("project-webapi-token.json"))
 
         let status = ConnectTokenStatusStore(applicationSupportDirectory: directory).status()

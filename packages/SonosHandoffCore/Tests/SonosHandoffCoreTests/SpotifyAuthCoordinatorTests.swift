@@ -34,10 +34,11 @@ struct SpotifyAuthCoordinatorTests {
 
         let tokenURL = applicationSupportDirectory.appendingPathComponent("project-webapi-token.json")
         let tokenData = try Data(contentsOf: tokenURL)
-        let token = try #require(JSONSerialization.jsonObject(with: tokenData) as? [String: String])
-        #expect(token["access_token"] == "access-token")
-        #expect(token["refresh_token"] == "refresh-token")
-        #expect(token["client_id"] == "client-id")
+        let token = try #require(JSONSerialization.jsonObject(with: tokenData) as? [String: Any])
+        #expect(token["access_token"] as? String == "access-token")
+        #expect(token["refresh_token"] as? String == "refresh-token")
+        #expect(token["client_id"] as? String == "client-id")
+        #expect(token["expires_at"] as? Int != nil)
 
         let callbackBody = await callbackCapture.waitForBody()
         #expect(callbackBody?.contains("Spotify sign-in completed.") == true)
