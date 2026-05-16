@@ -43,10 +43,10 @@ final class SonosGroupingService: @unchecked Sendable {
 
         let newCoordinatorTarget = await directory.target(for: newCoordinator)
         try await avTransport.becomeStandalone(target: newCoordinatorTarget)
-        for member in group.members where member.id != newCoordinator.id {
-            let memberTarget = await directory.target(for: member)
-            try await avTransport.join(target: memberTarget, coordinator: newCoordinatorTarget)
-        }
+        try await rejoinMembers(
+            group.members.filter { $0.id != newCoordinator.id },
+            to: newCoordinatorTarget
+        )
     }
 
     func removeCoordinator(groupID: String, coordinatorRoomName: String, replacementRoomName: String) async throws {
@@ -70,9 +70,23 @@ final class SonosGroupingService: @unchecked Sendable {
 
         let newCoordinatorTarget = await directory.target(for: newCoordinator)
         try await avTransport.becomeStandalone(target: newCoordinatorTarget)
-        for member in group.members where member.id != newCoordinator.id && member.id != oldCoordinator.id {
-            let memberTarget = await directory.target(for: member)
-            try await avTransport.join(target: memberTarget, coordinator: newCoordinatorTarget)
+        try await rejoinMembers(
+            group.members.filter { $0.id != newCoordinator.id && $0.id != oldCoordinator.id },
+            to: newCoordinatorTarget
+        )
+    }
+
+    private func rejoinMembers(_ members: [SonosSpeaker], to coordinator: ConnectSonosTarget) async throws {
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for member in members {
+                let memberTarget = await directory.target(for: member)
+                let avTransport = avTransport
+                group.addTask {
+                    try await avTransport.join(target: memberTarget, coordinator: coordinator)
+                }
+            }
+
+            try await group.waitForAll()
         }
     }
 }

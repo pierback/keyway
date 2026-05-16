@@ -6,18 +6,68 @@ import Testing
 struct SonosGroupingServiceTests {
     @Test
     func removeCoordinatorLeavesOldCoordinatorOutOfReplacementGroup() async throws {
-        GroupingServiceURLProtocol.requests = []
-        GroupingServiceURLProtocol.topologyResponse = Self.topologyEnvelope(
-            """
-            <ZoneGroups>
-              <ZoneGroup Coordinator="RINCON_KITCHEN" ID="RINCON_KITCHEN:123">
-                <ZoneGroupMember UUID="RINCON_KITCHEN" ZoneName="Kitchen" Location="http://kitchen.local:1400/xml/device_description.xml"/>
-                <ZoneGroupMember UUID="RINCON_PORT" ZoneName="Port" Location="http://port.local:1400/xml/device_description.xml"/>
-                <ZoneGroupMember UUID="RINCON_OFFICE" ZoneName="Office" Location="http://office.local:1400/xml/device_description.xml"/>
-              </ZoneGroup>
-            </ZoneGroups>
-            """
+        GroupingServiceURLProtocol.reset(
+            topologyResponse: Self.topologyEnvelope(
+                """
+                <ZoneGroups>
+                  <ZoneGroup Coordinator="RINCON_KITCHEN" ID="RINCON_KITCHEN:123">
+                    <ZoneGroupMember UUID="RINCON_KITCHEN" ZoneName="Kitchen" Location="http://kitchen.local:1400/xml/device_description.xml"/>
+                    <ZoneGroupMember UUID="RINCON_PORT" ZoneName="Port" Location="http://port.local:1400/xml/device_description.xml"/>
+                    <ZoneGroupMember UUID="RINCON_OFFICE" ZoneName="Office" Location="http://office.local:1400/xml/device_description.xml"/>
+                  </ZoneGroup>
+                </ZoneGroups>
+                """
+            )
         )
+        let service = Self.groupingService()
+
+        try await service.removeCoordinator(
+            groupID: "RINCON_KITCHEN:123",
+            coordinatorRoomName: "Kitchen",
+            replacementRoomName: "Port"
+        )
+
+        let avTransportRequests = GroupingServiceURLProtocol.snapshot()
+            .filter { $0.url?.path == "/MediaRenderer/AVTransport/Control" }
+        #expect(avTransportRequests.map { $0.url?.host } == ["port.local", "office.local"])
+        #expect(avTransportRequests[0].soapAction == "\"urn:schemas-upnp-org:service:AVTransport:1#BecomeCoordinatorOfStandaloneGroup\"")
+        #expect(avTransportRequests[1].soapAction == "\"urn:schemas-upnp-org:service:AVTransport:1#SetAVTransportURI\"")
+        #expect(avTransportRequests[1].body.contains("<CurrentURI>x-rincon:RINCON_PORT</CurrentURI>"))
+        #expect(avTransportRequests.contains { $0.url?.host == "kitchen.local" } == false)
+    }
+
+    @Test
+    func migrateCoordinatorRejoinsEveryOtherMemberToNewCoordinator() async throws {
+        GroupingServiceURLProtocol.reset(
+            topologyResponse: Self.topologyEnvelope(
+                """
+                <ZoneGroups>
+                  <ZoneGroup Coordinator="RINCON_KITCHEN" ID="RINCON_KITCHEN:123">
+                    <ZoneGroupMember UUID="RINCON_KITCHEN" ZoneName="Kitchen" Location="http://kitchen.local:1400/xml/device_description.xml"/>
+                    <ZoneGroupMember UUID="RINCON_PORT" ZoneName="Port" Location="http://port.local:1400/xml/device_description.xml"/>
+                    <ZoneGroupMember UUID="RINCON_OFFICE" ZoneName="Office" Location="http://office.local:1400/xml/device_description.xml"/>
+                    <ZoneGroupMember UUID="RINCON_BATH" ZoneName="Bath" Location="http://bath.local:1400/xml/device_description.xml"/>
+                  </ZoneGroup>
+                </ZoneGroups>
+                """
+            )
+        )
+        let service = Self.groupingService()
+
+        try await service.migrateCoordinator(groupID: "RINCON_KITCHEN:123", toRoomName: "Port")
+
+        let avTransportRequests = GroupingServiceURLProtocol.snapshot()
+            .filter { $0.url?.path == "/MediaRenderer/AVTransport/Control" }
+        #expect(avTransportRequests.first?.url?.host == "port.local")
+        #expect(avTransportRequests.first?.soapAction == "\"urn:schemas-upnp-org:service:AVTransport:1#BecomeCoordinatorOfStandaloneGroup\"")
+
+        let joinRequests = avTransportRequests.dropFirst()
+        #expect(Set(joinRequests.compactMap { $0.url?.host }) == ["kitchen.local", "office.local", "bath.local"])
+        #expect(joinRequests.allSatisfy { $0.soapAction == "\"urn:schemas-upnp-org:service:AVTransport:1#SetAVTransportURI\"" })
+        #expect(joinRequests.allSatisfy { $0.body.contains("<CurrentURI>x-rincon:RINCON_PORT</CurrentURI>") })
+    }
+
+    private static func groupingService() -> SonosGroupingService {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [GroupingServiceURLProtocol.self]
         let soapClient = SonosSOAPClient(urlSession: URLSession(configuration: configuration))
@@ -26,24 +76,10 @@ struct SonosGroupingServiceTests {
             zoneGroupTopology: SonosZoneGroupTopology(soapClient: soapClient),
             resolver: SonosDNSSDResolver(commandRunner: GroupingServiceDiscoveryRunner())
         )
-        let service = SonosGroupingService(
+        return SonosGroupingService(
             directory: directory,
             avTransport: SonosAVTransport(soapClient: soapClient)
         )
-
-        try await service.removeCoordinator(
-            groupID: "RINCON_KITCHEN:123",
-            coordinatorRoomName: "Kitchen",
-            replacementRoomName: "Port"
-        )
-
-        let avTransportRequests = GroupingServiceURLProtocol.requests
-            .filter { $0.url?.path == "/MediaRenderer/AVTransport/Control" }
-        #expect(avTransportRequests.map { $0.url?.host } == ["port.local", "office.local"])
-        #expect(avTransportRequests[0].soapAction == "\"urn:schemas-upnp-org:service:AVTransport:1#BecomeCoordinatorOfStandaloneGroup\"")
-        #expect(avTransportRequests[1].soapAction == "\"urn:schemas-upnp-org:service:AVTransport:1#SetAVTransportURI\"")
-        #expect(avTransportRequests[1].body.contains("<CurrentURI>x-rincon:RINCON_PORT</CurrentURI>"))
-        #expect(avTransportRequests.contains { $0.url?.host == "kitchen.local" } == false)
     }
 
     private static func topologyEnvelope(_ topologyXML: String) -> String {
@@ -61,8 +97,22 @@ private struct GroupingServiceRequest: Sendable {
 }
 
 private final class GroupingServiceURLProtocol: URLProtocol, @unchecked Sendable {
-    nonisolated(unsafe) static var topologyResponse = ""
-    nonisolated(unsafe) static var requests: [GroupingServiceRequest] = []
+    private static let lock = NSLock()
+    private nonisolated(unsafe) static var topologyResponse = ""
+    private nonisolated(unsafe) static var requests: [GroupingServiceRequest] = []
+
+    static func reset(topologyResponse: String) {
+        lock.withLock {
+            self.topologyResponse = topologyResponse
+            self.requests = []
+        }
+    }
+
+    static func snapshot() -> [GroupingServiceRequest] {
+        lock.withLock {
+            requests
+        }
+    }
 
     override class func canInit(with request: URLRequest) -> Bool {
         true
@@ -74,7 +124,7 @@ private final class GroupingServiceURLProtocol: URLProtocol, @unchecked Sendable
 
     override func startLoading() {
         let body = Self.body(from: request)
-        Self.requests.append(
+        Self.append(
             GroupingServiceRequest(
                 url: request.url,
                 soapAction: request.value(forHTTPHeaderField: "SOAPACTION"),
@@ -89,7 +139,7 @@ private final class GroupingServiceURLProtocol: URLProtocol, @unchecked Sendable
         )!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         if request.url?.path == "/ZoneGroupTopology/Control" {
-            client?.urlProtocol(self, didLoad: Data(Self.topologyResponse.utf8))
+            client?.urlProtocol(self, didLoad: Data(Self.currentTopologyResponse().utf8))
         } else {
             client?.urlProtocol(self, didLoad: Data("<ok/>".utf8))
         }
@@ -97,6 +147,18 @@ private final class GroupingServiceURLProtocol: URLProtocol, @unchecked Sendable
     }
 
     override func stopLoading() {}
+
+    private static func append(_ request: GroupingServiceRequest) {
+        lock.withLock {
+            requests.append(request)
+        }
+    }
+
+    private static func currentTopologyResponse() -> String {
+        lock.withLock {
+            topologyResponse
+        }
+    }
 
     private static func body(from request: URLRequest) -> String {
         if let httpBody = request.httpBody {
@@ -134,6 +196,7 @@ private final class GroupingServiceDiscoveryRunner: SonosDiscoveryCommandRunning
                 10:00:00.000 Add 2 4 local. _sonos._tcp. RINCON_KITCHEN@Kitchen
                 10:00:00.001 Add 2 4 local. _sonos._tcp. RINCON_PORT@Port
                 10:00:00.002 Add 2 4 local. _sonos._tcp. RINCON_OFFICE@Office
+                10:00:00.003 Add 2 4 local. _sonos._tcp. RINCON_BATH@Bath
                 """,
                 status: 0
             )
@@ -146,6 +209,7 @@ private final class GroupingServiceDiscoveryRunner: SonosDiscoveryCommandRunning
                 "RINCON_KITCHEN@Kitchen": "kitchen.local",
                 "RINCON_PORT@Port": "port.local",
                 "RINCON_OFFICE@Office": "office.local",
+                "RINCON_BATH@Bath": "bath.local",
             ]
             if let host = hostByInstance[instance] {
                 return SonosDiscoveryCommandResult(
