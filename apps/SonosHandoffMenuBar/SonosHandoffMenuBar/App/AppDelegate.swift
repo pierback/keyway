@@ -4,7 +4,7 @@ import os
 import SonosHandoffCore
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDelegate {
     private let logger = Logger(subsystem: "com.fpieringer.SonosHandoffMenuBar", category: "Hotkeys")
     private var volumeHotkeys: VolumeHotkeyController?
 
@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        NSUserNotificationCenter.default.delegate = self
         NotificationCenter.default.addObserver(
             forName: .sonosHandoffRefreshHotkeys,
             object: nil,
@@ -32,5 +33,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         volumeHotkeys.start()
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: NSUserNotificationCenter,
+        didActivate notification: NSUserNotification
+    ) {
+        guard notification.userInfo?["kind"] as? String == "groupSuggestion",
+              notification.activationType == .actionButtonClicked
+        else {
+            return
+        }
+
+        let suggestionID = notification.userInfo?["suggestionID"] as? String
+        Task { @MainActor in
+            NotificationCenter.default.post(name: .sonosHandoffAcceptGroupSuggestion, object: suggestionID)
+        }
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: NSUserNotificationCenter,
+        shouldPresent notification: NSUserNotification
+    ) -> Bool {
+        true
     }
 }

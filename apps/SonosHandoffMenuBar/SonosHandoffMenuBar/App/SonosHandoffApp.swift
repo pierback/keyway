@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import os
 import SonosHandoffCore
 import SwiftUI
@@ -120,9 +121,18 @@ private final class PlaybackBackgroundSync {
     private var lastDiscoveryRefresh = Date.distantPast
     private var lastSeenSpeakerIDs: Set<String>?
     private var hasShownAuthPrompt = false
+    private var groupSuggestionActionCancellable: AnyCancellable?
 
     init(environment: AppEnvironment) {
         self.environment = environment
+        self.groupSuggestionActionCancellable = NotificationCenter.default
+            .publisher(for: .sonosHandoffAcceptGroupSuggestion)
+            .sink { [weak self] notification in
+                let suggestionID = notification.object as? String
+                Task { @MainActor [weak self] in
+                    await self?.acceptGroupSuggestion(id: suggestionID)
+                }
+            }
     }
 
     func start() {
@@ -245,8 +255,44 @@ private final class PlaybackBackgroundSync {
         let notification = NSUserNotification()
         notification.title = "Sonos speaker available"
         notification.informativeText = suggestion.title
-        notification.actionButtonTitle = "Open"
+        notification.actionButtonTitle = "Group"
+        notification.otherButtonTitle = "Later"
         notification.hasActionButton = true
+        notification.userInfo = ["kind": "groupSuggestion", "suggestionID": suggestion.id]
+        NSUserNotificationCenter.default.deliver(notification)
+    }
+
+    private func acceptGroupSuggestion(id: String?) async {
+        guard let suggestion = environment.groupSuggestionStore.suggestion,
+              id == nil || suggestion.id == id
+        else {
+            return
+        }
+
+        do {
+            try await environment.groupingEditor.join(
+                roomName: suggestion.speaker.roomName,
+                toCoordinatorRoomName: suggestion.coordinatorRoomName
+            )
+            environment.groupSuggestionStore.clear(id: suggestion.id)
+            let refresh = try await environment.outputDirectory.refresh(
+                currentRoomName: suggestion.coordinatorRoomName
+            )
+            lastDiscoveryRefresh = Date()
+            if let selectedRoomName = refresh.selectedRoomName {
+                selectRoomName(selectedRoomName)
+            }
+            logger.info("SonosHandoffGroupSuggestion result=notification_accepted room=\(suggestion.speaker.roomName, privacy: .public) coordinator=\(suggestion.coordinatorRoomName, privacy: .public)")
+        } catch {
+            logger.error("SonosHandoffGroupSuggestion result=notification_failure room=\(suggestion.speaker.roomName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+            showGroupSuggestionFailureNotification(suggestion)
+        }
+    }
+
+    private func showGroupSuggestionFailureNotification(_ suggestion: PlaybackGroupSuggestion) {
+        let notification = NSUserNotification()
+        notification.title = "Could not group speaker"
+        notification.informativeText = "Could not add \(suggestion.speaker.roomName) to \(suggestion.groupDisplayName)."
         NSUserNotificationCenter.default.deliver(notification)
     }
 

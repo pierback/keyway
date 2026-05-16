@@ -326,8 +326,10 @@ final class PlaybackSyncController: ObservableObject {
         }
     }
 
-    func acceptGroupSuggestion() {
-        guard let suggestion = groupSuggestion else {
+    func acceptGroupSuggestion(id: String? = nil) {
+        guard let suggestion = groupSuggestion,
+              id == nil || suggestion.id == id
+        else {
             return
         }
 
