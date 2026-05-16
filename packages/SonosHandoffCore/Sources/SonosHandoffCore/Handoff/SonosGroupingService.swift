@@ -48,4 +48,31 @@ final class SonosGroupingService: @unchecked Sendable {
             try await avTransport.join(target: memberTarget, coordinator: newCoordinatorTarget)
         }
     }
+
+    func removeCoordinator(groupID: String, coordinatorRoomName: String, replacementRoomName: String) async throws {
+        let state = try await directory.discoverGroupState()
+        guard let group = state.groups.first(where: { $0.id == groupID }) else {
+            throw ConnectHandoffError(.targetNotVisible, "Sonos group not found: \(groupID)")
+        }
+
+        guard let oldCoordinator = group.coordinator,
+              oldCoordinator.id == group.coordinatorID,
+              SonosRoomName.matches(oldCoordinator.roomName, coordinatorRoomName)
+        else {
+            throw ConnectHandoffError(.targetNotVisible, "\(coordinatorRoomName) is not the coordinator for \(group.displayName)")
+        }
+
+        guard let newCoordinator = group.members.first(where: { SonosRoomName.matches($0.roomName, replacementRoomName) }),
+              newCoordinator.id != oldCoordinator.id
+        else {
+            throw ConnectHandoffError(.targetNotVisible, "\(replacementRoomName) is not a replacement member in \(group.displayName)")
+        }
+
+        let newCoordinatorTarget = await directory.target(for: newCoordinator)
+        try await avTransport.becomeStandalone(target: newCoordinatorTarget)
+        for member in group.members where member.id != newCoordinator.id && member.id != oldCoordinator.id {
+            let memberTarget = await directory.target(for: member)
+            try await avTransport.join(target: memberTarget, coordinator: newCoordinatorTarget)
+        }
+    }
 }

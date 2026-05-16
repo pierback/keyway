@@ -413,15 +413,20 @@ final class PlaybackSyncController: ObservableObject {
             guard let replacement = group.members.first(where: { $0.id != row.speaker.id }) else {
                 return .changed
             }
-            try await groupingEditor.migrateCoordinator(groupID: group.id, toRoomName: replacement.roomName)
-            try await groupingEditor.removeFromGroup(roomName: row.speaker.roomName)
+            let startedAt = ContinuousClock.now
+            try await groupingEditor.removeCoordinator(
+                groupID: group.id,
+                coordinatorRoomName: row.speaker.roomName,
+                replacementRoomName: replacement.roomName
+            )
             let transferOutcome = await transferActions.transfer(to: replacement)
+            let elapsed = startedAt.duration(to: .now)
             switch transferOutcome.result {
             case .success:
                 activeSpotifyRoomName = replacement.roomName
                 selectRoomName(replacement.roomName)
                 clearSpotifyAuthRequired()
-                shortcutLogger.info("SonosHandoffGroupEdit result=migrated_removed_and_transferred oldCoordinator=\(row.speaker.roomName, privacy: .public) newCoordinator=\(replacement.roomName, privacy: .public)")
+                shortcutLogger.info("SonosHandoffGroupEdit result=removed_coordinator_and_transferred oldCoordinator=\(row.speaker.roomName, privacy: .public) newCoordinator=\(replacement.roomName, privacy: .public) elapsed=\(String(describing: elapsed), privacy: .public)")
                 return .changed
             case .failure(let code, _):
                 if code == .authRequired {

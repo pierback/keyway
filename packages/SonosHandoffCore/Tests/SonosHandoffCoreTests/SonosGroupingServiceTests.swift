@@ -1,0 +1,170 @@
+import Foundation
+import Testing
+@testable import SonosHandoffCore
+
+@Suite(.serialized)
+struct SonosGroupingServiceTests {
+    @Test
+    func removeCoordinatorLeavesOldCoordinatorOutOfReplacementGroup() async throws {
+        GroupingServiceURLProtocol.requests = []
+        GroupingServiceURLProtocol.topologyResponse = Self.topologyEnvelope(
+            """
+            <ZoneGroups>
+              <ZoneGroup Coordinator="RINCON_KITCHEN" ID="RINCON_KITCHEN:123">
+                <ZoneGroupMember UUID="RINCON_KITCHEN" ZoneName="Kitchen" Location="http://kitchen.local:1400/xml/device_description.xml"/>
+                <ZoneGroupMember UUID="RINCON_PORT" ZoneName="Port" Location="http://port.local:1400/xml/device_description.xml"/>
+                <ZoneGroupMember UUID="RINCON_OFFICE" ZoneName="Office" Location="http://office.local:1400/xml/device_description.xml"/>
+              </ZoneGroup>
+            </ZoneGroups>
+            """
+        )
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [GroupingServiceURLProtocol.self]
+        let soapClient = SonosSOAPClient(urlSession: URLSession(configuration: configuration))
+        let directory = SonosDirectory(
+            zeroconfClient: SonosSpotifyZeroconfClient(urlSession: URLSession(configuration: configuration)),
+            zoneGroupTopology: SonosZoneGroupTopology(soapClient: soapClient),
+            resolver: SonosDNSSDResolver(commandRunner: GroupingServiceDiscoveryRunner())
+        )
+        let service = SonosGroupingService(
+            directory: directory,
+            avTransport: SonosAVTransport(soapClient: soapClient)
+        )
+
+        try await service.removeCoordinator(
+            groupID: "RINCON_KITCHEN:123",
+            coordinatorRoomName: "Kitchen",
+            replacementRoomName: "Port"
+        )
+
+        let avTransportRequests = GroupingServiceURLProtocol.requests
+            .filter { $0.url?.path == "/MediaRenderer/AVTransport/Control" }
+        #expect(avTransportRequests.map { $0.url?.host } == ["port.local", "office.local"])
+        #expect(avTransportRequests[0].soapAction == "\"urn:schemas-upnp-org:service:AVTransport:1#BecomeCoordinatorOfStandaloneGroup\"")
+        #expect(avTransportRequests[1].soapAction == "\"urn:schemas-upnp-org:service:AVTransport:1#SetAVTransportURI\"")
+        #expect(avTransportRequests[1].body.contains("<CurrentURI>x-rincon:RINCON_PORT</CurrentURI>"))
+        #expect(avTransportRequests.contains { $0.url?.host == "kitchen.local" } == false)
+    }
+
+    private static func topologyEnvelope(_ topologyXML: String) -> String {
+        """
+        <?xml version="1.0"?>
+        <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><u:GetZoneGroupStateResponse xmlns:u="urn:schemas-upnp-org:service:ZoneGroupTopology:1"><CurrentZoneGroupState>\(topologyXML.xmlEscapedForGroupingServiceTest)</CurrentZoneGroupState></u:GetZoneGroupStateResponse></s:Body></s:Envelope>
+        """
+    }
+}
+
+private struct GroupingServiceRequest: Sendable {
+    let url: URL?
+    let soapAction: String?
+    let body: String
+}
+
+private final class GroupingServiceURLProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var topologyResponse = ""
+    nonisolated(unsafe) static var requests: [GroupingServiceRequest] = []
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        true
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        let body = Self.body(from: request)
+        Self.requests.append(
+            GroupingServiceRequest(
+                url: request.url,
+                soapAction: request.value(forHTTPHeaderField: "SOAPACTION"),
+                body: body
+            )
+        )
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: 200,
+            httpVersion: nil,
+            headerFields: ["Content-Type": "text/xml"]
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        if request.url?.path == "/ZoneGroupTopology/Control" {
+            client?.urlProtocol(self, didLoad: Data(Self.topologyResponse.utf8))
+        } else {
+            client?.urlProtocol(self, didLoad: Data("<ok/>".utf8))
+        }
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+
+    private static func body(from request: URLRequest) -> String {
+        if let httpBody = request.httpBody {
+            return String(data: httpBody, encoding: .utf8) ?? ""
+        }
+
+        guard let bodyStream = request.httpBodyStream else {
+            return ""
+        }
+
+        bodyStream.open()
+        defer { bodyStream.close() }
+
+        var data = Data()
+        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: 1024)
+        defer { buffer.deallocate() }
+
+        while bodyStream.hasBytesAvailable {
+            let count = bodyStream.read(buffer, maxLength: 1024)
+            guard count > 0 else {
+                break
+            }
+            data.append(buffer, count: count)
+        }
+
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+}
+
+private final class GroupingServiceDiscoveryRunner: SonosDiscoveryCommandRunning {
+    func run(_ command: SonosDiscoveryCommand) throws -> SonosDiscoveryCommandResult {
+        if command.arguments.first == "-B" {
+            return SonosDiscoveryCommandResult(
+                output: """
+                10:00:00.000 Add 2 4 local. _sonos._tcp. RINCON_KITCHEN@Kitchen
+                10:00:00.001 Add 2 4 local. _sonos._tcp. RINCON_PORT@Port
+                10:00:00.002 Add 2 4 local. _sonos._tcp. RINCON_OFFICE@Office
+                """,
+                status: 0
+            )
+        }
+
+        if command.arguments.first == "-L",
+           command.arguments.count >= 2 {
+            let instance = command.arguments[1]
+            let hostByInstance = [
+                "RINCON_KITCHEN@Kitchen": "kitchen.local",
+                "RINCON_PORT@Port": "port.local",
+                "RINCON_OFFICE@Office": "office.local",
+            ]
+            if let host = hostByInstance[instance] {
+                return SonosDiscoveryCommandResult(
+                    output: "location=http://\(host):1400/xml/device_description.xml",
+                    status: 0
+                )
+            }
+        }
+
+        return SonosDiscoveryCommandResult(output: "", status: 1)
+    }
+}
+
+private extension String {
+    var xmlEscapedForGroupingServiceTest: String {
+        replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&apos;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+    }
+}

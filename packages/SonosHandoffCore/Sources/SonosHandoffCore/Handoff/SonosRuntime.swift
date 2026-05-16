@@ -99,6 +99,14 @@ final class SonosRuntime: @unchecked Sendable {
         try await groupingService.migrateCoordinator(groupID: groupID, toRoomName: roomName)
     }
 
+    func removeCoordinator(groupID: String, coordinatorRoomName: String, replacementRoomName: String) async throws {
+        try await groupingService.removeCoordinator(
+            groupID: groupID,
+            coordinatorRoomName: coordinatorRoomName,
+            replacementRoomName: replacementRoomName
+        )
+    }
+
     func activePlaybackDeviceStatus() async throws -> SpotifyPlaybackDeviceStatus? {
         try await spotifyPlayback.activePlaybackDeviceStatus()
     }
