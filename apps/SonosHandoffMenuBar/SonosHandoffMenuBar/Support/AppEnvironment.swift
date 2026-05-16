@@ -8,12 +8,15 @@ struct AppEnvironment: @unchecked Sendable {
     let handoffService: any HandoffPerforming
     let roomHandoffService: any RoomHandoffPerforming
     let speakerDiscovery: any SonosSpeakerDiscovering
+    let groupingStateReader: any SonosGroupingStateReading
+    let groupingEditor: any SonosGroupingEditing
     let volumeService: any SpeakerVolumeAdjusting
     let activePlaybackObserver: any SpotifyActivePlaybackObserving
     let doctorService: any DoctorPerforming
     let accessibilityAutomator: any AccessibilityAutomating
     let outputSelection: PlaybackOutputSelection
     let outputDirectory: PlaybackOutputDirectory
+    let groupSuggestionStore: PlaybackGroupSuggestionStore
 
     @MainActor
     static func live() -> AppEnvironment {
@@ -24,8 +27,9 @@ struct AppEnvironment: @unchecked Sendable {
         let accessibilityAutomator = SpotifyUIAutomator()
         let spotifyConnectService = SpotifyConnectHandoffService(configStore: configStore)
         let outputSelection = PlaybackOutputSelection()
+        let groupSuggestionStore = PlaybackGroupSuggestionStore()
         let outputDirectory = PlaybackOutputDirectory(
-            speakerDiscovery: spotifyConnectService,
+            groupingStateReader: spotifyConnectService,
             configStore: configStore
         )
 
@@ -37,6 +41,8 @@ struct AppEnvironment: @unchecked Sendable {
             handoffService: spotifyConnectService,
             roomHandoffService: spotifyConnectService,
             speakerDiscovery: spotifyConnectService,
+            groupingStateReader: spotifyConnectService,
+            groupingEditor: spotifyConnectService,
             volumeService: spotifyConnectService,
             activePlaybackObserver: spotifyConnectService,
             doctorService: DoctorService(
@@ -46,7 +52,8 @@ struct AppEnvironment: @unchecked Sendable {
             ),
             accessibilityAutomator: accessibilityAutomator,
             outputSelection: outputSelection,
-            outputDirectory: outputDirectory
+            outputDirectory: outputDirectory,
+            groupSuggestionStore: groupSuggestionStore
         )
     }
 }

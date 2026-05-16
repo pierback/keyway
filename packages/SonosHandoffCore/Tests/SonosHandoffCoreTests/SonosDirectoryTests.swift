@@ -42,10 +42,128 @@ struct SonosDirectoryTests {
         #expect(target.roomName == "Port")
         #expect(target.host == "port.local")
         #expect(target.version == nil)
-        #expect(target.deviceID == nil)
+        #expect(target.deviceID == "RINCON_A")
         #expect(runner.browseCount == 1)
         #expect(runner.resolveCount == 1)
         #expect(router.requestedHosts().isEmpty)
+    }
+
+    @Test
+    func fallsBackToStandaloneGroupsWhenTopologyLookupFails() async throws {
+        let runner = RecordingSonosDiscoveryCommandRunner(
+            browseOutput: """
+            10:00:00.000 Add 2 4 local. _sonos._tcp. RINCON_A@Kitchen
+            10:00:00.001 Add 2 4 local. _sonos._tcp. RINCON_B@Port
+            """,
+            hostByInstance: [
+                "RINCON_A@Kitchen": "kitchen.local",
+                "RINCON_B@Port": "port.local",
+            ]
+        )
+        let directory = Self.directory(
+            runner: runner,
+            router: TargetDirectoryZeroconfRouter(payloadByHost: [:]),
+            topologyBody: "<s:Envelope><s:Body></s:Body></s:Envelope>"
+        )
+
+        let state = try await directory.discoverGroupState()
+
+        #expect(state.groups.map(\.displayName) == ["Kitchen", "Port"])
+        #expect(state.groups.allSatisfy { $0.members.count == 1 })
+    }
+
+    @Test
+    func resolvesGroupingTargetFromTopologyOnlySpeaker() async throws {
+        let runner = RecordingSonosDiscoveryCommandRunner(
+            browseOutput: "10:00:00.000 Add 2 4 local. _sonos._tcp. RINCON_A@Kitchen",
+            hostByInstance: ["RINCON_A@Kitchen": "kitchen.local"]
+        )
+        let directory = Self.directory(
+            runner: runner,
+            router: TargetDirectoryZeroconfRouter(payloadByHost: [:]),
+            topologyBody: Self.topologyEnvelope(
+                """
+                <ZoneGroups>
+                  <ZoneGroup Coordinator="RINCON_A" ID="RINCON_A:123">
+                    <ZoneGroupMember UUID="RINCON_A" ZoneName="Kitchen" Location="http://kitchen.local:1400/xml/device_description.xml"/>
+                    <ZoneGroupMember UUID="RINCON_B" ZoneName="Port" Location="http://port.local:1400/xml/device_description.xml"/>
+                  </ZoneGroup>
+                </ZoneGroups>
+                """
+            )
+        )
+
+        let target = try await directory.resolveGroupingTarget(named: "Port")
+
+        #expect(target.roomName == "Port")
+        #expect(target.host == "port.local")
+        #expect(target.deviceID == "RINCON_B")
+        #expect(runner.resolveCount == 1)
+    }
+
+    @Test
+    func keepsVisibleSpeakersMissingFromTopologyAsStandaloneGroups() async throws {
+        let runner = RecordingSonosDiscoveryCommandRunner(
+            browseOutput: """
+            10:00:00.000 Add 2 4 local. _sonos._tcp. RINCON_A@Kitchen
+            10:00:00.001 Add 2 4 local. _sonos._tcp. RINCON_B@Office
+            """,
+            hostByInstance: [
+                "RINCON_A@Kitchen": "kitchen.local",
+                "RINCON_B@Office": "office.local",
+            ]
+        )
+        let directory = Self.directory(
+            runner: runner,
+            router: TargetDirectoryZeroconfRouter(payloadByHost: [:]),
+            topologyBody: Self.topologyEnvelope(
+                """
+                <ZoneGroups>
+                  <ZoneGroup Coordinator="RINCON_A" ID="RINCON_A:123">
+                    <ZoneGroupMember UUID="RINCON_A" ZoneName="Kitchen" Location="http://kitchen.local:1400/xml/device_description.xml"/>
+                  </ZoneGroup>
+                </ZoneGroups>
+                """
+            )
+        )
+
+        let state = try await directory.discoverGroupState()
+
+        #expect(state.groups.map(\.displayName) == ["Kitchen", "Office"])
+    }
+
+    @Test
+    func resolveTargetUsesCachedTopologyHostForSpotifyMetadata() async throws {
+        let runner = RecordingSonosDiscoveryCommandRunner(
+            browseOutput: "10:00:00.000 Add 2 4 local. _sonos._tcp. RINCON_A@Kitchen",
+            hostByInstance: ["RINCON_A@Kitchen": "kitchen.local"]
+        )
+        let router = TargetDirectoryZeroconfRouter(
+            payloadByHost: ["port.local": #"{"version":"1.2.3","deviceID":"RINCON_B"}"#]
+        )
+        let directory = Self.directory(
+            runner: runner,
+            router: router,
+            topologyBody: Self.topologyEnvelope(
+                """
+                <ZoneGroups>
+                  <ZoneGroup Coordinator="RINCON_A" ID="RINCON_A:123">
+                    <ZoneGroupMember UUID="RINCON_A" ZoneName="Kitchen" Location="http://kitchen.local:1400/xml/device_description.xml"/>
+                    <ZoneGroupMember UUID="RINCON_B" ZoneName="Port" Location="http://port.local:1400/xml/device_description.xml"/>
+                  </ZoneGroup>
+                </ZoneGroups>
+                """
+            )
+        )
+
+        _ = try await directory.discoverGroupState()
+        let target = try await directory.resolveTarget(named: "Port")
+
+        #expect(target.host == "port.local")
+        #expect(target.version == "1.2.3")
+        #expect(target.deviceID == "RINCON_B")
+        #expect(runner.resolveCount == 1)
+        #expect(router.requestedHosts() == ["port.local"])
     }
 
     @Test
@@ -74,15 +192,29 @@ struct SonosDirectoryTests {
 
     private static func directory(
         runner: RecordingSonosDiscoveryCommandRunner,
-        router: TargetDirectoryZeroconfRouter
+        router: TargetDirectoryZeroconfRouter,
+        topologyBody: String? = nil
     ) -> SonosDirectory {
         TargetDirectoryZeroconfURLProtocol.router = router
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [TargetDirectoryZeroconfURLProtocol.self]
+        TargetDirectoryTopologyURLProtocol.responseBody = topologyBody
+        let zeroconfConfiguration = URLSessionConfiguration.ephemeral
+        zeroconfConfiguration.protocolClasses = [TargetDirectoryZeroconfURLProtocol.self]
+        let topologyConfiguration = URLSessionConfiguration.ephemeral
+        topologyConfiguration.protocolClasses = [TargetDirectoryTopologyURLProtocol.self]
         return SonosDirectory(
-            zeroconfClient: SonosSpotifyZeroconfClient(urlSession: URLSession(configuration: configuration)),
+            zeroconfClient: SonosSpotifyZeroconfClient(urlSession: URLSession(configuration: zeroconfConfiguration)),
+            zoneGroupTopology: SonosZoneGroupTopology(
+                soapClient: SonosSOAPClient(urlSession: URLSession(configuration: topologyConfiguration))
+            ),
             resolver: SonosDNSSDResolver(commandRunner: runner)
         )
+    }
+
+    private static func topologyEnvelope(_ topologyXML: String) -> String {
+        """
+        <?xml version="1.0"?>
+        <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><u:GetZoneGroupStateResponse xmlns:u="urn:schemas-upnp-org:service:ZoneGroupTopology:1"><CurrentZoneGroupState>\(topologyXML.xmlEscaped)</CurrentZoneGroupState></u:GetZoneGroupStateResponse></s:Body></s:Envelope>
+        """
     }
 }
 
@@ -162,6 +294,32 @@ private final class TargetDirectoryZeroconfURLProtocol: URLProtocol, @unchecked 
     override func stopLoading() {}
 }
 
+private final class TargetDirectoryTopologyURLProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var responseBody: String?
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        true
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: Self.responseBody == nil ? 500 : 200,
+            httpVersion: nil,
+            headerFields: ["Content-Type": "text/xml"]
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data((Self.responseBody ?? "").utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
 private final class TargetDirectoryZeroconfRouter: @unchecked Sendable {
     private let lock = NSLock()
     private let payloadByHost: [String: String]
@@ -183,5 +341,15 @@ private final class TargetDirectoryZeroconfRouter: @unchecked Sendable {
         hosts.append(host)
         lock.unlock()
         return payloadByHost[host]
+    }
+}
+
+private extension String {
+    var xmlEscaped: String {
+        replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&apos;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "<", with: "&lt;")
     }
 }

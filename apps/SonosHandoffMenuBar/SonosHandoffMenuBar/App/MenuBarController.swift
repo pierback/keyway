@@ -14,6 +14,8 @@ struct MenuBarController: View {
     private let shortcutLogger = os.Logger(subsystem: "com.fpieringer.SonosHandoffMenuBar", category: "Shortcuts")
 
     @State private var showMore = false
+    @State private var optionKeyPressed = false
+    @State private var modifierMonitor: Any?
 
     init(environment: AppEnvironment) {
         self.environment = environment
@@ -25,7 +27,11 @@ struct MenuBarController: View {
             header
             MenuBarVolumeControl(playback: playback)
             divider
-            MenuBarOutputSection(playback: playback, openSpotifySettings: openSettingsWindow)
+            MenuBarOutputSection(
+                playback: playback,
+                groupEditing: optionKeyPressed,
+                openSpotifySettings: openSettingsWindow
+            )
             divider
                 .padding(.top, 8)
             footer
@@ -35,10 +41,12 @@ struct MenuBarController: View {
         .background(.ultraThickMaterial)
         .onAppear {
             StatusHUD.shared.setVolumeOverlaySuppressed(true)
+            startModifierMonitor()
             playback.appear()
         }
         .onDisappear {
             StatusHUD.shared.setVolumeOverlaySuppressed(false)
+            stopModifierMonitor()
         }
     }
 
@@ -166,5 +174,25 @@ struct MenuBarController: View {
         notification.title = title
         notification.informativeText = message
         NSUserNotificationCenter.default.deliver(notification)
+    }
+
+    private func startModifierMonitor() {
+        optionKeyPressed = NSEvent.modifierFlags.contains(.option)
+        guard modifierMonitor == nil else {
+            return
+        }
+
+        modifierMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
+            optionKeyPressed = event.modifierFlags.contains(.option)
+            return event
+        }
+    }
+
+    private func stopModifierMonitor() {
+        if let modifierMonitor {
+            NSEvent.removeMonitor(modifierMonitor)
+        }
+        modifierMonitor = nil
+        optionKeyPressed = false
     }
 }

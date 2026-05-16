@@ -2,9 +2,57 @@ import Foundation
 import SonosHandoffCore
 
 struct PlaybackOutputRefresh: Sendable {
+    let rows: [PlaybackOutputRow]
     let speakers: [SonosSpeaker]
     let selectedRoomName: String?
     let menuMessage: String?
+}
+
+struct PlaybackOutputRow: Identifiable, Equatable, Sendable {
+    let group: SonosSpeakerGroup
+
+    var id: String {
+        group.id
+    }
+
+    var displayName: String {
+        group.displayName
+    }
+
+    var coordinator: SonosSpeaker {
+        group.coordinator ?? group.members[0]
+    }
+
+    var isGroup: Bool {
+        group.members.count > 1
+    }
+
+    func contains(roomName: String?) -> Bool {
+        group.contains(roomName: roomName)
+    }
+}
+
+enum PlaybackGroupMembership: Equatable, Sendable {
+    case coordinator
+    case member
+    case available
+}
+
+struct PlaybackGroupEditRow: Identifiable, Equatable, Sendable {
+    let speaker: SonosSpeaker
+    let membership: PlaybackGroupMembership
+
+    var id: String {
+        speaker.id
+    }
+
+    var isInGroup: Bool {
+        membership == .coordinator || membership == .member
+    }
+
+    var isCoordinator: Bool {
+        membership == .coordinator
+    }
 }
 
 @MainActor
@@ -13,11 +61,11 @@ final class PlaybackOutputDirectory {
     private let outputSelectionResolver = SonosOutputSelectionResolver()
 
     init(environment: AppEnvironment) {
-        self.discoveryCache = PlaybackDiscoveryCache(speakerDiscovery: environment.speakerDiscovery)
+        self.discoveryCache = PlaybackDiscoveryCache(groupingStateReader: environment.groupingStateReader)
     }
 
-    init(speakerDiscovery: any SonosSpeakerDiscovering, configStore: any ConfigStoring) {
-        self.discoveryCache = PlaybackDiscoveryCache(speakerDiscovery: speakerDiscovery)
+    init(groupingStateReader: any SonosGroupingStateReading, configStore: any ConfigStoring) {
+        self.discoveryCache = PlaybackDiscoveryCache(groupingStateReader: groupingStateReader)
     }
 
     func startBackgroundRefresh() async {
@@ -25,21 +73,24 @@ final class PlaybackOutputDirectory {
     }
 
     func cachedRefresh(currentRoomName: String?) async -> PlaybackOutputRefresh? {
-        guard let cachedSpeakers = await discoveryCache.cachedSnapshot() else {
+        guard let cachedState = await discoveryCache.cachedSnapshot() else {
             return nil
         }
 
-        return refresh(from: cachedSpeakers, currentRoomName: currentRoomName)
+        return refresh(from: cachedState, currentRoomName: currentRoomName)
     }
 
     func refresh(currentRoomName: String?) async throws -> PlaybackOutputRefresh {
-        let speakers = try await discoveryCache.refresh()
-        return refresh(from: speakers, currentRoomName: currentRoomName)
+        let state = try await discoveryCache.refresh()
+        return refresh(from: state, currentRoomName: currentRoomName)
     }
 
-    private func refresh(from speakers: [SonosSpeaker], currentRoomName: String?) -> PlaybackOutputRefresh {
+    private func refresh(from state: SonosGroupState, currentRoomName: String?) -> PlaybackOutputRefresh {
+        let rows = state.groups.map(PlaybackOutputRow.init(group:))
+        let speakers = state.speakers
         let selectedRoomName = selectedRoomName(currentRoomName: currentRoomName, in: speakers)
         return PlaybackOutputRefresh(
+            rows: rows,
             speakers: speakers,
             selectedRoomName: selectedRoomName,
             menuMessage: speakers.isEmpty ? "No Sonos speakers found on this network." : nil
@@ -55,12 +106,12 @@ final class PlaybackOutputDirectory {
 }
 
 actor PlaybackDiscoveryCache {
-    private let speakerDiscovery: any SonosSpeakerDiscovering
-    private var cachedSpeakers: [SonosSpeaker]?
+    private let groupingStateReader: any SonosGroupingStateReading
+    private var cachedState: SonosGroupState?
     private var backgroundRefreshTask: Task<Void, Never>?
 
-    init(speakerDiscovery: any SonosSpeakerDiscovering) {
-        self.speakerDiscovery = speakerDiscovery
+    init(groupingStateReader: any SonosGroupingStateReading) {
+        self.groupingStateReader = groupingStateReader
     }
 
     func startBackgroundRefresh() {
@@ -68,37 +119,37 @@ actor PlaybackDiscoveryCache {
             return
         }
 
-        let speakerDiscovery = speakerDiscovery
+        let groupingStateReader = groupingStateReader
         backgroundRefreshTask = Task(priority: .utility) { [weak self] in
             do {
-                let discovered = try await speakerDiscovery.discoverSpeakers()
-                await self?.finishBackgroundRefresh(speakers: discovered)
+                let state = try await groupingStateReader.discoverGroupState()
+                await self?.finishBackgroundRefresh(state: state)
             } catch {
-                await self?.finishBackgroundRefresh(speakers: nil)
+                await self?.finishBackgroundRefresh(state: nil)
             }
         }
     }
 
-    func cachedSnapshot() -> [SonosSpeaker]? {
-        cachedSpeakers
+    func cachedSnapshot() -> SonosGroupState? {
+        cachedState
     }
 
-    func refresh() async throws -> [SonosSpeaker] {
+    func refresh() async throws -> SonosGroupState {
         if let backgroundRefreshTask {
             await backgroundRefreshTask.value
-            if let cachedSpeakers {
-                return cachedSpeakers
+            if let cachedState {
+                return cachedState
             }
         }
 
-        let discovered = try await speakerDiscovery.discoverSpeakers()
-        cachedSpeakers = discovered
-        return discovered
+        let state = try await groupingStateReader.discoverGroupState()
+        cachedState = state
+        return state
     }
 
-    private func finishBackgroundRefresh(speakers: [SonosSpeaker]?) {
-        if let speakers {
-            cachedSpeakers = speakers
+    private func finishBackgroundRefresh(state: SonosGroupState?) {
+        if let state {
+            cachedState = state
         }
         backgroundRefreshTask = nil
     }

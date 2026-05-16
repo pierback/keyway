@@ -7,6 +7,7 @@ actor SonosDirectory {
     }
 
     private let zeroconfClient: SonosSpotifyZeroconfClient
+    private let zoneGroupTopology: SonosZoneGroupTopology
     private let resolver: SonosDNSSDResolver
     private let speakerDiscovery: SonosSpeakerDiscovery
     private var targetCache: [String: CacheEntry] = [:]
@@ -14,11 +15,13 @@ actor SonosDirectory {
 
     init(
         zeroconfClient: SonosSpotifyZeroconfClient,
+        zoneGroupTopology: SonosZoneGroupTopology = SonosZoneGroupTopology(soapClient: SonosSOAPClient(urlSession: .shared)),
         resolver: SonosDNSSDResolver = SonosDNSSDResolver(),
         speakerDiscovery: SonosSpeakerDiscovery? = nil,
         targetCacheTTL: TimeInterval = 120
     ) {
         self.zeroconfClient = zeroconfClient
+        self.zoneGroupTopology = zoneGroupTopology
         self.resolver = resolver
         self.speakerDiscovery = speakerDiscovery ?? SonosSpeakerDiscovery(resolver: resolver)
         self.targetCacheTTL = targetCacheTTL
@@ -28,17 +31,41 @@ actor SonosDirectory {
         try await speakerDiscovery.discoverSpeakers()
     }
 
+    func discoverGroupState() async throws -> SonosGroupState {
+        let speakers = try await discoverSpeakers()
+        guard let topologySpeaker = speakers.first else {
+            return .empty
+        }
+        do {
+            let state = try await zoneGroupTopology
+                .groupState(host: topologySpeaker.host, visibleSpeakers: speakers)
+                .includingStandaloneSpeakers(speakers)
+            storeTargets(for: state.speakers)
+            return state
+        } catch {
+            let state = SonosGroupState.standalone(speakers: speakers)
+            storeTargets(for: state.speakers)
+            return state
+        }
+    }
+
     func resolveTarget(named roomName: String, needsSpotifyMetadata: Bool = true) async throws -> ConnectSonosTarget {
         let roomName = roomName.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let cachedTarget = cachedTarget(for: roomName),
+        let cachedTarget = cachedTarget(for: roomName)
+        if let cachedTarget,
            !needsSpotifyMetadata || cachedTarget.version != nil {
             return cachedTarget
         }
 
-        let device = try await resolver.resolveDevice(named: roomName)
+        let device: SonosResolvedDevice
+        if let cachedTarget {
+            device = SonosResolvedDevice(cachedTarget)
+        } else {
+            device = try await resolver.resolveDevice(named: roomName)
+        }
 
         guard needsSpotifyMetadata else {
-            let target = ConnectSonosTarget(roomName: device.roomName, host: device.host, version: nil, deviceID: nil)
+            let target = ConnectSonosTarget(roomName: device.roomName, host: device.host, version: nil, deviceID: device.id)
             store(target, for: roomName)
             return target
         }
@@ -52,6 +79,24 @@ actor SonosDirectory {
         )
         store(target, for: roomName)
         return target
+    }
+
+    func resolveGroupingTarget(named roomName: String) async throws -> ConnectSonosTarget {
+        let normalizedRoomName = roomName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let cachedTarget = cachedTarget(for: normalizedRoomName) {
+            return cachedTarget
+        }
+
+        let state = try await discoverGroupState()
+        if let speaker = state.speakers.first(where: { SonosRoomName.matches($0.roomName, normalizedRoomName) }) {
+            return storeAndReturnTarget(for: speaker)
+        }
+
+        return try await resolveTarget(named: normalizedRoomName, needsSpotifyMetadata: false)
+    }
+
+    func target(for speaker: SonosSpeaker) -> ConnectSonosTarget {
+        storeAndReturnTarget(for: speaker)
     }
 
     private func cachedTarget(for roomName: String) -> ConnectSonosTarget? {
@@ -75,7 +120,30 @@ actor SonosDirectory {
         )
     }
 
+    private func storeAndReturnTarget(for speaker: SonosSpeaker) -> ConnectSonosTarget {
+        let target = ConnectSonosTarget(
+            roomName: speaker.roomName,
+            host: speaker.host,
+            version: nil,
+            deviceID: speaker.id
+        )
+        store(target, for: speaker.roomName)
+        return target
+    }
+
+    private func storeTargets(for speakers: [SonosSpeaker]) {
+        for speaker in speakers {
+            _ = storeAndReturnTarget(for: speaker)
+        }
+    }
+
     private static func cacheKey(_ roomName: String) -> String {
         roomName.lowercased()
+    }
+}
+
+private extension SonosResolvedDevice {
+    init(_ target: ConnectSonosTarget) {
+        self.init(id: target.deviceID ?? target.roomName, roomName: target.roomName, host: target.host)
     }
 }

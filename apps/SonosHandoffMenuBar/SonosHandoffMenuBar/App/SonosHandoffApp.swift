@@ -1,3 +1,4 @@
+import AppKit
 import os
 import SonosHandoffCore
 import SwiftUI
@@ -116,6 +117,7 @@ private final class PlaybackBackgroundSync {
     private let logger = Logger(subsystem: "com.fpieringer.SonosHandoffMenuBar", category: "Playback")
     private var task: Task<Void, Never>?
     private var lastDiscoveryRefresh = Date.distantPast
+    private var lastSeenSpeakerIDs: Set<String>?
     private var hasShownAuthPrompt = false
 
     init(environment: AppEnvironment) {
@@ -143,22 +145,26 @@ private final class PlaybackBackgroundSync {
                   let activeRoomName = SonosRoomName.normalized(status.deviceName)
             else {
                 hasShownAuthPrompt = false
+                environment.groupSuggestionStore.clear()
                 clearSelection(reason: "no_active_spotify_playback")
                 return
             }
 
             let refresh = try await outputRefresh(currentRoomName: activeRoomName)
             guard let selectedRoomName = refresh.selectedRoomName else {
+                updateGroupSuggestion(refresh: refresh, selectedRoomName: nil, spotifyPlaying: status.isPlaying)
                 clearSelection(reason: "active_device_not_visible")
                 logger.info("SonosHandoffPlaybackSync state=unmatched activeDevice=\(activeRoomName, privacy: .public)")
                 return
             }
 
             selectRoomName(selectedRoomName)
+            updateGroupSuggestion(refresh: refresh, selectedRoomName: selectedRoomName, spotifyPlaying: status.isPlaying)
             hasShownAuthPrompt = false
             logger.info("SonosHandoffPlaybackSync state=selected room=\(selectedRoomName, privacy: .public) spotifyVolume=\(status.volumePercent ?? -1, privacy: .public)")
         } catch {
             if SpotifyAuthRecovery.isAuthRequired(error) {
+                environment.groupSuggestionStore.clear()
                 clearSelection(reason: "spotify_auth_required")
                 showAuthPromptIfNeeded(error)
                 return
@@ -177,6 +183,76 @@ private final class PlaybackBackgroundSync {
 
         lastDiscoveryRefresh = Date()
         return try await environment.outputDirectory.refresh(currentRoomName: currentRoomName)
+    }
+
+    private func updateGroupSuggestion(
+        refresh: PlaybackOutputRefresh,
+        selectedRoomName: String?,
+        spotifyPlaying: Bool
+    ) {
+        let currentSpeakerIDs = Set(refresh.speakers.map(\.id))
+        defer {
+            lastSeenSpeakerIDs = currentSpeakerIDs
+        }
+
+        guard spotifyPlaying,
+              let selectedRoomName,
+              let currentGroup = refresh.rows.first(where: { $0.contains(roomName: selectedRoomName) })?.group,
+              let coordinator = currentGroup.coordinator
+        else {
+            environment.groupSuggestionStore.clear()
+            return
+        }
+
+        if let currentSuggestion = environment.groupSuggestionStore.suggestion {
+            let suggestionStillVisible = currentSpeakerIDs.contains(currentSuggestion.speaker.id)
+            let suggestionAlreadyJoined = currentGroup.members.contains { $0.id == currentSuggestion.speaker.id }
+            let suggestionTargetsCurrentCoordinator = SonosRoomName.matches(
+                currentSuggestion.coordinatorRoomName,
+                coordinator.roomName
+            )
+            if !suggestionStillVisible || suggestionAlreadyJoined || !suggestionTargetsCurrentCoordinator {
+                environment.groupSuggestionStore.clear(id: currentSuggestion.id)
+            }
+        }
+
+        guard let lastSeenSpeakerIDs else {
+            return
+        }
+
+        let newSpeakerIDs = currentSpeakerIDs.subtracting(lastSeenSpeakerIDs)
+        guard !newSpeakerIDs.isEmpty else {
+            return
+        }
+
+        let standaloneSpeakers = refresh.rows
+            .map(\.group)
+            .filter { $0.members.count == 1 }
+            .flatMap(\.members)
+        guard let speaker = standaloneSpeakers.first(where: { speaker in
+            newSpeakerIDs.contains(speaker.id) && !currentGroup.members.contains(where: { $0.id == speaker.id })
+        }) else {
+            return
+        }
+
+        let suggestion = PlaybackGroupSuggestion(
+            speaker: speaker,
+            coordinatorRoomName: coordinator.roomName,
+            groupDisplayName: currentGroup.displayName,
+            detectedAt: Date()
+        )
+        environment.groupSuggestionStore.present(suggestion)
+        showGroupSuggestionNotification(suggestion)
+        logger.info("SonosHandoffGroupSuggestion state=prompted room=\(speaker.roomName, privacy: .public) group=\(currentGroup.displayName, privacy: .public)")
+    }
+
+    private func showGroupSuggestionNotification(_ suggestion: PlaybackGroupSuggestion) {
+        let notification = NSUserNotification()
+        notification.title = "Sonos speaker available"
+        notification.informativeText = suggestion.title
+        notification.actionButtonTitle = "Open"
+        notification.hasActionButton = true
+        NSUserNotificationCenter.default.deliver(notification)
     }
 
     private func refreshDiscoveryCacheIfNeeded() async {

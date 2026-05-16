@@ -1,6 +1,6 @@
 import Foundation
 
-public final class SpotifyConnectHandoffService: HandoffPerforming, RoomHandoffPerforming, SonosSpeakerDiscovering, SpeakerVolumeAdjusting, SpotifyActivePlaybackObserving, @unchecked Sendable {
+public final class SpotifyConnectHandoffService: HandoffPerforming, RoomHandoffPerforming, SonosSpeakerDiscovering, SonosGroupingStateReading, SonosGroupingEditing, SpeakerVolumeAdjusting, SpotifyActivePlaybackObserving, @unchecked Sendable {
     private let runtime: SonosRuntime
 
     public init(
@@ -30,6 +30,22 @@ public final class SpotifyConnectHandoffService: HandoffPerforming, RoomHandoffP
 
     public func discoverSpeakers() async throws -> [SonosSpeaker] {
         try await runtime.discoverSpeakers()
+    }
+
+    public func discoverGroupState() async throws -> SonosGroupState {
+        try await runtime.discoverGroupState()
+    }
+
+    public func join(roomName: String, toCoordinatorRoomName coordinatorRoomName: String) async throws {
+        try await runtime.join(roomName: roomName, toCoordinatorRoomName: coordinatorRoomName)
+    }
+
+    public func removeFromGroup(roomName: String) async throws {
+        try await runtime.removeFromGroup(roomName: roomName)
+    }
+
+    public func migrateCoordinator(groupID: String, toRoomName roomName: String) async throws {
+        try await runtime.migrateCoordinator(groupID: groupID, toRoomName: roomName)
     }
 
     public func volumeDown(roomName: String, step: Int = 5) async throws -> Int {

@@ -14,6 +14,12 @@ public protocol SonosGroupingStateReading: Sendable {
     func discoverGroupState() async throws -> SonosGroupState
 }
 
+public protocol SonosGroupingEditing: Sendable {
+    func join(roomName: String, toCoordinatorRoomName coordinatorRoomName: String) async throws
+    func removeFromGroup(roomName: String) async throws
+    func migrateCoordinator(groupID: String, toRoomName roomName: String) async throws
+}
+
 public protocol RoomHandoffPerforming: Sendable {
     func transfer(toRoomName roomName: String) async -> TransferResult
 }
@@ -87,6 +93,37 @@ public struct SonosGroupState: Equatable, Sendable {
     }
 
     public static let empty = SonosGroupState(groups: [])
+
+    public static func standalone(speakers: [SonosSpeaker]) -> SonosGroupState {
+        SonosGroupState(
+            groups: speakers
+                .sorted {
+                    $0.roomName.localizedCaseInsensitiveCompare($1.roomName) == .orderedAscending
+                }
+                .map { speaker in
+                    SonosSpeakerGroup(
+                        id: speaker.id,
+                        coordinatorID: speaker.id,
+                        members: [speaker]
+                    )
+                }
+        )
+    }
+
+    public func includingStandaloneSpeakers(_ speakers: [SonosSpeaker]) -> SonosGroupState {
+        let groupedSpeakerIDs = Set(self.speakers.map(\.id))
+        let missingSpeakers = speakers.filter { !groupedSpeakerIDs.contains($0.id) }
+        guard !missingSpeakers.isEmpty else {
+            return self
+        }
+
+        return SonosGroupState(
+            groups: (groups + Self.standalone(speakers: missingSpeakers).groups)
+                .sorted {
+                    $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+                }
+        )
+    }
 
     public var speakers: [SonosSpeaker] {
         groups.flatMap(\.members)

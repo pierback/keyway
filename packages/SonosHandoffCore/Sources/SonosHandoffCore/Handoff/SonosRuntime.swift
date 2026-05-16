@@ -5,6 +5,7 @@ final class SonosRuntime: @unchecked Sendable {
     private let targetResolver: TargetResolver
     private let directory: SonosDirectory
     private let volumeService: SonosVolumeService
+    private let groupingService: SonosGroupingService
     private let spotifyPlayback: SpotifyPlaybackService
     private let transferService: SpotifyConnectTransferService
 
@@ -20,8 +21,12 @@ final class SonosRuntime: @unchecked Sendable {
         self.targetResolver = targetResolver
         let soapClient = SonosSOAPClient(urlSession: urlSession)
         let zeroconfClient = SonosSpotifyZeroconfClient(urlSession: urlSession)
-        let directory = SonosDirectory(zeroconfClient: zeroconfClient)
+        let directory = SonosDirectory(
+            zeroconfClient: zeroconfClient,
+            zoneGroupTopology: SonosZoneGroupTopology(soapClient: soapClient)
+        )
         let renderingControl = SonosRenderingControl(soapClient: soapClient)
+        let avTransport = SonosAVTransport(soapClient: soapClient)
         let transferVerifier = SonosTransferVerifier(soapClient: soapClient)
         let spotifyBridge = SpotifyConnectBridge(
             loginID: loginID,
@@ -37,6 +42,7 @@ final class SonosRuntime: @unchecked Sendable {
             renderingControl: renderingControl,
             spotifyPlayback: spotifyPlayback
         )
+        self.groupingService = SonosGroupingService(directory: directory, avTransport: avTransport)
         self.transferService = SpotifyConnectTransferService(
             directory: directory,
             spotifyBridge: spotifyBridge,
@@ -75,6 +81,22 @@ final class SonosRuntime: @unchecked Sendable {
 
     func discoverSpeakers() async throws -> [SonosSpeaker] {
         try await directory.discoverSpeakers()
+    }
+
+    func discoverGroupState() async throws -> SonosGroupState {
+        try await directory.discoverGroupState()
+    }
+
+    func join(roomName: String, toCoordinatorRoomName coordinatorRoomName: String) async throws {
+        try await groupingService.join(roomName: roomName, toCoordinatorRoomName: coordinatorRoomName)
+    }
+
+    func removeFromGroup(roomName: String) async throws {
+        try await groupingService.removeFromGroup(roomName: roomName)
+    }
+
+    func migrateCoordinator(groupID: String, toRoomName roomName: String) async throws {
+        try await groupingService.migrateCoordinator(groupID: groupID, toRoomName: roomName)
     }
 
     func activePlaybackDeviceStatus() async throws -> SpotifyPlaybackDeviceStatus? {
