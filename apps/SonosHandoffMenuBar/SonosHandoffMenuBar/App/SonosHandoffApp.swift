@@ -115,6 +115,7 @@ private final class PlaybackBackgroundSync {
 
     private let environment: AppEnvironment
     private let logger = Logger(subsystem: "com.fpieringer.SonosHandoffMenuBar", category: "Playback")
+    private let groupSuggestionResolver = SonosGroupSuggestionResolver()
     private var task: Task<Void, Never>?
     private var lastDiscoveryRefresh = Date.distantPast
     private var lastSeenSpeakerIDs: Set<String>?
@@ -191,6 +192,7 @@ private final class PlaybackBackgroundSync {
         spotifyPlaying: Bool
     ) {
         let currentSpeakerIDs = Set(refresh.speakers.map(\.id))
+        let previousSpeakerIDs = lastSeenSpeakerIDs
         defer {
             lastSeenSpeakerIDs = currentSpeakerIDs
         }
@@ -213,37 +215,30 @@ private final class PlaybackBackgroundSync {
             )
             if !suggestionStillVisible || suggestionAlreadyJoined || !suggestionTargetsCurrentCoordinator {
                 environment.groupSuggestionStore.clear(id: currentSuggestion.id)
+            } else {
+                return
             }
         }
 
-        guard let lastSeenSpeakerIDs else {
-            return
-        }
-
-        let newSpeakerIDs = currentSpeakerIDs.subtracting(lastSeenSpeakerIDs)
-        guard !newSpeakerIDs.isEmpty else {
-            return
-        }
-
-        let standaloneSpeakers = refresh.rows
-            .map(\.group)
-            .filter { $0.members.count == 1 }
-            .flatMap(\.members)
-        guard let speaker = standaloneSpeakers.first(where: { speaker in
-            newSpeakerIDs.contains(speaker.id) && !currentGroup.members.contains(where: { $0.id == speaker.id })
-        }) else {
+        let state = SonosGroupState(groups: refresh.rows.map(\.group))
+        guard let candidate = groupSuggestionResolver.suggestion(
+            in: state,
+            selectedRoomName: selectedRoomName,
+            spotifyPlaying: spotifyPlaying,
+            previousSpeakerIDs: previousSpeakerIDs
+        ) else {
             return
         }
 
         let suggestion = PlaybackGroupSuggestion(
-            speaker: speaker,
-            coordinatorRoomName: coordinator.roomName,
-            groupDisplayName: currentGroup.displayName,
+            speaker: candidate.speaker,
+            coordinatorRoomName: candidate.coordinatorRoomName,
+            groupDisplayName: candidate.groupDisplayName,
             detectedAt: Date()
         )
         environment.groupSuggestionStore.present(suggestion)
         showGroupSuggestionNotification(suggestion)
-        logger.info("SonosHandoffGroupSuggestion state=prompted room=\(speaker.roomName, privacy: .public) group=\(currentGroup.displayName, privacy: .public)")
+        logger.info("SonosHandoffGroupSuggestion state=prompted room=\(candidate.speaker.roomName, privacy: .public) group=\(candidate.groupDisplayName, privacy: .public)")
     }
 
     private func showGroupSuggestionNotification(_ suggestion: PlaybackGroupSuggestion) {
