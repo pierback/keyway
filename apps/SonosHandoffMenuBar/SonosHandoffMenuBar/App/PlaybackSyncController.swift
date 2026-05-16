@@ -29,6 +29,10 @@ final class PlaybackSyncController: ObservableObject {
     private var monitorCancellable: AnyCancellable?
     private var outputSelectionCancellable: AnyCancellable?
     private var groupSuggestionCancellable: AnyCancellable?
+    private var outputRefreshCancellable: AnyCancellable?
+    private var outputRefreshInProgress = false
+    private var hasPendingOutputRefresh = false
+    private var pendingOutputRefreshRoomName: String?
     private let sliderCommitter = PlaybackSliderCommitter()
     private let operationGate = PlaybackOperationGate()
     private var activeSpotifyRoomName: String?
@@ -66,6 +70,14 @@ final class PlaybackSyncController: ObservableObject {
         self.groupSuggestionCancellable = groupSuggestionStore.$suggestion.sink { [weak self] suggestion in
             self?.groupSuggestion = suggestion
         }
+        self.outputRefreshCancellable = NotificationCenter.default
+            .publisher(for: .sonosHandoffRefreshOutputs)
+            .sink { [weak self] notification in
+                let currentRoomName = notification.object as? String
+                Task { @MainActor [weak self] in
+                    await self?.refreshOutputs(showLoading: false, currentRoomName: currentRoomName)
+                }
+            }
     }
 
     var canControlVolume: Bool {
@@ -148,28 +160,48 @@ final class PlaybackSyncController: ObservableObject {
         )
     }
 
-    func refreshOutputs(showLoading: Bool = true) async {
-        guard !isRefreshingOutputs else {
+    func refreshOutputs(showLoading: Bool = true, currentRoomName: String? = nil) async {
+        let requestedRoomName = SonosRoomName.normalized(currentRoomName)
+        guard !outputRefreshInProgress else {
+            hasPendingOutputRefresh = true
+            pendingOutputRefreshRoomName = requestedRoomName
             return
         }
 
+        outputRefreshInProgress = true
         if showLoading {
             isRefreshingOutputs = true
         }
-        defer { isRefreshingOutputs = false }
-        clearMenuMessageIfAuthenticated()
+        defer {
+            outputRefreshInProgress = false
+            isRefreshingOutputs = false
+        }
 
-        do {
-            let refresh = try await outputDirectory.refresh(currentRoomName: preferredCurrentRoomName())
-            applyOutputRefresh(refresh)
-        } catch {
-            outputRows = []
-            speakers = []
-            selectRoomName(nil)
-            operationGate.cancelVolume()
-            volumeState.clearStatus()
-            menuMessage = "Could not search for Sonos speakers."
-            shortcutLogger.error("SonosHandoffDiscovery result=failure error=\(error.localizedDescription, privacy: .public)")
+        var refreshRoomName = requestedRoomName
+        while true {
+            clearMenuMessageIfAuthenticated()
+
+            do {
+                let refresh = try await outputDirectory.refresh(
+                    currentRoomName: refreshRoomName ?? preferredCurrentRoomName()
+                )
+                applyOutputRefresh(refresh)
+            } catch {
+                outputRows = []
+                speakers = []
+                selectRoomName(nil)
+                operationGate.cancelVolume()
+                volumeState.clearStatus()
+                menuMessage = "Could not search for Sonos speakers."
+                shortcutLogger.error("SonosHandoffDiscovery result=failure error=\(error.localizedDescription, privacy: .public)")
+            }
+
+            guard hasPendingOutputRefresh else {
+                return
+            }
+            hasPendingOutputRefresh = false
+            refreshRoomName = pendingOutputRefreshRoomName
+            pendingOutputRefreshRoomName = nil
         }
     }
 

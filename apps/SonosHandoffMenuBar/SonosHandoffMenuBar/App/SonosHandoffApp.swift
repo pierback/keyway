@@ -279,9 +279,11 @@ private final class PlaybackBackgroundSync {
                 currentRoomName: suggestion.coordinatorRoomName
             )
             lastDiscoveryRefresh = Date()
+            let refreshedRoomName = refresh.selectedRoomName ?? suggestion.coordinatorRoomName
             if let selectedRoomName = refresh.selectedRoomName {
                 selectRoomName(selectedRoomName)
             }
+            NotificationCenter.default.post(name: .sonosHandoffRefreshOutputs, object: refreshedRoomName)
             logger.info("SonosHandoffGroupSuggestion result=notification_accepted room=\(suggestion.speaker.roomName, privacy: .public) coordinator=\(suggestion.coordinatorRoomName, privacy: .public)")
         } catch {
             logger.error("SonosHandoffGroupSuggestion result=notification_failure room=\(suggestion.speaker.roomName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
