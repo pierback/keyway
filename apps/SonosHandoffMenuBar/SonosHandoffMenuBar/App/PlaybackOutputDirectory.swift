@@ -88,7 +88,7 @@ final class PlaybackOutputDirectory {
     private func refresh(from state: SonosGroupState, currentRoomName: String?) -> PlaybackOutputRefresh {
         let rows = state.groups.map(PlaybackOutputRow.init(group:))
         let speakers = state.speakers
-        let selectedRoomName = selectedRoomName(currentRoomName: currentRoomName, in: speakers)
+        let selectedRoomName = selectedRoomName(currentRoomName: currentRoomName, in: state.groups)
         return PlaybackOutputRefresh(
             rows: rows,
             speakers: speakers,
@@ -97,10 +97,10 @@ final class PlaybackOutputDirectory {
         )
     }
 
-    private func selectedRoomName(currentRoomName: String?, in speakers: [SonosSpeaker]) -> String? {
+    private func selectedRoomName(currentRoomName: String?, in groups: [SonosSpeakerGroup]) -> String? {
         outputSelectionResolver.selectedRoomName(
             currentRoomName: currentRoomName,
-            speakers: speakers
+            groups: groups
         )
     }
 }

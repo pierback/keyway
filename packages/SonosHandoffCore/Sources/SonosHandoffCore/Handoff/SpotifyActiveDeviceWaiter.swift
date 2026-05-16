@@ -67,7 +67,7 @@ struct SpotifyActiveDeviceWaiter: Sendable {
         state: ConnectPlayerState,
         policy: SpotifyActiveDeviceWaitPolicy
     ) -> Bool {
-        guard SonosRoomName.matches(state.device.name, roomName) else {
+        guard SonosRoomName.matchesSpotifyDeviceName(state.device.name, roomName: roomName) else {
             return false
         }
 

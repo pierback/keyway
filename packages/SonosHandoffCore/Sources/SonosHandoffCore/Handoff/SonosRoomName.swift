@@ -29,4 +29,18 @@ public enum SonosRoomName {
 
         return lhs.caseInsensitiveCompare(rhs) == .orderedSame
     }
+
+    public static func matchesSpotifyDeviceName(_ deviceName: String, roomName: String) -> Bool {
+        guard let deviceName = normalized(deviceName), let roomName = normalized(roomName) else {
+            return false
+        }
+        if matches(deviceName, roomName) {
+            return true
+        }
+
+        return deviceName.range(
+            of: "\(roomName) + ",
+            options: [.anchored, .caseInsensitive]
+        ) != nil
+    }
 }

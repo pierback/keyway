@@ -38,6 +38,40 @@ struct SpotifyActiveDeviceWaiterTests {
     }
 
     @Test
+    func activeDeviceMatchingAcceptsSpotifyGroupNameForCoordinator() async throws {
+        let source = PlayerStateSource([
+            .state(deviceName: "Kitchen + Port", isPlaying: false),
+        ])
+        let waiter = SpotifyActiveDeviceWaiter(currentPlayerState: source.nextState(accessToken:))
+
+        let result = try await waiter.waitForRoom(
+            named: "Kitchen",
+            accessToken: "token",
+            policy: SpotifyActiveDeviceWaitPolicy(attemptsMax: 1, retryNanoseconds: 0, requiresPlaying: false)
+        )
+
+        #expect(result.state?.device.name == "Kitchen + Port")
+        #expect(await source.requestCount == 1)
+    }
+
+    @Test
+    func activeDeviceMatchingAcceptsSpotifyGroupCountSuffixForCoordinator() async throws {
+        let source = PlayerStateSource([
+            .state(deviceName: "Kitchen + 1", isPlaying: true),
+        ])
+        let waiter = SpotifyActiveDeviceWaiter(currentPlayerState: source.nextState(accessToken:))
+
+        let result = try await waiter.waitForRoom(
+            named: "Kitchen",
+            accessToken: "token",
+            policy: SpotifyActiveDeviceWaitPolicy(attemptsMax: 1, retryNanoseconds: 0, requiresPlaying: true)
+        )
+
+        #expect(result.state?.device.name == "Kitchen + 1")
+        #expect(await source.requestCount == 1)
+    }
+
+    @Test
     func transferVerificationRequiresPlayback() async throws {
         let source = PlayerStateSource([
             .state(deviceName: "Port", isPlaying: false),
