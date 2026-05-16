@@ -76,6 +76,16 @@ public actor SpeakerVolumeCommandQueue {
         }
     }
 
+    public func setMute(
+        using volumeService: any SpeakerVolumeAdjusting,
+        roomName: String,
+        muted: Bool
+    ) async throws -> Bool {
+        try await run {
+            try await volumeService.setMute(roomName: roomName, muted: muted)
+        }
+    }
+
     private func run<Result: Sendable>(
         _ operation: @Sendable @escaping () async throws -> Result
     ) async throws -> Result {

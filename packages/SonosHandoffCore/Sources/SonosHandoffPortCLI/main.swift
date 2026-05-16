@@ -180,6 +180,23 @@ do {
         let muted = try await toggleMute(on: target)
         print("muted=\(muted)")
         print("volume-mute=ok")
+    case "volume-mute-on":
+        let target = try await resolvedCommandTarget(needsSpotifyMetadata: false)
+        let muted = try await setMute(on: target, to: true)
+        print("muted=\(muted)")
+        print("volume-mute-on=ok")
+    case "volume-mute-off":
+        let target = try await resolvedCommandTarget(needsSpotifyMetadata: false)
+        let muted = try await setMute(on: target, to: false)
+        print("muted=\(muted)")
+        print("volume-mute-off=ok")
+    case "volume-zero-muted":
+        let target = try await resolvedCommandTarget(needsSpotifyMetadata: false)
+        let volume = try await setVolume(on: target, to: 0)
+        let muted = try await setMute(on: target, to: true)
+        print("volume=\(volume)")
+        print("muted=\(muted)")
+        print("volume-zero-muted=ok")
     case "playback-status":
         let state = try await currentSpotifyPlaybackState()
         printSpotifyState(state)
@@ -914,6 +931,9 @@ func printUsage() {
           sonos-handoff-port volume-down [room] [--step 5...25] [--host HOST]
           sonos-handoff-port volume-set [room] --volume 0...100 [--host HOST]
           sonos-handoff-port volume-mute [room] [--host HOST]
+          sonos-handoff-port volume-mute-on [room] [--host HOST]
+          sonos-handoff-port volume-mute-off [room] [--host HOST]
+          sonos-handoff-port volume-zero-muted [room] [--host HOST]
         """
     )
 }
@@ -950,7 +970,7 @@ func validateOptions() throws {
 
 func isCommand(_ value: String) -> Bool {
     switch value {
-    case "handoff", "playback-status", "sonos-status", "volume-up", "volume-down", "volume-set", "volume-status", "volume-mute":
+    case "handoff", "playback-status", "sonos-status", "volume-up", "volume-down", "volume-set", "volume-status", "volume-mute", "volume-mute-on", "volume-mute-off", "volume-zero-muted":
         return true
     default:
         return false

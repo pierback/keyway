@@ -130,4 +130,8 @@ final class SonosRuntime: @unchecked Sendable {
     func toggleMute(roomName: String) async throws -> Bool {
         try await volumeService.toggleMute(roomName: roomName)
     }
+
+    func setMute(roomName: String, muted: Bool) async throws -> Bool {
+        try await volumeService.setMute(roomName: roomName, muted: muted)
+    }
 }

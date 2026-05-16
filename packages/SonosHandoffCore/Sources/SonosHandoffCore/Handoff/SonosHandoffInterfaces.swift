@@ -4,6 +4,7 @@ public protocol SpeakerVolumeAdjusting: Sendable {
     func volumeDown(roomName: String, step: Int) async throws -> Int
     func volumeUp(roomName: String, step: Int) async throws -> Int
     func toggleMute(roomName: String) async throws -> Bool
+    func setMute(roomName: String, muted: Bool) async throws -> Bool
 }
 
 public protocol SonosSpeakerDiscovering: Sendable {

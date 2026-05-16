@@ -72,6 +72,7 @@ private enum BlockingVolumeCall: Equatable, Sendable {
     case volumeDown(roomName: String, step: Int)
     case volumeUp(roomName: String, step: Int)
     case toggleMute(roomName: String)
+    case setMute(roomName: String, muted: Bool)
 }
 
 private actor BlockingSpeakerVolumeAdjuster: SpeakerVolumeAdjusting {
@@ -104,6 +105,11 @@ private actor BlockingSpeakerVolumeAdjuster: SpeakerVolumeAdjusting {
     func toggleMute(roomName: String) async throws -> Bool {
         await record(.toggleMute(roomName: roomName))
         return true
+    }
+
+    func setMute(roomName: String, muted: Bool) async throws -> Bool {
+        await record(.setMute(roomName: roomName, muted: muted))
+        return muted
     }
 
     func waitForCallCount(_ count: Int) async {

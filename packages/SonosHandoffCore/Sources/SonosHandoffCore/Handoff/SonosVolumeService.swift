@@ -45,4 +45,9 @@ final class SonosVolumeService: @unchecked Sendable {
         let target = try await directory.resolveTarget(named: roomName, needsSpotifyMetadata: false)
         return try await renderingControl.toggleMute(on: target)
     }
+
+    func setMute(roomName: String, muted: Bool) async throws -> Bool {
+        let target = try await directory.resolveTarget(named: roomName, needsSpotifyMetadata: false)
+        return try await renderingControl.setMute(on: target, to: muted)
+    }
 }

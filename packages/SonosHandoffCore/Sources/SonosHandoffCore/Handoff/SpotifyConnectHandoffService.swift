@@ -76,6 +76,10 @@ public final class SpotifyConnectHandoffService: HandoffPerforming, RoomHandoffP
         try await runtime.toggleMute(roomName: roomName)
     }
 
+    public func setMute(roomName: String, muted: Bool) async throws -> Bool {
+        try await runtime.setMute(roomName: roomName, muted: muted)
+    }
+
     public func activePlaybackDeviceStatus() async throws -> SpotifyPlaybackDeviceStatus? {
         try await runtime.activePlaybackDeviceStatus()
     }
