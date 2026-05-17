@@ -29,7 +29,7 @@ struct SonosGroupSuggestionTrackerTests {
         )
 
         #expect(update.action == .present(candidate("Office", coordinator: "Kitchen", group: "Kitchen + Port")))
-        #expect(update.seenSpeakerIDs == ["RINCON_OFFICE"])
+        #expect(update.seenSpeakerIDs == ["RINCON_KITCHEN", "RINCON_PORT", "RINCON_OFFICE"])
     }
 
     @Test
@@ -65,6 +65,77 @@ struct SonosGroupSuggestionTrackerTests {
         #expect(update.seenSpeakerIDs == ["RINCON_KITCHEN", "RINCON_PORT", "RINCON_OFFICE"])
         #expect(update.staleSuggestionIDs.isEmpty)
         #expect(update.refreshedSuggestions == [candidate("Office", coordinator: "Kitchen", group: "Kitchen + Port")])
+    }
+
+    @Test
+    func startupBaselineKeepsOtherStandaloneSpeakersEligible() {
+        let firstUpdate = tracker.update(
+            in: SonosGroupState(groups: [
+                group(coordinator: "Kitchen", members: ["Kitchen", "Port"]),
+                standalone("Office"),
+                standalone("Bath"),
+            ]),
+            selectedRoomName: "Kitchen",
+            spotifyPlaying: true,
+            previousSpeakerIDs: nil,
+            currentSuggestions: []
+        )
+
+        #expect(firstUpdate.action == .present(candidate("Bath", coordinator: "Kitchen", group: "Kitchen + Port")))
+        #expect(firstUpdate.seenSpeakerIDs == ["RINCON_KITCHEN", "RINCON_PORT", "RINCON_BATH"])
+
+        let secondUpdate = tracker.update(
+            in: SonosGroupState(groups: [
+                group(coordinator: "Kitchen", members: ["Kitchen", "Port"]),
+                standalone("Office"),
+                standalone("Bath"),
+            ]),
+            selectedRoomName: "Kitchen",
+            spotifyPlaying: true,
+            previousSpeakerIDs: firstUpdate.seenSpeakerIDs,
+            currentSuggestions: [
+                SonosGroupSuggestionReference(
+                    speakerID: "RINCON_BATH",
+                    coordinatorRoomName: "Kitchen"
+                ),
+            ]
+        )
+
+        #expect(secondUpdate.action == .present(candidate("Office", coordinator: "Kitchen", group: "Kitchen + Port")))
+        #expect(secondUpdate.seenSpeakerIDs == ["RINCON_KITCHEN", "RINCON_PORT", "RINCON_BATH", "RINCON_OFFICE"])
+        #expect(secondUpdate.refreshedSuggestions == [candidate("Bath", coordinator: "Kitchen", group: "Kitchen + Port")])
+    }
+
+    @Test
+    func startupBaselineDoesNotSuggestMemberThatLeavesCurrentGroup() {
+        let startupUpdate = tracker.update(
+            in: groupState,
+            selectedRoomName: "Kitchen",
+            spotifyPlaying: true,
+            previousSpeakerIDs: nil,
+            currentSuggestions: []
+        )
+
+        let laterUpdate = tracker.update(
+            in: SonosGroupState(groups: [
+                group(coordinator: "Kitchen", members: ["Kitchen"]),
+                standalone("Port"),
+                standalone("Office"),
+            ]),
+            selectedRoomName: "Kitchen",
+            spotifyPlaying: true,
+            previousSpeakerIDs: startupUpdate.seenSpeakerIDs,
+            currentSuggestions: [
+                SonosGroupSuggestionReference(
+                    speakerID: "RINCON_OFFICE",
+                    coordinatorRoomName: "Kitchen"
+                ),
+            ]
+        )
+
+        #expect(laterUpdate.action == .keepCurrent)
+        #expect(laterUpdate.seenSpeakerIDs == ["RINCON_KITCHEN", "RINCON_PORT", "RINCON_OFFICE"])
+        #expect(laterUpdate.refreshedSuggestions == [candidate("Office", coordinator: "Kitchen", group: "Kitchen")])
     }
 
     @Test

@@ -83,6 +83,10 @@ public struct SonosGroupSuggestionTracker: Sendable {
             )
         }
 
+        let baselineSpeakerIDs = previousSpeakerIDs ?? selectedGroupSpeakerIDs(
+            in: state,
+            selectedRoomName: selectedRoomName
+        )
         let validSuggestions = currentSuggestions.filter { suggestion in
             resolver.suggestionStillValid(
                 speakerID: suggestion.speakerID,
@@ -111,7 +115,7 @@ public struct SonosGroupSuggestionTracker: Sendable {
             return SonosGroupSuggestionUpdate(
                 action: .present(candidate),
                 seenSpeakerIDs: seenSpeakerIDs(
-                    previousSpeakerIDs: previousSpeakerIDs,
+                    previousSpeakerIDs: baselineSpeakerIDs,
                     currentSpeakerIDs: currentSpeakerIDs,
                     validSuggestionSpeakerIDs: validSuggestionSpeakerIDs,
                     suggestedSpeakerID: candidate.speaker.id
@@ -125,7 +129,7 @@ public struct SonosGroupSuggestionTracker: Sendable {
             return SonosGroupSuggestionUpdate(
                 action: .keepCurrent,
                 seenSpeakerIDs: seenSpeakerIDs(
-                    previousSpeakerIDs: previousSpeakerIDs,
+                    previousSpeakerIDs: baselineSpeakerIDs,
                     currentSpeakerIDs: currentSpeakerIDs,
                     validSuggestionSpeakerIDs: validSuggestionSpeakerIDs,
                     suggestedSpeakerID: nil
@@ -158,5 +162,13 @@ public struct SonosGroupSuggestionTracker: Sendable {
             seenSpeakerIDs.insert(suggestedSpeakerID)
         }
         return seenSpeakerIDs.intersection(currentSpeakerIDs)
+    }
+
+    private func selectedGroupSpeakerIDs(in state: SonosGroupState, selectedRoomName: String) -> Set<String> {
+        guard let selectedGroup = state.groups.first(where: { $0.contains(roomName: selectedRoomName) }) else {
+            return []
+        }
+
+        return Set(selectedGroup.members.map(\.id))
     }
 }
