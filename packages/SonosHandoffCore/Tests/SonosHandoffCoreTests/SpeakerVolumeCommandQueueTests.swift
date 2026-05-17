@@ -73,6 +73,14 @@ private enum BlockingVolumeCall: Equatable, Sendable {
     case volumeUp(roomName: String, step: Int)
     case toggleMute(roomName: String)
     case setMute(roomName: String, muted: Bool)
+    case memberStatus(roomName: String)
+    case setMemberVolume(roomName: String, volume: Int)
+    case groupStatus(coordinatorRoomName: String)
+    case setGroupVolume(coordinatorRoomName: String, volume: Int)
+    case groupVolumeDown(coordinatorRoomName: String, step: Int)
+    case groupVolumeUp(coordinatorRoomName: String, step: Int)
+    case toggleGroupMute(coordinatorRoomName: String)
+    case setGroupMute(coordinatorRoomName: String, muted: Bool)
 }
 
 private actor BlockingSpeakerVolumeAdjuster: SpeakerVolumeAdjusting {
@@ -109,6 +117,46 @@ private actor BlockingSpeakerVolumeAdjuster: SpeakerVolumeAdjusting {
 
     func setMute(roomName: String, muted: Bool) async throws -> Bool {
         await record(.setMute(roomName: roomName, muted: muted))
+        return muted
+    }
+
+    func memberVolumeStatus(roomName: String) async throws -> SpeakerVolumeStatus {
+        await record(.memberStatus(roomName: roomName))
+        return SpeakerVolumeStatus(roomName: roomName, host: "port.local", volume: 11, outputFixed: false, muted: false)
+    }
+
+    func setMemberVolume(roomName: String, volume: Int) async throws -> Int {
+        await record(.setMemberVolume(roomName: roomName, volume: volume))
+        return volume
+    }
+
+    func groupVolumeStatus(coordinatorRoomName: String) async throws -> SpeakerVolumeStatus {
+        await record(.groupStatus(coordinatorRoomName: coordinatorRoomName))
+        return SpeakerVolumeStatus(roomName: coordinatorRoomName, host: "port.local", volume: 15, outputFixed: false, muted: false)
+    }
+
+    func setGroupVolume(coordinatorRoomName: String, volume: Int) async throws -> Int {
+        await record(.setGroupVolume(coordinatorRoomName: coordinatorRoomName, volume: volume))
+        return volume
+    }
+
+    func groupVolumeDown(coordinatorRoomName: String, step: Int) async throws -> Int {
+        await record(.groupVolumeDown(coordinatorRoomName: coordinatorRoomName, step: step))
+        return 15
+    }
+
+    func groupVolumeUp(coordinatorRoomName: String, step: Int) async throws -> Int {
+        await record(.groupVolumeUp(coordinatorRoomName: coordinatorRoomName, step: step))
+        return 25
+    }
+
+    func toggleGroupMute(coordinatorRoomName: String) async throws -> Bool {
+        await record(.toggleGroupMute(coordinatorRoomName: coordinatorRoomName))
+        return true
+    }
+
+    func setGroupMute(coordinatorRoomName: String, muted: Bool) async throws -> Bool {
+        await record(.setGroupMute(coordinatorRoomName: coordinatorRoomName, muted: muted))
         return muted
     }
 

@@ -20,6 +20,8 @@ final class PlaybackSyncController: ObservableObject {
     @Published private(set) var spotifyAuthMessage = "Spotify sign-in expired. Sign in again to sync playback."
     @Published private(set) var groupSuggestions: [PlaybackGroupSuggestion] = []
     @Published private(set) var groupEditRows: [PlaybackGroupEditRow] = []
+    @Published private(set) var pinnedMixerGroupID: String?
+    @Published private(set) var memberVolumeRows: [PlaybackMemberVolumeRow] = []
 
     private let outputDirectory: PlaybackOutputDirectory
     private let groupingInspectionResolver = SonosGroupingInspectionResolver()
@@ -45,6 +47,7 @@ final class PlaybackSyncController: ObservableObject {
     private var outputRefreshInProgress = false
     private var hasPendingOutputRefresh = false
     private var pendingOutputRefreshRoomName: String?
+    private var memberVolumeLoadInFlightKey: String?
     private let sliderCommitter = PlaybackSliderCommitter()
     private let operationGate = PlaybackOperationGate()
     private var activeSpotifyRoomName: String?
@@ -113,6 +116,77 @@ final class PlaybackSyncController: ObservableObject {
         currentGroupState.groups.first { $0.contains(roomName: selectedRoomName) }
     }
 
+    func isMixerPinned(for row: PlaybackOutputRow) -> Bool {
+        pinnedMixerGroupID == row.id
+    }
+
+    func toggleMixer(for row: PlaybackOutputRow) {
+        guard row.isGroup else {
+            return
+        }
+
+        if pinnedMixerGroupID == row.id {
+            pinnedMixerGroupID = nil
+            memberVolumeRows = []
+            return
+        }
+
+        pinnedMixerGroupID = row.id
+        prepareMemberVolumeRows(for: row)
+        loadMemberVolumes(for: row)
+    }
+
+    func loadMemberVolumes(for row: PlaybackOutputRow) {
+        guard row.isGroup else {
+            return
+        }
+        let loadKey = memberVolumeLoadKey(for: row)
+        guard memberVolumeLoadInFlightKey != loadKey else {
+            return
+        }
+
+        prepareMemberVolumeRows(for: row)
+        memberVolumeLoadInFlightKey = loadKey
+        Task { @MainActor in
+            let statuses = await loadMemberVolumeStatuses(for: row)
+            guard memberVolumeLoadInFlightKey == loadKey else {
+                return
+            }
+            memberVolumeLoadInFlightKey = nil
+            applyMemberVolumeStatuses(statuses, groupID: row.id)
+        }
+    }
+
+    func setMemberVolumeFromSlider(rowID: String, locationX: CGFloat, width: CGFloat) {
+        guard let index = memberVolumeRows.firstIndex(where: { $0.id == rowID }) else {
+            return
+        }
+
+        memberVolumeRows[index].state.setSliderValue(locationX: Double(locationX), width: Double(width))
+    }
+
+    func commitMemberVolume(rowID: String) {
+        guard let index = memberVolumeRows.firstIndex(where: { $0.id == rowID }) else {
+            return
+        }
+
+        let roomName = memberVolumeRows[index].speaker.roomName
+        let desiredVolume = memberVolumeRows[index].state.roundedValue
+        memberVolumeRows[index].state.setBusy()
+
+        Task { @MainActor in
+            do {
+                let volume = try await volumeActions.setMemberVolume(roomName: roomName, volume: desiredVolume)
+                updateMemberVolume(rowID: rowID, volume: volume, muted: false)
+                shortcutLogger.info("SonosHandoffMemberVolumeSet result=success room=\(roomName, privacy: .public) volume=\(volume, privacy: .public)")
+            } catch {
+                restoreMemberVolume(rowID: rowID)
+                menuMessage = "Could not set \(roomName) volume."
+                shortcutLogger.error("SonosHandoffMemberVolumeSet result=failure room=\(roomName, privacy: .public) volume=\(desiredVolume, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
     func appear() {
         if selectedRoomName == nil {
             selectRoomName(outputSelection.roomName)
@@ -162,8 +236,12 @@ final class PlaybackSyncController: ObservableObject {
                 return SonosRoomName.matches(self.selectedRoomName, roomName)
             },
             commit: { [weak self] roomName, desiredVolume in
-                self?.commitSliderVolume(
+                guard let self else {
+                    return
+                }
+                self.commitSliderVolume(
                     roomName: roomName,
+                    scope: self.volumeScope(for: roomName),
                     desiredVolume: desiredVolume,
                     markBusy: false,
                     applyResultWhileEditing: false,
@@ -287,6 +365,7 @@ final class PlaybackSyncController: ObservableObject {
         currentGroupState = refresh.state
         selectRoomName(resolvedSelectedRoomName)
         setGroupEditRows(refresh.groupEditRows)
+        refreshPinnedMixerRows()
         refreshPendingGroupSuggestions(from: refresh, selectedRoomName: resolvedSelectedRoomName)
 
         if let selectedRoomName = resolvedSelectedRoomName {
@@ -333,6 +412,7 @@ final class PlaybackSyncController: ObservableObject {
         guard let roomName = selectedRoomName else {
             return
         }
+        let scope = volumeScope(for: roomName)
 
         volumeState.setBusy()
         menuMessage = nil
@@ -344,7 +424,7 @@ final class PlaybackSyncController: ObservableObject {
             }
 
             do {
-                let volume = try await volumeActions.adjustVolume(roomName: roomName, direction: direction)
+                let volume = try await volumeActions.adjustVolume(roomName: roomName, scope: scope, direction: direction)
                 guard isCurrentVolumeOperation(ticket) else {
                     return
                 }
@@ -364,6 +444,7 @@ final class PlaybackSyncController: ObservableObject {
         guard let roomName = selectedRoomName else {
             return
         }
+        let scope = volumeScope(for: roomName)
 
         volumeState.setBusy()
         menuMessage = nil
@@ -375,7 +456,7 @@ final class PlaybackSyncController: ObservableObject {
             }
 
             do {
-                let muted = try await volumeActions.toggleMute(roomName: roomName)
+                let muted = try await volumeActions.toggleMute(roomName: roomName, scope: scope)
                 guard isCurrentVolumeOperation(ticket) else {
                     return
                 }
@@ -798,6 +879,7 @@ final class PlaybackSyncController: ObservableObject {
         guard let roomName = roomName ?? selectedRoomName else {
             return
         }
+        let scope = volumeScope(for: roomName)
 
         volumeState.setBusy()
         operationGate.runVolume(roomName: roomName) { [weak self] ticket in
@@ -806,7 +888,7 @@ final class PlaybackSyncController: ObservableObject {
             }
 
             do {
-                let status = try await volumeActions.volumeStatus(roomName: roomName)
+                let status = try await volumeActions.volumeStatus(roomName: roomName, scope: scope)
                 guard isCurrentVolumeOperation(ticket) else {
                     return
                 }
@@ -843,8 +925,10 @@ final class PlaybackSyncController: ObservableObject {
         }
 
         let desiredVolume = volumeState.roundedValue
+        let scope = volumeScope(for: roomName)
         commitSliderVolume(
             roomName: roomName,
+            scope: scope,
             desiredVolume: desiredVolume,
             markBusy: true,
             applyResultWhileEditing: true,
@@ -854,6 +938,7 @@ final class PlaybackSyncController: ObservableObject {
 
     private func commitSliderVolume(
         roomName: String,
+        scope: PlaybackVolumeScope,
         desiredVolume: Int,
         markBusy: Bool,
         applyResultWhileEditing: Bool,
@@ -869,7 +954,7 @@ final class PlaybackSyncController: ObservableObject {
             }
 
             do {
-                let volume = try await volumeActions.setVolume(roomName: roomName, volume: desiredVolume)
+                let volume = try await volumeActions.setVolume(roomName: roomName, scope: scope, volume: desiredVolume)
                 guard isCurrentVolumeOperation(ticket) else {
                     return
                 }
@@ -902,14 +987,94 @@ final class PlaybackSyncController: ObservableObject {
         volumeState.applyStatus(status)
     }
 
+    private func prepareMemberVolumeRows(for row: PlaybackOutputRow) {
+        guard row.isGroup else {
+            memberVolumeRows = []
+            return
+        }
+
+        let existingRowsByID = Dictionary(uniqueKeysWithValues: memberVolumeRows.map { ($0.id, $0) })
+        memberVolumeRows = row.group.members.map { speaker in
+            existingRowsByID[speaker.id] ?? PlaybackMemberVolumeRow(
+                groupID: row.id,
+                speaker: speaker,
+                state: loadingMemberState()
+            )
+        }
+    }
+
+    private func loadMemberVolumeStatuses(for row: PlaybackOutputRow) async -> [String: SpeakerVolumeStatus] {
+        await withTaskGroup(of: (String, SpeakerVolumeStatus?).self) { group in
+            for speaker in row.group.members {
+                group.addTask { [volumeActions] in
+                    do {
+                        let status = try await volumeActions.memberVolumeStatus(roomName: speaker.roomName)
+                        return (speaker.id, status)
+                    } catch {
+                        return (speaker.id, nil)
+                    }
+                }
+            }
+
+            var statuses: [String: SpeakerVolumeStatus] = [:]
+            for await (speakerID, status) in group {
+                if let status {
+                    statuses[speakerID] = status
+                }
+            }
+            return statuses
+        }
+    }
+
+    private func applyMemberVolumeStatuses(_ statuses: [String: SpeakerVolumeStatus], groupID: String) {
+        memberVolumeRows = memberVolumeRows.map { row in
+            guard row.groupID == groupID else {
+                return row
+            }
+
+            var next = row
+            if let status = statuses[row.id] {
+                next.state.applyStatus(status)
+                next.confirmedState = next.state
+            } else {
+                next.restoreConfirmedState()
+            }
+            return next
+        }
+    }
+
+    private func updateMemberVolume(rowID: String, volume: Int, muted: Bool) {
+        guard let index = memberVolumeRows.firstIndex(where: { $0.id == rowID }) else {
+            return
+        }
+
+        memberVolumeRows[index].state.applyLocalVolume(volume, muted: muted)
+        memberVolumeRows[index].confirmedState = memberVolumeRows[index].state
+    }
+
+    private func restoreMemberVolume(rowID: String) {
+        guard let index = memberVolumeRows.firstIndex(where: { $0.id == rowID }) else {
+            return
+        }
+
+        memberVolumeRows[index].restoreConfirmedState()
+    }
+
+    private func loadingMemberState() -> SpeakerVolumeControlState {
+        var state = SpeakerVolumeControlState()
+        state.setBusy()
+        return state
+    }
+
     private func selectRoomName(_ roomName: String?) {
         if !SonosRoomName.matches(selectedRoomName, roomName) {
             sliderCommitter.cancel()
         }
         selectedRoomName = roomName
-        outputSelection.setRoomName(roomName)
-        volumeMonitor.setRoomName(roomName)
+        outputSelection.setSelection(roomName: roomName, group: roomName.flatMap(groupContaining))
+        volumeMonitor.setTarget(roomName: roomName, scope: roomName.map(volumeScope(for:)) ?? .member)
         refreshGroupEditRowsFromCurrentOutputs()
+        clearPinnedMixerIfSelectionChanged()
     }
 
     private func applyExternalOutputSelection(_ roomName: String?) {
@@ -919,8 +1084,9 @@ final class PlaybackSyncController: ObservableObject {
 
         sliderCommitter.cancel()
         selectedRoomName = SonosRoomName.normalized(roomName)
-        volumeMonitor.setRoomName(selectedRoomName)
+        volumeMonitor.setTarget(roomName: selectedRoomName, scope: selectedRoomName.map(volumeScope(for:)) ?? .member)
         refreshGroupEditRowsFromCurrentOutputs()
+        clearPinnedMixerIfSelectionChanged()
         if let selectedRoomName {
             clearSpotifyAuthRequired()
             refreshVolumeStatus(roomName: selectedRoomName)
@@ -971,6 +1137,51 @@ final class PlaybackSyncController: ObservableObject {
             previousSpeakerIDs: nil
         )
         setGroupEditRows(report.groupEditRows)
+    }
+
+    private func volumeScope(for roomName: String) -> PlaybackVolumeScope {
+        guard let group = currentGroupState.groups.first(where: { $0.contains(roomName: roomName) }),
+              group.members.count > 1
+        else {
+            return .member
+        }
+
+        return .group
+    }
+
+    private func clearPinnedMixerIfSelectionChanged() {
+        guard let pinnedMixerGroupID else {
+            return
+        }
+
+        guard let selectedOutputGroup,
+              selectedOutputGroup.id == pinnedMixerGroupID
+        else {
+            self.pinnedMixerGroupID = nil
+            memberVolumeRows = []
+            memberVolumeLoadInFlightKey = nil
+            return
+        }
+    }
+
+    private func refreshPinnedMixerRows() {
+        guard let pinnedMixerGroupID,
+              let row = outputRows.first(where: { $0.id == pinnedMixerGroupID }),
+              row.contains(roomName: selectedRoomName)
+        else {
+            return
+        }
+
+        loadMemberVolumes(for: row)
+    }
+
+    private func groupContaining(roomName: String) -> SonosSpeakerGroup? {
+        currentGroupState.groups.first { $0.contains(roomName: roomName) }
+    }
+
+    private func memberVolumeLoadKey(for row: PlaybackOutputRow) -> String {
+        let memberIDs = row.group.members.map(\.id).sorted().joined(separator: "|")
+        return "\(row.id):\(memberIDs)"
     }
 
     private func setOutputRows(_ rows: [PlaybackOutputRow]) {
@@ -1044,5 +1255,24 @@ private struct PlaybackGroupEditError: LocalizedError {
 
     var errorDescription: String? {
         message
+    }
+}
+
+struct PlaybackMemberVolumeRow: Identifiable, Equatable {
+    let groupID: String
+    let speaker: SonosSpeaker
+    var state: SpeakerVolumeControlState
+    var confirmedState: SpeakerVolumeControlState? = nil
+
+    var id: String {
+        speaker.id
+    }
+
+    mutating func restoreConfirmedState() {
+        if let confirmedState {
+            state = confirmedState
+        } else {
+            state.clearStatus()
+        }
     }
 }

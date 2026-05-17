@@ -98,7 +98,7 @@ final class PlaybackBackgroundSync {
                 return
             }
 
-            selectRoomName(selectedRoomName)
+            selectRoomName(selectedRoomName, selectedGroup: refresh.selectedGroup)
             updateGroupSuggestion(refresh: refresh, selectedRoomName: selectedRoomName, spotifyPlaying: status.isPlaying)
             notifyOpenMenuAfterDiscoveryRefresh(
                 discoveryRefreshStarted: discoveryRefreshStarted,
@@ -252,7 +252,7 @@ final class PlaybackBackgroundSync {
                 )
             } catch {
                 lastDiscoveryRefresh = Date.distantPast
-                selectRoomName(coordinatorRoomName)
+                selectRoomName(coordinatorRoomName, selectedGroup: nil)
                 NotificationCenter.default.post(name: .sonosHandoffRefreshOutputs, object: coordinatorRoomName)
                 logger.error("SonosHandoffGroupSuggestion result=notification_accepted_refresh_failure room=\(suggestion.speaker.roomName, privacy: .public) coordinator=\(coordinatorRoomName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
                 return
@@ -265,7 +265,7 @@ final class PlaybackBackgroundSync {
             )
             lastDiscoveryRefresh = Date()
             if let selectedRoomName = plan.selectedRoomName {
-                selectRoomName(selectedRoomName)
+                selectRoomName(selectedRoomName, selectedGroup: postRefresh.selectedGroup)
             } else if let clearReason = plan.clearReason {
                 clearSelection(reason: clearReason.rawValue)
             }
@@ -319,13 +319,9 @@ final class PlaybackBackgroundSync {
         return true
     }
 
-    private func selectRoomName(_ roomName: String) {
-        guard !SonosRoomName.matches(environment.outputSelection.roomName, roomName) else {
-            return
-        }
-
-        environment.outputSelection.setRoomName(roomName)
-        SonosVolumeMonitor.shared.setRoomName(roomName)
+    private func selectRoomName(_ roomName: String, selectedGroup: SonosSpeakerGroup?) {
+        environment.outputSelection.setSelection(roomName: roomName, group: selectedGroup)
+        SonosVolumeMonitor.shared.setTarget(roomName: roomName, scope: volumeScope(for: selectedGroup))
     }
 
     private func clearSelection(reason: String) {
@@ -333,9 +329,17 @@ final class PlaybackBackgroundSync {
             return
         }
 
-        environment.outputSelection.setRoomName(nil)
-        SonosVolumeMonitor.shared.setRoomName(nil)
+        environment.outputSelection.setSelection(roomName: nil, group: nil)
+        SonosVolumeMonitor.shared.setTarget(roomName: nil, scope: .member)
         logger.info("SonosHandoffPlaybackSync state=cleared reason=\(reason, privacy: .public)")
+    }
+
+    private func volumeScope(for group: SonosSpeakerGroup?) -> PlaybackVolumeScope {
+        guard let group, group.members.count > 1 else {
+            return .member
+        }
+
+        return .group
     }
 
     private func showAuthPromptIfNeeded(_ error: Error) {

@@ -34,6 +34,39 @@ struct SonosRenderingControlTests {
         #expect(setMuteRequest.body.contains("<DesiredMute>0</DesiredMute>"))
     }
 
+    @Test
+    func setGroupVolumeUsesGroupRenderingControlOnCoordinator() async throws {
+        RenderingControlURLProtocol.requests = []
+        RenderingControlURLProtocol.currentGroupVolume = "24"
+        let control = renderingControl()
+
+        let volume = try await control.setGroupVolume(on: target(), to: 25)
+
+        #expect(volume == 24)
+        let setVolumeRequest = try #require(RenderingControlURLProtocol.requests.first)
+        #expect(setVolumeRequest.url?.host == "port.local")
+        #expect(setVolumeRequest.url?.path == "/MediaRenderer/GroupRenderingControl/Control")
+        #expect(setVolumeRequest.soapAction == "\"urn:schemas-upnp-org:service:GroupRenderingControl:1#SetGroupVolume\"")
+        #expect(setVolumeRequest.body.contains("<DesiredVolume>25</DesiredVolume>"))
+    }
+
+    @Test
+    func groupStatusReadsGroupVolumeAndMute() async throws {
+        RenderingControlURLProtocol.requests = []
+        RenderingControlURLProtocol.currentGroupVolume = "31"
+        RenderingControlURLProtocol.currentGroupMute = "1"
+        let control = renderingControl()
+
+        let status = try await control.groupStatus(on: target())
+
+        #expect(status.roomName == "Port")
+        #expect(status.volume == 31)
+        #expect(status.muted)
+        #expect(status.outputFixed == false)
+        #expect(RenderingControlURLProtocol.requests.map(\.soapAction).contains("\"urn:schemas-upnp-org:service:GroupRenderingControl:1#GetGroupVolume\""))
+        #expect(RenderingControlURLProtocol.requests.map(\.soapAction).contains("\"urn:schemas-upnp-org:service:GroupRenderingControl:1#GetGroupMute\""))
+    }
+
     private func renderingControl() -> SonosRenderingControl {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [RenderingControlURLProtocol.self]
@@ -56,6 +89,8 @@ private struct RenderingControlRequest: Sendable {
 private final class RenderingControlURLProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var requests: [RenderingControlRequest] = []
     nonisolated(unsafe) static var currentMute = "0"
+    nonisolated(unsafe) static var currentGroupVolume = "20"
+    nonisolated(unsafe) static var currentGroupMute = "0"
 
     override class func canInit(with request: URLRequest) -> Bool {
         true
@@ -76,7 +111,15 @@ private final class RenderingControlURLProtocol: URLProtocol, @unchecked Sendabl
         )
 
         let responseBody: String
-        if request.value(forHTTPHeaderField: "SOAPACTION")?.contains("#GetMute") == true {
+        if request.value(forHTTPHeaderField: "SOAPACTION")?.contains("#GetGroupVolume") == true {
+            responseBody = """
+            <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><u:GetGroupVolumeResponse xmlns:u="urn:schemas-upnp-org:service:GroupRenderingControl:1"><CurrentVolume>\(Self.currentGroupVolume)</CurrentVolume></u:GetGroupVolumeResponse></s:Body></s:Envelope>
+            """
+        } else if request.value(forHTTPHeaderField: "SOAPACTION")?.contains("#GetGroupMute") == true {
+            responseBody = """
+            <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><u:GetGroupMuteResponse xmlns:u="urn:schemas-upnp-org:service:GroupRenderingControl:1"><CurrentMute>\(Self.currentGroupMute)</CurrentMute></u:GetGroupMuteResponse></s:Body></s:Envelope>
+            """
+        } else if request.value(forHTTPHeaderField: "SOAPACTION")?.contains("#GetMute") == true {
             responseBody = """
             <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><u:GetMuteResponse xmlns:u="urn:schemas-upnp-org:service:RenderingControl:1"><CurrentMute>\(Self.currentMute)</CurrentMute></u:GetMuteResponse></s:Body></s:Envelope>
             """

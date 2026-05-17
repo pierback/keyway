@@ -240,11 +240,10 @@ struct MenuBarController: View {
     }
 
     private func applyModifierFlags(_ flags: NSEvent.ModifierFlags) {
-        let optionPressed = flags.intersection(.deviceIndependentFlagsMask).contains(.option)
-        guard optionPressed != optionKeyPressed else {
-            return
+        let modifierFlags = flags.intersection(.deviceIndependentFlagsMask)
+        let optionPressed = modifierFlags.contains(.option)
+        if optionPressed != optionKeyPressed {
+            optionKeyPressed = optionPressed
         }
-
-        optionKeyPressed = optionPressed
     }
 }

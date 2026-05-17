@@ -4,9 +4,14 @@ import SonosHandoffCore
 
 @MainActor
 final class ShortcutVolumeActionController {
-    private struct QueuedVolumeAdjustment {
-        let roomName: String
+    private struct QueuedVolumeAdjustment: Sendable {
+        let target: ShortcutVolumeTarget
         let direction: VolumeDirection
+    }
+
+    private struct ShortcutVolumeTarget: Sendable {
+        let roomName: String
+        let scope: PlaybackVolumeScope
     }
 
     private let logger = Logger(subsystem: "com.fpieringer.SonosHandoffMenuBar", category: "Hotkeys")
@@ -33,7 +38,7 @@ final class ShortcutVolumeActionController {
     }
 
     func adjustVolume(direction: VolumeDirection) {
-        guard let roomName = selectedRoomName() else {
+        guard let target = selectedVolumeTarget() else {
             logger.info("SonosHandoffHotkeys action=volume_\(direction.logName, privacy: .public) ignored reason=no_active_sonos_output")
             StatusHUD.shared.finish(
                 title: "No Sonos Playback",
@@ -43,47 +48,59 @@ final class ShortcutVolumeActionController {
             return
         }
 
-        adjustVolume(direction: direction, roomName: roomName)
+        adjustVolume(direction: direction, target: target)
     }
 
-    private func adjustVolume(direction: VolumeDirection, roomName: String) {
+    private func adjustVolume(direction: VolumeDirection, target: ShortcutVolumeTarget) {
         if volumeAdjustmentInFlight {
-            queuedVolumeAdjustment = QueuedVolumeAdjustment(roomName: roomName, direction: direction)
-            logger.info("SonosHandoffHotkeys action=volume_\(direction.logName, privacy: .public) state=queued room=\(roomName, privacy: .public)")
+            queuedVolumeAdjustment = QueuedVolumeAdjustment(target: target, direction: direction)
+            logger.info("SonosHandoffHotkeys action=volume_\(direction.logName, privacy: .public) state=queued room=\(target.roomName, privacy: .public) scope=\(target.scope.logName, privacy: .public)")
             return
         }
 
         volumeAdjustmentInFlight = true
-        StatusHUD.shared.showVolumePending(roomName: roomName, direction: direction)
+        StatusHUD.shared.showVolumePending(roomName: target.roomName, direction: direction)
         let logger = logger
         Task.detached(priority: .userInitiated) { [volumeService, volumeCommands, step, logger] in
             do {
                 let volume: Int
-                switch direction {
-                case .down:
+                switch (target.scope, direction) {
+                case (.member, .down):
                     volume = try await volumeCommands.volumeDown(
                         using: volumeService,
-                        roomName: roomName,
+                        roomName: target.roomName,
                         step: step
                     )
-                case .up:
+                case (.member, .up):
                     volume = try await volumeCommands.volumeUp(
                         using: volumeService,
-                        roomName: roomName,
+                        roomName: target.roomName,
+                        step: step
+                    )
+                case (.group, .down):
+                    volume = try await volumeCommands.groupVolumeDown(
+                        using: volumeService,
+                        coordinatorRoomName: target.roomName,
+                        step: step
+                    )
+                case (.group, .up):
+                    volume = try await volumeCommands.groupVolumeUp(
+                        using: volumeService,
+                        coordinatorRoomName: target.roomName,
                         step: step
                     )
                 }
-                logger.info("SonosHandoffHotkeys result=success action=volume_\(direction.logName, privacy: .public) room=\(roomName, privacy: .public) step=\(step, privacy: .public) volume=\(volume, privacy: .public)")
+                logger.info("SonosHandoffHotkeys result=success action=volume_\(direction.logName, privacy: .public) room=\(target.roomName, privacy: .public) scope=\(target.scope.logName, privacy: .public) step=\(step, privacy: .public) volume=\(volume, privacy: .public)")
                 await MainActor.run {
-                    SonosVolumeMonitor.shared.noteLocalChange(roomName: roomName, volume: volume, muted: false)
-                    StatusHUD.shared.showVolume(roomName: roomName, volume: volume, direction: direction)
+                    SonosVolumeMonitor.shared.noteLocalChange(roomName: target.roomName, volume: volume, muted: false)
+                    StatusHUD.shared.showVolume(roomName: target.roomName, volume: volume, direction: direction)
                     self.finishVolumeAdjustment(shouldRunQueued: true)
                 }
             } catch {
-                logger.error("SonosHandoffHotkeys result=failure action=volume_\(direction.logName, privacy: .public) room=\(roomName, privacy: .public) step=\(step, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+                logger.error("SonosHandoffHotkeys result=failure action=volume_\(direction.logName, privacy: .public) room=\(target.roomName, privacy: .public) scope=\(target.scope.logName, privacy: .public) step=\(step, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
                 await MainActor.run {
                     StatusHUD.shared.finish(
-                        title: "\(roomName) Volume Failed",
+                        title: "\(target.roomName) Volume Failed",
                         message: error.localizedDescription
                     )
                     self.finishVolumeAdjustment(shouldRunQueued: false)
@@ -98,7 +115,7 @@ final class ShortcutVolumeActionController {
 
     func toggleMute() {
         clearQueuedVolumeAdjustment()
-        guard let roomName = selectedRoomName() else {
+        guard let target = selectedVolumeTarget() else {
             logger.info("SonosHandoffHotkeys action=mute_toggle ignored reason=no_active_sonos_output")
             StatusHUD.shared.finish(
                 title: "No Sonos Playback",
@@ -108,21 +125,27 @@ final class ShortcutVolumeActionController {
             return
         }
 
-        StatusHUD.shared.showMutePending(roomName: roomName)
+        StatusHUD.shared.showMutePending(roomName: target.roomName)
         let logger = logger
         Task.detached(priority: .userInitiated) { [volumeService, volumeCommands, logger] in
             do {
-                let muted = try await volumeCommands.toggleMute(using: volumeService, roomName: roomName)
-                logger.info("SonosHandoffHotkeys result=success action=mute_toggle room=\(roomName, privacy: .public) muted=\(muted, privacy: .public)")
+                let muted: Bool
+                switch target.scope {
+                case .member:
+                    muted = try await volumeCommands.toggleMute(using: volumeService, roomName: target.roomName)
+                case .group:
+                    muted = try await volumeCommands.toggleGroupMute(using: volumeService, coordinatorRoomName: target.roomName)
+                }
+                logger.info("SonosHandoffHotkeys result=success action=mute_toggle room=\(target.roomName, privacy: .public) scope=\(target.scope.logName, privacy: .public) muted=\(muted, privacy: .public)")
                 await MainActor.run {
-                    SonosVolumeMonitor.shared.noteLocalChange(roomName: roomName, muted: muted)
-                    StatusHUD.shared.showMute(roomName: roomName, muted: muted)
+                    SonosVolumeMonitor.shared.noteLocalChange(roomName: target.roomName, muted: muted)
+                    StatusHUD.shared.showMute(roomName: target.roomName, muted: muted)
                 }
             } catch {
-                logger.error("SonosHandoffHotkeys result=failure action=mute_toggle room=\(roomName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+                logger.error("SonosHandoffHotkeys result=failure action=mute_toggle room=\(target.roomName, privacy: .public) scope=\(target.scope.logName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
                 await MainActor.run {
                     StatusHUD.shared.finish(
-                        title: "\(roomName) Mute Failed",
+                        title: "\(target.roomName) Mute Failed",
                         message: error.localizedDescription
                     )
                 }
@@ -138,15 +161,41 @@ final class ShortcutVolumeActionController {
         }
 
         queuedVolumeAdjustment = nil
-        adjustVolume(direction: adjustment.direction, roomName: adjustment.roomName)
+        adjustVolume(direction: adjustment.direction, target: adjustment.target)
     }
 
-    private func selectedRoomName() -> String? {
+    private func selectedVolumeTarget() -> ShortcutVolumeTarget? {
         if let selectedRoomName = SonosRoomName.normalized(outputSelection.roomName) {
-            return selectedRoomName
+            return ShortcutVolumeTarget(
+                roomName: selectedRoomName,
+                scope: volumeScope(roomName: selectedRoomName)
+            )
         }
 
         let config = try? configStore.load()
-        return outputPreferenceResolver.preferredRoomName(selectedRoomName: nil, config: config)
+        let preferredRoomName = outputPreferenceResolver.preferredRoomName(selectedRoomName: nil, config: config)
+        return ShortcutVolumeTarget(roomName: preferredRoomName, scope: .member)
+    }
+
+    private func volumeScope(roomName: String) -> PlaybackVolumeScope {
+        guard let selectedGroup = outputSelection.selectedGroup,
+              selectedGroup.contains(roomName: roomName),
+              selectedGroup.members.count > 1
+        else {
+            return .member
+        }
+
+        return .group
+    }
+}
+
+private extension PlaybackVolumeScope {
+    var logName: String {
+        switch self {
+        case .member:
+            "member"
+        case .group:
+            "group"
+        }
     }
 }

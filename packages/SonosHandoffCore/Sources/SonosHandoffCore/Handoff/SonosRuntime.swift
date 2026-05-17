@@ -175,4 +175,36 @@ final class SonosRuntime: @unchecked Sendable {
     func setMute(roomName: String, muted: Bool) async throws -> Bool {
         try await volumeService.setMute(roomName: roomName, muted: muted)
     }
+
+    func memberVolumeStatus(roomName: String) async throws -> SpeakerVolumeStatus {
+        try await volumeService.memberStatus(roomName: roomName)
+    }
+
+    func setMemberVolume(roomName: String, volume: Int) async throws -> Int {
+        try await volumeService.setMemberVolume(roomName: roomName, volume: volume)
+    }
+
+    func groupVolumeDown(coordinatorRoomName: String, step: Int = 5) async throws -> Int {
+        try await volumeService.groupVolumeDown(coordinatorRoomName: coordinatorRoomName, step: step)
+    }
+
+    func groupVolumeUp(coordinatorRoomName: String, step: Int = 5) async throws -> Int {
+        try await volumeService.groupVolumeUp(coordinatorRoomName: coordinatorRoomName, step: step)
+    }
+
+    func groupVolumeStatus(coordinatorRoomName: String) async throws -> SpeakerVolumeStatus {
+        try await volumeService.groupStatus(coordinatorRoomName: coordinatorRoomName)
+    }
+
+    func setGroupVolume(coordinatorRoomName: String, volume: Int) async throws -> Int {
+        try await volumeService.setGroupVolume(coordinatorRoomName: coordinatorRoomName, volume: volume)
+    }
+
+    func toggleGroupMute(coordinatorRoomName: String) async throws -> Bool {
+        try await volumeService.toggleGroupMute(coordinatorRoomName: coordinatorRoomName)
+    }
+
+    func setGroupMute(coordinatorRoomName: String, muted: Bool) async throws -> Bool {
+        try await volumeService.setGroupMute(coordinatorRoomName: coordinatorRoomName, muted: muted)
+    }
 }

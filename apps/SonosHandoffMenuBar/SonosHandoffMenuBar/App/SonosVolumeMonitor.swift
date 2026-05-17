@@ -14,6 +14,7 @@ final class SonosVolumeMonitor: ObservableObject {
     private var volumeCommands: SpeakerVolumeCommandQueue = .shared
     private var pollTask: Task<Void, Never>?
     private var selectedRoomName: String?
+    private var selectedScope = PlaybackVolumeScope.member
     private var pollInFlight = false
     private var suppressUntil = Date.distantPast
     private var suppressedRoomName: String?
@@ -42,13 +43,14 @@ final class SonosVolumeMonitor: ObservableObject {
         }
     }
 
-    func setRoomName(_ roomName: String?) {
+    func setTarget(roomName: String?, scope: PlaybackVolumeScope) {
         let normalizedRoomName = SonosRoomName.normalized(roomName)
-        guard !SonosRoomName.matches(selectedRoomName, normalizedRoomName) else {
+        guard !SonosRoomName.matches(selectedRoomName, normalizedRoomName) || selectedScope != scope else {
             return
         }
 
         selectedRoomName = normalizedRoomName
+        selectedScope = scope
         snapshot = nil
     }
 
@@ -73,20 +75,28 @@ final class SonosVolumeMonitor: ObservableObject {
         else {
             return
         }
+        let scope = selectedScope
 
         pollInFlight = true
         defer { pollInFlight = false }
 
         let result: Result<SpeakerVolumeStatus, Error>
         do {
-            result = .success(try await volumeCommands.volumeStatus(using: volumeService, roomName: roomName))
+            switch scope {
+            case .member:
+                result = .success(try await volumeCommands.volumeStatus(using: volumeService, roomName: roomName))
+            case .group:
+                result = .success(try await volumeCommands.groupVolumeStatus(using: volumeService, coordinatorRoomName: roomName))
+            }
         } catch {
             result = .failure(error)
         }
 
         switch result {
         case .success(let status):
-            guard SonosRoomName.matches(selectedRoomName, roomName) else {
+            guard SonosRoomName.matches(selectedRoomName, roomName),
+                  selectedScope == scope
+            else {
                 logger.info("SonosHandoffVolumeMonitor state=stale_ignored room=\(roomName, privacy: .public)")
                 return
             }

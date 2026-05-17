@@ -109,7 +109,7 @@ struct MenuBarOutputSection: View {
             }
 
             ForEach(playback.outputRows) { row in
-                outputRow(for: row)
+                outputRowStack(for: row)
                     .transition(MenuBarMotion.rowTransition)
             }
         }
@@ -156,50 +156,126 @@ struct MenuBarOutputSection: View {
         .padding(.horizontal, 10)
     }
 
-    private func outputRow(for row: PlaybackOutputRow) -> some View {
+    private func outputRowStack(for row: PlaybackOutputRow) -> some View {
         let selected = row.contains(roomName: playback.selectedRoomName)
+        let mixerExpanded = isMixerExpanded(row, selected: selected)
+
+        return VStack(alignment: .leading, spacing: 0) {
+            outputRow(for: row, selected: selected, mixerExpanded: mixerExpanded)
+                .task(id: mixerExpanded ? row.id : "collapsed-\(row.id)") {
+                    if mixerExpanded {
+                        playback.loadMemberVolumes(for: row)
+                    }
+                }
+
+            if mixerExpanded {
+                ForEach(playback.memberVolumeRows.filter { $0.groupID == row.id }) { memberRow in
+                    memberVolumeRow(memberRow)
+                        .transition(MenuBarMotion.rowTransition)
+                }
+            }
+        }
+        .animation(MenuBarMotion.rowUpdate, value: mixerExpanded)
+        .animation(MenuBarMotion.rowUpdate, value: playback.memberVolumeRows)
+    }
+
+    private func outputRow(for row: PlaybackOutputRow, selected: Bool, mixerExpanded: Bool) -> some View {
         let loading = row.coordinator.roomName == playback.loadingRoomName
         let subtitle = loading ? "Transferring..." : nil
 
-        return Button {
-            playback.transfer(to: row)
-        } label: {
-            HStack(spacing: 13) {
-                ZStack {
-                    Circle()
-                        .fill(outputIconBackground(selected: selected))
+        return HStack(spacing: 0) {
+            Button {
+                playback.transfer(to: row)
+            } label: {
+                HStack(spacing: 13) {
+                    ZStack {
+                        Circle()
+                            .fill(outputIconBackground(selected: selected))
 
-                    Image(systemName: outputIconName(for: row))
-                        .font(.system(size: 12, weight: .regular))
-                        .symbolRenderingMode(.monochrome)
-                        .foregroundStyle(outputIconForeground(selected: selected))
+                        Image(systemName: outputIconName(for: row))
+                            .font(.system(size: 12, weight: .regular))
+                            .symbolRenderingMode(.monochrome)
+                            .foregroundStyle(outputIconForeground(selected: selected))
+                    }
+                    .frame(width: Self.iconSize, height: Self.iconSize)
+
+                    rowTitle(row.displayName, subtitle: subtitle, dimmed: loading)
+
+                    Spacer(minLength: 0)
+
+                    rowStatus(loading: loading, selected: selected)
                 }
-                .frame(width: Self.iconSize, height: Self.iconSize)
-
-                rowTitle(row.displayName, subtitle: subtitle, dimmed: loading)
-
-                Spacer(minLength: 0)
-
-                rowStatus(loading: loading, selected: selected)
+                .frame(maxWidth: .infinity, minHeight: Self.rowHeight, alignment: .leading)
+                .padding(.leading, 12)
             }
-            .frame(maxWidth: .infinity, minHeight: Self.rowHeight, alignment: .leading)
-            .padding(.horizontal, 12)
-            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .background {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(selected ? Self.accentColor.opacity(0.11) : Color.clear)
+            .buttonStyle(.plain)
+            .disabled(playback.loadingRoomName != nil || playback.groupLoadingRoomName != nil || playback.volumeState.isBusy)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("transfer-to-\(row.coordinator.roomName)")
+            .accessibilityLabel("Transfer to \(row.displayName)")
+            .accessibilityValue(selected ? "Selected" : "")
+            .accessibilityHint("Hands off Spotify playback to \(row.displayName)")
+
+            if selected && row.isGroup {
+                Button {
+                    playback.toggleMixer(for: row)
+                } label: {
+                    Image(systemName: mixerExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color.secondary.opacity(0.85))
+                        .frame(width: 24, height: Self.rowHeight)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(playback.loadingRoomName != nil || playback.groupLoadingRoomName != nil)
+                .accessibilityIdentifier("mixer-toggle-\(row.coordinator.roomName)")
+                .accessibilityLabel(mixerExpanded ? "Collapse \(row.displayName) mixer" : "Expand \(row.displayName) mixer")
             }
-            .animation(MenuBarMotion.selection, value: selected)
-            .animation(MenuBarMotion.selection, value: loading)
         }
-        .buttonStyle(.plain)
-        .disabled(playback.loadingRoomName != nil || playback.groupLoadingRoomName != nil || playback.volumeState.isBusy)
+        .padding(.trailing, selected && row.isGroup ? 4 : 12)
+        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(selected ? Self.accentColor.opacity(0.11) : Color.clear)
+        }
+        .animation(MenuBarMotion.selection, value: selected)
+        .animation(MenuBarMotion.selection, value: loading)
         .padding(.horizontal, 8)
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("transfer-to-\(row.coordinator.roomName)")
-        .accessibilityLabel("Transfer to \(row.displayName)")
-        .accessibilityValue(selected ? "Selected" : "")
-        .accessibilityHint("Hands off Spotify playback to \(row.displayName)")
+    }
+
+    private func memberVolumeRow(_ row: PlaybackMemberVolumeRow) -> some View {
+        HStack(spacing: 9) {
+            Image(systemName: "hifispeaker")
+                .font(.system(size: 11, weight: .regular))
+                .foregroundStyle(Color.secondary.opacity(0.82))
+                .frame(width: 14, height: 18)
+
+            Text(row.speaker.roomName)
+                .font(.system(size: 12, weight: .regular))
+                .foregroundStyle(Color.primary.opacity(0.82))
+                .lineLimit(1)
+                .frame(width: 74, alignment: .leading)
+
+            MemberVolumeSlider(playback: playback, row: row)
+                .opacity(row.state.hasStatus && !row.state.outputFixed ? 1 : 0.48)
+                .disabled(!row.state.hasStatus || row.state.outputFixed || row.state.isBusy)
+
+            if row.state.isBusy {
+                ProgressView()
+                    .controlSize(.small)
+                    .scaleEffect(0.52)
+                    .frame(width: 25, height: 18)
+            } else {
+                Text(row.state.hasStatus ? "\(row.state.roundedValue)%" : "--")
+                    .font(.system(size: 11, weight: .regular, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    .frame(width: 25, alignment: .trailing)
+            }
+        }
+        .frame(height: 28)
+        .padding(.leading, 43)
+        .padding(.trailing, 14)
     }
 
     private func groupSuggestionRow(_ suggestion: PlaybackGroupSuggestion) -> some View {
@@ -406,6 +482,14 @@ struct MenuBarOutputSection: View {
         selected ? Color.white.opacity(0.96) : Color.secondary.opacity(0.85)
     }
 
+    private func isMixerExpanded(_ row: PlaybackOutputRow, selected: Bool) -> Bool {
+        guard row.isGroup, selected else {
+            return false
+        }
+
+        return playback.isMixerPinned(for: row)
+    }
+
     private func groupIconName(for row: PlaybackGroupEditRow) -> String {
         if row.isGroup {
             return "hifispeaker.2"
@@ -442,5 +526,71 @@ struct MenuBarOutputSection: View {
             }
             return "Move coordinator and remove \(row.speaker.roomName) from group"
         }
+    }
+}
+
+@MainActor
+private struct MemberVolumeSlider: View {
+    @ObservedObject var playback: PlaybackSyncController
+    let row: PlaybackMemberVolumeRow
+
+    var body: some View {
+        GeometryReader { proxy in
+            track(width: proxy.size.width)
+        }
+        .frame(height: 18)
+        .contentShape(Rectangle())
+        .accessibilityLabel("\(row.speaker.roomName) volume")
+        .accessibilityIdentifier("member-volume-\(row.speaker.roomName)")
+        .accessibilityValue(row.state.hasStatus ? "\(row.state.roundedValue) percent" : "Unknown")
+    }
+
+    private func track(width: CGFloat) -> some View {
+        let trackWidth = max(width, 1)
+        let clampedVolume = min(max(row.state.value, 0), 100)
+        let progress = CGFloat(clampedVolume / 100)
+        let knobSize: CGFloat = 12
+        let knobOffset = min(max((trackWidth * progress) - (knobSize / 2), 0), max(trackWidth - knobSize, 0))
+
+        return ZStack(alignment: .leading) {
+            Capsule()
+                .fill(Color.white.opacity(0.18))
+                .frame(height: 3)
+
+            Capsule()
+                .fill(Color.white.opacity(0.76))
+                .frame(width: max(trackWidth * progress, knobSize / 2), height: 3)
+
+            Circle()
+                .fill(Color.white.opacity(0.94))
+                .frame(width: knobSize, height: knobSize)
+                .offset(x: knobOffset)
+                .shadow(color: .black.opacity(0.2), radius: 0.6, y: 0.4)
+        }
+        .frame(height: 18)
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    guard row.state.hasStatus, !row.state.outputFixed, !row.state.isBusy else {
+                        return
+                    }
+                    playback.setMemberVolumeFromSlider(
+                        rowID: row.id,
+                        locationX: value.location.x,
+                        width: trackWidth
+                    )
+                }
+                .onEnded { value in
+                    guard row.state.hasStatus, !row.state.outputFixed, !row.state.isBusy else {
+                        return
+                    }
+                    playback.setMemberVolumeFromSlider(
+                        rowID: row.id,
+                        locationX: value.location.x,
+                        width: trackWidth
+                    )
+                    playback.commitMemberVolume(rowID: row.id)
+                }
+        )
     }
 }

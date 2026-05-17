@@ -86,6 +86,83 @@ public actor SpeakerVolumeCommandQueue {
         }
     }
 
+    public func memberVolumeStatus(
+        using volumeService: any SpeakerVolumeAdjusting,
+        roomName: String
+    ) async throws -> SpeakerVolumeStatus {
+        try await run {
+            try await volumeService.memberVolumeStatus(roomName: roomName)
+        }
+    }
+
+    public func setMemberVolume(
+        using volumeService: any SpeakerVolumeAdjusting,
+        roomName: String,
+        volume: Int
+    ) async throws -> Int {
+        try await run {
+            try await volumeService.setMemberVolume(roomName: roomName, volume: volume)
+        }
+    }
+
+    public func groupVolumeStatus(
+        using volumeService: any SpeakerVolumeAdjusting,
+        coordinatorRoomName: String
+    ) async throws -> SpeakerVolumeStatus {
+        try await run {
+            try await volumeService.groupVolumeStatus(coordinatorRoomName: coordinatorRoomName)
+        }
+    }
+
+    public func setGroupVolume(
+        using volumeService: any SpeakerVolumeAdjusting,
+        coordinatorRoomName: String,
+        volume: Int
+    ) async throws -> Int {
+        try await run {
+            try await volumeService.setGroupVolume(coordinatorRoomName: coordinatorRoomName, volume: volume)
+        }
+    }
+
+    public func groupVolumeDown(
+        using volumeService: any SpeakerVolumeAdjusting,
+        coordinatorRoomName: String,
+        step: Int
+    ) async throws -> Int {
+        try await run {
+            try await volumeService.groupVolumeDown(coordinatorRoomName: coordinatorRoomName, step: step)
+        }
+    }
+
+    public func groupVolumeUp(
+        using volumeService: any SpeakerVolumeAdjusting,
+        coordinatorRoomName: String,
+        step: Int
+    ) async throws -> Int {
+        try await run {
+            try await volumeService.groupVolumeUp(coordinatorRoomName: coordinatorRoomName, step: step)
+        }
+    }
+
+    public func toggleGroupMute(
+        using volumeService: any SpeakerVolumeAdjusting,
+        coordinatorRoomName: String
+    ) async throws -> Bool {
+        try await run {
+            try await volumeService.toggleGroupMute(coordinatorRoomName: coordinatorRoomName)
+        }
+    }
+
+    public func setGroupMute(
+        using volumeService: any SpeakerVolumeAdjusting,
+        coordinatorRoomName: String,
+        muted: Bool
+    ) async throws -> Bool {
+        try await run {
+            try await volumeService.setGroupMute(coordinatorRoomName: coordinatorRoomName, muted: muted)
+        }
+    }
+
     private func run<Result: Sendable>(
         _ operation: @Sendable @escaping () async throws -> Result
     ) async throws -> Result {
