@@ -9,57 +9,27 @@ typealias PlaybackGroupSuggestion = SonosGroupSuggestion
 @MainActor
 final class PlaybackGroupSuggestionStore: ObservableObject {
     @Published private(set) var suggestions: [PlaybackGroupSuggestion] = []
+    private var collection = SonosGroupSuggestionCollection()
 
     func present(_ suggestion: PlaybackGroupSuggestion) {
-        if let index = suggestions.firstIndex(where: { $0.matches(identifier: suggestion.id) }) {
-            suggestions[index] = suggestion
-            return
-        }
-
-        suggestions.append(suggestion)
+        collection.present(suggestion)
+        suggestions = collection.suggestions
     }
 
     func refresh(_ candidates: [SonosGroupSuggestionCandidate]) -> [PlaybackGroupSuggestion] {
-        guard !candidates.isEmpty else {
-            return []
-        }
-
-        var refreshedBySpeakerID: [String: SonosGroupSuggestionCandidate] = [:]
-        for candidate in candidates {
-            refreshedBySpeakerID[candidate.speaker.id] = candidate
-        }
-        var changedSuggestions: [PlaybackGroupSuggestion] = []
-        suggestions = suggestions.map { suggestion in
-            guard let candidate = refreshedBySpeakerID[suggestion.speaker.id] else {
-                return suggestion
-            }
-
-            let refreshedSuggestion = suggestion.refreshed(with: candidate)
-            if refreshedSuggestion != suggestion {
-                changedSuggestions.append(refreshedSuggestion)
-            }
-            return refreshedSuggestion
-        }
+        let changedSuggestions = collection.refresh(candidates)
+        suggestions = collection.suggestions
         return changedSuggestions
     }
 
     func clear(id: String? = nil) {
-        guard let id else {
-            suggestions = []
-            return
-        }
-
-        suggestions.removeAll { $0.matches(identifier: id) }
+        collection.clear(id: id)
+        suggestions = collection.suggestions
     }
 
     func clear(ids: Set<String>) {
-        guard !ids.isEmpty else {
-            return
-        }
-
-        suggestions.removeAll { suggestion in
-            ids.contains { suggestion.matches(identifier: $0) }
-        }
+        collection.clear(ids: ids)
+        suggestions = collection.suggestions
     }
 }
 
