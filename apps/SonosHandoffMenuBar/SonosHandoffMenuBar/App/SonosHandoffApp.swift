@@ -132,6 +132,7 @@ private final class PlaybackBackgroundSync {
     private var lastSeenSpeakerIDs: Set<String>?
     private var hasShownAuthPrompt = false
     private var groupSuggestionActionCancellable: AnyCancellable?
+    private var groupSuggestionIgnoreCancellable: AnyCancellable?
 
     init(
         environment: AppEnvironment,
@@ -148,6 +149,17 @@ private final class PlaybackBackgroundSync {
 
                 Task { @MainActor [weak self] in
                     await self?.acceptGroupSuggestion(id: suggestionID)
+                }
+            }
+        self.groupSuggestionIgnoreCancellable = NotificationCenter.default
+            .publisher(for: .sonosHandoffIgnoreGroupSuggestion)
+            .sink { [weak self] notification in
+                guard let suggestionID = notification.object as? String else {
+                    return
+                }
+
+                Task { @MainActor [weak self] in
+                    self?.ignoreGroupSuggestion(id: suggestionID)
                 }
             }
     }
@@ -376,6 +388,12 @@ private final class PlaybackBackgroundSync {
             logger.error("SonosHandoffGroupSuggestion result=notification_failure room=\(suggestion.speaker.roomName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
             groupSuggestionNotifier.deliverFailure(suggestion)
         }
+    }
+
+    private func ignoreGroupSuggestion(id: String) {
+        environment.groupSuggestionStore.clear(id: id)
+        groupSuggestionNotifier.cancelSuggestion(id: id)
+        logger.info("SonosHandoffGroupSuggestion result=ignored id=\(id, privacy: .public)")
     }
 
     private func activePlaybackRoomNameForSuggestionRefresh() async -> String? {

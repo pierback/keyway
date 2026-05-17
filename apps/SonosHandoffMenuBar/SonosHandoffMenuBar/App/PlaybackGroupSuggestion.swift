@@ -36,6 +36,7 @@ final class PlaybackGroupSuggestionStore: ObservableObject {
 enum PlaybackGroupSuggestionNotification {
     static let categoryIdentifier = "sonos-handoff.group-suggestion"
     static let groupActionIdentifier = "sonos-handoff.group-suggestion.group"
+    static let ignoreActionIdentifier = "sonos-handoff.group-suggestion.ignore"
 }
 
 @MainActor
@@ -53,9 +54,14 @@ final class PlaybackGroupSuggestionNotifier {
             title: "Group",
             options: []
         )
+        let ignoreAction = UNNotificationAction(
+            identifier: PlaybackGroupSuggestionNotification.ignoreActionIdentifier,
+            title: "Ignore",
+            options: []
+        )
         let category = UNNotificationCategory(
             identifier: PlaybackGroupSuggestionNotification.categoryIdentifier,
-            actions: [groupAction],
+            actions: [groupAction, ignoreAction],
             intentIdentifiers: [],
             options: []
         )

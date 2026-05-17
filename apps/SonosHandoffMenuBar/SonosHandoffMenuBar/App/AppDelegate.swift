@@ -45,9 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             completionHandler()
         }
 
-        guard response.notification.request.content.categoryIdentifier == PlaybackGroupSuggestionNotification.categoryIdentifier,
-              response.actionIdentifier == PlaybackGroupSuggestionNotification.groupActionIdentifier
-        else {
+        guard response.notification.request.content.categoryIdentifier == PlaybackGroupSuggestionNotification.categoryIdentifier else {
             return
         }
 
@@ -55,9 +53,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             logger.error("SonosHandoffGroupSuggestionNotification action=ignored reason=missing_suggestion_id")
             return
         }
+        let actionIdentifier = response.actionIdentifier
 
         Task { @MainActor in
-            NotificationCenter.default.post(name: .sonosHandoffAcceptGroupSuggestion, object: suggestionID)
+            switch actionIdentifier {
+            case PlaybackGroupSuggestionNotification.groupActionIdentifier:
+                NotificationCenter.default.post(name: .sonosHandoffAcceptGroupSuggestion, object: suggestionID)
+            case PlaybackGroupSuggestionNotification.ignoreActionIdentifier:
+                NotificationCenter.default.post(name: .sonosHandoffIgnoreGroupSuggestion, object: suggestionID)
+            default:
+                break
+            }
         }
     }
 
