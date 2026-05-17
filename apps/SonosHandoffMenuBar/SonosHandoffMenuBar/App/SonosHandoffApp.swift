@@ -311,24 +311,54 @@ private final class PlaybackBackgroundSync {
             )
             environment.groupSuggestionStore.clear(id: suggestion.id)
             groupSuggestionNotifier.cancelSuggestion(id: suggestion.id)
+            let activeRoomName = await activePlaybackRoomNameForSuggestionRefresh()
             let refresh = try await environment.outputDirectory.refresh(
-                currentRoomName: suggestion.coordinatorRoomName
+                currentRoomName: activeRoomName ?? suggestion.coordinatorRoomName
             )
             lastDiscoveryRefresh = Date()
-            let refreshedRoomName = refresh.selectedRoomName ?? suggestion.coordinatorRoomName
-            if let selectedRoomName = refresh.selectedRoomName {
+            let selectedRoomName = activeRoomName == nil ? nil : refresh.selectedRoomName
+            let refreshedRoomName = selectedRoomName ?? activeRoomName ?? suggestion.coordinatorRoomName
+            if let selectedRoomName {
                 selectRoomName(selectedRoomName)
+            } else {
+                let reason = activeRoomName == nil
+                    ? "notification_grouping_no_active_playback"
+                    : "notification_grouping_active_device_not_visible"
+                clearSelection(reason: reason)
             }
             updateGroupSuggestion(
                 refresh: refresh,
-                selectedRoomName: refresh.selectedRoomName,
-                spotifyPlaying: true
+                selectedRoomName: selectedRoomName,
+                spotifyPlaying: activeRoomName != nil
             )
             NotificationCenter.default.post(name: .sonosHandoffRefreshOutputs, object: refreshedRoomName)
             logger.info("SonosHandoffGroupSuggestion result=notification_accepted room=\(suggestion.speaker.roomName, privacy: .public) coordinator=\(suggestion.coordinatorRoomName, privacy: .public)")
         } catch {
             logger.error("SonosHandoffGroupSuggestion result=notification_failure room=\(suggestion.speaker.roomName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
             groupSuggestionNotifier.deliverFailure(suggestion)
+        }
+    }
+
+    private func activePlaybackRoomNameForSuggestionRefresh() async -> String? {
+        do {
+            guard let status = try await environment.activePlaybackObserver.activePlaybackDeviceStatus(),
+                  status.isPlaying
+            else {
+                return nil
+            }
+
+            return SonosRoomName.normalized(status.deviceName)
+        } catch {
+            if SpotifyAuthRecovery.isAuthRequired(error) {
+                environment.groupSuggestionStore.clear()
+                groupSuggestionNotifier.cancelAllSuggestions()
+                clearSelection(reason: "spotify_auth_required")
+                showAuthPromptIfNeeded(error)
+                return nil
+            }
+
+            logger.info("SonosHandoffGroupSuggestion active_playback=unavailable error=\(error.localizedDescription, privacy: .public)")
+            return nil
         }
     }
 
