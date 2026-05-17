@@ -52,6 +52,18 @@ struct SonosOutputSelectionResolverTests {
     }
 
     @Test
+    func selectsGroupCoordinatorWhenSpotifyUsesMultiMemberCountSuffix() {
+        let selected = resolver.selectedRoomName(
+            currentRoomName: "Kitchen + 2",
+            groups: [
+                group(coordinator: "Kitchen", members: ["Kitchen", "Port", "Office"]),
+            ]
+        )
+
+        #expect(selected == "Kitchen")
+    }
+
+    @Test
     func returnsNilWhenCurrentOutputIsNotVisible() {
         let selected = resolver.selectedRoomName(
             currentRoomName: "Office",
