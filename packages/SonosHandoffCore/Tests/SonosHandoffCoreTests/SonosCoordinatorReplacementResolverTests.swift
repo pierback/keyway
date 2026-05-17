@@ -34,6 +34,24 @@ struct SonosCoordinatorReplacementResolverTests {
         #expect(replacement == nil)
     }
 
+    @Test
+    func usesEffectiveCoordinatorWhenCoordinatorIDIsMissingFromMembers() {
+        let replacement = resolver.replacement(
+            in: SonosSpeakerGroup(
+                id: "RINCON_MISSING:group",
+                coordinatorID: "RINCON_MISSING",
+                members: [
+                    speaker("Kitchen"),
+                    speaker("Port"),
+                    speaker("Office"),
+                ]
+            ),
+            removingCoordinatorID: "RINCON_KITCHEN"
+        )
+
+        #expect(replacement?.roomName == "Port")
+    }
+
     private func group(coordinator: String, members roomNames: [String]) -> SonosSpeakerGroup {
         SonosSpeakerGroup(
             id: "RINCON_\(coordinator.uppercased()):group",

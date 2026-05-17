@@ -56,7 +56,6 @@ final class SonosGroupingService: @unchecked Sendable {
         }
 
         guard let oldCoordinator = group.coordinator,
-              oldCoordinator.id == group.coordinatorID,
               SonosRoomName.matches(oldCoordinator.roomName, coordinatorRoomName)
         else {
             throw ConnectHandoffError(.targetNotVisible, "\(coordinatorRoomName) is not the coordinator for \(group.displayName)")

@@ -5,7 +5,7 @@ public struct SonosCoordinatorReplacementResolver: Sendable {
         in group: SonosSpeakerGroup,
         removingCoordinatorID coordinatorID: String
     ) -> SonosSpeaker? {
-        guard group.coordinatorID == coordinatorID,
+        guard group.coordinator?.id == coordinatorID,
               group.members.count > 1
         else {
             return nil

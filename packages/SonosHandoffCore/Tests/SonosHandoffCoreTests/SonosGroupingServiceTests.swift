@@ -37,6 +37,37 @@ struct SonosGroupingServiceTests {
     }
 
     @Test
+    func removeCoordinatorUsesEffectiveCoordinatorWhenCoordinatorIDIsMissingFromMembers() async throws {
+        GroupingServiceURLProtocol.reset(
+            topologyResponse: Self.topologyEnvelope(
+                """
+                <ZoneGroups>
+                  <ZoneGroup Coordinator="RINCON_MISSING" ID="RINCON_MISSING:123">
+                    <ZoneGroupMember UUID="RINCON_KITCHEN" ZoneName="Kitchen" Location="http://kitchen.local:1400/xml/device_description.xml"/>
+                    <ZoneGroupMember UUID="RINCON_PORT" ZoneName="Port" Location="http://port.local:1400/xml/device_description.xml"/>
+                    <ZoneGroupMember UUID="RINCON_OFFICE" ZoneName="Office" Location="http://office.local:1400/xml/device_description.xml"/>
+                  </ZoneGroup>
+                </ZoneGroups>
+                """
+            )
+        )
+        let service = Self.groupingService()
+
+        try await service.removeCoordinator(
+            groupID: "RINCON_MISSING:123",
+            coordinatorRoomName: "Kitchen",
+            replacementRoomName: "Port"
+        )
+
+        let avTransportRequests = GroupingServiceURLProtocol.snapshot()
+            .filter { $0.url?.path == "/MediaRenderer/AVTransport/Control" }
+        #expect(avTransportRequests.map { $0.url?.host } == ["port.local", "office.local"])
+        #expect(avTransportRequests[0].soapAction == "\"urn:schemas-upnp-org:service:AVTransport:1#BecomeCoordinatorOfStandaloneGroup\"")
+        #expect(avTransportRequests[1].body.contains("<CurrentURI>x-rincon:RINCON_PORT</CurrentURI>"))
+        #expect(avTransportRequests.contains { $0.url?.host == "kitchen.local" } == false)
+    }
+
+    @Test
     func migrateCoordinatorRejoinsEveryOtherMemberToNewCoordinator() async throws {
         GroupingServiceURLProtocol.reset(
             topologyResponse: Self.topologyEnvelope(

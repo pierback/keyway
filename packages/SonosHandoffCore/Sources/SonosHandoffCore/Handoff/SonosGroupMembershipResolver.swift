@@ -49,7 +49,7 @@ public struct SonosGroupMembershipResolver: Sendable {
 
         return orderedSpeakers(speakers, selectedGroup: selectedGroup).map { speaker in
             let membership: SonosGroupMembership
-            if speaker.id == selectedGroup.coordinatorID {
+            if speaker.id == selectedGroup.coordinator?.id {
                 membership = .coordinator
             } else if selectedGroup.members.contains(where: { $0.id == speaker.id }) {
                 membership = .member

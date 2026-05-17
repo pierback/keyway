@@ -59,6 +59,26 @@ struct SonosGroupMembershipResolverTests {
         #expect(rows[1].canToggle == true)
     }
 
+    @Test
+    func marksEffectiveCoordinatorWhenCoordinatorIDIsMissingFromMembers() {
+        let rows = resolver.rows(
+            speakers: [
+                speaker("Kitchen"),
+                speaker("Port"),
+                speaker("Office"),
+            ],
+            selectedGroup: SonosSpeakerGroup(
+                id: "RINCON_MISSING:group",
+                coordinatorID: "RINCON_MISSING",
+                members: [speaker("Kitchen"), speaker("Port")]
+            )
+        )
+
+        #expect(rows.map(\.speaker.roomName) == ["Kitchen", "Port", "Office"])
+        #expect(rows.map(\.membership) == [.coordinator, .member, .available])
+        #expect(rows.map(\.canToggle) == [true, true, true])
+    }
+
     private func group(coordinator: String, members roomNames: [String]) -> SonosSpeakerGroup {
         SonosSpeakerGroup(
             id: "RINCON_\(coordinator.uppercased()):group",
