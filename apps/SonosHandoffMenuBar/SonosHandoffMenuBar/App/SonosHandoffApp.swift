@@ -208,6 +208,7 @@ private final class PlaybackBackgroundSync {
         selectedRoomName: String?,
         spotifyPlaying: Bool
     ) {
+        let state = SonosGroupState(groups: refresh.rows.map(\.group))
         let currentSpeakerIDs = Set(refresh.speakers.map(\.id))
         let previousSpeakerIDs = lastSeenSpeakerIDs
         defer {
@@ -215,29 +216,26 @@ private final class PlaybackBackgroundSync {
         }
 
         guard spotifyPlaying,
-              let selectedRoomName,
-              let currentGroup = refresh.rows.first(where: { $0.contains(roomName: selectedRoomName) })?.group,
-              let coordinator = currentGroup.coordinator
+              let selectedRoomName
         else {
             environment.groupSuggestionStore.clear()
             return
         }
 
         if let currentSuggestion = environment.groupSuggestionStore.suggestion {
-            let suggestionStillVisible = currentSpeakerIDs.contains(currentSuggestion.speaker.id)
-            let suggestionAlreadyJoined = currentGroup.members.contains { $0.id == currentSuggestion.speaker.id }
-            let suggestionTargetsCurrentCoordinator = SonosRoomName.matches(
-                currentSuggestion.coordinatorRoomName,
-                coordinator.roomName
+            let keepSuggestion = groupSuggestionResolver.suggestionStillValid(
+                speakerID: currentSuggestion.speaker.id,
+                coordinatorRoomName: currentSuggestion.coordinatorRoomName,
+                in: state,
+                selectedRoomName: selectedRoomName
             )
-            if !suggestionStillVisible || suggestionAlreadyJoined || !suggestionTargetsCurrentCoordinator {
-                environment.groupSuggestionStore.clear(id: currentSuggestion.id)
-            } else {
+            if keepSuggestion {
                 return
+            } else {
+                environment.groupSuggestionStore.clear(id: currentSuggestion.id)
             }
         }
 
-        let state = SonosGroupState(groups: refresh.rows.map(\.group))
         guard let candidate = groupSuggestionResolver.suggestion(
             in: state,
             selectedRoomName: selectedRoomName,

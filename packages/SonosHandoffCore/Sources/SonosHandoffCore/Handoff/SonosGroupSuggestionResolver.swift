@@ -54,6 +54,24 @@ public struct SonosGroupSuggestionResolver: Sendable {
         )
     }
 
+    public func suggestionStillValid(
+        speakerID: String,
+        coordinatorRoomName: String,
+        in state: SonosGroupState,
+        selectedRoomName: String?
+    ) -> Bool {
+        guard let selectedRoomName,
+              let currentGroup = state.groups.first(where: { $0.contains(roomName: selectedRoomName) }),
+              let coordinator = currentGroup.coordinator,
+              SonosRoomName.matches(coordinatorRoomName, coordinator.roomName),
+              !currentGroup.members.contains(where: { $0.id == speakerID })
+        else {
+            return false
+        }
+
+        return standaloneSpeakers(in: state).contains { $0.id == speakerID }
+    }
+
     private func eligibleSpeakerIDs(
         in state: SonosGroupState,
         previousSpeakerIDs: Set<String>?,

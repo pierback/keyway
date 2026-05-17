@@ -83,6 +83,59 @@ struct SonosGroupSuggestionResolverTests {
         #expect(candidate == nil)
     }
 
+    @Test
+    func keepsCurrentSuggestionWhileStandaloneSpeakerStillTargetsCurrentCoordinator() {
+        let keepSuggestion = resolver.suggestionStillValid(
+            speakerID: "RINCON_OFFICE",
+            coordinatorRoomName: "Kitchen",
+            in: groupState,
+            selectedRoomName: "Kitchen"
+        )
+
+        #expect(keepSuggestion)
+    }
+
+    @Test
+    func clearsCurrentSuggestionAfterSpeakerJoinedCurrentGroup() {
+        let keepSuggestion = resolver.suggestionStillValid(
+            speakerID: "RINCON_OFFICE",
+            coordinatorRoomName: "Kitchen",
+            in: SonosGroupState(groups: [
+                group(coordinator: "Kitchen", members: ["Kitchen", "Port", "Office"]),
+            ]),
+            selectedRoomName: "Kitchen"
+        )
+
+        #expect(!keepSuggestion)
+    }
+
+    @Test
+    func clearsCurrentSuggestionWhenPlaybackMovedToAnotherCoordinator() {
+        let keepSuggestion = resolver.suggestionStillValid(
+            speakerID: "RINCON_OFFICE",
+            coordinatorRoomName: "Kitchen",
+            in: groupState,
+            selectedRoomName: "Office"
+        )
+
+        #expect(!keepSuggestion)
+    }
+
+    @Test
+    func clearsCurrentSuggestionWhenSpeakerIsNoLongerStandalone() {
+        let keepSuggestion = resolver.suggestionStillValid(
+            speakerID: "RINCON_OFFICE",
+            coordinatorRoomName: "Kitchen",
+            in: SonosGroupState(groups: [
+                kitchenPortGroup,
+                group(coordinator: "Office", members: ["Office", "Bath"]),
+            ]),
+            selectedRoomName: "Kitchen"
+        )
+
+        #expect(!keepSuggestion)
+    }
+
     private var groupState: SonosGroupState {
         SonosGroupState(groups: [
             kitchenPortGroup,
@@ -112,6 +165,14 @@ struct SonosGroupSuggestionResolverTests {
     private func standalone(_ roomName: String) -> SonosSpeakerGroup {
         let speaker = speaker(roomName)
         return SonosSpeakerGroup(id: speaker.id, coordinatorID: speaker.id, members: [speaker])
+    }
+
+    private func group(coordinator: String, members roomNames: [String]) -> SonosSpeakerGroup {
+        SonosSpeakerGroup(
+            id: "RINCON_\(coordinator.uppercased()):group",
+            coordinatorID: "RINCON_\(coordinator.uppercased())",
+            members: roomNames.map(speaker)
+        )
     }
 
     private func speaker(_ roomName: String) -> SonosSpeaker {
