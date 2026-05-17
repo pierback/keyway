@@ -34,6 +34,7 @@ final class PlaybackSyncController: ObservableObject {
     private let transferActions: PlaybackTransferActionController
     private let groupSuggestionStore: PlaybackGroupSuggestionStore
     private let groupSuggestionNotifier: PlaybackGroupSuggestionNotifier
+    private let groupSuggestionPresenter: PlaybackGroupSuggestionPresenter
     private let shortcutLogger = os.Logger(subsystem: "com.fpieringer.SonosHandoffMenuBar", category: "Shortcuts")
     private var monitorCancellable: AnyCancellable?
     private var outputSelectionCancellable: AnyCancellable?
@@ -67,6 +68,10 @@ final class PlaybackSyncController: ObservableObject {
             volumeMonitor: volumeMonitor
         )
         self.transferActions = transferActions ?? PlaybackTransferActionController(environment: environment)
+        self.groupSuggestionPresenter = PlaybackGroupSuggestionPresenter(
+            store: environment.groupSuggestionStore,
+            notifier: environment.groupSuggestionNotifier
+        )
         self.monitorCancellable = volumeMonitor.$snapshot.sink { [weak self] snapshot in
             guard let self else {
                 return
@@ -307,12 +312,7 @@ final class PlaybackSyncController: ObservableObject {
             selectedRoomName: selectedRoomName,
             currentSuggestions: groupSuggestionStore.suggestions.map(\.reference)
         )
-        groupSuggestionStore.clear(ids: update.staleSuggestionIDs)
-        groupSuggestionNotifier.cancelSuggestions(ids: update.staleSuggestionIDs)
-        let refreshedSuggestions = groupSuggestionStore.refresh(update.refreshedSuggestions)
-        for suggestion in refreshedSuggestions {
-            groupSuggestionNotifier.deliverSuggestion(suggestion)
-        }
+        groupSuggestionPresenter.apply(update)
     }
 
     private func preferredCurrentRoomName() -> String? {
@@ -510,8 +510,7 @@ final class PlaybackSyncController: ObservableObject {
     }
 
     private func clearGroupSuggestions() {
-        groupSuggestionStore.clear()
-        groupSuggestionNotifier.cancelAllSuggestions()
+        groupSuggestionPresenter.clearAll()
     }
 
     private func groupSuggestionRejectionMessage(_ rejection: SonosGroupSuggestionAcceptanceRejection) -> String {

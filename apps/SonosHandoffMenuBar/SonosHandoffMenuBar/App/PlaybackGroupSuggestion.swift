@@ -33,6 +33,63 @@ final class PlaybackGroupSuggestionStore: ObservableObject {
     }
 }
 
+@MainActor
+final class PlaybackGroupSuggestionPresenter {
+    private let store: PlaybackGroupSuggestionStore
+    private let notifier: PlaybackGroupSuggestionNotifier
+
+    init(
+        store: PlaybackGroupSuggestionStore,
+        notifier: PlaybackGroupSuggestionNotifier
+    ) {
+        self.store = store
+        self.notifier = notifier
+    }
+
+    func apply(_ refresh: SonosGroupSuggestionRefresh) {
+        store.clear(ids: refresh.staleSuggestionIDs)
+        notifier.cancelSuggestions(ids: refresh.staleSuggestionIDs)
+        let refreshedSuggestions = store.refresh(refresh.refreshedSuggestions)
+        for suggestion in refreshedSuggestions {
+            notifier.deliverSuggestion(suggestion)
+        }
+    }
+
+    @discardableResult
+    func apply(
+        _ update: SonosGroupSuggestionUpdate,
+        detectedAt: Date = Date()
+    ) -> PlaybackGroupSuggestion? {
+        apply(SonosGroupSuggestionRefresh(
+            staleSuggestionIDs: update.staleSuggestionIDs,
+            refreshedSuggestions: update.refreshedSuggestions
+        ))
+
+        switch update.action {
+        case .none, .keepCurrent:
+            return nil
+        case .clearCurrent:
+            clearAll()
+            return nil
+        case .present(let candidate):
+            let suggestion = PlaybackGroupSuggestion(candidate: candidate, detectedAt: detectedAt)
+            store.present(suggestion)
+            notifier.deliverSuggestion(suggestion)
+            return suggestion
+        }
+    }
+
+    func clear(id: String) {
+        store.clear(id: id)
+        notifier.cancelSuggestion(id: id)
+    }
+
+    func clearAll() {
+        store.clear()
+        notifier.cancelAllSuggestions()
+    }
+}
+
 enum PlaybackGroupSuggestionNotification {
     static let categoryIdentifier = "sonos-handoff.group-suggestion"
     static let groupActionIdentifier = "sonos-handoff.group-suggestion.group"
