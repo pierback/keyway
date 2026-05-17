@@ -20,6 +20,13 @@ public enum SonosGroupingReadinessIssue: String, Equatable, Sendable {
     }
 }
 
+public enum SonosGroupingValidationScope: String, Equatable, Sendable {
+    case none = "none"
+    case standaloneJoinAndRemoval = "standalone_join_remove"
+    case coordinatorRemoval = "coordinator_remove"
+    case full = "full"
+}
+
 public struct SonosGroupingReadinessReport: Equatable, Sendable {
     public let issues: [SonosGroupingReadinessIssue]
     public let activeRoomName: String?
@@ -66,6 +73,19 @@ public struct SonosGroupingReadinessReport: Equatable, Sendable {
 
     public var canValidateAnyMutation: Bool {
         canValidateStandaloneJoinAndRemoval || canValidateCoordinatorRemoval
+    }
+
+    public var validationScope: SonosGroupingValidationScope {
+        switch (canValidateStandaloneJoinAndRemoval, canValidateCoordinatorRemoval) {
+        case (true, true):
+            return .full
+        case (true, false):
+            return .standaloneJoinAndRemoval
+        case (false, true):
+            return .coordinatorRemoval
+        case (false, false):
+            return .none
+        }
     }
 }
 

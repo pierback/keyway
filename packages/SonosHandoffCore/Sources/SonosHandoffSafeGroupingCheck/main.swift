@@ -55,6 +55,8 @@ struct SafeGroupingCheck {
               3. if possible, removes the current coordinator and transfers playback to a
                  replacement using coordinator-migration verification, failing if the operation
                  takes longer than 2 seconds
+            Dry-run and prepared modes print grouping_validation_scope=full when both mutation
+            paths are available, or a narrower scope when only part of the validation can run.
 
             Use \(restoreFlag) with mutation mode to add the old coordinator back and migrate the
             coordinator role back after the coordinator-removal check.
@@ -130,16 +132,22 @@ private struct LiveGroupingValidator {
         }
 
         printScenario(groupingScenario)
+        print("grouping_validation_scope=\(readiness.validationScope.rawValue)")
+
+        if !readiness.canValidateAnyMutation {
+            let reason = readiness.capabilityIssues.map(\.rawValue).joined(separator: ",")
+            if !mutate {
+                print("grouping_scenario=not_ready reason=\(reason)")
+                print(prepareSilent ? "safe_grouping_check=prepared_not_ready" : "safe_grouping_check=dry_run_not_ready")
+                return
+            }
+            throw ValidationError("No grouping mutation can be validated: \(reason)")
+        }
 
         guard mutate else {
             print("grouping_mutation=skipped")
-            print(prepareSilent ? "safe_grouping_check=ready" : "safe_grouping_check=dry_run")
+            print(safeGroupingStatus(prepareSilent: prepareSilent, scope: readiness.validationScope))
             return
-        }
-
-        guard readiness.canValidateAnyMutation else {
-            let reason = readiness.capabilityIssues.map(\.rawValue).joined(separator: ",")
-            throw ValidationError("No grouping mutation can be validated: \(reason)")
         }
 
         try await exerciseStandaloneJoinAndRemoval(scenario: groupingScenario)
@@ -153,6 +161,24 @@ private struct LiveGroupingValidator {
         }
         try await exerciseCoordinatorRemoval(scenario: refreshedScenario)
         print("safe_grouping_check=ok")
+    }
+
+    private func safeGroupingStatus(
+        prepareSilent: Bool,
+        scope: SonosGroupingValidationScope
+    ) -> String {
+        switch (prepareSilent, scope) {
+        case (_, .none):
+            return prepareSilent ? "safe_grouping_check=prepared_not_ready" : "safe_grouping_check=dry_run_not_ready"
+        case (true, .full):
+            return "safe_grouping_check=ready"
+        case (false, .full):
+            return "safe_grouping_check=dry_run"
+        case (true, _):
+            return "safe_grouping_check=prepared_ready_partial"
+        case (false, _):
+            return "safe_grouping_check=dry_run_ready_partial"
+        }
     }
 
     private func readinessReport(in state: SonosGroupState) async throws -> SonosGroupingReadinessReport {

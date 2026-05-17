@@ -26,6 +26,7 @@ struct SonosGroupingReadinessResolverTests {
         #expect(report.canValidateStandaloneJoinAndRemoval)
         #expect(report.canValidateCoordinatorRemoval)
         #expect(report.canValidateAnyMutation)
+        #expect(report.validationScope == .full)
     }
 
     @Test
@@ -42,6 +43,7 @@ struct SonosGroupingReadinessResolverTests {
         #expect(report.capabilityIssues.isEmpty)
         #expect(!report.hasActiveVisibleGroup)
         #expect(!report.canValidateAnyMutation)
+        #expect(report.validationScope == .none)
     }
 
     @Test
@@ -69,6 +71,7 @@ struct SonosGroupingReadinessResolverTests {
         #expect(report.capabilityIssues == [.noStandaloneCandidate, .noCoordinatorReplacement])
         #expect(report.hasActiveVisibleGroup)
         #expect(!report.canValidateAnyMutation)
+        #expect(report.validationScope == .none)
     }
 
     @Test
@@ -88,6 +91,25 @@ struct SonosGroupingReadinessResolverTests {
         #expect(report.canValidateStandaloneJoinAndRemoval)
         #expect(!report.canValidateCoordinatorRemoval)
         #expect(report.canValidateAnyMutation)
+        #expect(report.validationScope == .standaloneJoinAndRemoval)
+    }
+
+    @Test
+    func reportsCoordinatorRemovalOnlyWhenNoStandaloneCandidateExists() {
+        let report = resolver.report(
+            in: SonosGroupState(groups: [
+                group(coordinator: "Kitchen", members: ["Kitchen", "Port"]),
+            ]),
+            playback: SpotifyPlaybackDeviceStatus(deviceName: "Kitchen", isPlaying: true, volumePercent: 0)
+        )
+
+        #expect(report.issues == [.noStandaloneCandidate])
+        #expect(report.blockingIssues.isEmpty)
+        #expect(report.capabilityIssues == [.noStandaloneCandidate])
+        #expect(!report.canValidateStandaloneJoinAndRemoval)
+        #expect(report.canValidateCoordinatorRemoval)
+        #expect(report.canValidateAnyMutation)
+        #expect(report.validationScope == .coordinatorRemoval)
     }
 
     @Test
@@ -104,6 +126,7 @@ struct SonosGroupingReadinessResolverTests {
         #expect(report.capabilityIssues.isEmpty)
         #expect(!report.hasActiveVisibleGroup)
         #expect(!report.canValidateAnyMutation)
+        #expect(report.validationScope == .none)
     }
 
     @Test
@@ -120,6 +143,7 @@ struct SonosGroupingReadinessResolverTests {
         #expect(report.activeGroup?.displayName == "Kitchen + 2")
         #expect(report.coordinator?.roomName == "Kitchen")
         #expect(report.canValidateAnyMutation)
+        #expect(report.validationScope == .full)
     }
 
     private func standalone(_ roomName: String) -> SonosSpeakerGroup {
