@@ -52,6 +52,30 @@ public final class SpotifyConnectHandoffService: HandoffPerforming, RoomHandoffP
         try await runtime.migrateCoordinator(groupID: groupID, toRoomName: roomName)
     }
 
+    public func prepareCoordinatorRemoval(
+        in group: SonosSpeakerGroup,
+        coordinatorRoomName: String,
+        replacementRoomName: String
+    ) async throws {
+        try await runtime.prepareCoordinatorRemoval(
+            in: group,
+            coordinatorRoomName: coordinatorRoomName,
+            replacementRoomName: replacementRoomName
+        )
+    }
+
+    public func finishCoordinatorRemoval(
+        in group: SonosSpeakerGroup,
+        coordinatorRoomName: String,
+        replacementRoomName: String
+    ) async throws {
+        try await runtime.finishCoordinatorRemoval(
+            in: group,
+            coordinatorRoomName: coordinatorRoomName,
+            replacementRoomName: replacementRoomName
+        )
+    }
+
     public func removeCoordinator(
         in group: SonosSpeakerGroup,
         coordinatorRoomName: String,

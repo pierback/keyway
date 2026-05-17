@@ -616,7 +616,7 @@ final class PlaybackSyncController: ObservableObject {
             return .changed()
         case .removeCoordinator(let group, let coordinatorRoomName, let replacement):
             let startedAt = ContinuousClock.now
-            try await groupingEditor.removeCoordinator(
+            try await groupingEditor.prepareCoordinatorRemoval(
                 in: group,
                 coordinatorRoomName: coordinatorRoomName,
                 replacementRoomName: replacement.roomName
@@ -625,14 +625,28 @@ final class PlaybackSyncController: ObservableObject {
                 to: replacement,
                 verification: .coordinatorMigration
             )
-            let elapsed = startedAt.duration(to: .now)
+            let transferElapsed = startedAt.duration(to: .now)
+            do {
+                try await groupingEditor.finishCoordinatorRemoval(
+                    in: group,
+                    coordinatorRoomName: coordinatorRoomName,
+                    replacementRoomName: replacement.roomName
+                )
+            } catch {
+                if case .success = transferOutcome.result {
+                    throw PlaybackGroupEditError(
+                        "Moved playback to \(replacement.roomName), but could not finish grouping."
+                    )
+                }
+                throw error
+            }
             switch transferOutcome.result {
             case .success:
                 activeSpotifyRoomName = replacement.roomName
                 selectRoomName(replacement.roomName)
                 clearSpotifyAuthRequired()
-                shortcutLogger.info("SonosHandoffGroupEdit result=removed_coordinator_and_transferred oldCoordinator=\(coordinatorRoomName, privacy: .public) newCoordinator=\(replacement.roomName, privacy: .public) elapsed=\(String(describing: elapsed), privacy: .public)")
-                if elapsed > Self.coordinatorMigrationTarget {
+                shortcutLogger.info("SonosHandoffGroupEdit result=removed_coordinator_and_transferred oldCoordinator=\(coordinatorRoomName, privacy: .public) newCoordinator=\(replacement.roomName, privacy: .public) transferElapsed=\(String(describing: transferElapsed), privacy: .public)")
+                if transferElapsed > Self.coordinatorMigrationTarget {
                     return .changed(
                         message: "Moved coordinator to \(replacement.roomName), but migration took longer than 2 seconds."
                     )

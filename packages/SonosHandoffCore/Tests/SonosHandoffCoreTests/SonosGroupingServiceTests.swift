@@ -62,6 +62,46 @@ struct SonosGroupingServiceTests {
     }
 
     @Test
+    func prepareCoordinatorRemovalOnlyMakesReplacementStandalone() async throws {
+        GroupingServiceURLProtocol.reset()
+        let service = Self.groupingService()
+        let currentGroup = Self.group(coordinator: "Kitchen", members: ["Kitchen", "Port", "Office"])
+
+        try await service.prepareCoordinatorRemoval(
+            in: currentGroup,
+            coordinatorRoomName: "Kitchen",
+            replacementRoomName: "Port"
+        )
+
+        let avTransportRequests = GroupingServiceURLProtocol.snapshot()
+            .filter { $0.url?.path == "/MediaRenderer/AVTransport/Control" }
+        #expect(avTransportRequests.count == 1)
+        #expect(avTransportRequests[0].url?.host == "port.local")
+        #expect(avTransportRequests[0].soapAction == "\"urn:schemas-upnp-org:service:AVTransport:1#BecomeCoordinatorOfStandaloneGroup\"")
+    }
+
+    @Test
+    func finishCoordinatorRemovalRejoinsRemainingMembersToReplacement() async throws {
+        GroupingServiceURLProtocol.reset()
+        let service = Self.groupingService()
+        let currentGroup = Self.group(coordinator: "Kitchen", members: ["Kitchen", "Port", "Office", "Bath"])
+
+        try await service.finishCoordinatorRemoval(
+            in: currentGroup,
+            coordinatorRoomName: "Kitchen",
+            replacementRoomName: "Port"
+        )
+
+        let avTransportRequests = GroupingServiceURLProtocol.snapshot()
+            .filter { $0.url?.path == "/MediaRenderer/AVTransport/Control" }
+        #expect(Set(avTransportRequests.compactMap { $0.url?.host }) == ["office.local", "bath.local"])
+        #expect(avTransportRequests.allSatisfy { $0.soapAction == "\"urn:schemas-upnp-org:service:AVTransport:1#SetAVTransportURI\"" })
+        #expect(avTransportRequests.allSatisfy { $0.body.contains("<CurrentURI>x-rincon:RINCON_PORT</CurrentURI>") })
+        #expect(avTransportRequests.contains { $0.url?.host == "kitchen.local" } == false)
+        #expect(avTransportRequests.contains { $0.url?.host == "port.local" } == false)
+    }
+
+    @Test
     func removeCoordinatorUsesEffectiveCoordinatorWhenCoordinatorIDIsMissingFromMembers() async throws {
         GroupingServiceURLProtocol.reset()
         let service = Self.groupingService()

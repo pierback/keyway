@@ -64,6 +64,56 @@ final class SonosGroupingService: @unchecked Sendable {
         coordinatorRoomName: String,
         replacementRoomName: String
     ) async throws {
+        try await prepareCoordinatorRemoval(
+            in: group,
+            coordinatorRoomName: coordinatorRoomName,
+            replacementRoomName: replacementRoomName
+        )
+        try await finishCoordinatorRemoval(
+            in: group,
+            coordinatorRoomName: coordinatorRoomName,
+            replacementRoomName: replacementRoomName
+        )
+    }
+
+    func prepareCoordinatorRemoval(
+        in group: SonosSpeakerGroup,
+        coordinatorRoomName: String,
+        replacementRoomName: String
+    ) async throws {
+        let migration = try coordinatorMigration(
+            in: group,
+            coordinatorRoomName: coordinatorRoomName,
+            replacementRoomName: replacementRoomName
+        )
+
+        let newCoordinatorTarget = await directory.target(for: migration.newCoordinator)
+        try await avTransport.becomeStandalone(target: newCoordinatorTarget)
+    }
+
+    func finishCoordinatorRemoval(
+        in group: SonosSpeakerGroup,
+        coordinatorRoomName: String,
+        replacementRoomName: String
+    ) async throws {
+        let migration = try coordinatorMigration(
+            in: group,
+            coordinatorRoomName: coordinatorRoomName,
+            replacementRoomName: replacementRoomName
+        )
+
+        let newCoordinatorTarget = await directory.target(for: migration.newCoordinator)
+        try await rejoinMembers(
+            group.members.filter { $0.id != migration.newCoordinator.id && $0.id != migration.oldCoordinator.id },
+            to: newCoordinatorTarget
+        )
+    }
+
+    private func coordinatorMigration(
+        in group: SonosSpeakerGroup,
+        coordinatorRoomName: String,
+        replacementRoomName: String
+    ) throws -> (oldCoordinator: SonosSpeaker, newCoordinator: SonosSpeaker) {
         guard let oldCoordinator = group.coordinator,
               SonosRoomName.matches(oldCoordinator.roomName, coordinatorRoomName)
         else {
@@ -76,12 +126,7 @@ final class SonosGroupingService: @unchecked Sendable {
             throw ConnectHandoffError(.targetNotVisible, "\(replacementRoomName) is not a replacement member in \(group.displayName)")
         }
 
-        let newCoordinatorTarget = await directory.target(for: newCoordinator)
-        try await avTransport.becomeStandalone(target: newCoordinatorTarget)
-        try await rejoinMembers(
-            group.members.filter { $0.id != newCoordinator.id && $0.id != oldCoordinator.id },
-            to: newCoordinatorTarget
-        )
+        return (oldCoordinator, newCoordinator)
     }
 
     private func rejoinMembers(_ members: [SonosSpeaker], to coordinator: ConnectSonosTarget) async throws {
