@@ -98,6 +98,7 @@ actor PlaybackDiscoveryCache {
     private let groupingStateReader: any SonosGroupingStateReading
     private var cachedState: SonosGroupState?
     private var backgroundRefreshTask: Task<Void, Never>?
+    private var backgroundRefreshFailed = false
 
     init(groupingStateReader: any SonosGroupingStateReading) {
         self.groupingStateReader = groupingStateReader
@@ -120,19 +121,24 @@ actor PlaybackDiscoveryCache {
     }
 
     func cachedSnapshot() -> SonosGroupState? {
-        cachedState
+        guard !backgroundRefreshFailed else {
+            return nil
+        }
+
+        return cachedState
     }
 
     func refresh() async throws -> SonosGroupState {
         if let backgroundRefreshTask {
             await backgroundRefreshTask.value
-            if let cachedState {
+            if let cachedState, !backgroundRefreshFailed {
                 return cachedState
             }
         }
 
         let state = try await groupingStateReader.discoverGroupState()
         cachedState = state
+        backgroundRefreshFailed = false
         return state
     }
 
@@ -140,7 +146,7 @@ actor PlaybackDiscoveryCache {
         if let backgroundRefreshTask {
             await backgroundRefreshTask.value
         }
-        if let cachedState {
+        if let cachedState, !backgroundRefreshFailed {
             return cachedState
         }
 
@@ -150,6 +156,9 @@ actor PlaybackDiscoveryCache {
     private func finishBackgroundRefresh(state: SonosGroupState?) {
         if let state {
             cachedState = state
+            backgroundRefreshFailed = false
+        } else {
+            backgroundRefreshFailed = true
         }
         backgroundRefreshTask = nil
     }
