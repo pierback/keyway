@@ -641,7 +641,9 @@ final class PlaybackSyncController: ObservableObject {
             let transferElapsed = startedAt.duration(to: .now)
             switch transferOutcome.result {
             case .success:
-                break
+                activeSpotifyRoomName = replacement.roomName
+                selectRoomName(replacement.roomName)
+                clearSpotifyAuthRequired()
             case .failure(let code, _):
                 do {
                     try await groupingEditor.join(
@@ -676,9 +678,6 @@ final class PlaybackSyncController: ObservableObject {
                 )
             }
 
-            activeSpotifyRoomName = replacement.roomName
-            selectRoomName(replacement.roomName)
-            clearSpotifyAuthRequired()
             shortcutLogger.info("SonosHandoffGroupEdit result=removed_coordinator_and_transferred oldCoordinator=\(coordinatorRoomName, privacy: .public) newCoordinator=\(replacement.roomName, privacy: .public) transferElapsed=\(String(describing: transferElapsed), privacy: .public)")
             if transferElapsed > Self.coordinatorMigrationTarget {
                 return .changed(
