@@ -5,6 +5,20 @@ struct SonosGroupSuggestionTrackerTests {
     private let tracker = SonosGroupSuggestionTracker()
 
     @Test
+    func suggestionReferenceMatchesCurrentOrRetargetedIdentifier() {
+        let reference = SonosGroupSuggestionReference(
+            speakerID: "RINCON_BATH",
+            coordinatorRoomName: "Port"
+        )
+
+        #expect(reference.matches(identifier: nil))
+        #expect(reference.matches(identifier: "RINCON_BATH|Port"))
+        #expect(reference.matches(identifier: "RINCON_BATH|Kitchen"))
+        #expect(reference.matches(identifier: "RINCON_BATH"))
+        #expect(!reference.matches(identifier: "RINCON_OFFICE|Port"))
+    }
+
+    @Test
     func presentsStartupSuggestionWhenSpotifyIsPlayingOnVisibleGroup() {
         let update = tracker.update(
             in: groupState,
