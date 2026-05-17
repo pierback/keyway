@@ -353,10 +353,17 @@ private final class PlaybackBackgroundSync {
                 return
             }
 
-            try await environment.groupingEditor.join(
-                roomName: suggestion.speaker.roomName,
-                toCoordinatorRoomName: coordinatorRoomName
-            )
+            do {
+                try await environment.groupingEditor.join(
+                    roomName: suggestion.speaker.roomName,
+                    toCoordinatorRoomName: coordinatorRoomName
+                )
+            } catch {
+                logger.error("SonosHandoffGroupSuggestion result=notification_join_failure room=\(suggestion.speaker.roomName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+                groupSuggestionNotifier.deliverFailure(suggestion)
+                return
+            }
+
             environment.groupSuggestionStore.clear(id: suggestion.id)
             groupSuggestionNotifier.cancelSuggestion(id: suggestion.id)
             let postRefreshPlan = groupSuggestionAcceptRefreshResolver.plan(
@@ -364,9 +371,19 @@ private final class PlaybackBackgroundSync {
                 outputSelectedRoomName: nil,
                 fallbackRoomName: coordinatorRoomName
             )
-            let postRefresh = try await environment.outputDirectory.refresh(
-                currentRoomName: postRefreshPlan.discoveryRoomName
-            )
+            let postRefresh: PlaybackOutputRefresh
+            do {
+                postRefresh = try await environment.outputDirectory.refresh(
+                    currentRoomName: postRefreshPlan.discoveryRoomName
+                )
+            } catch {
+                lastDiscoveryRefresh = Date.distantPast
+                selectRoomName(coordinatorRoomName)
+                NotificationCenter.default.post(name: .sonosHandoffRefreshOutputs, object: coordinatorRoomName)
+                logger.error("SonosHandoffGroupSuggestion result=notification_accepted_refresh_failure room=\(suggestion.speaker.roomName, privacy: .public) coordinator=\(coordinatorRoomName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+                return
+            }
+
             let plan = groupSuggestionAcceptRefreshResolver.plan(
                 activeRoomName: activeRoomName,
                 outputSelectedRoomName: postRefresh.selectedRoomName,
