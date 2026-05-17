@@ -1,10 +1,11 @@
 import AppKit
 import os
+import UserNotifications
 
 import SonosHandoffCore
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private let logger = Logger(subsystem: "com.fpieringer.SonosHandoffMenuBar", category: "Hotkeys")
     private var volumeHotkeys: VolumeHotkeyController?
 
@@ -17,7 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCent
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSUserNotificationCenter.default.delegate = self
+        UNUserNotificationCenter.current().delegate = self
         NotificationCenter.default.addObserver(
             forName: .sonosHandoffRefreshHotkeys,
             object: nil,
@@ -36,25 +37,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCent
     }
 
     nonisolated func userNotificationCenter(
-        _ center: NSUserNotificationCenter,
-        didActivate notification: NSUserNotification
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
     ) {
-        guard notification.userInfo?["kind"] as? String == "groupSuggestion",
-              notification.activationType == .actionButtonClicked
+        defer {
+            completionHandler()
+        }
+
+        guard response.notification.request.content.categoryIdentifier == PlaybackGroupSuggestionNotification.categoryIdentifier,
+              response.actionIdentifier == PlaybackGroupSuggestionNotification.groupActionIdentifier
         else {
             return
         }
 
-        let suggestionID = notification.userInfo?["suggestionID"] as? String
+        let suggestionID = response.notification.request.content.userInfo["suggestionID"] as? String
         Task { @MainActor in
             NotificationCenter.default.post(name: .sonosHandoffAcceptGroupSuggestion, object: suggestionID)
         }
     }
 
     nonisolated func userNotificationCenter(
-        _ center: NSUserNotificationCenter,
-        shouldPresent notification: NSUserNotification
-    ) -> Bool {
-        true
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .list])
     }
 }

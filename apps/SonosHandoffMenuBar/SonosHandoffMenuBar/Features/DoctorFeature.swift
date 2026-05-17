@@ -1,5 +1,6 @@
 import AppKit
 import SonosHandoffCore
+import UserNotifications
 
 @MainActor
 struct DoctorFeature {
@@ -45,9 +46,14 @@ struct DoctorFeature {
     }
 
     private func showNotification(title: String, message: String) {
-        let notification = NSUserNotification()
-        notification.title = title
-        notification.informativeText = message
-        NSUserNotificationCenter.default.deliver(notification)
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = message
+        let request = UNNotificationRequest(
+            identifier: "doctor-\(UUID().uuidString)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request)
     }
 }

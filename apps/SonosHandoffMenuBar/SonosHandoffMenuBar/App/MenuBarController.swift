@@ -2,6 +2,7 @@ import AppKit
 import os
 import SonosHandoffCore
 import SwiftUI
+import UserNotifications
 
 @MainActor
 struct MenuBarController: View {
@@ -170,10 +171,15 @@ struct MenuBarController: View {
     }
 
     private func showNotification(title: String, message: String) {
-        let notification = NSUserNotification()
-        notification.title = title
-        notification.informativeText = message
-        NSUserNotificationCenter.default.deliver(notification)
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = message
+        let request = UNNotificationRequest(
+            identifier: "shortcut-status-\(UUID().uuidString)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request)
     }
 
     private func startModifierMonitor() {

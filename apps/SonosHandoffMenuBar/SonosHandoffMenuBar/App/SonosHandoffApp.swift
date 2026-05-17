@@ -13,11 +13,18 @@ struct SonosHandoffApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     private let environment: AppEnvironment
     private let playbackBackgroundSync: PlaybackBackgroundSync
+    private let groupSuggestionNotifier: PlaybackGroupSuggestionNotifier
 
     init() {
         let environment = AppEnvironment.live()
         self.environment = environment
-        let playbackBackgroundSync = PlaybackBackgroundSync(environment: environment)
+        let groupSuggestionNotifier = PlaybackGroupSuggestionNotifier()
+        self.groupSuggestionNotifier = groupSuggestionNotifier
+        groupSuggestionNotifier.prepare()
+        let playbackBackgroundSync = PlaybackBackgroundSync(
+            environment: environment,
+            groupSuggestionNotifier: groupSuggestionNotifier
+        )
         self.playbackBackgroundSync = playbackBackgroundSync
         appDelegate.configure(environment: environment)
         SonosVolumeMonitor.shared.start(
@@ -115,6 +122,7 @@ private final class PlaybackBackgroundSync {
     private static let discoveryRefreshInterval: TimeInterval = 20
 
     private let environment: AppEnvironment
+    private let groupSuggestionNotifier: PlaybackGroupSuggestionNotifier
     private let logger = Logger(subsystem: "com.fpieringer.SonosHandoffMenuBar", category: "Playback")
     private let groupSuggestionTracker = SonosGroupSuggestionTracker()
     private var task: Task<Void, Never>?
@@ -123,8 +131,12 @@ private final class PlaybackBackgroundSync {
     private var hasShownAuthPrompt = false
     private var groupSuggestionActionCancellable: AnyCancellable?
 
-    init(environment: AppEnvironment) {
+    init(
+        environment: AppEnvironment,
+        groupSuggestionNotifier: PlaybackGroupSuggestionNotifier
+    ) {
         self.environment = environment
+        self.groupSuggestionNotifier = groupSuggestionNotifier
         self.groupSuggestionActionCancellable = NotificationCenter.default
             .publisher(for: .sonosHandoffAcceptGroupSuggestion)
             .sink { [weak self] notification in
@@ -243,7 +255,7 @@ private final class PlaybackBackgroundSync {
                 detectedAt: Date()
             )
             environment.groupSuggestionStore.present(suggestion)
-            showGroupSuggestionNotification(suggestion)
+            groupSuggestionNotifier.deliverSuggestion(suggestion)
             logger.info("SonosHandoffGroupSuggestion state=prompted room=\(candidate.speaker.roomName, privacy: .public) group=\(candidate.groupDisplayName, privacy: .public)")
         }
     }
@@ -267,17 +279,6 @@ private final class PlaybackBackgroundSync {
         } catch {
             logger.info("SonosHandoffPlaybackSync output_cache_refresh=failed reason=no_active_playback error=\(error.localizedDescription, privacy: .public)")
         }
-    }
-
-    private func showGroupSuggestionNotification(_ suggestion: PlaybackGroupSuggestion) {
-        let notification = NSUserNotification()
-        notification.title = "Sonos speaker available"
-        notification.informativeText = suggestion.title
-        notification.actionButtonTitle = "Group"
-        notification.otherButtonTitle = "Later"
-        notification.hasActionButton = true
-        notification.userInfo = ["kind": "groupSuggestion", "suggestionID": suggestion.id]
-        NSUserNotificationCenter.default.deliver(notification)
     }
 
     private func acceptGroupSuggestion(id: String?) async {
@@ -305,15 +306,8 @@ private final class PlaybackBackgroundSync {
             logger.info("SonosHandoffGroupSuggestion result=notification_accepted room=\(suggestion.speaker.roomName, privacy: .public) coordinator=\(suggestion.coordinatorRoomName, privacy: .public)")
         } catch {
             logger.error("SonosHandoffGroupSuggestion result=notification_failure room=\(suggestion.speaker.roomName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
-            showGroupSuggestionFailureNotification(suggestion)
+            groupSuggestionNotifier.deliverFailure(suggestion)
         }
-    }
-
-    private func showGroupSuggestionFailureNotification(_ suggestion: PlaybackGroupSuggestion) {
-        let notification = NSUserNotification()
-        notification.title = "Could not group speaker"
-        notification.informativeText = "Could not add \(suggestion.speaker.roomName) to \(suggestion.groupDisplayName)."
-        NSUserNotificationCenter.default.deliver(notification)
     }
 
     private func refreshDiscoveryCacheIfNeeded() async -> Bool {

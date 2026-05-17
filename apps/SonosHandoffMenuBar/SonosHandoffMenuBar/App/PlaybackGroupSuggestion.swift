@@ -1,6 +1,8 @@
 import Combine
 import Foundation
+import os
 import SonosHandoffCore
+import UserNotifications
 
 struct PlaybackGroupSuggestion: Identifiable, Equatable, Sendable {
     let speaker: SonosSpeaker
@@ -37,5 +39,80 @@ final class PlaybackGroupSuggestionStore: ObservableObject {
             return
         }
         suggestion = nil
+    }
+}
+
+enum PlaybackGroupSuggestionNotification {
+    static let categoryIdentifier = "sonos-handoff.group-suggestion"
+    static let groupActionIdentifier = "sonos-handoff.group-suggestion.group"
+}
+
+@MainActor
+final class PlaybackGroupSuggestionNotifier {
+    private let notificationCenter: UNUserNotificationCenter
+    private let logger = Logger(subsystem: "com.fpieringer.SonosHandoffMenuBar", category: "Playback")
+
+    init(notificationCenter: UNUserNotificationCenter = .current()) {
+        self.notificationCenter = notificationCenter
+    }
+
+    func prepare() {
+        let groupAction = UNNotificationAction(
+            identifier: PlaybackGroupSuggestionNotification.groupActionIdentifier,
+            title: "Group",
+            options: []
+        )
+        let category = UNNotificationCategory(
+            identifier: PlaybackGroupSuggestionNotification.categoryIdentifier,
+            actions: [groupAction],
+            intentIdentifiers: [],
+            options: []
+        )
+        notificationCenter.setNotificationCategories([category])
+        notificationCenter.requestAuthorization(options: [.alert]) { [logger] granted, error in
+            if let error {
+                logger.error("SonosHandoffGroupSuggestionNotification authorization=failure error=\(error.localizedDescription, privacy: .public)")
+                return
+            }
+
+            logger.info("SonosHandoffGroupSuggestionNotification authorization=\(granted, privacy: .public)")
+        }
+    }
+
+    func deliverSuggestion(_ suggestion: PlaybackGroupSuggestion) {
+        let content = UNMutableNotificationContent()
+        content.title = "Sonos speaker available"
+        content.body = suggestion.title
+        content.categoryIdentifier = PlaybackGroupSuggestionNotification.categoryIdentifier
+        content.userInfo = [
+            "kind": "groupSuggestion",
+            "suggestionID": suggestion.id,
+        ]
+
+        deliver(content, identifier: "group-suggestion-\(suggestion.id)")
+    }
+
+    func deliverFailure(_ suggestion: PlaybackGroupSuggestion) {
+        let content = UNMutableNotificationContent()
+        content.title = "Could not group speaker"
+        content.body = "Could not add \(suggestion.speaker.roomName) to \(suggestion.groupDisplayName)."
+
+        deliver(content, identifier: "group-suggestion-failure-\(suggestion.id)")
+    }
+
+    private func deliver(_ content: UNNotificationContent, identifier: String) {
+        let request = UNNotificationRequest(
+            identifier: identifier,
+            content: content,
+            trigger: nil
+        )
+        notificationCenter.add(request) { [logger] error in
+            if let error {
+                logger.error("SonosHandoffGroupSuggestionNotification delivery=failure error=\(error.localizedDescription, privacy: .public)")
+                return
+            }
+
+            logger.info("SonosHandoffGroupSuggestionNotification delivery=scheduled identifier=\(identifier, privacy: .public)")
+        }
     }
 }
