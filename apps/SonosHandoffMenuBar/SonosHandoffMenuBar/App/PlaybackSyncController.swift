@@ -31,6 +31,7 @@ final class PlaybackSyncController: ObservableObject {
     private var outputSelectionCancellable: AnyCancellable?
     private var groupSuggestionCancellable: AnyCancellable?
     private var outputRefreshCancellable: AnyCancellable?
+    private var cachedOutputRefreshCancellable: AnyCancellable?
     private var outputRefreshInProgress = false
     private var hasPendingOutputRefresh = false
     private var pendingOutputRefreshRoomName: String?
@@ -79,6 +80,17 @@ final class PlaybackSyncController: ObservableObject {
                     await self?.refreshOutputs(showLoading: false, currentRoomName: currentRoomName)
                 }
             }
+        self.cachedOutputRefreshCancellable = NotificationCenter.default
+            .publisher(for: .sonosHandoffApplyCachedOutputs)
+            .sink { [weak self] notification in
+                let currentRoomName = notification.object as? String
+                Task { @MainActor [weak self] in
+                    _ = await self?.applyCachedOutputs(
+                        currentRoomName: currentRoomName,
+                        fallbackToPreferredRoom: false
+                    )
+                }
+            }
     }
 
     var canControlVolume: Bool {
@@ -117,7 +129,10 @@ final class PlaybackSyncController: ObservableObject {
         }
         applyMonitoredVolume(volumeMonitor.snapshot)
         Task {
-            let hasCachedOutputs = await applyCachedOutputs()
+            let hasCachedOutputs = await applyCachedOutputs(
+                currentRoomName: preferredCurrentRoomName(),
+                fallbackToPreferredRoom: true
+            )
             await outputDirectory.startBackgroundRefresh()
             await syncActiveSpotifyOutput()
             await refreshOutputs(showLoading: !hasCachedOutputs)
@@ -210,8 +225,11 @@ final class PlaybackSyncController: ObservableObject {
         }
     }
 
-    private func applyCachedOutputs() async -> Bool {
-        guard let refresh = await outputDirectory.cachedRefresh(currentRoomName: preferredCurrentRoomName()) else {
+    private func applyCachedOutputs(currentRoomName: String?, fallbackToPreferredRoom: Bool) async -> Bool {
+        let roomName = currentRoomName ?? (fallbackToPreferredRoom ? preferredCurrentRoomName() : nil)
+        guard let refresh = await outputDirectory.cachedRefresh(
+            currentRoomName: roomName
+        ) else {
             return false
         }
 

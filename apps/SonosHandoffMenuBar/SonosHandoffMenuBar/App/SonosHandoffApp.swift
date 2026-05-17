@@ -158,6 +158,7 @@ private final class PlaybackBackgroundSync {
                 hasShownAuthPrompt = false
                 environment.groupSuggestionStore.clear()
                 clearSelection(reason: "no_active_spotify_playback")
+                await refreshOutputCacheWithoutPlayback(discoveryRefreshStarted: discoveryRefreshStarted)
                 return
             }
 
@@ -168,12 +169,20 @@ private final class PlaybackBackgroundSync {
             guard let selectedRoomName = refresh.selectedRoomName else {
                 updateGroupSuggestion(refresh: refresh, selectedRoomName: nil, spotifyPlaying: status.isPlaying)
                 clearSelection(reason: "active_device_not_visible")
+                notifyOpenMenuAfterDiscoveryRefresh(
+                    discoveryRefreshStarted: discoveryRefreshStarted,
+                    currentRoomName: activeRoomName
+                )
                 logger.info("SonosHandoffPlaybackSync state=unmatched activeDevice=\(activeRoomName, privacy: .public)")
                 return
             }
 
             selectRoomName(selectedRoomName)
             updateGroupSuggestion(refresh: refresh, selectedRoomName: selectedRoomName, spotifyPlaying: status.isPlaying)
+            notifyOpenMenuAfterDiscoveryRefresh(
+                discoveryRefreshStarted: discoveryRefreshStarted,
+                currentRoomName: selectedRoomName
+            )
             hasShownAuthPrompt = false
             logger.info("SonosHandoffPlaybackSync state=selected room=\(selectedRoomName, privacy: .public) spotifyVolume=\(status.volumePercent ?? -1, privacy: .public)")
         } catch {
@@ -271,6 +280,27 @@ private final class PlaybackBackgroundSync {
         )
         showGroupSuggestionNotification(suggestion)
         logger.info("SonosHandoffGroupSuggestion state=prompted room=\(candidate.speaker.roomName, privacy: .public) group=\(candidate.groupDisplayName, privacy: .public)")
+    }
+
+    private func notifyOpenMenuAfterDiscoveryRefresh(discoveryRefreshStarted: Bool, currentRoomName: String?) {
+        guard discoveryRefreshStarted else {
+            return
+        }
+
+        NotificationCenter.default.post(name: .sonosHandoffApplyCachedOutputs, object: currentRoomName)
+    }
+
+    private func refreshOutputCacheWithoutPlayback(discoveryRefreshStarted: Bool) async {
+        guard discoveryRefreshStarted else {
+            return
+        }
+
+        do {
+            _ = try await environment.outputDirectory.refreshAfterBackgroundRefresh(currentRoomName: nil)
+            notifyOpenMenuAfterDiscoveryRefresh(discoveryRefreshStarted: true, currentRoomName: nil)
+        } catch {
+            logger.info("SonosHandoffPlaybackSync output_cache_refresh=failed reason=no_active_playback error=\(error.localizedDescription, privacy: .public)")
+        }
     }
 
     private func rememberSeenSpeakers(

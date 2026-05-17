@@ -103,4 +103,5 @@ extension Notification.Name {
     static let sonosHandoffRefreshHotkeys = Notification.Name("com.fpieringer.SonosHandoffMenuBar.refreshHotkeys")
     static let sonosHandoffAcceptGroupSuggestion = Notification.Name("com.fpieringer.SonosHandoffMenuBar.acceptGroupSuggestion")
     static let sonosHandoffRefreshOutputs = Notification.Name("com.fpieringer.SonosHandoffMenuBar.refreshOutputs")
+    static let sonosHandoffApplyCachedOutputs = Notification.Name("com.fpieringer.SonosHandoffMenuBar.applyCachedOutputs")
 }
