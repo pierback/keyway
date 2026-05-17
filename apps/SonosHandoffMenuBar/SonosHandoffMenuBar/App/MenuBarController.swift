@@ -19,6 +19,7 @@ struct MenuBarController: View {
 
     @State private var showMore = false
     @State private var optionKeyPressed = false
+    @State private var groupEditingPinned = false
     @State private var localModifierMonitor: Any?
     @State private var globalModifierMonitor: Any?
     @State private var modifierPollTask: Task<Void, Never>?
@@ -35,7 +36,9 @@ struct MenuBarController: View {
             divider
             MenuBarOutputSection(
                 playback: playback,
-                groupEditing: optionKeyPressed,
+                groupEditing: groupEditingActive,
+                groupEditingPinned: groupEditingPinned,
+                togglePinnedGroupEditing: togglePinnedGroupEditing,
                 openSpotifySettings: openSettingsWindow
             )
             divider
@@ -60,7 +63,12 @@ struct MenuBarController: View {
         .onDisappear {
             StatusHUD.shared.setVolumeOverlaySuppressed(false)
             stopModifierMonitor()
+            groupEditingPinned = false
         }
+    }
+
+    private var groupEditingActive: Bool {
+        optionKeyPressed || groupEditingPinned
     }
 
     private var header: some View {
@@ -198,6 +206,12 @@ struct MenuBarController: View {
             trigger: nil
         )
         UNUserNotificationCenter.current().add(request)
+    }
+
+    private func togglePinnedGroupEditing() {
+        withAnimation(MenuBarMotion.modeSwitch) {
+            groupEditingPinned.toggle()
+        }
     }
 
     private func startModifierMonitor() {
