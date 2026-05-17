@@ -7,6 +7,7 @@ final class SpotifyConnectTransferService: @unchecked Sendable {
     private let zeroconfClient: SonosSpotifyZeroconfClient
     private let transferVerifier: SonosTransferVerifier
     private let coordinatorMigrationTransferVerifier: SonosTransferVerifier
+    private let readinessPolicy = SpotifyConnectTransferReadinessPolicy()
 
     init(
         directory: SonosDirectory,
@@ -60,15 +61,13 @@ final class SpotifyConnectTransferService: @unchecked Sendable {
         let verifier = transferVerifier(for: verification)
         try await verifier.waitForSpotifyConnectMode(on: target)
         let readiness = try await verifier.playAndVerifyReadiness(on: target)
-        switch (verification, readiness) {
-        case (.full, .transportStarted):
+        switch readinessPolicy.action(verification: verification, readiness: readiness) {
+        case .verifyIfAvailable:
             await spotifyPlayback.verifyActiveDeviceIfAvailable(named: roomName)
-        case (.full, .spotifyConnectModeOnly):
+        case .verifyRequired:
             _ = try await spotifyPlayback.verifyActiveDevice(named: roomName)
-        case (.coordinatorMigration, .transportStarted):
+        case .acceptSonosReadiness:
             return
-        case (.coordinatorMigration, .spotifyConnectModeOnly):
-            _ = try await spotifyPlayback.verifyActiveDevice(named: roomName)
         }
     }
 
@@ -78,6 +77,29 @@ final class SpotifyConnectTransferService: @unchecked Sendable {
             return transferVerifier
         case .coordinatorMigration:
             return coordinatorMigrationTransferVerifier
+        }
+    }
+}
+
+enum SpotifyConnectTransferReadinessAction: Equatable, Sendable {
+    case verifyIfAvailable
+    case verifyRequired
+    case acceptSonosReadiness
+}
+
+struct SpotifyConnectTransferReadinessPolicy: Sendable {
+    func action(
+        verification: RoomHandoffVerificationMode,
+        readiness: SonosPlaybackReadiness
+    ) -> SpotifyConnectTransferReadinessAction {
+        switch (verification, readiness) {
+        case (.full, .transportStarted):
+            return .verifyIfAvailable
+        case (.full, .spotifyConnectModeOnly):
+            return .verifyRequired
+        case (.coordinatorMigration, .transportStarted),
+             (.coordinatorMigration, .spotifyConnectModeOnly):
+            return .acceptSonosReadiness
         }
     }
 }
