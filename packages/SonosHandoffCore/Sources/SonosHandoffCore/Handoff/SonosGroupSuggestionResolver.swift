@@ -61,28 +61,21 @@ public struct SonosGroupSuggestionResolver: Sendable {
         in state: SonosGroupState,
         selectedRoomName: String?
     ) -> Bool {
-        guard let selectedRoomName,
-              let currentGroup = state.groups.first(where: { $0.contains(roomName: selectedRoomName) }),
-              let coordinator = currentGroup.coordinator,
-              SonosRoomName.matches(coordinatorRoomName, coordinator.roomName),
-              !currentGroup.members.contains(where: { $0.id == speakerID })
-        else {
-            return false
-        }
-
-        return standaloneSpeakers(in: state).contains { $0.id == speakerID }
+        refreshedSuggestion(
+            speakerID: speakerID,
+            in: state,
+            selectedRoomName: selectedRoomName
+        ) != nil
     }
 
     public func refreshedSuggestion(
         speakerID: String,
-        coordinatorRoomName: String,
         in state: SonosGroupState,
         selectedRoomName: String?
     ) -> SonosGroupSuggestionCandidate? {
         guard let selectedRoomName,
               let currentGroup = state.groups.first(where: { $0.contains(roomName: selectedRoomName) }),
               let coordinator = currentGroup.coordinator,
-              SonosRoomName.matches(coordinatorRoomName, coordinator.roomName),
               !currentGroup.members.contains(where: { $0.id == speakerID }),
               let speaker = standaloneSpeakers(in: state).first(where: { $0.id == speakerID })
         else {

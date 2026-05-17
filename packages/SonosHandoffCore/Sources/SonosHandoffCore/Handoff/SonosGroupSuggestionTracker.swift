@@ -80,7 +80,6 @@ public struct SonosGroupSuggestionTracker: Sendable {
         let refreshedSuggestions = validSuggestions.compactMap { suggestion in
             resolver.refreshedSuggestion(
                 speakerID: suggestion.speakerID,
-                coordinatorRoomName: suggestion.coordinatorRoomName,
                 in: state,
                 selectedRoomName: selectedRoomName
             )

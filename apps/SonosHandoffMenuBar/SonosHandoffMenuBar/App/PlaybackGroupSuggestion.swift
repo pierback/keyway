@@ -44,19 +44,13 @@ final class PlaybackGroupSuggestionStore: ObservableObject {
             return
         }
 
-        let refreshedByID = Dictionary(
+        let refreshedBySpeakerID = Dictionary(
             uniqueKeysWithValues: candidates.map { candidate in
-                (
-                    SonosGroupSuggestionReference(
-                        speakerID: candidate.speaker.id,
-                        coordinatorRoomName: candidate.coordinatorRoomName
-                    ).id,
-                    candidate
-                )
+                (candidate.speaker.id, candidate)
             }
         )
         suggestions = suggestions.map { suggestion in
-            guard let candidate = refreshedByID[suggestion.id] else {
+            guard let candidate = refreshedBySpeakerID[suggestion.speaker.id] else {
                 return suggestion
             }
 
