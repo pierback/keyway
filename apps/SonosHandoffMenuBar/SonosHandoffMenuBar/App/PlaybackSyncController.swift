@@ -19,6 +19,7 @@ final class PlaybackSyncController: ObservableObject {
 
     private let outputDirectory: PlaybackOutputDirectory
     private let groupMembershipResolver = SonosGroupMembershipResolver()
+    private let coordinatorReplacementResolver = SonosCoordinatorReplacementResolver()
     private let outputSelectionResolver = SonosOutputSelectionResolver()
     private let outputSelection: PlaybackOutputSelection
     private let activePlaybackObserver: any SpotifyActivePlaybackObserving
@@ -469,7 +470,10 @@ final class PlaybackSyncController: ObservableObject {
             shortcutLogger.info("SonosHandoffGroupEdit result=removed room=\(row.speaker.roomName, privacy: .public)")
             return .changed
         case .coordinator:
-            guard let replacement = group.members.first(where: { $0.id != row.speaker.id }) else {
+            guard let replacement = coordinatorReplacementResolver.replacement(
+                in: group,
+                removingCoordinatorID: row.speaker.id
+            ) else {
                 return .changed
             }
             let startedAt = ContinuousClock.now
