@@ -11,11 +11,7 @@ public struct SonosGroupSuggestionReference: Equatable, Sendable {
         "\(speakerID)|\(coordinatorRoomName)"
     }
 
-    public func matches(identifier: String?) -> Bool {
-        guard let identifier else {
-            return true
-        }
-
+    public func matches(identifier: String) -> Bool {
         return identifier == id || Self.speakerID(in: identifier) == speakerID
     }
 

@@ -11,7 +11,6 @@ struct SonosGroupSuggestionTrackerTests {
             coordinatorRoomName: "Port"
         )
 
-        #expect(reference.matches(identifier: nil))
         #expect(reference.matches(identifier: "RINCON_BATH|Port"))
         #expect(reference.matches(identifier: "RINCON_BATH|Kitchen"))
         #expect(reference.matches(identifier: "RINCON_BATH"))

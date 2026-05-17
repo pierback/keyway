@@ -25,7 +25,7 @@ struct PlaybackGroupSuggestion: Identifiable, Equatable, Sendable {
         )
     }
 
-    func matches(identifier: String?) -> Bool {
+    func matches(identifier: String) -> Bool {
         reference.matches(identifier: identifier)
     }
 }
