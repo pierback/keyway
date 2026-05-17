@@ -47,7 +47,7 @@ public struct SonosGroupMembershipResolver: Sendable {
             return []
         }
 
-        return speakers.map { speaker in
+        return orderedSpeakers(speakers, selectedGroup: selectedGroup).map { speaker in
             let membership: SonosGroupMembership
             if speaker.id == selectedGroup.coordinatorID {
                 membership = .coordinator
@@ -63,5 +63,46 @@ public struct SonosGroupMembershipResolver: Sendable {
                 coordinatorRemovalAvailable: selectedGroup.members.count > 1
             )
         }
+    }
+
+    private func orderedSpeakers(
+        _ speakers: [SonosSpeaker],
+        selectedGroup: SonosSpeakerGroup
+    ) -> [SonosSpeaker] {
+        var speakerByID: [String: SonosSpeaker] = [:]
+        for speaker in speakers where speakerByID[speaker.id] == nil {
+            speakerByID[speaker.id] = speaker
+        }
+        let selectedMemberIDs = Set(selectedGroup.members.map(\.id))
+        var ordered: [SonosSpeaker] = []
+        var emittedIDs: Set<String> = []
+
+        if let coordinator = selectedGroup.coordinator,
+           let speaker = speakerByID[coordinator.id] ?? selectedGroup.members.first(where: { $0.id == coordinator.id }) {
+            ordered.append(speaker)
+            emittedIDs.insert(speaker.id)
+        }
+
+        let selectedMembers = selectedGroup.members
+            .filter { $0.id != selectedGroup.coordinatorID }
+            .sorted(by: roomNameAscending)
+        for member in selectedMembers where !emittedIDs.contains(member.id) {
+            ordered.append(speakerByID[member.id] ?? member)
+            emittedIDs.insert(member.id)
+        }
+
+        let availableSpeakers = speakers
+            .filter { !selectedMemberIDs.contains($0.id) }
+            .sorted(by: roomNameAscending)
+        for speaker in availableSpeakers where !emittedIDs.contains(speaker.id) {
+            ordered.append(speaker)
+            emittedIDs.insert(speaker.id)
+        }
+
+        return ordered
+    }
+
+    private func roomNameAscending(_ left: SonosSpeaker, _ right: SonosSpeaker) -> Bool {
+        left.roomName.localizedCaseInsensitiveCompare(right.roomName) == .orderedAscending
     }
 }

@@ -31,6 +31,22 @@ struct SonosGroupMembershipResolverTests {
     }
 
     @Test
+    func ordersSelectedGroupBeforeAvailableSpeakers() {
+        let rows = resolver.rows(
+            speakers: [
+                speaker("Office"),
+                speaker("Port"),
+                speaker("Kitchen"),
+                speaker("Bath"),
+            ],
+            selectedGroup: group(coordinator: "Kitchen", members: ["Port", "Kitchen"])
+        )
+
+        #expect(rows.map(\.speaker.roomName) == ["Kitchen", "Port", "Bath", "Office"])
+        #expect(rows.map(\.membership) == [.coordinator, .member, .available, .available])
+    }
+
+    @Test
     func disablesCoordinatorRemovalForSingleSpeakerGroup() {
         let rows = resolver.rows(
             speakers: [speaker("Kitchen"), speaker("Office")],
