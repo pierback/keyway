@@ -411,8 +411,7 @@ final class PlaybackSyncController: ObservableObject {
                     menuMessage = message
                 }
                 if outcome.shouldRefreshOutputs {
-                    groupSuggestionStore.clear(id: row.speaker.id)
-                    groupSuggestionNotifier.cancelSuggestion(id: row.speaker.id)
+                    clearSuggestionsCoveredByGroupEdit(row)
                     await refreshOutputs(showLoading: false)
                 }
             } catch {
@@ -421,6 +420,14 @@ final class PlaybackSyncController: ObservableObject {
                 shortcutLogger.error("SonosHandoffGroupEdit result=failure target=\(row.displayName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
                 await refreshOutputs(showLoading: false)
             }
+        }
+    }
+
+    private func clearSuggestionsCoveredByGroupEdit(_ row: PlaybackGroupEditRow) {
+        let speakerIDs = row.joinSpeakers.isEmpty ? [row.speaker.id] : row.joinSpeakers.map(\.id)
+        for speakerID in speakerIDs {
+            groupSuggestionStore.clear(id: speakerID)
+            groupSuggestionNotifier.cancelSuggestion(id: speakerID)
         }
     }
 
