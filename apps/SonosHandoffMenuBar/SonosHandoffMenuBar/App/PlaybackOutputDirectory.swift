@@ -85,6 +85,11 @@ final class PlaybackOutputDirectory {
         return refresh(from: state, currentRoomName: currentRoomName)
     }
 
+    func refreshAfterBackgroundRefresh(currentRoomName: String?) async throws -> PlaybackOutputRefresh {
+        let state = try await discoveryCache.refreshAfterBackgroundRefresh()
+        return refresh(from: state, currentRoomName: currentRoomName)
+    }
+
     private func refresh(from state: SonosGroupState, currentRoomName: String?) -> PlaybackOutputRefresh {
         let rows = state.groups.map(PlaybackOutputRow.init(group:))
         let speakers = state.speakers
@@ -145,6 +150,17 @@ actor PlaybackDiscoveryCache {
         let state = try await groupingStateReader.discoverGroupState()
         cachedState = state
         return state
+    }
+
+    func refreshAfterBackgroundRefresh() async throws -> SonosGroupState {
+        if let backgroundRefreshTask {
+            await backgroundRefreshTask.value
+        }
+        if let cachedState {
+            return cachedState
+        }
+
+        return try await refresh()
     }
 
     private func finishBackgroundRefresh(state: SonosGroupState?) {

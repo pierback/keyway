@@ -149,7 +149,7 @@ private final class PlaybackBackgroundSync {
     }
 
     private func syncOnce() async {
-        await refreshDiscoveryCacheIfNeeded()
+        let discoveryRefreshStarted = await refreshDiscoveryCacheIfNeeded()
 
         do {
             guard let status = try await environment.activePlaybackObserver.activePlaybackDeviceStatus(),
@@ -161,7 +161,10 @@ private final class PlaybackBackgroundSync {
                 return
             }
 
-            let refresh = try await outputRefresh(currentRoomName: activeRoomName)
+            let refresh = try await outputRefresh(
+                currentRoomName: activeRoomName,
+                forceRefresh: discoveryRefreshStarted
+            )
             guard let selectedRoomName = refresh.selectedRoomName else {
                 updateGroupSuggestion(refresh: refresh, selectedRoomName: nil, spotifyPlaying: status.isPlaying)
                 clearSelection(reason: "active_device_not_visible")
@@ -185,7 +188,11 @@ private final class PlaybackBackgroundSync {
         }
     }
 
-    private func outputRefresh(currentRoomName: String) async throws -> PlaybackOutputRefresh {
+    private func outputRefresh(currentRoomName: String, forceRefresh: Bool) async throws -> PlaybackOutputRefresh {
+        if forceRefresh {
+            return try await environment.outputDirectory.refreshAfterBackgroundRefresh(currentRoomName: currentRoomName)
+        }
+
         let shouldRefreshDiscovery = Date().timeIntervalSince(lastDiscoveryRefresh) >= Self.discoveryRefreshInterval
         if !shouldRefreshDiscovery,
            let cachedRefresh = await environment.outputDirectory.cachedRefresh(currentRoomName: currentRoomName) {
@@ -298,13 +305,14 @@ private final class PlaybackBackgroundSync {
         NSUserNotificationCenter.default.deliver(notification)
     }
 
-    private func refreshDiscoveryCacheIfNeeded() async {
+    private func refreshDiscoveryCacheIfNeeded() async -> Bool {
         guard Date().timeIntervalSince(lastDiscoveryRefresh) >= Self.discoveryRefreshInterval else {
-            return
+            return false
         }
 
         lastDiscoveryRefresh = Date()
         await environment.outputDirectory.startBackgroundRefresh()
+        return true
     }
 
     private func selectRoomName(_ roomName: String) {
