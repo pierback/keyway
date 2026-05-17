@@ -20,9 +20,13 @@ struct MenuBarOutputSection: View {
             .padding(.top, 8)
             .padding(.bottom, 6)
 
-            if groupEditing, !playback.groupEditRows.isEmpty {
-                ForEach(playback.groupEditRows) { row in
-                    groupEditRow(for: row)
+            if groupEditing {
+                if playback.groupEditRows.isEmpty {
+                    emptyGroupRow
+                } else {
+                    ForEach(playback.groupEditRows) { row in
+                        groupEditRow(for: row)
+                    }
                 }
             } else if playback.outputRows.isEmpty {
                 emptyOutputRow
@@ -89,6 +93,23 @@ struct MenuBarOutputSection: View {
             }
 
             Text(playback.isRefreshingOutputs ? "Searching..." : "No Sonos speakers found")
+                .font(.system(size: 13, weight: .regular))
+                .foregroundStyle(.secondary)
+
+            Spacer(minLength: 0)
+        }
+        .frame(height: 30)
+        .padding(.horizontal, 10)
+    }
+
+    private var emptyGroupRow: some View {
+        HStack(spacing: 9) {
+            Image(systemName: "hifispeaker.slash")
+                .font(.system(size: 17, weight: .regular))
+                .foregroundStyle(.secondary)
+                .frame(width: 18, height: 18)
+
+            Text("No active Sonos group")
                 .font(.system(size: 13, weight: .regular))
                 .foregroundStyle(.secondary)
 
