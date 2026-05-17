@@ -5,6 +5,11 @@ import Testing
 @Suite(.serialized)
 struct SonosTransferVerifierTests {
     @Test
+    func coordinatorMigrationTimingStaysUnderTwoSeconds() {
+        #expect(SonosTransferVerifierTiming.coordinatorMigration.maximumScheduledDelayNanoseconds < 2_000_000_000)
+    }
+
+    @Test
     func acceptsSpotifyConnectMediaInfo() async throws {
         let router = TransferVerifierRouter()
         router.setResponses([
@@ -133,13 +138,16 @@ struct SonosTransferVerifierTests {
         TransferVerifierURLProtocol.router = router
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [TransferVerifierURLProtocol.self]
-        return SonosTransferVerifier(
-            soapClient: SonosSOAPClient(urlSession: URLSession(configuration: configuration)),
+        let timing = SonosTransferVerifierTiming(
             activationDelayNanoseconds: 0,
             activationPollAttempts: activationPollAttempts,
             activationPollDelayNanoseconds: 0,
             playbackPollAttempts: playbackPollAttempts,
-            playbackPollDelayNanoseconds: playbackPollDelayNanoseconds,
+            playbackPollDelayNanoseconds: playbackPollDelayNanoseconds
+        )
+        return SonosTransferVerifier(
+            soapClient: SonosSOAPClient(urlSession: URLSession(configuration: configuration)),
+            timing: timing,
             sleep: sleep
         )
     }

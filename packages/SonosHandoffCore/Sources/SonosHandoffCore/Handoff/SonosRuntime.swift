@@ -30,11 +30,7 @@ final class SonosRuntime: @unchecked Sendable {
         let transferVerifier = SonosTransferVerifier(soapClient: soapClient)
         let coordinatorMigrationTransferVerifier = SonosTransferVerifier(
             soapClient: soapClient,
-            activationDelayNanoseconds: 250_000_000,
-            activationPollAttempts: 8,
-            activationPollDelayNanoseconds: 150_000_000,
-            playbackPollAttempts: 4,
-            playbackPollDelayNanoseconds: 150_000_000
+            timing: .coordinatorMigration
         )
         let spotifyBridge = SpotifyConnectBridge(
             loginID: loginID,
