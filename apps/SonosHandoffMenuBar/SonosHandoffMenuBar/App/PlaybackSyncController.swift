@@ -174,7 +174,8 @@ final class PlaybackSyncController: ObservableObject {
     func refreshOutputs(
         showLoading: Bool = true,
         currentRoomName: String? = nil,
-        waitForBackgroundRefresh: Bool = false
+        waitForBackgroundRefresh: Bool = false,
+        preserveMenuMessage: Bool = false
     ) async {
         let requestedRoomName = SonosRoomName.normalized(currentRoomName)
         guard !outputRefreshInProgress else {
@@ -194,7 +195,9 @@ final class PlaybackSyncController: ObservableObject {
 
         var refreshRoomName = requestedRoomName
         while true {
-            clearMenuMessageIfAuthenticated()
+            if !preserveMenuMessage {
+                clearMenuMessageIfAuthenticated()
+            }
 
             do {
                 let currentRoomName = refreshRoomName ?? preferredCurrentRoomName()
@@ -419,13 +422,16 @@ final class PlaybackSyncController: ObservableObject {
                 }
                 if outcome.shouldRefreshOutputs {
                     clearSuggestionsCoveredByGroupEdit(row)
-                    await refreshOutputs(showLoading: false)
+                    await refreshOutputs(
+                        showLoading: false,
+                        preserveMenuMessage: outcome.menuMessage != nil
+                    )
                 }
             } catch {
                 groupLoadingRoomName = nil
                 menuMessage = groupEditMessage(for: row.displayName, error: error)
                 shortcutLogger.error("SonosHandoffGroupEdit result=failure target=\(row.displayName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
-                await refreshOutputs(showLoading: false)
+                await refreshOutputs(showLoading: false, preserveMenuMessage: true)
             }
         }
     }
@@ -488,7 +494,7 @@ final class PlaybackSyncController: ObservableObject {
                 groupLoadingRoomName = nil
                 menuMessage = "Could not add \(suggestion.speaker.roomName) to group."
                 shortcutLogger.error("SonosHandoffGroupSuggestion result=failure room=\(suggestion.speaker.roomName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
-                await refreshOutputs(showLoading: false)
+                await refreshOutputs(showLoading: false, preserveMenuMessage: true)
             }
         }
     }
