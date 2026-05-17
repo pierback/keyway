@@ -167,7 +167,7 @@ struct MenuBarOutputSection: View {
         let loading = suggestion.speaker.roomName == playback.groupLoadingRoomName
 
         return Button {
-            playback.acceptGroupSuggestion()
+            playback.acceptGroupSuggestion(id: suggestion.id)
         } label: {
             HStack(spacing: 13) {
                 ZStack {
