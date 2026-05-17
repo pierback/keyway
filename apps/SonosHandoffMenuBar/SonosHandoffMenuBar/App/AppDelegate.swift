@@ -51,7 +51,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             return
         }
 
-        let suggestionID = response.notification.request.content.userInfo["suggestionID"] as? String
+        guard let suggestionID = response.notification.request.content.userInfo["suggestionID"] as? String else {
+            logger.error("SonosHandoffGroupSuggestionNotification action=ignored reason=missing_suggestion_id")
+            return
+        }
+
         Task { @MainActor in
             NotificationCenter.default.post(name: .sonosHandoffAcceptGroupSuggestion, object: suggestionID)
         }

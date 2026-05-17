@@ -140,7 +140,10 @@ private final class PlaybackBackgroundSync {
         self.groupSuggestionActionCancellable = NotificationCenter.default
             .publisher(for: .sonosHandoffAcceptGroupSuggestion)
             .sink { [weak self] notification in
-                let suggestionID = notification.object as? String
+                guard let suggestionID = notification.object as? String else {
+                    return
+                }
+
                 Task { @MainActor [weak self] in
                     await self?.acceptGroupSuggestion(id: suggestionID)
                 }
@@ -297,7 +300,7 @@ private final class PlaybackBackgroundSync {
         }
     }
 
-    private func acceptGroupSuggestion(id: String?) async {
+    private func acceptGroupSuggestion(id: String) async {
         guard let suggestion = environment.groupSuggestionStore.suggestions.first(where: { $0.matches(identifier: id) })
         else {
             return
