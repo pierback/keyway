@@ -23,6 +23,7 @@ final class PlaybackSyncController: ObservableObject {
     private let groupMembershipResolver = SonosGroupMembershipResolver()
     private let groupMembershipChangePlanner = SonosGroupMembershipChangePlanner()
     private let groupSuggestionTracker = SonosGroupSuggestionTracker()
+    private let groupSuggestionAcceptRefreshResolver = SonosGroupSuggestionAcceptRefreshResolver()
     private let outputSelectionResolver = SonosOutputSelectionResolver()
     private let outputSelection: PlaybackOutputSelection
     private let activePlaybackObserver: any SpotifyActivePlaybackObserving
@@ -453,11 +454,20 @@ final class PlaybackSyncController: ObservableObject {
 
     private func refreshOutputsAfterGroupSuggestionAccept(fallbackRoomName: String) async {
         let activeRoomName = await activePlaybackRoomNameForGroupSuggestionRefresh()
+        let preRefreshPlan = groupSuggestionAcceptRefreshResolver.plan(
+            activeRoomName: activeRoomName,
+            outputSelectedRoomName: nil,
+            fallbackRoomName: fallbackRoomName
+        )
 
         do {
-            let refresh = try await outputDirectory.refresh(currentRoomName: activeRoomName ?? fallbackRoomName)
-            let selectedRoomName = activeRoomName == nil ? nil : refresh.selectedRoomName
-            applyOutputRefresh(refresh, selectedRoomName: selectedRoomName)
+            let refresh = try await outputDirectory.refresh(currentRoomName: preRefreshPlan.discoveryRoomName)
+            let plan = groupSuggestionAcceptRefreshResolver.plan(
+                activeRoomName: activeRoomName,
+                outputSelectedRoomName: refresh.selectedRoomName,
+                fallbackRoomName: fallbackRoomName
+            )
+            applyOutputRefresh(refresh, selectedRoomName: plan.selectedRoomName)
         } catch {
             outputRows = []
             speakers = []

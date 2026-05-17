@@ -125,6 +125,7 @@ private final class PlaybackBackgroundSync {
     private let groupSuggestionNotifier: PlaybackGroupSuggestionNotifier
     private let logger = Logger(subsystem: "com.fpieringer.SonosHandoffMenuBar", category: "Playback")
     private let groupSuggestionTracker = SonosGroupSuggestionTracker()
+    private let groupSuggestionAcceptRefreshResolver = SonosGroupSuggestionAcceptRefreshResolver()
     private var task: Task<Void, Never>?
     private var lastDiscoveryRefresh = Date.distantPast
     private var lastSeenSpeakerIDs: Set<String>?
@@ -312,26 +313,31 @@ private final class PlaybackBackgroundSync {
             environment.groupSuggestionStore.clear(id: suggestion.id)
             groupSuggestionNotifier.cancelSuggestion(id: suggestion.id)
             let activeRoomName = await activePlaybackRoomNameForSuggestionRefresh()
+            let preRefreshPlan = groupSuggestionAcceptRefreshResolver.plan(
+                activeRoomName: activeRoomName,
+                outputSelectedRoomName: nil,
+                fallbackRoomName: suggestion.coordinatorRoomName
+            )
             let refresh = try await environment.outputDirectory.refresh(
-                currentRoomName: activeRoomName ?? suggestion.coordinatorRoomName
+                currentRoomName: preRefreshPlan.discoveryRoomName
+            )
+            let plan = groupSuggestionAcceptRefreshResolver.plan(
+                activeRoomName: activeRoomName,
+                outputSelectedRoomName: refresh.selectedRoomName,
+                fallbackRoomName: suggestion.coordinatorRoomName
             )
             lastDiscoveryRefresh = Date()
-            let selectedRoomName = activeRoomName == nil ? nil : refresh.selectedRoomName
-            let refreshedRoomName = selectedRoomName ?? activeRoomName ?? suggestion.coordinatorRoomName
-            if let selectedRoomName {
+            if let selectedRoomName = plan.selectedRoomName {
                 selectRoomName(selectedRoomName)
-            } else {
-                let reason = activeRoomName == nil
-                    ? "notification_grouping_no_active_playback"
-                    : "notification_grouping_active_device_not_visible"
-                clearSelection(reason: reason)
+            } else if let clearReason = plan.clearReason {
+                clearSelection(reason: clearReason.rawValue)
             }
             updateGroupSuggestion(
                 refresh: refresh,
-                selectedRoomName: selectedRoomName,
-                spotifyPlaying: activeRoomName != nil
+                selectedRoomName: plan.selectedRoomName,
+                spotifyPlaying: plan.spotifyPlaying
             )
-            NotificationCenter.default.post(name: .sonosHandoffRefreshOutputs, object: refreshedRoomName)
+            NotificationCenter.default.post(name: .sonosHandoffRefreshOutputs, object: plan.menuRefreshRoomName)
             logger.info("SonosHandoffGroupSuggestion result=notification_accepted room=\(suggestion.speaker.roomName, privacy: .public) coordinator=\(suggestion.coordinatorRoomName, privacy: .public)")
         } catch {
             logger.error("SonosHandoffGroupSuggestion result=notification_failure room=\(suggestion.speaker.roomName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
