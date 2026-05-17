@@ -52,7 +52,8 @@ struct SafeGroupingCheck {
               1. adds one standalone speaker to the current Spotify-on-Sonos group
               2. removes that speaker again
               3. if possible, removes the current coordinator and transfers playback to a
-                 replacement using coordinator-migration verification
+                 replacement using coordinator-migration verification, failing if the operation
+                 takes longer than 2 seconds
 
             Use \(restoreFlag) with mutation mode to add the old coordinator back and migrate the
             coordinator role back after the coordinator-removal check.
@@ -62,6 +63,8 @@ struct SafeGroupingCheck {
 }
 
 private struct LiveGroupingValidator {
+    private static let coordinatorMigrationTarget = Duration.seconds(2)
+
     private let service: SpotifyConnectHandoffService
     private let mutate: Bool
     private let prepareSilent: Bool
@@ -244,6 +247,11 @@ private struct LiveGroupingValidator {
             let elapsed = startedAt.duration(to: clock.now)
             guard case .success = transfer else {
                 throw ValidationError("Coordinator migration transfer failed: \(transfer)")
+            }
+            guard elapsed <= Self.coordinatorMigrationTarget else {
+                throw ValidationError(
+                    "Coordinator migration exceeded target: elapsed=\(elapsed) target=\(Self.coordinatorMigrationTarget)"
+                )
             }
 
             let migratedState = try await service.discoverGroupState()
