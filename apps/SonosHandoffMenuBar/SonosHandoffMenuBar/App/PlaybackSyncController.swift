@@ -47,6 +47,7 @@ final class PlaybackSyncController: ObservableObject {
     private let sliderCommitter = PlaybackSliderCommitter()
     private let operationGate = PlaybackOperationGate()
     private var activeSpotifyRoomName: String?
+    private var currentGroupState = SonosGroupState.empty
 
     init(
         environment: AppEnvironment,
@@ -197,6 +198,7 @@ final class PlaybackSyncController: ObservableObject {
             } catch {
                 outputRows = []
                 speakers = []
+                currentGroupState = .empty
                 selectRoomName(nil)
                 operationGate.cancelVolume()
                 volumeState.clearStatus()
@@ -268,6 +270,7 @@ final class PlaybackSyncController: ObservableObject {
     private func applyOutputRefresh(_ refresh: PlaybackOutputRefresh, selectedRoomName resolvedSelectedRoomName: String?) {
         outputRows = refresh.rows
         speakers = refresh.speakers
+        currentGroupState = refresh.state
         selectRoomName(resolvedSelectedRoomName)
         groupEditRows = refresh.groupEditRows
         refreshPendingGroupSuggestions(from: refresh, selectedRoomName: resolvedSelectedRoomName)
@@ -288,7 +291,7 @@ final class PlaybackSyncController: ObservableObject {
         }
 
         let update = groupSuggestionTracker.refresh(
-            in: SonosGroupState(groups: refresh.rows.map(\.group)),
+            in: refresh.state,
             selectedRoomName: selectedRoomName,
             currentSuggestions: groupSuggestionStore.suggestions.map(\.reference)
         )
@@ -521,6 +524,7 @@ final class PlaybackSyncController: ObservableObject {
         } catch {
             outputRows = []
             speakers = []
+            currentGroupState = .empty
             selectRoomName(nil)
             operationGate.cancelVolume()
             volumeState.clearStatus()
@@ -860,7 +864,7 @@ final class PlaybackSyncController: ObservableObject {
 
     private func refreshGroupEditRowsFromCurrentOutputs() {
         let report = groupingInspectionResolver.report(
-            in: SonosGroupState(groups: outputRows.map(\.group)),
+            in: currentGroupState,
             activeRoomName: selectedRoomName,
             spotifyPlaying: selectedRoomName != nil,
             previousSpeakerIDs: nil

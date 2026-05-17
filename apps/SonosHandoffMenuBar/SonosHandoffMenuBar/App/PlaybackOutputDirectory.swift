@@ -2,6 +2,7 @@ import Foundation
 import SonosHandoffCore
 
 struct PlaybackOutputRefresh: Sendable {
+    let state: SonosGroupState
     let rows: [PlaybackOutputRow]
     let speakers: [SonosSpeaker]
     let selectedRoomName: String?
@@ -57,6 +58,7 @@ final class PlaybackOutputDirectory {
         )
         let speakers = state.speakers
         return PlaybackOutputRefresh(
+            state: state,
             rows: report.outputRows,
             speakers: speakers,
             selectedRoomName: report.selectedRoomName,

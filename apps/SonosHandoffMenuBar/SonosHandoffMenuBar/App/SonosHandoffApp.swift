@@ -257,9 +257,8 @@ private final class PlaybackBackgroundSync {
         selectedRoomName: String?,
         spotifyPlaying: Bool
     ) {
-        let state = SonosGroupState(groups: refresh.rows.map(\.group))
         let update = groupSuggestionTracker.update(
-            in: state,
+            in: refresh.state,
             selectedRoomName: selectedRoomName,
             spotifyPlaying: spotifyPlaying,
             previousSpeakerIDs: lastSeenSpeakerIDs,
