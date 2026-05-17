@@ -109,7 +109,7 @@ final class PlaybackSyncController: ObservableObject {
     }
 
     var selectedOutputGroup: SonosSpeakerGroup? {
-        outputRows.first { $0.contains(roomName: selectedRoomName) }?.group
+        currentGroupState.groups.first { $0.contains(roomName: selectedRoomName) }
     }
 
     func appear() {
@@ -310,12 +310,12 @@ final class PlaybackSyncController: ObservableObject {
     private func selectedRoomName(forActiveSpotifyRoomName roomName: String) -> String? {
         if let selectedRoomName = outputSelectionResolver.selectedRoomName(
             currentRoomName: roomName,
-            groups: outputRows.map(\.group)
+            groups: currentGroupState.groups
         ) {
             return selectedRoomName
         }
 
-        return speakers
+        return currentGroupState.speakers
             .first(where: { SonosRoomName.matches($0.roomName, roomName) })?
             .roomName
     }
