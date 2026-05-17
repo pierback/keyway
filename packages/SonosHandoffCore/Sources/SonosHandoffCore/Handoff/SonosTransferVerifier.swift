@@ -12,6 +12,7 @@ struct SonosTransferVerifier {
     private let activationPollDelayNanoseconds: UInt64
     private let playbackPollAttempts: Int
     private let playbackPollDelayNanoseconds: UInt64
+    private let sleep: @Sendable (UInt64) async throws -> Void
 
     private static let defaultActivationDelayNanoseconds: UInt64 = 1_000_000_000
     private static let defaultActivationPollAttempts = 1
@@ -25,7 +26,8 @@ struct SonosTransferVerifier {
         activationPollAttempts: Int = Self.defaultActivationPollAttempts,
         activationPollDelayNanoseconds: UInt64 = Self.defaultActivationPollDelayNanoseconds,
         playbackPollAttempts: Int = Self.defaultPlaybackPollAttempts,
-        playbackPollDelayNanoseconds: UInt64 = Self.defaultPlaybackPollDelayNanoseconds
+        playbackPollDelayNanoseconds: UInt64 = Self.defaultPlaybackPollDelayNanoseconds,
+        sleep: @escaping @Sendable (UInt64) async throws -> Void = { try await Task.sleep(nanoseconds: $0) }
     ) {
         precondition(activationPollAttempts > 0, "activationPollAttempts must be positive")
         precondition(playbackPollAttempts > 0, "playbackPollAttempts must be positive")
@@ -35,10 +37,11 @@ struct SonosTransferVerifier {
         self.activationPollDelayNanoseconds = activationPollDelayNanoseconds
         self.playbackPollAttempts = playbackPollAttempts
         self.playbackPollDelayNanoseconds = playbackPollDelayNanoseconds
+        self.sleep = sleep
     }
 
     func waitForSpotifyConnectMode(on target: ConnectSonosTarget) async throws {
-        try await Task.sleep(nanoseconds: activationDelayNanoseconds)
+        try await sleep(activationDelayNanoseconds)
 
         var lastURI = ""
         for attempt in 0 ..< activationPollAttempts {
@@ -48,7 +51,7 @@ struct SonosTransferVerifier {
             }
 
             if attempt + 1 < activationPollAttempts {
-                try await Task.sleep(nanoseconds: activationPollDelayNanoseconds)
+                try await sleep(activationPollDelayNanoseconds)
             }
         }
 
@@ -65,13 +68,15 @@ struct SonosTransferVerifier {
 
     private func waitForPlaybackOrSpotifyConnectReadiness(on target: ConnectSonosTarget) async throws -> SonosPlaybackReadiness {
         var lastState: String?
-        for _ in 0 ..< playbackPollAttempts {
+        for attempt in 0 ..< playbackPollAttempts {
             lastState = try await transportState(on: target)
             if lastState == "PLAYING" || lastState == "TRANSITIONING" {
                 return .transportStarted
             }
 
-            try await Task.sleep(nanoseconds: playbackPollDelayNanoseconds)
+            if attempt + 1 < playbackPollAttempts {
+                try await sleep(playbackPollDelayNanoseconds)
+            }
         }
 
         let currentURI = try await currentURI(on: target)

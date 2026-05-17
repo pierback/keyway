@@ -71,6 +71,31 @@ struct SonosTransferVerifierTests {
     }
 
     @Test
+    func doesNotSleepAfterFinalPlaybackPoll() async throws {
+        let router = TransferVerifierRouter()
+        let sleepRecorder = TransferVerifierSleepRecorder()
+        router.setResponses([
+            "Play": [""],
+            "GetTransportInfo": [
+                Self.transportInfo(state: "STOPPED"),
+                Self.transportInfo(state: "STOPPED"),
+            ],
+            "GetMediaInfo": [Self.mediaInfo(uri: "x-sonos-vli:spotify:track:123")],
+        ])
+        let verifier = Self.verifier(
+            router: router,
+            playbackPollAttempts: 2,
+            playbackPollDelayNanoseconds: 150,
+            sleep: sleepRecorder.record
+        )
+
+        let readiness = try await verifier.playAndVerifyReadiness(on: Self.target)
+
+        #expect(readiness == .spotifyConnectModeOnly)
+        #expect(await sleepRecorder.snapshot() == [150])
+    }
+
+    @Test
     func failsWhenTargetLeavesSpotifyConnectModeBeforePlaybackStarts() async throws {
         let router = TransferVerifierRouter()
         router.setResponses([
@@ -101,7 +126,9 @@ struct SonosTransferVerifierTests {
     private static func verifier(
         router: TransferVerifierRouter,
         activationPollAttempts: Int = 1,
-        playbackPollAttempts: Int = 2
+        playbackPollAttempts: Int = 2,
+        playbackPollDelayNanoseconds: UInt64 = 0,
+        sleep: @escaping @Sendable (UInt64) async throws -> Void = { _ in }
     ) -> SonosTransferVerifier {
         TransferVerifierURLProtocol.router = router
         let configuration = URLSessionConfiguration.ephemeral
@@ -112,7 +139,8 @@ struct SonosTransferVerifierTests {
             activationPollAttempts: activationPollAttempts,
             activationPollDelayNanoseconds: 0,
             playbackPollAttempts: playbackPollAttempts,
-            playbackPollDelayNanoseconds: 0
+            playbackPollDelayNanoseconds: playbackPollDelayNanoseconds,
+            sleep: sleep
         )
     }
 
@@ -122,6 +150,18 @@ struct SonosTransferVerifierTests {
 
     private static func transportInfo(state: String) -> String {
         "<CurrentTransportState>\(state)</CurrentTransportState>"
+    }
+}
+
+private actor TransferVerifierSleepRecorder {
+    private var sleeps: [UInt64] = []
+
+    func record(_ nanoseconds: UInt64) async throws {
+        sleeps.append(nanoseconds)
+    }
+
+    func snapshot() -> [UInt64] {
+        sleeps
     }
 }
 
