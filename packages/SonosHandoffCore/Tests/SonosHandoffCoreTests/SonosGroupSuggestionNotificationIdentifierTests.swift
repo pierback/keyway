@@ -15,6 +15,27 @@ struct SonosGroupSuggestionNotificationIdentifierTests {
     }
 
     @Test
+    func buildsAllNotificationIdentifiersForSpeakerScopedCancellation() {
+        #expect(
+            SonosGroupSuggestionNotificationIdentifier.allIDs("RINCON_OFFICE|Kitchen")
+                == [
+                    "group-suggestion-RINCON_OFFICE",
+                    "group-suggestion-failure-RINCON_OFFICE",
+                ]
+        )
+        #expect(
+            SonosGroupSuggestionNotificationIdentifier.allIDs([
+                "RINCON_OFFICE|Kitchen",
+                "RINCON_OFFICE|Port",
+            ])
+            == [
+                "group-suggestion-RINCON_OFFICE",
+                "group-suggestion-failure-RINCON_OFFICE",
+            ]
+        )
+    }
+
+    @Test
     func recognizesOnlyActiveSuggestionIdentifiers() {
         #expect(SonosGroupSuggestionNotificationIdentifier.isSuggestionID("group-suggestion-RINCON_OFFICE"))
         #expect(!SonosGroupSuggestionNotificationIdentifier.isSuggestionID("group-suggestion-failure-RINCON_OFFICE"))

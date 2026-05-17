@@ -100,9 +100,9 @@ final class PlaybackGroupSuggestionNotifier {
     }
 
     func cancelSuggestion(id: String) {
-        let identifier = SonosGroupSuggestionNotificationIdentifier.suggestionID(id)
-        notificationCenter.removePendingNotificationRequests(withIdentifiers: [identifier])
-        notificationCenter.removeDeliveredNotifications(withIdentifiers: [identifier])
+        let identifiers = SonosGroupSuggestionNotificationIdentifier.allIDs(id)
+        notificationCenter.removePendingNotificationRequests(withIdentifiers: identifiers)
+        notificationCenter.removeDeliveredNotifications(withIdentifiers: identifiers)
     }
 
     func cancelSuggestions(ids: Set<String>) {
@@ -110,7 +110,7 @@ final class PlaybackGroupSuggestionNotifier {
             return
         }
 
-        let identifiers = ids.map(SonosGroupSuggestionNotificationIdentifier.suggestionID)
+        let identifiers = SonosGroupSuggestionNotificationIdentifier.allIDs(ids)
         notificationCenter.removePendingNotificationRequests(withIdentifiers: identifiers)
         notificationCenter.removeDeliveredNotifications(withIdentifiers: identifiers)
     }

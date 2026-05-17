@@ -10,6 +10,19 @@ public enum SonosGroupSuggestionNotificationIdentifier: Sendable {
         "\(failurePrefix)\(speakerID(in: suggestionID))"
     }
 
+    public static func allIDs(_ id: String) -> [String] {
+        [
+            suggestionID(id),
+            failureID(id),
+        ]
+    }
+
+    public static func allIDs(_ suggestionIDs: Set<String>) -> [String] {
+        suggestionIDs
+            .flatMap(allIDs)
+            .uniqued { $0 }
+    }
+
     public static func isSuggestionID(_ identifier: String) -> Bool {
         identifier.hasPrefix(suggestionPrefix) && !identifier.hasPrefix(failurePrefix)
     }
