@@ -19,6 +19,7 @@
 		77D58B17164D4B7195A1ED3B /* PlaybackTransferActionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77D58B16164D4B7195A1ED3B /* PlaybackTransferActionController.swift */; };
 		77D58B15164D4B7195A1ED3B /* PlaybackVolumeActionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77D58B14164D4B7195A1ED3B /* PlaybackVolumeActionController.swift */; };
 		77D58B19164D4B7195A1ED3B /* PlaybackGroupSuggestion.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77D58B18164D4B7195A1ED3B /* PlaybackGroupSuggestion.swift */; };
+		77D58B1B164D4B7195A1ED3B /* PlaybackBackgroundSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77D58B1A164D4B7195A1ED3B /* PlaybackBackgroundSync.swift */; };
 		79B30C7CE63C9E6208B01244 /* PlaybackSyncController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79B30C7BE63C9E6208B01244 /* PlaybackSyncController.swift */; };
 		7A7C9B322B3F32EDB9656C17 /* PlaybackVolumeTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A7C9B312B3F32EDB9656C17 /* PlaybackVolumeTypes.swift */; };
 		4A6D3C11D7F84385A5E21801 /* PlaybackOperationGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A6D3C10D7F84385A5E21801 /* PlaybackOperationGate.swift */; };
@@ -53,6 +54,7 @@
 		77D58B16164D4B7195A1ED3B /* PlaybackTransferActionController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlaybackTransferActionController.swift; sourceTree = "<group>"; };
 		77D58B14164D4B7195A1ED3B /* PlaybackVolumeActionController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlaybackVolumeActionController.swift; sourceTree = "<group>"; };
 		77D58B18164D4B7195A1ED3B /* PlaybackGroupSuggestion.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlaybackGroupSuggestion.swift; sourceTree = "<group>"; };
+		77D58B1A164D4B7195A1ED3B /* PlaybackBackgroundSync.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlaybackBackgroundSync.swift; sourceTree = "<group>"; };
 		79B30C7BE63C9E6208B01244 /* PlaybackSyncController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlaybackSyncController.swift; sourceTree = "<group>"; };
 		7A7C9B312B3F32EDB9656C17 /* PlaybackVolumeTypes.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlaybackVolumeTypes.swift; sourceTree = "<group>"; };
 		4A6D3C10D7F84385A5E21801 /* PlaybackOperationGate.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlaybackOperationGate.swift; sourceTree = "<group>"; };
@@ -177,6 +179,7 @@
 				77D58B16164D4B7195A1ED3B /* PlaybackTransferActionController.swift */,
 				77D58B14164D4B7195A1ED3B /* PlaybackVolumeActionController.swift */,
 				77D58B18164D4B7195A1ED3B /* PlaybackGroupSuggestion.swift */,
+				77D58B1A164D4B7195A1ED3B /* PlaybackBackgroundSync.swift */,
 				79B30C7BE63C9E6208B01244 /* PlaybackSyncController.swift */,
 				7A7C9B312B3F32EDB9656C17 /* PlaybackVolumeTypes.swift */,
 				4A6D3C10D7F84385A5E21801 /* PlaybackOperationGate.swift */,
@@ -279,6 +282,7 @@
 				77D58B17164D4B7195A1ED3B /* PlaybackTransferActionController.swift in Sources */,
 				77D58B15164D4B7195A1ED3B /* PlaybackVolumeActionController.swift in Sources */,
 				77D58B19164D4B7195A1ED3B /* PlaybackGroupSuggestion.swift in Sources */,
+				77D58B1B164D4B7195A1ED3B /* PlaybackBackgroundSync.swift in Sources */,
 				79B30C7CE63C9E6208B01244 /* PlaybackSyncController.swift in Sources */,
 				7A7C9B322B3F32EDB9656C17 /* PlaybackVolumeTypes.swift in Sources */,
 				4A6D3C11D7F84385A5E21801 /* PlaybackOperationGate.swift in Sources */,
