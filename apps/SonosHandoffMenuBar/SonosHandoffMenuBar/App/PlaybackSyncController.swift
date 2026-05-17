@@ -606,12 +606,7 @@ final class PlaybackSyncController: ObservableObject {
         case .none:
             return .unchanged
         case .join(let speakers, let coordinatorRoomName):
-            for speaker in speakers {
-                try await groupingEditor.join(
-                    roomName: speaker.roomName,
-                    toCoordinatorRoomName: coordinatorRoomName
-                )
-            }
+            try await joinSpeakers(speakers, toCoordinatorRoomName: coordinatorRoomName)
             let joinedRoomNames = speakers.map(\.roomName).joined(separator: ",")
             shortcutLogger.info("SonosHandoffGroupEdit result=joined rooms=\(joinedRoomNames, privacy: .public) coordinator=\(coordinatorRoomName, privacy: .public)")
             return .changed()
@@ -653,6 +648,35 @@ final class PlaybackSyncController: ObservableObject {
                     "Moved coordinator to \(replacement.roomName), but Spotify playback did not transfer."
                 )
             }
+        }
+    }
+
+    private func joinSpeakers(
+        _ speakers: [SonosSpeaker],
+        toCoordinatorRoomName coordinatorRoomName: String
+    ) async throws {
+        guard speakers.count > 1 else {
+            if let speaker = speakers.first {
+                try await groupingEditor.join(
+                    roomName: speaker.roomName,
+                    toCoordinatorRoomName: coordinatorRoomName
+                )
+            }
+            return
+        }
+
+        let groupingEditor = groupingEditor
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for speaker in speakers {
+                group.addTask {
+                    try await groupingEditor.join(
+                        roomName: speaker.roomName,
+                        toCoordinatorRoomName: coordinatorRoomName
+                    )
+                }
+            }
+
+            try await group.waitForAll()
         }
     }
 
