@@ -626,6 +626,31 @@ final class PlaybackSyncController: ObservableObject {
                 verification: .coordinatorMigration
             )
             let transferElapsed = startedAt.duration(to: .now)
+            switch transferOutcome.result {
+            case .success:
+                break
+            case .failure(let code, _):
+                do {
+                    try await groupingEditor.join(
+                        roomName: replacement.roomName,
+                        toCoordinatorRoomName: coordinatorRoomName
+                    )
+                } catch {
+                    throw PlaybackGroupEditError(
+                        "Spotify playback did not transfer to \(replacement.roomName), and \(replacement.roomName) could not rejoin \(coordinatorRoomName)."
+                    )
+                }
+
+                if code == .authRequired {
+                    requireSpotifyAuth(message: transferOutcome.failureMessage)
+                    return .changed()
+                }
+
+                throw PlaybackGroupEditError(
+                    "Spotify playback did not transfer to \(replacement.roomName)."
+                )
+            }
+
             do {
                 try await groupingEditor.finishCoordinatorRemoval(
                     in: group,
@@ -633,35 +658,21 @@ final class PlaybackSyncController: ObservableObject {
                     replacementRoomName: replacement.roomName
                 )
             } catch {
-                if case .success = transferOutcome.result {
-                    throw PlaybackGroupEditError(
-                        "Moved playback to \(replacement.roomName), but could not finish grouping."
-                    )
-                }
-                throw error
-            }
-            switch transferOutcome.result {
-            case .success:
-                activeSpotifyRoomName = replacement.roomName
-                selectRoomName(replacement.roomName)
-                clearSpotifyAuthRequired()
-                shortcutLogger.info("SonosHandoffGroupEdit result=removed_coordinator_and_transferred oldCoordinator=\(coordinatorRoomName, privacy: .public) newCoordinator=\(replacement.roomName, privacy: .public) transferElapsed=\(String(describing: transferElapsed), privacy: .public)")
-                if transferElapsed > Self.coordinatorMigrationTarget {
-                    return .changed(
-                        message: "Moved coordinator to \(replacement.roomName), but migration took longer than 2 seconds."
-                    )
-                }
-                return .changed()
-            case .failure(let code, _):
-                if code == .authRequired {
-                    requireSpotifyAuth(message: transferOutcome.failureMessage)
-                    return .changed()
-                }
-
                 throw PlaybackGroupEditError(
-                    "Moved coordinator to \(replacement.roomName), but Spotify playback did not transfer."
+                    "Moved playback to \(replacement.roomName), but could not finish grouping."
                 )
             }
+
+            activeSpotifyRoomName = replacement.roomName
+            selectRoomName(replacement.roomName)
+            clearSpotifyAuthRequired()
+            shortcutLogger.info("SonosHandoffGroupEdit result=removed_coordinator_and_transferred oldCoordinator=\(coordinatorRoomName, privacy: .public) newCoordinator=\(replacement.roomName, privacy: .public) transferElapsed=\(String(describing: transferElapsed), privacy: .public)")
+            if transferElapsed > Self.coordinatorMigrationTarget {
+                return .changed(
+                    message: "Moved coordinator to \(replacement.roomName), but migration took longer than 2 seconds."
+                )
+            }
+            return .changed()
         }
     }
 

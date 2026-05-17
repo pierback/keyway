@@ -289,6 +289,32 @@ private struct LiveGroupingValidator {
         print("standalone_remove=ok room=\(standaloneSpeaker.roomName)")
     }
 
+    private func rollbackCoordinatorPreparation(
+        scenario: GroupingScenario,
+        replacement: SonosSpeaker,
+        originalError: Error
+    ) async throws {
+        do {
+            try await prepareSafeMutation(label: "coordinator_rollback")
+            try await service.join(
+                roomName: replacement.roomName,
+                toCoordinatorRoomName: scenario.coordinator.roomName
+            )
+            let rolledBackState = try await service.discoverGroupState()
+            try requireGroup(
+                in: rolledBackState,
+                containing: scenario.coordinator.roomName,
+                alsoContaining: replacement.roomName,
+                message: "Coordinator preparation rollback did not rejoin \(replacement.roomName) to \(scenario.coordinator.roomName)."
+            )
+            print("coordinator_rollback=ok room=\(replacement.roomName) coordinator=\(scenario.coordinator.roomName)")
+        } catch {
+            throw ValidationError(
+                "Coordinator migration failed: \(describe(originalError)); rollback failed for \(replacement.roomName): \(describe(error))"
+            )
+        }
+    }
+
     private func exerciseCoordinatorRemoval(scenario: GroupingScenario) async throws {
         guard let replacement = scenario.coordinatorReplacement else {
             print("coordinator_remove=skipped reason=no_replacement_candidate")
@@ -311,6 +337,15 @@ private struct LiveGroupingValidator {
             let transferStartedAt = clock.now
             let transfer = await service.transfer(toRoomName: replacement.roomName, verification: .coordinatorMigration)
             let transferElapsed = transferStartedAt.duration(to: clock.now)
+            guard case .success = transfer else {
+                let transferError = ValidationError("Coordinator migration transfer failed: \(transfer)")
+                try await rollbackCoordinatorPreparation(
+                    scenario: scenario,
+                    replacement: replacement,
+                    originalError: transferError
+                )
+                throw transferError
+            }
 
             try await prepareSafeMutation(label: "coordinator_finish")
             try await service.finishCoordinatorRemoval(
@@ -321,9 +356,6 @@ private struct LiveGroupingValidator {
 
             let operationElapsed = prepareElapsed + transferElapsed
             let safetyInclusiveElapsed = safetyInclusiveStartedAt.duration(to: clock.now)
-            guard case .success = transfer else {
-                throw ValidationError("Coordinator migration transfer failed: \(transfer)")
-            }
             guard operationElapsed <= Self.coordinatorMigrationTarget else {
                 throw ValidationError(
                     "Coordinator migration exceeded target: elapsed=\(operationElapsed) target=\(Self.coordinatorMigrationTarget)"
