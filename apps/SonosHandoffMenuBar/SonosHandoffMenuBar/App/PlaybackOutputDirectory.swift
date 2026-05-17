@@ -8,30 +8,7 @@ struct PlaybackOutputRefresh: Sendable {
     let menuMessage: String?
 }
 
-struct PlaybackOutputRow: Identifiable, Equatable, Sendable {
-    let group: SonosSpeakerGroup
-
-    var id: String {
-        group.id
-    }
-
-    var displayName: String {
-        group.displayName
-    }
-
-    var coordinator: SonosSpeaker {
-        group.coordinator ?? group.members[0]
-    }
-
-    var isGroup: Bool {
-        group.members.count > 1
-    }
-
-    func contains(roomName: String?) -> Bool {
-        group.contains(roomName: roomName)
-    }
-}
-
+typealias PlaybackOutputRow = SonosOutputRow
 typealias PlaybackGroupEditRow = SonosGroupMembershipRow
 
 @MainActor
@@ -75,7 +52,7 @@ final class PlaybackOutputDirectory {
             state.groups,
             currentRoomName: currentRoomName
         )
-        let rows = orderedGroups.map(PlaybackOutputRow.init(group:))
+        let rows = orderedGroups.compactMap(PlaybackOutputRow.init(group:))
         let speakers = state.speakers
         let selectedRoomName = selectedRoomName(currentRoomName: currentRoomName, in: state.groups)
         return PlaybackOutputRefresh(
