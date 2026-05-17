@@ -9,7 +9,6 @@ final class PlaybackBackgroundSync {
     private static let discoveryRefreshInterval: TimeInterval = 20
 
     private let environment: AppEnvironment
-    private let groupSuggestionNotifier: PlaybackGroupSuggestionNotifier
     private let groupSuggestionPresenter: PlaybackGroupSuggestionPresenter
     private let logger = Logger(subsystem: "com.fpieringer.SonosHandoffMenuBar", category: "Playback")
     private let groupSuggestionTracker = SonosGroupSuggestionTracker()
@@ -27,7 +26,6 @@ final class PlaybackBackgroundSync {
         groupSuggestionNotifier: PlaybackGroupSuggestionNotifier
     ) {
         self.environment = environment
-        self.groupSuggestionNotifier = groupSuggestionNotifier
         self.groupSuggestionPresenter = PlaybackGroupSuggestionPresenter(
             store: environment.groupSuggestionStore,
             notifier: groupSuggestionNotifier
@@ -232,7 +230,7 @@ final class PlaybackBackgroundSync {
                 )
             } catch {
                 logger.error("SonosHandoffGroupSuggestion result=notification_join_failure room=\(suggestion.speaker.roomName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
-                groupSuggestionNotifier.deliverFailure(suggestion)
+                groupSuggestionPresenter.deliverFailure(suggestion)
                 return
             }
 
@@ -275,7 +273,7 @@ final class PlaybackBackgroundSync {
             logger.info("SonosHandoffGroupSuggestion result=notification_accepted room=\(suggestion.speaker.roomName, privacy: .public) coordinator=\(coordinatorRoomName, privacy: .public)")
         } catch {
             logger.error("SonosHandoffGroupSuggestion result=notification_failure room=\(suggestion.speaker.roomName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
-            groupSuggestionNotifier.deliverFailure(suggestion)
+            groupSuggestionPresenter.deliverFailure(suggestion)
         }
     }
 

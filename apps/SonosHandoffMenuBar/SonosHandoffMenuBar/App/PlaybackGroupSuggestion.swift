@@ -84,6 +84,10 @@ final class PlaybackGroupSuggestionPresenter {
         notifier.cancelSuggestion(id: id)
     }
 
+    func deliverFailure(_ suggestion: PlaybackGroupSuggestion) {
+        notifier.deliverFailure(suggestion)
+    }
+
     func clearAll() {
         store.clear()
         notifier.cancelAllSuggestions()

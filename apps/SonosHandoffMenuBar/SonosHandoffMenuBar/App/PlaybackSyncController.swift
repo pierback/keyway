@@ -33,7 +33,6 @@ final class PlaybackSyncController: ObservableObject {
     private let volumeActions: PlaybackVolumeActionController
     private let transferActions: PlaybackTransferActionController
     private let groupSuggestionStore: PlaybackGroupSuggestionStore
-    private let groupSuggestionNotifier: PlaybackGroupSuggestionNotifier
     private let groupSuggestionPresenter: PlaybackGroupSuggestionPresenter
     private let shortcutLogger = os.Logger(subsystem: "com.fpieringer.SonosHandoffMenuBar", category: "Shortcuts")
     private var monitorCancellable: AnyCancellable?
@@ -62,7 +61,6 @@ final class PlaybackSyncController: ObservableObject {
         self.volumeMonitor = volumeMonitor
         self.groupingEditor = environment.groupingEditor
         self.groupSuggestionStore = environment.groupSuggestionStore
-        self.groupSuggestionNotifier = environment.groupSuggestionNotifier
         self.volumeActions = volumeActions ?? PlaybackVolumeActionController(
             environment: environment,
             volumeMonitor: volumeMonitor
@@ -439,8 +437,7 @@ final class PlaybackSyncController: ObservableObject {
     private func clearSuggestionsCoveredByGroupEdit(_ row: PlaybackGroupEditRow) {
         let speakerIDs = row.joinSpeakers.isEmpty ? [row.speaker.id] : row.joinSpeakers.map(\.id)
         for speakerID in speakerIDs {
-            groupSuggestionStore.clear(id: speakerID)
-            groupSuggestionNotifier.cancelSuggestion(id: speakerID)
+            groupSuggestionPresenter.clear(id: speakerID)
         }
     }
 
@@ -461,8 +458,7 @@ final class PlaybackSyncController: ObservableObject {
                         return
                     }
 
-                    groupSuggestionStore.clear(id: suggestion.id)
-                    groupSuggestionNotifier.cancelSuggestion(id: suggestion.id)
+                    groupSuggestionPresenter.clear(id: suggestion.id)
                     menuMessage = "Spotify is not playing on a Sonos group."
                     return
                 }
@@ -477,14 +473,12 @@ final class PlaybackSyncController: ObservableObject {
                         roomName: suggestion.speaker.roomName,
                         toCoordinatorRoomName: coordinatorRoomName
                     )
-                    groupSuggestionStore.clear(id: suggestion.id)
-                    groupSuggestionNotifier.cancelSuggestion(id: suggestion.id)
+                    groupSuggestionPresenter.clear(id: suggestion.id)
                     groupLoadingRoomName = nil
                     shortcutLogger.info("SonosHandoffGroupSuggestion result=accepted room=\(suggestion.speaker.roomName, privacy: .public) coordinator=\(coordinatorRoomName, privacy: .public)")
                     await refreshOutputsAfterGroupSuggestionAccept(fallbackRoomName: coordinatorRoomName)
                 case .reject(let rejection):
-                    groupSuggestionStore.clear(id: suggestion.id)
-                    groupSuggestionNotifier.cancelSuggestion(id: suggestion.id)
+                    groupSuggestionPresenter.clear(id: suggestion.id)
                     groupLoadingRoomName = nil
                     menuMessage = groupSuggestionRejectionMessage(rejection)
                     applyOutputRefresh(refresh)
@@ -504,8 +498,7 @@ final class PlaybackSyncController: ObservableObject {
             return
         }
 
-        groupSuggestionStore.clear(id: id)
-        groupSuggestionNotifier.cancelSuggestion(id: id)
+        groupSuggestionPresenter.clear(id: id)
         shortcutLogger.info("SonosHandoffGroupSuggestion result=ignored source=menu id=\(id, privacy: .public)")
     }
 
