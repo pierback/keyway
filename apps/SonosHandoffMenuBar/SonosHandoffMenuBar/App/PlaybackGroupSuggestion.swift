@@ -24,6 +24,22 @@ struct PlaybackGroupSuggestion: Identifiable, Equatable, Sendable {
             coordinatorRoomName: coordinatorRoomName
         )
     }
+
+    func matches(identifier: String?) -> Bool {
+        guard let identifier else {
+            return true
+        }
+
+        return identifier == id || Self.speakerID(in: identifier) == speaker.id
+    }
+
+    private static func speakerID(in identifier: String) -> String {
+        guard let separator = identifier.firstIndex(of: "|") else {
+            return identifier
+        }
+
+        return String(identifier[..<separator])
+    }
 }
 
 @MainActor

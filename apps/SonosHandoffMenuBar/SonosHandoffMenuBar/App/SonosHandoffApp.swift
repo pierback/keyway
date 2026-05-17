@@ -293,7 +293,7 @@ private final class PlaybackBackgroundSync {
     }
 
     private func acceptGroupSuggestion(id: String?) async {
-        guard let suggestion = environment.groupSuggestionStore.suggestions.first(where: { id == nil || $0.id == id })
+        guard let suggestion = environment.groupSuggestionStore.suggestions.first(where: { $0.matches(identifier: id) })
         else {
             return
         }
