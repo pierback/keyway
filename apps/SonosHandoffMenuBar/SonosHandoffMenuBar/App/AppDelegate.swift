@@ -57,7 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         Task { @MainActor in
             switch actionIdentifier {
-            case PlaybackGroupSuggestionNotification.groupActionIdentifier:
+            case PlaybackGroupSuggestionNotification.groupActionIdentifier, UNNotificationDefaultActionIdentifier:
                 NotificationCenter.default.post(name: .sonosHandoffAcceptGroupSuggestion, object: suggestionID)
             case PlaybackGroupSuggestionNotification.ignoreActionIdentifier:
                 NotificationCenter.default.post(name: .sonosHandoffIgnoreGroupSuggestion, object: suggestionID)
