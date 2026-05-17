@@ -22,6 +22,7 @@ final class PlaybackSyncController: ObservableObject {
     private let outputDirectory: PlaybackOutputDirectory
     private let groupMembershipResolver = SonosGroupMembershipResolver()
     private let groupMembershipChangePlanner = SonosGroupMembershipChangePlanner()
+    private let groupSuggestionTracker = SonosGroupSuggestionTracker()
     private let outputSelectionResolver = SonosOutputSelectionResolver()
     private let outputSelection: PlaybackOutputSelection
     private let activePlaybackObserver: any SpotifyActivePlaybackObserving
@@ -268,6 +269,7 @@ final class PlaybackSyncController: ObservableObject {
         outputRows = refresh.rows
         speakers = refresh.speakers
         selectRoomName(refresh.selectedRoomName)
+        refreshPendingGroupSuggestions(from: refresh)
 
         if let selectedRoomName = refresh.selectedRoomName {
             clearSpotifyAuthRequired()
@@ -276,6 +278,24 @@ final class PlaybackSyncController: ObservableObject {
             operationGate.cancelVolume()
             volumeState.clearStatus()
             clearMenuMessageIfAuthenticated(refresh.menuMessage)
+        }
+    }
+
+    private func refreshPendingGroupSuggestions(from refresh: PlaybackOutputRefresh) {
+        guard !groupSuggestionStore.suggestions.isEmpty else {
+            return
+        }
+
+        let update = groupSuggestionTracker.refresh(
+            in: SonosGroupState(groups: refresh.rows.map(\.group)),
+            selectedRoomName: refresh.selectedRoomName,
+            currentSuggestions: groupSuggestionStore.suggestions.map(\.reference)
+        )
+        groupSuggestionStore.clear(ids: update.staleSuggestionIDs)
+        groupSuggestionNotifier.cancelSuggestions(ids: update.staleSuggestionIDs)
+        let refreshedSuggestions = groupSuggestionStore.refresh(update.refreshedSuggestions)
+        for suggestion in refreshedSuggestions {
+            groupSuggestionNotifier.deliverSuggestion(suggestion)
         }
     }
 

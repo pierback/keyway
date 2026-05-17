@@ -50,6 +50,19 @@ public struct SonosGroupSuggestionUpdate: Equatable, Sendable {
     }
 }
 
+public struct SonosGroupSuggestionRefresh: Equatable, Sendable {
+    public let staleSuggestionIDs: Set<String>
+    public let refreshedSuggestions: [SonosGroupSuggestionCandidate]
+
+    public init(
+        staleSuggestionIDs: Set<String>,
+        refreshedSuggestions: [SonosGroupSuggestionCandidate]
+    ) {
+        self.staleSuggestionIDs = staleSuggestionIDs
+        self.refreshedSuggestions = refreshedSuggestions
+    }
+}
+
 public struct SonosGroupSuggestionTracker: Sendable {
     private let resolver = SonosGroupSuggestionResolver()
 
@@ -89,23 +102,17 @@ public struct SonosGroupSuggestionTracker: Sendable {
             in: state,
             selectedRoomName: selectedRoomName
         )
+        let refresh = refresh(
+            in: state,
+            selectedRoomName: selectedRoomName,
+            currentSuggestions: currentSuggestions
+        )
         let validSuggestions = currentSuggestions.filter { suggestion in
-            resolver.suggestionStillValid(
-                speakerID: suggestion.speakerID,
-                coordinatorRoomName: suggestion.coordinatorRoomName,
-                in: state,
-                selectedRoomName: selectedRoomName
-            )
+            !refresh.staleSuggestionIDs.contains(suggestion.id)
         }
-        let staleSuggestionIDs = allCurrentSuggestionIDs.subtracting(validSuggestions.map(\.id))
+        let staleSuggestionIDs = refresh.staleSuggestionIDs
         let validSuggestionSpeakerIDs = Set(validSuggestions.map(\.speakerID))
-        let refreshedSuggestions = validSuggestions.compactMap { suggestion in
-            resolver.refreshedSuggestion(
-                speakerID: suggestion.speakerID,
-                in: state,
-                selectedRoomName: selectedRoomName
-            )
-        }
+        let refreshedSuggestions = refresh.refreshedSuggestions
 
         if let candidate = resolver.suggestion(
             in: state,
@@ -149,6 +156,35 @@ public struct SonosGroupSuggestionTracker: Sendable {
                 suggestedSpeakerID: nil
             ),
             staleSuggestionIDs: staleSuggestionIDs
+        )
+    }
+
+    public func refresh(
+        in state: SonosGroupState,
+        selectedRoomName: String?,
+        currentSuggestions: [SonosGroupSuggestionReference]
+    ) -> SonosGroupSuggestionRefresh {
+        let allCurrentSuggestionIDs = Set(currentSuggestions.map(\.id))
+        let validSuggestions = currentSuggestions.filter { suggestion in
+            resolver.suggestionStillValid(
+                speakerID: suggestion.speakerID,
+                coordinatorRoomName: suggestion.coordinatorRoomName,
+                in: state,
+                selectedRoomName: selectedRoomName
+            )
+        }
+        let staleSuggestionIDs = allCurrentSuggestionIDs.subtracting(validSuggestions.map(\.id))
+        let refreshedSuggestions = validSuggestions.compactMap { suggestion in
+            resolver.refreshedSuggestion(
+                speakerID: suggestion.speakerID,
+                in: state,
+                selectedRoomName: selectedRoomName
+            )
+        }
+
+        return SonosGroupSuggestionRefresh(
+            staleSuggestionIDs: staleSuggestionIDs,
+            refreshedSuggestions: refreshedSuggestions
         )
     }
 

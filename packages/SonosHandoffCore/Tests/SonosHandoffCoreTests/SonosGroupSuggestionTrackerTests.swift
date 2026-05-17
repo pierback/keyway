@@ -185,6 +185,30 @@ struct SonosGroupSuggestionTrackerTests {
     }
 
     @Test
+    func refreshReturnsRetargetedPendingSuggestionsAndStaleIDs() {
+        let refresh = tracker.refresh(
+            in: SonosGroupState(groups: [
+                group(coordinator: "Port", members: ["Port", "Kitchen", "Office"]),
+                standalone("Bath"),
+            ]),
+            selectedRoomName: "Port",
+            currentSuggestions: [
+                SonosGroupSuggestionReference(
+                    speakerID: "RINCON_BATH",
+                    coordinatorRoomName: "Kitchen"
+                ),
+                SonosGroupSuggestionReference(
+                    speakerID: "RINCON_OFFICE",
+                    coordinatorRoomName: "Kitchen"
+                ),
+            ]
+        )
+
+        #expect(refresh.staleSuggestionIDs == ["RINCON_OFFICE|Kitchen"])
+        #expect(refresh.refreshedSuggestions == [candidate("Bath", coordinator: "Port", group: "Port + 2")])
+    }
+
+    @Test
     func keepsPendingSuggestionAfterCoordinatorMigration() {
         let update = tracker.update(
             in: SonosGroupState(groups: [
