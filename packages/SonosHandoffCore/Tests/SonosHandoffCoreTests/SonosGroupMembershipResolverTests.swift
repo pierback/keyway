@@ -7,7 +7,7 @@ struct SonosGroupMembershipResolverTests {
     @Test
     func returnsNoRowsWithoutSelectedGroup() {
         let rows = resolver.rows(
-            speakers: [speaker("Kitchen")],
+            groups: [standalone("Kitchen")],
             selectedGroup: nil
         )
 
@@ -16,13 +16,13 @@ struct SonosGroupMembershipResolverTests {
 
     @Test
     func marksCoordinatorMembersAndAvailableSpeakers() {
+        let selectedGroup = group(coordinator: "Kitchen", members: ["Kitchen", "Port"])
         let rows = resolver.rows(
-            speakers: [
-                speaker("Kitchen"),
-                speaker("Port"),
-                speaker("Office"),
+            groups: [
+                selectedGroup,
+                standalone("Office"),
             ],
-            selectedGroup: group(coordinator: "Kitchen", members: ["Kitchen", "Port"])
+            selectedGroup: selectedGroup
         )
 
         #expect(rows.map(\.speaker.roomName) == ["Kitchen", "Port", "Office"])
@@ -32,14 +32,14 @@ struct SonosGroupMembershipResolverTests {
 
     @Test
     func ordersSelectedGroupBeforeAvailableSpeakers() {
+        let selectedGroup = group(coordinator: "Kitchen", members: ["Port", "Kitchen"])
         let rows = resolver.rows(
-            speakers: [
-                speaker("Office"),
-                speaker("Port"),
-                speaker("Kitchen"),
-                speaker("Bath"),
+            groups: [
+                standalone("Office"),
+                selectedGroup,
+                standalone("Bath"),
             ],
-            selectedGroup: group(coordinator: "Kitchen", members: ["Port", "Kitchen"])
+            selectedGroup: selectedGroup
         )
 
         #expect(rows.map(\.speaker.roomName) == ["Kitchen", "Port", "Bath", "Office"])
@@ -48,9 +48,10 @@ struct SonosGroupMembershipResolverTests {
 
     @Test
     func disablesCoordinatorRemovalForSingleSpeakerGroup() {
+        let selectedGroup = standalone("Kitchen")
         let rows = resolver.rows(
-            speakers: [speaker("Kitchen"), speaker("Office")],
-            selectedGroup: group(coordinator: "Kitchen", members: ["Kitchen"])
+            groups: [selectedGroup, standalone("Office")],
+            selectedGroup: selectedGroup
         )
 
         #expect(rows[0].membership == .coordinator)
@@ -61,22 +62,43 @@ struct SonosGroupMembershipResolverTests {
 
     @Test
     func marksEffectiveCoordinatorWhenCoordinatorIDIsMissingFromMembers() {
+        let selectedGroup = SonosSpeakerGroup(
+            id: "RINCON_MISSING:group",
+            coordinatorID: "RINCON_MISSING",
+            members: [speaker("Kitchen"), speaker("Port")]
+        )
         let rows = resolver.rows(
-            speakers: [
-                speaker("Kitchen"),
-                speaker("Port"),
-                speaker("Office"),
+            groups: [
+                selectedGroup,
+                standalone("Office"),
             ],
-            selectedGroup: SonosSpeakerGroup(
-                id: "RINCON_MISSING:group",
-                coordinatorID: "RINCON_MISSING",
-                members: [speaker("Kitchen"), speaker("Port")]
-            )
+            selectedGroup: selectedGroup
         )
 
         #expect(rows.map(\.speaker.roomName) == ["Kitchen", "Port", "Office"])
         #expect(rows.map(\.membership) == [.coordinator, .member, .available])
         #expect(rows.map(\.canToggle) == [true, true, true])
+    }
+
+    @Test
+    func excludesMembersOfOtherGroupsFromAvailableSpeakers() {
+        let selectedGroup = group(coordinator: "Kitchen", members: ["Kitchen", "Port"])
+        let rows = resolver.rows(
+            groups: [
+                selectedGroup,
+                group(coordinator: "Office", members: ["Office", "Bath"]),
+                standalone("Hall"),
+            ],
+            selectedGroup: selectedGroup
+        )
+
+        #expect(rows.map(\.speaker.roomName) == ["Kitchen", "Port", "Hall"])
+        #expect(rows.map(\.membership) == [.coordinator, .member, .available])
+    }
+
+    private func standalone(_ roomName: String) -> SonosSpeakerGroup {
+        let speaker = speaker(roomName)
+        return SonosSpeakerGroup(id: speaker.id, coordinatorID: speaker.id, members: [speaker])
     }
 
     private func group(coordinator: String, members roomNames: [String]) -> SonosSpeakerGroup {

@@ -40,14 +40,14 @@ public struct SonosGroupMembershipResolver: Sendable {
     public init() {}
 
     public func rows(
-        speakers: [SonosSpeaker],
+        groups: [SonosSpeakerGroup],
         selectedGroup: SonosSpeakerGroup?
     ) -> [SonosGroupMembershipRow] {
         guard let selectedGroup else {
             return []
         }
 
-        return orderedSpeakers(speakers, selectedGroup: selectedGroup).map { speaker in
+        return orderedSpeakers(groups: groups, selectedGroup: selectedGroup).map { speaker in
             let membership: SonosGroupMembership
             if speaker.id == selectedGroup.coordinator?.id {
                 membership = .coordinator
@@ -66,11 +66,11 @@ public struct SonosGroupMembershipResolver: Sendable {
     }
 
     private func orderedSpeakers(
-        _ speakers: [SonosSpeaker],
+        groups: [SonosSpeakerGroup],
         selectedGroup: SonosSpeakerGroup
     ) -> [SonosSpeaker] {
         var speakerByID: [String: SonosSpeaker] = [:]
-        for speaker in speakers where speakerByID[speaker.id] == nil {
+        for speaker in groups.flatMap(\.members) where speakerByID[speaker.id] == nil {
             speakerByID[speaker.id] = speaker
         }
         let selectedMemberIDs = Set(selectedGroup.members.map(\.id))
@@ -91,7 +91,9 @@ public struct SonosGroupMembershipResolver: Sendable {
             emittedIDs.insert(member.id)
         }
 
-        let availableSpeakers = speakers
+        let availableSpeakers = groups
+            .filter { $0.members.count == 1 }
+            .flatMap(\.members)
             .filter { !selectedMemberIDs.contains($0.id) }
             .sorted(by: roomNameAscending)
         for speaker in availableSpeakers where !emittedIDs.contains(speaker.id) {

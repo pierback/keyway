@@ -111,7 +111,7 @@ final class PlaybackSyncController: ObservableObject {
 
     var groupEditRows: [PlaybackGroupEditRow] {
         groupMembershipResolver.rows(
-            speakers: speakers,
+            groups: outputRows.map(\.group),
             selectedGroup: selectedOutputGroup
         )
     }
