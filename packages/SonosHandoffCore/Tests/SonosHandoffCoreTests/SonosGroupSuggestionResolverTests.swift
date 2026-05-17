@@ -136,6 +136,35 @@ struct SonosGroupSuggestionResolverTests {
         #expect(!keepSuggestion)
     }
 
+    @Test
+    func recordingPromptedSpeakerLeavesOtherNewSpeakersEligible() {
+        let seenSpeakerIDs = resolver.seenSpeakerIDsAfterSuggestion(
+            previousSpeakerIDs: ["RINCON_KITCHEN", "RINCON_PORT"],
+            currentSpeakerIDs: ["RINCON_KITCHEN", "RINCON_PORT", "RINCON_OFFICE", "RINCON_BATH"],
+            suggestedSpeakerID: "RINCON_OFFICE"
+        )
+        let nextCandidate = resolver.suggestion(
+            in: groupStateWithOfficeAndBath,
+            selectedRoomName: "Kitchen",
+            spotifyPlaying: true,
+            previousSpeakerIDs: seenSpeakerIDs
+        )
+
+        #expect(seenSpeakerIDs == ["RINCON_KITCHEN", "RINCON_PORT", "RINCON_OFFICE"])
+        #expect(nextCandidate?.speaker.roomName == "Bath")
+    }
+
+    @Test
+    func recordingNoSuggestionMarksCurrentSpeakersSeen() {
+        let seenSpeakerIDs = resolver.seenSpeakerIDsAfterSuggestion(
+            previousSpeakerIDs: ["RINCON_KITCHEN"],
+            currentSpeakerIDs: ["RINCON_KITCHEN", "RINCON_PORT"],
+            suggestedSpeakerID: nil
+        )
+
+        #expect(seenSpeakerIDs == ["RINCON_KITCHEN", "RINCON_PORT"])
+    }
+
     private var groupState: SonosGroupState {
         SonosGroupState(groups: [
             kitchenPortGroup,

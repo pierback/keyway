@@ -72,6 +72,20 @@ public struct SonosGroupSuggestionResolver: Sendable {
         return standaloneSpeakers(in: state).contains { $0.id == speakerID }
     }
 
+    public func seenSpeakerIDsAfterSuggestion(
+        previousSpeakerIDs: Set<String>?,
+        currentSpeakerIDs: Set<String>,
+        suggestedSpeakerID: String?
+    ) -> Set<String> {
+        guard let suggestedSpeakerID else {
+            return currentSpeakerIDs
+        }
+
+        var seenSpeakerIDs = previousSpeakerIDs ?? []
+        seenSpeakerIDs.insert(suggestedSpeakerID)
+        return seenSpeakerIDs.intersection(currentSpeakerIDs)
+    }
+
     private func eligibleSpeakerIDs(
         in state: SonosGroupState,
         previousSpeakerIDs: Set<String>?,
