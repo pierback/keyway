@@ -5,6 +5,8 @@ import SonosHandoffCore
 
 @MainActor
 final class PlaybackSyncController: ObservableObject {
+    private static let coordinatorMigrationTarget = Duration.seconds(2)
+
     @Published private(set) var speakers: [SonosSpeaker] = []
     @Published private(set) var outputRows: [PlaybackOutputRow] = []
     @Published private(set) var selectedRoomName: String?
@@ -377,6 +379,9 @@ final class PlaybackSyncController: ObservableObject {
             do {
                 let outcome = try await applyGroupMembershipChange(row, group: group)
                 groupLoadingRoomName = nil
+                if let message = outcome.menuMessage {
+                    menuMessage = message
+                }
                 if outcome.shouldRefreshOutputs {
                     await refreshOutputs(showLoading: false)
                 }
@@ -470,11 +475,11 @@ final class PlaybackSyncController: ObservableObject {
                 toCoordinatorRoomName: coordinatorRoomName
             )
             shortcutLogger.info("SonosHandoffGroupEdit result=joined room=\(roomName, privacy: .public) coordinator=\(coordinatorRoomName, privacy: .public)")
-            return .changed
+            return .changed()
         case .remove(let roomName):
             try await groupingEditor.removeFromGroup(roomName: roomName)
             shortcutLogger.info("SonosHandoffGroupEdit result=removed room=\(roomName, privacy: .public)")
-            return .changed
+            return .changed()
         case .removeCoordinator(let groupID, let coordinatorRoomName, let replacement):
             let startedAt = ContinuousClock.now
             try await groupingEditor.removeCoordinator(
@@ -493,11 +498,16 @@ final class PlaybackSyncController: ObservableObject {
                 selectRoomName(replacement.roomName)
                 clearSpotifyAuthRequired()
                 shortcutLogger.info("SonosHandoffGroupEdit result=removed_coordinator_and_transferred oldCoordinator=\(coordinatorRoomName, privacy: .public) newCoordinator=\(replacement.roomName, privacy: .public) elapsed=\(String(describing: elapsed), privacy: .public)")
-                return .changed
+                if elapsed > Self.coordinatorMigrationTarget {
+                    return .changed(
+                        message: "Moved coordinator to \(replacement.roomName), but migration took longer than 2 seconds."
+                    )
+                }
+                return .changed()
             case .failure(let code, _):
                 if code == .authRequired {
                     requireSpotifyAuth(message: transferOutcome.failureMessage)
-                    return .changed
+                    return .changed()
                 }
 
                 throw PlaybackGroupEditError(
@@ -699,7 +709,7 @@ private extension String {
 
 private enum PlaybackGroupEditOutcome {
     case unchanged
-    case changed
+    case changed(message: String? = nil)
 
     var shouldRefreshOutputs: Bool {
         switch self {
@@ -707,6 +717,15 @@ private enum PlaybackGroupEditOutcome {
             return false
         case .changed:
             return true
+        }
+    }
+
+    var menuMessage: String? {
+        switch self {
+        case .unchanged:
+            return nil
+        case .changed(let message):
+            return message
         }
     }
 }
