@@ -8,22 +8,31 @@ enum SonosPlaybackReadiness: Equatable, Sendable {
 struct SonosTransferVerifier {
     private let soapClient: SonosSOAPClient
     private let activationDelayNanoseconds: UInt64
+    private let activationPollAttempts: Int
+    private let activationPollDelayNanoseconds: UInt64
     private let playbackPollAttempts: Int
     private let playbackPollDelayNanoseconds: UInt64
 
     private static let defaultActivationDelayNanoseconds: UInt64 = 1_000_000_000
+    private static let defaultActivationPollAttempts = 1
+    private static let defaultActivationPollDelayNanoseconds: UInt64 = 0
     private static let defaultPlaybackPollAttempts = 16
     private static let defaultPlaybackPollDelayNanoseconds: UInt64 = 350_000_000
 
     init(
         soapClient: SonosSOAPClient,
         activationDelayNanoseconds: UInt64 = Self.defaultActivationDelayNanoseconds,
+        activationPollAttempts: Int = Self.defaultActivationPollAttempts,
+        activationPollDelayNanoseconds: UInt64 = Self.defaultActivationPollDelayNanoseconds,
         playbackPollAttempts: Int = Self.defaultPlaybackPollAttempts,
         playbackPollDelayNanoseconds: UInt64 = Self.defaultPlaybackPollDelayNanoseconds
     ) {
+        precondition(activationPollAttempts > 0, "activationPollAttempts must be positive")
         precondition(playbackPollAttempts > 0, "playbackPollAttempts must be positive")
         self.soapClient = soapClient
         self.activationDelayNanoseconds = activationDelayNanoseconds
+        self.activationPollAttempts = activationPollAttempts
+        self.activationPollDelayNanoseconds = activationPollDelayNanoseconds
         self.playbackPollAttempts = playbackPollAttempts
         self.playbackPollDelayNanoseconds = playbackPollDelayNanoseconds
     }
@@ -31,10 +40,19 @@ struct SonosTransferVerifier {
     func waitForSpotifyConnectMode(on target: ConnectSonosTarget) async throws {
         try await Task.sleep(nanoseconds: activationDelayNanoseconds)
 
-        let currentURI = try await currentURI(on: target)
-        guard Self.isSpotifyConnectURI(currentURI) else {
-            throw ConnectHandoffError(.transferVerificationFailed, "\(target.roomName) did not enter Spotify Connect mode; CurrentURI=\(currentURI)")
+        var lastURI = ""
+        for attempt in 0 ..< activationPollAttempts {
+            lastURI = try await currentURI(on: target)
+            if Self.isSpotifyConnectURI(lastURI) {
+                return
+            }
+
+            if attempt + 1 < activationPollAttempts {
+                try await Task.sleep(nanoseconds: activationPollDelayNanoseconds)
+            }
         }
+
+        throw ConnectHandoffError(.transferVerificationFailed, "\(target.roomName) did not enter Spotify Connect mode; CurrentURI=\(lastURI)")
     }
 
     func playAndVerifyReadiness(on target: ConnectSonosTarget) async throws -> SonosPlaybackReadiness {

@@ -28,6 +28,14 @@ final class SonosRuntime: @unchecked Sendable {
         let renderingControl = SonosRenderingControl(soapClient: soapClient)
         let avTransport = SonosAVTransport(soapClient: soapClient)
         let transferVerifier = SonosTransferVerifier(soapClient: soapClient)
+        let coordinatorMigrationTransferVerifier = SonosTransferVerifier(
+            soapClient: soapClient,
+            activationDelayNanoseconds: 250_000_000,
+            activationPollAttempts: 8,
+            activationPollDelayNanoseconds: 150_000_000,
+            playbackPollAttempts: 4,
+            playbackPollDelayNanoseconds: 150_000_000
+        )
         let spotifyBridge = SpotifyConnectBridge(
             loginID: loginID,
             appSupport: appSupport,
@@ -48,7 +56,8 @@ final class SonosRuntime: @unchecked Sendable {
             spotifyBridge: spotifyBridge,
             spotifyPlayback: spotifyPlayback,
             zeroconfClient: zeroconfClient,
-            transferVerifier: transferVerifier
+            transferVerifier: transferVerifier,
+            coordinatorMigrationTransferVerifier: coordinatorMigrationTransferVerifier
         )
     }
 
@@ -59,7 +68,7 @@ final class SonosRuntime: @unchecked Sendable {
                 return .failure(code: .targetNotConfigured, message: "No saved target found for alias '\(alias)'.")
             }
 
-            try await transferService.transferToRoom(named: target.spotifyDeviceName)
+            try await transferService.transferToRoom(named: target.spotifyDeviceName, verification: .full)
             return .success
         } catch let error as ConnectHandoffError {
             return .failure(code: error.code, message: error.message)
@@ -68,9 +77,9 @@ final class SonosRuntime: @unchecked Sendable {
         }
     }
 
-    func transfer(toRoomName roomName: String) async -> TransferResult {
+    func transfer(toRoomName roomName: String, verification: RoomHandoffVerificationMode) async -> TransferResult {
         do {
-            try await transferService.transferToRoom(named: roomName)
+            try await transferService.transferToRoom(named: roomName, verification: verification)
             return .success
         } catch let error as ConnectHandoffError {
             return .failure(code: error.code, message: error.message)

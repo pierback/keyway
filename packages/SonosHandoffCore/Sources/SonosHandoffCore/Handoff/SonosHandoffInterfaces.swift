@@ -23,7 +23,12 @@ public protocol SonosGroupingEditing: Sendable {
 }
 
 public protocol RoomHandoffPerforming: Sendable {
-    func transfer(toRoomName roomName: String) async -> TransferResult
+    func transfer(toRoomName roomName: String, verification: RoomHandoffVerificationMode) async -> TransferResult
+}
+
+public enum RoomHandoffVerificationMode: Equatable, Sendable {
+    case full
+    case coordinatorMigration
 }
 
 public protocol SpotifyActivePlaybackObserving: Sendable {

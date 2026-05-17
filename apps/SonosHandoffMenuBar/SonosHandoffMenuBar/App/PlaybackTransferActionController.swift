@@ -26,11 +26,11 @@ final class PlaybackTransferActionController {
         self.roomHandoffService = environment.roomHandoffService
     }
 
-    func transfer(to speaker: SonosSpeaker) async -> PlaybackTransferOutcome {
+    func transfer(to speaker: SonosSpeaker, verification: RoomHandoffVerificationMode = .full) async -> PlaybackTransferOutcome {
         let roomName = speaker.roomName
         logger.info("SonosHandoffTransfer state=started room=\(roomName, privacy: .public) host=\(speaker.host, privacy: .public)")
 
-        let result = await roomHandoffService.transfer(toRoomName: roomName)
+        let result = await roomHandoffService.transfer(toRoomName: roomName, verification: verification)
         switch result {
         case .success:
             logger.info("SonosHandoffTransfer state=succeeded room=\(roomName, privacy: .public)")

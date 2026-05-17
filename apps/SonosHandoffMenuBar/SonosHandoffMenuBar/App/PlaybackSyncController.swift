@@ -464,7 +464,10 @@ final class PlaybackSyncController: ObservableObject {
                 coordinatorRoomName: row.speaker.roomName,
                 replacementRoomName: replacement.roomName
             )
-            let transferOutcome = await transferActions.transfer(to: replacement)
+            let transferOutcome = await transferActions.transfer(
+                to: replacement,
+                verification: .coordinatorMigration
+            )
             let elapsed = startedAt.duration(to: .now)
             switch transferOutcome.result {
             case .success:

@@ -24,8 +24,8 @@ public final class SpotifyConnectHandoffService: HandoffPerforming, RoomHandoffP
         await runtime.transfer(to: alias)
     }
 
-    public func transfer(toRoomName roomName: String) async -> TransferResult {
-        await runtime.transfer(toRoomName: roomName)
+    public func transfer(toRoomName roomName: String, verification: RoomHandoffVerificationMode) async -> TransferResult {
+        await runtime.transfer(toRoomName: roomName, verification: verification)
     }
 
     public func discoverSpeakers() async throws -> [SonosSpeaker] {

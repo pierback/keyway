@@ -6,22 +6,25 @@ final class SpotifyConnectTransferService: @unchecked Sendable {
     private let spotifyPlayback: SpotifyPlaybackService
     private let zeroconfClient: SonosSpotifyZeroconfClient
     private let transferVerifier: SonosTransferVerifier
+    private let coordinatorMigrationTransferVerifier: SonosTransferVerifier
 
     init(
         directory: SonosDirectory,
         spotifyBridge: SpotifyConnectBridge,
         spotifyPlayback: SpotifyPlaybackService,
         zeroconfClient: SonosSpotifyZeroconfClient,
-        transferVerifier: SonosTransferVerifier
+        transferVerifier: SonosTransferVerifier,
+        coordinatorMigrationTransferVerifier: SonosTransferVerifier
     ) {
         self.directory = directory
         self.spotifyBridge = spotifyBridge
         self.spotifyPlayback = spotifyPlayback
         self.zeroconfClient = zeroconfClient
         self.transferVerifier = transferVerifier
+        self.coordinatorMigrationTransferVerifier = coordinatorMigrationTransferVerifier
     }
 
-    func transferToRoom(named roomName: String) async throws {
+    func transferToRoom(named roomName: String, verification: RoomHandoffVerificationMode) async throws {
         let target = try await directory.resolveTarget(named: roomName)
         guard let version = target.version else {
             throw ConnectHandoffError(.targetNotVisible, "Missing Spotify Connect version for \(roomName)")
@@ -46,13 +49,35 @@ final class SpotifyConnectTransferService: @unchecked Sendable {
             throw ConnectHandoffError(.transferVerificationFailed, "Sonos Spotify Connect activation failed: \(response)")
         }
 
-        try await transferVerifier.waitForSpotifyConnectMode(on: target)
-        let readiness = try await transferVerifier.playAndVerifyReadiness(on: target)
-        switch readiness {
-        case .transportStarted:
+        try await verifyTransfer(to: target, roomName: roomName, verification: verification)
+    }
+
+    private func verifyTransfer(
+        to target: ConnectSonosTarget,
+        roomName: String,
+        verification: RoomHandoffVerificationMode
+    ) async throws {
+        let verifier = transferVerifier(for: verification)
+        try await verifier.waitForSpotifyConnectMode(on: target)
+        let readiness = try await verifier.playAndVerifyReadiness(on: target)
+        switch (verification, readiness) {
+        case (.full, .transportStarted):
             await spotifyPlayback.verifyActiveDeviceIfAvailable(named: roomName)
-        case .spotifyConnectModeOnly:
+        case (.full, .spotifyConnectModeOnly):
             _ = try await spotifyPlayback.verifyActiveDevice(named: roomName)
+        case (.coordinatorMigration, .transportStarted):
+            return
+        case (.coordinatorMigration, .spotifyConnectModeOnly):
+            _ = try await spotifyPlayback.verifyActiveDevice(named: roomName)
+        }
+    }
+
+    private func transferVerifier(for verification: RoomHandoffVerificationMode) -> SonosTransferVerifier {
+        switch verification {
+        case .full:
+            return transferVerifier
+        case .coordinatorMigration:
+            return coordinatorMigrationTransferVerifier
         }
     }
 }

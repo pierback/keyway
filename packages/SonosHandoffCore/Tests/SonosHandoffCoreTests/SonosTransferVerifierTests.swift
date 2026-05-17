@@ -18,6 +18,22 @@ struct SonosTransferVerifierTests {
     }
 
     @Test
+    func pollsForSpotifyConnectMediaInfoDuringActivationLag() async throws {
+        let router = TransferVerifierRouter()
+        router.setResponses([
+            "GetMediaInfo": [
+                Self.mediaInfo(uri: "x-rincon-queue:RINCON_123#0"),
+                Self.mediaInfo(uri: "x-sonos-vli:spotify:track:123"),
+            ],
+        ])
+        let verifier = Self.verifier(router: router, activationPollAttempts: 2)
+
+        try await verifier.waitForSpotifyConnectMode(on: Self.target)
+
+        #expect(router.recordedActions() == ["GetMediaInfo", "GetMediaInfo"])
+    }
+
+    @Test
     func reportsTransportStartedWhenPlaybackBeginsAfterLag() async throws {
         let router = TransferVerifierRouter()
         router.setResponses([
@@ -82,13 +98,19 @@ struct SonosTransferVerifierTests {
         deviceID: "RINCON_123"
     )
 
-    private static func verifier(router: TransferVerifierRouter, playbackPollAttempts: Int = 2) -> SonosTransferVerifier {
+    private static func verifier(
+        router: TransferVerifierRouter,
+        activationPollAttempts: Int = 1,
+        playbackPollAttempts: Int = 2
+    ) -> SonosTransferVerifier {
         TransferVerifierURLProtocol.router = router
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [TransferVerifierURLProtocol.self]
         return SonosTransferVerifier(
             soapClient: SonosSOAPClient(urlSession: URLSession(configuration: configuration)),
             activationDelayNanoseconds: 0,
+            activationPollAttempts: activationPollAttempts,
+            activationPollDelayNanoseconds: 0,
             playbackPollAttempts: playbackPollAttempts,
             playbackPollDelayNanoseconds: 0
         )
