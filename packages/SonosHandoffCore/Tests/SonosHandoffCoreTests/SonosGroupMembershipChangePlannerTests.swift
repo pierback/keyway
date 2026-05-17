@@ -27,13 +27,14 @@ struct SonosGroupMembershipChangePlannerTests {
     @Test
     func coordinatorRemovalUsesReplacementMember() {
         let port = speaker("Port")
+        let currentGroup = group(coordinator: "Kitchen", members: ["Kitchen", "Port", "Office"])
         let change = planner.change(
             for: row("Kitchen", membership: .coordinator, coordinatorRemovalAvailable: true),
-            in: group(coordinator: "Kitchen", members: ["Kitchen", "Port", "Office"])
+            in: currentGroup
         )
 
         #expect(change == .removeCoordinator(
-            groupID: "RINCON_KITCHEN:group",
+            group: currentGroup,
             coordinatorRoomName: "Kitchen",
             replacement: port
         ))

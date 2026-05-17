@@ -561,10 +561,10 @@ final class PlaybackSyncController: ObservableObject {
             try await groupingEditor.removeFromGroup(roomName: roomName)
             shortcutLogger.info("SonosHandoffGroupEdit result=removed room=\(roomName, privacy: .public)")
             return .changed()
-        case .removeCoordinator(let groupID, let coordinatorRoomName, let replacement):
+        case .removeCoordinator(let group, let coordinatorRoomName, let replacement):
             let startedAt = ContinuousClock.now
             try await groupingEditor.removeCoordinator(
-                groupID: groupID,
+                in: group,
                 coordinatorRoomName: coordinatorRoomName,
                 replacementRoomName: replacement.roomName
             )

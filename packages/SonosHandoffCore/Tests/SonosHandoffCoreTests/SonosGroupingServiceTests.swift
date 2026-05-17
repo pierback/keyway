@@ -6,27 +6,17 @@ import Testing
 struct SonosGroupingServiceTests {
     @Test
     func removeCoordinatorLeavesOldCoordinatorOutOfReplacementGroup() async throws {
-        GroupingServiceURLProtocol.reset(
-            topologyResponse: Self.topologyEnvelope(
-                """
-                <ZoneGroups>
-                  <ZoneGroup Coordinator="RINCON_KITCHEN" ID="RINCON_KITCHEN:123">
-                    <ZoneGroupMember UUID="RINCON_KITCHEN" ZoneName="Kitchen" Location="http://kitchen.local:1400/xml/device_description.xml"/>
-                    <ZoneGroupMember UUID="RINCON_PORT" ZoneName="Port" Location="http://port.local:1400/xml/device_description.xml"/>
-                    <ZoneGroupMember UUID="RINCON_OFFICE" ZoneName="Office" Location="http://office.local:1400/xml/device_description.xml"/>
-                  </ZoneGroup>
-                </ZoneGroups>
-                """
-            )
-        )
+        GroupingServiceURLProtocol.reset()
         let service = Self.groupingService()
+        let currentGroup = Self.group(coordinator: "Kitchen", members: ["Kitchen", "Port", "Office"])
 
         try await service.removeCoordinator(
-            groupID: "RINCON_KITCHEN:123",
+            in: currentGroup,
             coordinatorRoomName: "Kitchen",
             replacementRoomName: "Port"
         )
 
+        #expect(GroupingServiceURLProtocol.snapshot().contains { $0.url?.path == "/ZoneGroupTopology/Control" } == false)
         let avTransportRequests = GroupingServiceURLProtocol.snapshot()
             .filter { $0.url?.path == "/MediaRenderer/AVTransport/Control" }
         #expect(avTransportRequests.map { $0.url?.host } == ["port.local", "office.local"])
@@ -38,27 +28,21 @@ struct SonosGroupingServiceTests {
 
     @Test
     func removeCoordinatorUsesEffectiveCoordinatorWhenCoordinatorIDIsMissingFromMembers() async throws {
-        GroupingServiceURLProtocol.reset(
-            topologyResponse: Self.topologyEnvelope(
-                """
-                <ZoneGroups>
-                  <ZoneGroup Coordinator="RINCON_MISSING" ID="RINCON_MISSING:123">
-                    <ZoneGroupMember UUID="RINCON_KITCHEN" ZoneName="Kitchen" Location="http://kitchen.local:1400/xml/device_description.xml"/>
-                    <ZoneGroupMember UUID="RINCON_PORT" ZoneName="Port" Location="http://port.local:1400/xml/device_description.xml"/>
-                    <ZoneGroupMember UUID="RINCON_OFFICE" ZoneName="Office" Location="http://office.local:1400/xml/device_description.xml"/>
-                  </ZoneGroup>
-                </ZoneGroups>
-                """
-            )
-        )
+        GroupingServiceURLProtocol.reset()
         let service = Self.groupingService()
+        let currentGroup = SonosSpeakerGroup(
+            id: "RINCON_MISSING:123",
+            coordinatorID: "RINCON_MISSING",
+            members: ["Kitchen", "Port", "Office"].map(Self.speaker)
+        )
 
         try await service.removeCoordinator(
-            groupID: "RINCON_MISSING:123",
+            in: currentGroup,
             coordinatorRoomName: "Kitchen",
             replacementRoomName: "Port"
         )
 
+        #expect(GroupingServiceURLProtocol.snapshot().contains { $0.url?.path == "/ZoneGroupTopology/Control" } == false)
         let avTransportRequests = GroupingServiceURLProtocol.snapshot()
             .filter { $0.url?.path == "/MediaRenderer/AVTransport/Control" }
         #expect(avTransportRequests.map { $0.url?.host } == ["port.local", "office.local"])
@@ -113,6 +97,22 @@ struct SonosGroupingServiceTests {
         )
     }
 
+    private static func group(coordinator: String, members roomNames: [String]) -> SonosSpeakerGroup {
+        SonosSpeakerGroup(
+            id: "RINCON_\(coordinator.uppercased()):123",
+            coordinatorID: "RINCON_\(coordinator.uppercased())",
+            members: roomNames.map(speaker)
+        )
+    }
+
+    private static func speaker(_ roomName: String) -> SonosSpeaker {
+        SonosSpeaker(
+            id: "RINCON_\(roomName.uppercased())",
+            roomName: roomName,
+            host: "\(roomName.lowercased()).local"
+        )
+    }
+
     private static func topologyEnvelope(_ topologyXML: String) -> String {
         """
         <?xml version="1.0"?>
@@ -132,7 +132,7 @@ private final class GroupingServiceURLProtocol: URLProtocol, @unchecked Sendable
     private nonisolated(unsafe) static var topologyResponse = ""
     private nonisolated(unsafe) static var requests: [GroupingServiceRequest] = []
 
-    static func reset(topologyResponse: String) {
+    static func reset(topologyResponse: String = "") {
         lock.withLock {
             self.topologyResponse = topologyResponse
             self.requests = []

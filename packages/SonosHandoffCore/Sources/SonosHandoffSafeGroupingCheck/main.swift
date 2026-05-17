@@ -295,7 +295,7 @@ private struct LiveGroupingValidator {
         let startedAt = clock.now
         do {
             try await service.removeCoordinator(
-                groupID: scenario.group.id,
+                in: scenario.group,
                 coordinatorRoomName: scenario.coordinator.roomName,
                 replacementRoomName: replacement.roomName
             )

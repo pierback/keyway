@@ -104,9 +104,13 @@ final class SonosRuntime: @unchecked Sendable {
         try await groupingService.migrateCoordinator(groupID: groupID, toRoomName: roomName)
     }
 
-    func removeCoordinator(groupID: String, coordinatorRoomName: String, replacementRoomName: String) async throws {
+    func removeCoordinator(
+        in group: SonosSpeakerGroup,
+        coordinatorRoomName: String,
+        replacementRoomName: String
+    ) async throws {
         try await groupingService.removeCoordinator(
-            groupID: groupID,
+            in: group,
             coordinatorRoomName: coordinatorRoomName,
             replacementRoomName: replacementRoomName
         )

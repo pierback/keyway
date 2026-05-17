@@ -3,7 +3,7 @@ public enum SonosGroupMembershipChange: Equatable, Sendable {
     case join(roomName: String, coordinatorRoomName: String)
     case remove(roomName: String)
     case removeCoordinator(
-        groupID: String,
+        group: SonosSpeakerGroup,
         coordinatorRoomName: String,
         replacement: SonosSpeaker
     )
@@ -41,7 +41,7 @@ public struct SonosGroupMembershipChangePlanner: Sendable {
                 return .none
             }
             return .removeCoordinator(
-                groupID: group.id,
+                group: group,
                 coordinatorRoomName: row.speaker.roomName,
                 replacement: replacement
             )

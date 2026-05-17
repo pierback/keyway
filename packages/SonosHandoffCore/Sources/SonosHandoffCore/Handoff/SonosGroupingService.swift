@@ -49,12 +49,11 @@ final class SonosGroupingService: @unchecked Sendable {
         )
     }
 
-    func removeCoordinator(groupID: String, coordinatorRoomName: String, replacementRoomName: String) async throws {
-        let state = try await directory.discoverGroupState()
-        guard let group = state.groups.first(where: { $0.id == groupID }) else {
-            throw ConnectHandoffError(.targetNotVisible, "Sonos group not found: \(groupID)")
-        }
-
+    func removeCoordinator(
+        in group: SonosSpeakerGroup,
+        coordinatorRoomName: String,
+        replacementRoomName: String
+    ) async throws {
         guard let oldCoordinator = group.coordinator,
               SonosRoomName.matches(oldCoordinator.roomName, coordinatorRoomName)
         else {
