@@ -49,7 +49,8 @@ struct SafeGroupingCheck {
             every discovered speaker to volume 0, verifies that safety state, and prints the
             grouping scenario that would be tested.
 
-            Mutation mode always performs the same volume-0/muted safety preparation first, then:
+            Mutation mode always performs the same volume-0/muted safety preparation first,
+            repeats that safety preparation immediately before every grouping/transfer mutation, then:
               1. adds one standalone speaker to the current Spotify-on-Sonos group
               2. removes that speaker again
               3. if possible, removes the current coordinator and transfers playback to a
@@ -257,6 +258,7 @@ private struct LiveGroupingValidator {
             return
         }
 
+        try await prepareSafeMutation(label: "standalone_join")
         try await service.join(
             roomName: standaloneSpeaker.roomName,
             toCoordinatorRoomName: scenario.coordinator.roomName
@@ -271,6 +273,7 @@ private struct LiveGroupingValidator {
             )
             print("standalone_join=ok room=\(standaloneSpeaker.roomName)")
 
+            try await prepareSafeMutation(label: "standalone_remove")
             try await service.removeFromGroup(roomName: standaloneSpeaker.roomName)
             let removedState = try await service.discoverGroupState()
             guard removedState.groups.contains(where: { group in
@@ -291,6 +294,7 @@ private struct LiveGroupingValidator {
             return
         }
 
+        try await prepareSafeMutation(label: "coordinator_remove")
         let clock = ContinuousClock()
         let startedAt = clock.now
         do {
@@ -299,6 +303,7 @@ private struct LiveGroupingValidator {
                 coordinatorRoomName: scenario.coordinator.roomName,
                 replacementRoomName: replacement.roomName
             )
+            try await prepareSafeMutation(label: "coordinator_transfer")
             let transfer = await service.transfer(toRoomName: replacement.roomName, verification: .coordinatorMigration)
             let elapsed = startedAt.duration(to: clock.now)
             guard case .success = transfer else {
@@ -340,6 +345,7 @@ private struct LiveGroupingValidator {
 
     private func rollbackStandaloneJoin(roomName: String, originalError: Error) async throws {
         do {
+            try await prepareSafeMutation(label: "standalone_rollback")
             try await service.removeFromGroup(roomName: roomName)
             print("standalone_rollback=ok room=\(roomName)")
         } catch {
@@ -354,8 +360,10 @@ private struct LiveGroupingValidator {
             throw ValidationError("Original coordinator is missing from \(originalGroup.displayName).")
         }
 
+        try await prepareSafeMutation(label: "coordinator_restore_remove_old")
         try await service.removeFromGroup(roomName: oldCoordinator.roomName)
         for member in originalGroup.members where member.id != oldCoordinator.id {
+            try await prepareSafeMutation(label: "coordinator_restore_join")
             try await service.join(roomName: member.roomName, toCoordinatorRoomName: oldCoordinator.roomName)
         }
 
@@ -367,8 +375,10 @@ private struct LiveGroupingValidator {
         }
 
         if restoredGroup.coordinator?.id != oldCoordinator.id {
+            try await prepareSafeMutation(label: "coordinator_restore_migrate")
             try await service.migrateCoordinator(groupID: restoredGroup.id, toRoomName: oldCoordinator.roomName)
         }
+        try await prepareSafeMutation(label: "coordinator_restore_transfer")
         let restoredTransfer = await service.transfer(toRoomName: oldCoordinator.roomName, verification: .coordinatorMigration)
         guard case .success = restoredTransfer else {
             throw ValidationError("Original coordinator transfer failed during restore: \(restoredTransfer)")
@@ -408,6 +418,17 @@ private struct LiveGroupingValidator {
             return error.message
         }
         return error.localizedDescription
+    }
+
+    private func prepareSafeMutation(label: String) async throws {
+        let state = try await service.discoverGroupState()
+        guard !state.speakers.isEmpty else {
+            throw ValidationError("No Sonos speakers discovered before \(label).")
+        }
+
+        print("volume_safety_step=\(label)")
+        try await forceSafeVolumeState(for: state.speakers)
+        try await verifySafeVolumeState(for: state.speakers)
     }
 
     private func requireCoordinatorRemoved(
