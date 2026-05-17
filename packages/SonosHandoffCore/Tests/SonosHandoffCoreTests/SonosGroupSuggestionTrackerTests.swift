@@ -232,6 +232,29 @@ struct SonosGroupSuggestionTrackerTests {
     }
 
     @Test
+    func clearsPendingSuggestionWhenPlaybackMovesToDifferentGroup() {
+        let update = tracker.update(
+            in: SonosGroupState(groups: [
+                group(coordinator: "Living", members: ["Living", "Bath"]),
+                standalone("Office"),
+            ]),
+            selectedRoomName: "Living",
+            spotifyPlaying: true,
+            previousSpeakerIDs: ["RINCON_KITCHEN", "RINCON_PORT", "RINCON_OFFICE", "RINCON_LIVING", "RINCON_BATH"],
+            currentSuggestions: [
+                SonosGroupSuggestionReference(
+                    speakerID: "RINCON_OFFICE",
+                    coordinatorRoomName: "Kitchen"
+                ),
+            ]
+        )
+
+        #expect(update.action == .clearCurrent)
+        #expect(update.staleSuggestionIDs == ["RINCON_OFFICE|Kitchen"])
+        #expect(update.refreshedSuggestions.isEmpty)
+    }
+
+    @Test
     func clearsCurrentSuggestionWhenSpotifyStopsPlaying() {
         let update = tracker.update(
             in: groupState,

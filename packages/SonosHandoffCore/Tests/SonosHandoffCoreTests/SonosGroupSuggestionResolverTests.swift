@@ -99,6 +99,7 @@ struct SonosGroupSuggestionResolverTests {
     func refreshesCurrentSuggestionWithLatestGroupDisplayName() {
         let candidate = resolver.refreshedSuggestion(
             speakerID: "RINCON_BATH",
+            coordinatorRoomName: "Kitchen",
             in: SonosGroupState(groups: [
                 group(coordinator: "Kitchen", members: ["Kitchen", "Port", "Office"]),
                 standalone("Bath"),
@@ -115,6 +116,7 @@ struct SonosGroupSuggestionResolverTests {
     func refreshesCurrentSuggestionAfterCoordinatorMigration() {
         let candidate = resolver.refreshedSuggestion(
             speakerID: "RINCON_BATH",
+            coordinatorRoomName: "Kitchen",
             in: SonosGroupState(groups: [
                 group(coordinator: "Port", members: ["Port", "Kitchen", "Office"]),
                 standalone("Bath"),
@@ -125,6 +127,21 @@ struct SonosGroupSuggestionResolverTests {
         #expect(candidate?.speaker.roomName == "Bath")
         #expect(candidate?.coordinatorRoomName == "Port")
         #expect(candidate?.groupDisplayName == "Port + 2")
+    }
+
+    @Test
+    func clearsCurrentSuggestionWhenPlaybackMovesToDifferentGroup() {
+        let keepSuggestion = resolver.suggestionStillValid(
+            speakerID: "RINCON_OFFICE",
+            coordinatorRoomName: "Kitchen",
+            in: SonosGroupState(groups: [
+                group(coordinator: "Living", members: ["Living", "Bath"]),
+                standalone("Office"),
+            ]),
+            selectedRoomName: "Living"
+        )
+
+        #expect(!keepSuggestion)
     }
 
     @Test
