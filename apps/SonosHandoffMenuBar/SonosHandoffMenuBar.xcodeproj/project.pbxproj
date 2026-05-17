@@ -40,13 +40,11 @@
 		AA330E5DA6262030A498903B /* SonosHandoffApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FDDC3093E7C25C9614553B5 /* SonosHandoffApp.swift */; };
 		B604B667AFA69C7B97537FE9 /* SonosHandoffCore in Frameworks */ = {isa = PBXBuildFile; productRef = FAFE3AF25C8577252A119443 /* SonosHandoffCore */; };
 		D5E7713E3E18444490BA13FE /* VolumeHotkeyController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5E7713D3E18444490BA13FE /* VolumeHotkeyController.swift */; };
-		FA8E732D6C4DF491562B2720 /* DoctorFeature.swift in Sources */ = {isa = PBXBuildFile; fileRef = 600C5740E614B2D048B9F00F /* DoctorFeature.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		1B6133A39F7C24248F9CF7FF /* MenuBarController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MenuBarController.swift; sourceTree = "<group>"; };
 		51654BE1FA9A1C54DD31384F /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		600C5740E614B2D048B9F00F /* DoctorFeature.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DoctorFeature.swift; sourceTree = "<group>"; };
 		6E81F94C7A9144909C894E21 /* MenuBarMotion.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MenuBarMotion.swift; sourceTree = "<group>"; };
 		6E81F94F7A9144909C894E21 /* MenuBarOutputSection.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MenuBarOutputSection.swift; sourceTree = "<group>"; };
 		6E81F9517A9144909C894E21 /* MenuBarVolumeControl.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MenuBarVolumeControl.swift; sourceTree = "<group>"; };
@@ -97,7 +95,6 @@
 		4BD6C3F488CBF4F3C4A487E9 /* Features */ = {
 			isa = PBXGroup;
 			children = (
-				600C5740E614B2D048B9F00F /* DoctorFeature.swift */,
 				8AB614A589EDD25AB3051CE2 /* SettingsFeature.swift */,
 			);
 			name = Features;
@@ -303,7 +300,6 @@
 					88D43E76F4E0450E90BDF58B /* StatusHUDPanel.swift in Sources */,
 					921C4DE67C9230B2D66D63AA /* StatusHUDAnchor.swift in Sources */,
 					921C4DE87C9230B2D66D63AA /* StatusHUDViews.swift in Sources */,
-				FA8E732D6C4DF491562B2720 /* DoctorFeature.swift in Sources */,
 				0DF48BBDC0677673936EBEAB /* SettingsFeature.swift in Sources */,
 				55A8E14353DDBE893D4419EE /* AppEnvironment.swift in Sources */,
 			);

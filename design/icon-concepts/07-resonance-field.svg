@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">Resonance Field</title>
+  <desc id="desc">Abstract field lines around a small source point, suggesting audio moving through rooms.</desc>
+  <defs>
+    <linearGradient id="bg" x1="120" y1="82" x2="900" y2="918" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#262A2C"/>
+      <stop offset="0.58" stop-color="#121516"/>
+      <stop offset="1" stop-color="#050606"/>
+    </linearGradient>
+    <linearGradient id="field" x1="220" y1="228" x2="810" y2="806" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ECE7DC"/>
+      <stop offset="0.62" stop-color="#A9B3B1"/>
+      <stop offset="1" stop-color="#4FDB89"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#000000" flood-opacity="0.48"/>
+    </filter>
+  </defs>
+  <rect width="1024" height="1024" rx="226" fill="url(#bg)"/>
+  <g filter="url(#shadow)" fill="none" stroke="url(#field)" stroke-linecap="round">
+    <path d="M262 618C354 710 498 744 628 700C743 661 806 565 779 468" stroke-width="36" opacity="0.35"/>
+    <path d="M304 528C373 596 482 624 584 593C676 565 725 496 707 421" stroke-width="42" opacity="0.58"/>
+    <path d="M360 448C408 492 481 509 550 487C608 469 640 427 632 380" stroke-width="46" opacity="0.94"/>
+  </g>
+  <circle cx="376" cy="634" r="34" fill="#ECE7DC"/>
+  <circle cx="512" cy="512" r="14" fill="#4FDB89"/>
+</svg>

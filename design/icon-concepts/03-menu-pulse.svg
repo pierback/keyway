@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">Menu Pulse</title>
+  <desc id="desc">A menu bar tile with a small speaker and active audio pulse.</desc>
+  <defs>
+    <linearGradient id="bg" x1="178" y1="126" x2="846" y2="896" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#313940"/>
+      <stop offset="0.52" stop-color="#1B2025"/>
+      <stop offset="1" stop-color="#0A0C0E"/>
+    </linearGradient>
+    <linearGradient id="active" x1="320" y1="296" x2="748" y2="706" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#5AF28C"/>
+      <stop offset="1" stop-color="#16A8FF"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#000000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+  <rect width="1024" height="1024" rx="224" fill="url(#bg)"/>
+  <rect x="206" y="242" width="612" height="148" rx="74" fill="#EFF5F7" opacity="0.11"/>
+  <circle cx="300" cy="316" r="32" fill="#EAF1F4" opacity="0.9"/>
+  <circle cx="410" cy="316" r="32" fill="#EAF1F4" opacity="0.46"/>
+  <circle cx="520" cy="316" r="32" fill="url(#active)"/>
+  <g filter="url(#shadow)">
+    <rect x="344" y="468" width="238" height="302" rx="66" fill="#232A30" stroke="#EAF1F4" stroke-opacity="0.18" stroke-width="10"/>
+    <circle cx="463" cy="560" r="39" fill="none" stroke="#EAF1F4" stroke-width="16"/>
+    <circle cx="463" cy="672" r="51" fill="#101519" stroke="#EAF1F4" stroke-opacity="0.82" stroke-width="16"/>
+  </g>
+  <path d="M618 566C664 602 690 645 690 694" fill="none" stroke="url(#active)" stroke-width="34" stroke-linecap="round"/>
+  <path d="M672 506C747 566 786 635 786 714" fill="none" stroke="url(#active)" stroke-width="28" stroke-linecap="round" opacity="0.62"/>
+</svg>

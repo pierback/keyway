@@ -206,14 +206,6 @@ final class StatusHUDPanel {
         messageField.stringValue = message
     }
 
-    func showVolumePending(roomName: String) {
-        configureVolumeLayout()
-        resetVolumeStatus(roomName: roomName)
-        leftIconView.image = NSImage(systemSymbolName: "speaker.fill", accessibilityDescription: "Volume")
-        rightIconView.image = NSImage(systemSymbolName: "speaker.wave.2.fill", accessibilityDescription: "Volume")
-        setVolumeFill(0)
-    }
-
     func showVolume(roomName: String, volume: Int) {
         configureVolumeLayout()
         resetVolumeStatus(roomName: roomName)
@@ -321,17 +313,22 @@ final class StatusHUDPanel {
     private func setVolumeFill(_ volume: Int) {
         let percent = CGFloat(volume) / 100
         let fillWidth = max(0, min(activeTrackFrame.width, activeTrackFrame.width * percent))
-        fillView.frame = NSRect(x: 0, y: 0, width: fillWidth, height: activeTrackFrame.height)
         let knobX = min(
             max(activeTrackFrame.minX + fillWidth - (knobSize / 2), activeTrackFrame.minX),
             activeTrackFrame.maxX - knobSize
         )
-        knobView.frame = NSRect(
-            x: knobX,
-            y: activeTrackFrame.midY - (knobSize / 2),
-            width: knobSize,
-            height: knobSize
-        )
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0
+            context.allowsImplicitAnimation = false
+            fillView.frame = NSRect(x: 0, y: 0, width: fillWidth, height: activeTrackFrame.height)
+            knobView.frame = NSRect(
+                x: knobX,
+                y: activeTrackFrame.midY - (knobSize / 2),
+                width: knobSize,
+                height: knobSize
+            )
+        }
     }
 
     private func resize(to size: NSSize) {

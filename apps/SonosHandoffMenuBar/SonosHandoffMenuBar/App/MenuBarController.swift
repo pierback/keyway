@@ -1,25 +1,20 @@
 import AppKit
-import os
 import SonosHandoffCore
 import SwiftUI
-import UserNotifications
 
 @MainActor
 struct MenuBarController: View {
     static let settingsWindowID = "settings-window"
     private static let footerHorizontalPadding: CGFloat = 20
-    private static let footerPrimaryRowHeight: CGFloat = 44
-    private static let footerUtilityRowHeight: CGFloat = 32
+    private static let footerPrimaryRowHeight: CGFloat = 36
+    private static let footerUtilityRowHeight: CGFloat = 31
 
     let environment: AppEnvironment
     @Environment(\.openWindow) private var openWindow
     @StateObject private var playback: PlaybackSyncController
-    private let doctorFeature = DoctorFeature()
-    private let shortcutLogger = os.Logger(subsystem: "com.fpieringer.SonosHandoffMenuBar", category: "Shortcuts")
 
     @State private var showMore = false
     @State private var optionKeyPressed = false
-    @State private var groupEditingPinned = false
     @State private var localModifierMonitor: Any?
     @State private var globalModifierMonitor: Any?
     @State private var modifierPollTask: Task<Void, Never>?
@@ -61,12 +56,11 @@ struct MenuBarController: View {
         .onDisappear {
             StatusHUD.shared.setVolumeOverlaySuppressed(false)
             stopModifierMonitor()
-            groupEditingPinned = false
         }
     }
 
     private var groupEditingActive: Bool {
-        optionKeyPressed || groupEditingPinned
+        optionKeyPressed
     }
 
     private var header: some View {
@@ -94,47 +88,24 @@ struct MenuBarController: View {
 
     private var footer: some View {
         VStack(spacing: 0) {
-            if groupEditingPinned {
-                footerRow(title: "Done Editing Group", systemImage: "checkmark", emphasized: true) {
-                    setPinnedGroupEditing(false)
-                }
-            } else {
-                footerRow(title: "Show More", systemImage: showMore ? "chevron.down" : "chevron.right", emphasized: true) {
-                    withAnimation(MenuBarMotion.modeSwitch) {
-                        showMore.toggle()
-                    }
+            footerRow(title: "Show More", systemImage: showMore ? "chevron.down" : "chevron.right", emphasized: true) {
+                withAnimation(MenuBarMotion.modeSwitch) {
+                    showMore.toggle()
                 }
             }
 
-            if showMore && !groupEditingPinned {
+            if showMore {
                 VStack(spacing: 0) {
-                    footerRow(title: "Edit Speaker Group", systemImage: "hifispeaker.2") {
-                        setPinnedGroupEditing(true)
-                    }
-
                     footerRow(title: "Settings...", systemImage: "gearshape") {
                         openSettingsWindow()
-                    }
-
-                    footerRow(title: "Check Shortcut Status", systemImage: "keyboard") {
-                        checkShortcutStatus()
-                    }
-
-                    footerRow(title: doctorFeature.menuTitle, systemImage: "stethoscope") {
-                        doctorFeature.runDoctor(using: environment)
-                    }
-
-                    if !AccessibilityPermission.isGranted() {
-                        footerRow(title: "Enable fn Volume Shortcuts...", systemImage: "accessibility") {
-                            openShortcutPermissions()
-                        }
                     }
 
                     footerRow(title: "Quit", systemImage: "power") {
                         NSApp.terminate(nil)
                     }
                 }
-                .padding(.vertical, 6)
+                .padding(.top, 1)
+                .padding(.bottom, 5)
                 .transition(MenuBarMotion.statusTransition)
             }
         }
@@ -177,49 +148,6 @@ struct MenuBarController: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             NSApp.activate(ignoringOtherApps: true)
             openWindow(id: Self.settingsWindowID)
-        }
-    }
-
-    private func checkShortcutStatus() {
-        NotificationCenter.default.post(name: .sonosHandoffRefreshHotkeys, object: nil)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            let status = ShortcutRuntimeStatus.shared.snapshot()
-            shortcutLogger.info("SonosHandoffShortcuts accessibility=\(status.accessibilityGranted, privacy: .public) mediaFallback=\(status.mediaFallback.rawValue, privacy: .public) plainHotkeys=\(status.plainHotkeysRegistered, privacy: .public) fnHotkeys=\(status.fnHotkeysRegistered, privacy: .public) failure=\(status.lastFailureReason ?? "none", privacy: .public) step=\(status.step, privacy: .public) appPath=\(status.appPath, privacy: .public)")
-            StatusHUD.shared.finish(title: status.title, message: status.message, dismissAfter: status.mediaFallback == .enabled ? 4.0 : 7.0)
-            showNotification(title: status.title, message: status.message)
-        }
-    }
-
-    private func openShortcutPermissions() {
-        AccessibilityPermission.requestPrompt()
-        NotificationCenter.default.post(name: .sonosHandoffRefreshHotkeys, object: nil)
-        shortcutLogger.info("SonosHandoffShortcuts action=open_accessibility_settings appPath=\(Bundle.main.bundlePath, privacy: .public)")
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-            NSWorkspace.shared.open(url)
-        }
-        StatusHUD.shared.finish(
-            title: "Enable Shortcuts",
-            message: "Add and enable Sonos Handoff in Accessibility",
-            dismissAfter: 7.0
-        )
-    }
-
-    private func showNotification(title: String, message: String) {
-        let content = UNMutableNotificationContent()
-        content.title = title
-        content.body = message
-        let request = UNNotificationRequest(
-            identifier: "shortcut-status-\(UUID().uuidString)",
-            content: content,
-            trigger: nil
-        )
-        UNUserNotificationCenter.current().add(request)
-    }
-
-    private func setPinnedGroupEditing(_ enabled: Bool) {
-        withAnimation(MenuBarMotion.modeSwitch) {
-            groupEditingPinned = enabled
-            showMore = false
         }
     }
 

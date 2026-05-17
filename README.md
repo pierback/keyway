@@ -126,7 +126,7 @@ sonos-handoff-safe-grouping-check --mutate --i-understand-this-mutates-sonos-gro
 3. Run `sonos-handoff doctor` and confirm both token checks and saved targets are valid.
 4. Keep Spotify actively playing before handoff.
 
-The menu has `Check Shortcut Status` and volume status actions. Physical `Shift+fn+F10/F11/F12` uses the Mac media/function keys, so the installed app must be enabled in Accessibility before held repeat is reliable; otherwise the app leaves the `Shift+fn` path disabled and shows a permission HUD. Plain `Shift+F10/F11/F12` remains the Carbon fallback for mute/down/up.
+Physical `Shift+fn+F10/F11/F12` uses the Mac media/function keys, so the installed app must be enabled in Accessibility before held repeat is reliable; otherwise the app leaves the `Shift+fn` path disabled and shows a permission HUD. Plain `Shift+F10/F11/F12` remains the Carbon fallback for mute/down/up.
 
 Grant Accessibility to the installed app at:
 
@@ -134,7 +134,7 @@ Grant Accessibility to the installed app at:
 /Users/f.pieringer/Applications/Sonos Handoff.app
 ```
 
-After granting permission, restart the app or click `Check Shortcut Status`. Logs should change from `event_tap_create_failed accessibility=false` to `mediaFallback=enabled events=systemDefined`.
+After granting permission, click `Settings...` -> `Shortcuts` -> `Refresh`, or restart the app. Logs should change from `event_tap_create_failed accessibility=false` to `mediaFallback=enabled events=systemDefined`.
 
 ## Grouping Validation
 

@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">Room Pair</title>
+  <desc id="desc">Two Sonos-style speakers grouped by a quiet connection line.</desc>
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="38%" r="70%">
+      <stop stop-color="#2A333A"/>
+      <stop offset="0.72" stop-color="#14191E"/>
+      <stop offset="1" stop-color="#080A0D"/>
+    </radialGradient>
+    <linearGradient id="green" x1="204" y1="228" x2="820" y2="788" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#38F47B"/>
+      <stop offset="1" stop-color="#0ABF6F"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="20" stdDeviation="24" flood-color="#000000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+  <rect width="1024" height="1024" rx="224" fill="url(#bg)"/>
+  <path d="M344 512H680" stroke="url(#green)" stroke-width="42" stroke-linecap="round" opacity="0.9"/>
+  <circle cx="512" cy="512" r="32" fill="#EAF1F4"/>
+  <g filter="url(#shadow)">
+    <rect x="214" y="326" width="214" height="372" rx="64" fill="#252C32" stroke="#EAF1F4" stroke-opacity="0.18" stroke-width="10"/>
+    <rect x="596" y="326" width="214" height="372" rx="64" fill="#252C32" stroke="#EAF1F4" stroke-opacity="0.18" stroke-width="10"/>
+    <circle cx="321" cy="440" r="42" fill="none" stroke="#EAF1F4" stroke-width="17"/>
+    <circle cx="703" cy="440" r="42" fill="none" stroke="#EAF1F4" stroke-width="17"/>
+    <circle cx="321" cy="584" r="58" fill="#101519" stroke="#EAF1F4" stroke-opacity="0.82" stroke-width="17"/>
+    <circle cx="703" cy="584" r="58" fill="#101519" stroke="#EAF1F4" stroke-opacity="0.82" stroke-width="17"/>
+  </g>
+  <path d="M260 766C348 816 459 842 512 842C565 842 676 816 764 766" fill="none" stroke="#38F47B" stroke-width="24" stroke-linecap="round" opacity="0.45"/>
+</svg>

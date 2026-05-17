@@ -41,18 +41,7 @@ final class StatusHUD {
         scheduleDismiss(after: seconds)
     }
 
-    func showVolumePending(roomName: String, direction: VolumeDirection) {
-        guard !suppressVolumeOverlay else {
-            return
-        }
-
-        hideWorkItem?.cancel()
-        let panel = ensurePanel()
-        panel.showVolumePending(roomName: roomName)
-        panel.orderFront()
-    }
-
-    func showVolume(roomName: String, volume: Int, direction: VolumeDirection, dismissAfter seconds: TimeInterval = 3.0) {
+    func showVolume(roomName: String, volume: Int, dismissAfter seconds: TimeInterval = 3.0) {
         guard !suppressVolumeOverlay else {
             return
         }

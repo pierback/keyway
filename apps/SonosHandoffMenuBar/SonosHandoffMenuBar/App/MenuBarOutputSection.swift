@@ -7,6 +7,7 @@ struct MenuBarOutputSection: View {
     private static let rowHeight: CGFloat = 32
     private static let suggestionRowHeight: CGFloat = 34
     private static let iconSize: CGFloat = 22
+    private static let trailingControlSize: CGFloat = 24
 
     @ObservedObject var playback: PlaybackSyncController
     let groupEditing: Bool
@@ -116,7 +117,7 @@ struct MenuBarOutputSection: View {
     }
 
     private var emptyOutputRow: some View {
-        HStack(spacing: 9) {
+        return HStack(spacing: 9) {
             if playback.isRefreshingOutputs {
                 ProgressView()
                     .controlSize(.small)
@@ -140,7 +141,7 @@ struct MenuBarOutputSection: View {
     }
 
     private var emptyGroupRow: some View {
-        HStack(spacing: 9) {
+        return HStack(spacing: 9) {
             Image(systemName: "hifispeaker.slash")
                 .font(.system(size: 17, weight: .regular))
                 .foregroundStyle(.secondary)
@@ -183,7 +184,6 @@ struct MenuBarOutputSection: View {
         let loading = row.coordinator.roomName == playback.loadingRoomName
         let groupJoinRow = directGroupJoinRow(for: row, selected: selected)
         let grouping = groupJoinRow.map { $0.displayName == playback.groupLoadingRoomName } ?? false
-        let hasTrailingControl = (selected && row.isGroup) || groupJoinRow != nil
         let subtitle = loading ? "Transferring..." : grouping ? "Adding..." : nil
 
         return HStack(spacing: 0) {
@@ -230,7 +230,7 @@ struct MenuBarOutputSection: View {
                     Image(systemName: mixerExpanded ? "chevron.down" : "chevron.right")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(Color.secondary.opacity(0.85))
-                        .frame(width: 24, height: Self.rowHeight)
+                        .frame(width: Self.trailingControlSize, height: Self.rowHeight)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -239,7 +239,7 @@ struct MenuBarOutputSection: View {
                 .accessibilityLabel(mixerExpanded ? "Collapse \(row.displayName) mixer" : "Expand \(row.displayName) mixer")
             }
         }
-        .padding(.trailing, hasTrailingControl ? 4 : 12)
+        .padding(.trailing, 4)
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .background {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -263,12 +263,12 @@ struct MenuBarOutputSection: View {
                         .transition(MenuBarMotion.statusTransition)
                 } else {
                     Image(systemName: "plus")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Color.primary.opacity(0.58))
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(Color.primary.opacity(0.46))
                         .transition(MenuBarMotion.statusTransition)
                 }
             }
-            .frame(width: 24, height: Self.rowHeight)
+            .frame(width: Self.trailingControlSize, height: Self.rowHeight)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -278,7 +278,10 @@ struct MenuBarOutputSection: View {
     }
 
     private func memberVolumeRow(_ row: PlaybackMemberVolumeRow) -> some View {
-        HStack(spacing: 9) {
+        let removalRow = directGroupRemovalRow(for: row)
+        let groupLoading = removalRow.map { $0.displayName == playback.groupLoadingRoomName } ?? false
+
+        return HStack(spacing: 9) {
             Image(systemName: "hifispeaker")
                 .font(.system(size: 11, weight: .regular))
                 .foregroundStyle(Color.secondary.opacity(0.82))
@@ -306,10 +309,43 @@ struct MenuBarOutputSection: View {
                     .monospacedDigit()
                     .frame(width: 25, alignment: .trailing)
             }
+
+            if let removalRow {
+                groupRemovalButton(for: removalRow, loading: groupLoading)
+            } else {
+                Color.clear
+                    .frame(width: Self.trailingControlSize, height: 28)
+            }
         }
         .frame(height: 28)
         .padding(.leading, 43)
-        .padding(.trailing, 14)
+        .padding(.trailing, 4)
+    }
+
+    private func groupRemovalButton(for row: PlaybackGroupEditRow, loading: Bool) -> some View {
+        Button {
+            playback.toggleGroupMembership(row)
+        } label: {
+            ZStack {
+                if loading {
+                    ProgressView()
+                        .controlSize(.small)
+                        .scaleEffect(0.52)
+                        .transition(MenuBarMotion.statusTransition)
+                } else {
+                    Image(systemName: "minus")
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(Color.primary.opacity(0.42))
+                        .transition(MenuBarMotion.statusTransition)
+                }
+            }
+            .frame(width: Self.trailingControlSize, height: 28)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(playback.loadingRoomName != nil || playback.groupLoadingRoomName != nil || !row.canToggle)
+        .accessibilityIdentifier("group-remove-\(row.displayName)")
+        .accessibilityLabel(groupAccessibilityLabel(for: row))
     }
 
     private func groupSuggestionRow(_ suggestion: PlaybackGroupSuggestion) -> some View {
@@ -445,7 +481,7 @@ struct MenuBarOutputSection: View {
                     .transition(MenuBarMotion.statusTransition)
             }
         }
-        .frame(width: 18, height: 18)
+        .frame(width: Self.trailingControlSize, height: 18)
     }
 
     @ViewBuilder
@@ -463,7 +499,7 @@ struct MenuBarOutputSection: View {
                     .transition(MenuBarMotion.statusTransition)
             }
         }
-        .frame(width: 18, height: 18)
+        .frame(width: Self.trailingControlSize, height: 18)
     }
 
     private func rowTitle(_ title: String, subtitle: String?, dimmed: Bool) -> some View {
@@ -533,6 +569,14 @@ struct MenuBarOutputSection: View {
             (editRow.id == row.id || editRow.speaker.id == row.coordinator.id)
                 && editRow.canToggle
                 && (editRow.membership == .available || editRow.membership == .availableGroup)
+        }
+    }
+
+    private func directGroupRemovalRow(for row: PlaybackMemberVolumeRow) -> PlaybackGroupEditRow? {
+        playback.groupEditRows.first { editRow in
+            editRow.speaker.id == row.speaker.id
+                && editRow.canToggle
+                && (editRow.membership == .member || editRow.membership == .coordinator)
         }
     }
 

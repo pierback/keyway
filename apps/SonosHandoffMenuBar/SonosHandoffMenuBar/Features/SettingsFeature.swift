@@ -200,13 +200,13 @@ struct SettingsFeature: View {
                 Spacer()
 
                 Button("Refresh") {
-                    refreshAccessibilityState()
+                    refreshShortcutState()
                 }
                 .controlSize(.small)
 
                 Button("Open Settings") {
                     AccessibilityPermission.requestPrompt()
-                    refreshAccessibilityState()
+                    refreshShortcutState()
                     NSWorkspace.shared.open(accessibilitySettingsURL)
                 }
                 .controlSize(.small)
@@ -317,6 +317,11 @@ struct SettingsFeature: View {
 
     private func refreshAccessibilityState() {
         accessibilityGranted = accessibilityAutomator.checkAccessibilityPermission()
+    }
+
+    private func refreshShortcutState() {
+        refreshAccessibilityState()
+        NotificationCenter.default.post(name: .sonosHandoffRefreshHotkeys, object: nil)
     }
 
     private func saveSpotifyClientID() {

@@ -124,8 +124,8 @@ final class SonosVolumeMonitor: ObservableObject {
         }
 
         switch decision.feedback {
-        case .some(.volume(let direction)):
-            StatusHUD.shared.showVolume(roomName: status.roomName, volume: status.volume, direction: direction, dismissAfter: 1.6)
+        case .some(.volume):
+            StatusHUD.shared.showVolume(roomName: status.roomName, volume: status.volume, dismissAfter: 1.6)
         case .some(.mute):
             StatusHUD.shared.showMute(roomName: status.roomName, muted: status.muted, dismissAfter: 1.6)
         case nil:

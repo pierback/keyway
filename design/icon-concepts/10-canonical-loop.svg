@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">Canonical Loop</title>
+  <desc id="desc">A minimal looped path with one highlighted join, suggesting stable handoff and grouping.</desc>
+  <defs>
+    <linearGradient id="bg" x1="118" y1="102" x2="910" y2="914" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#282C2E"/>
+      <stop offset="0.6" stop-color="#121516"/>
+      <stop offset="1" stop-color="#050606"/>
+    </linearGradient>
+    <linearGradient id="loop" x1="244" y1="230" x2="780" y2="790" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#EFEAE1"/>
+      <stop offset="0.5" stop-color="#C6CAC7"/>
+      <stop offset="1" stop-color="#55DE8B"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="22" stdDeviation="26" flood-color="#000000" flood-opacity="0.5"/>
+    </filter>
+  </defs>
+  <rect width="1024" height="1024" rx="226" fill="url(#bg)"/>
+  <g filter="url(#shadow)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M364 320H620C704 320 772 388 772 472C772 556 704 624 620 624H404C336 624 282 570 282 502C282 434 336 380 404 380H618"
+      stroke="#EFEAE1" stroke-opacity="0.18" stroke-width="74"/>
+    <path d="M364 320H620C704 320 772 388 772 472C772 556 704 624 620 624H404C336 624 282 570 282 502C282 434 336 380 404 380H618"
+      stroke="url(#loop)" stroke-width="42"/>
+    <path d="M558 704H682" stroke="#EFEAE1" stroke-opacity="0.26" stroke-width="34"/>
+  </g>
+  <circle cx="622" cy="380" r="42" fill="#55DE8B"/>
+</svg>

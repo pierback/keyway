@@ -12,7 +12,6 @@ struct AppEnvironment: @unchecked Sendable {
     let groupingEditor: any SonosGroupingEditing
     let volumeService: any SpeakerVolumeAdjusting
     let activePlaybackObserver: any SpotifyActivePlaybackObserving
-    let doctorService: any DoctorPerforming
     let accessibilityAutomator: any AccessibilityAutomating
     let outputSelection: PlaybackOutputSelection
     let outputDirectory: PlaybackOutputDirectory
@@ -52,11 +51,6 @@ struct AppEnvironment: @unchecked Sendable {
             groupingEditor: spotifyConnectService,
             volumeService: spotifyConnectService,
             activePlaybackObserver: spotifyConnectService,
-            doctorService: DoctorService(
-                configStore: configStore,
-                connectTokenStatusStore: connectTokenStatusStore,
-                accessibilityAutomator: accessibilityAutomator
-            ),
             accessibilityAutomator: accessibilityAutomator,
             outputSelection: outputSelection,
             outputDirectory: outputDirectory,

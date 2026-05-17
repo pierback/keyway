@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">Transfer Weave</title>
+  <desc id="desc">An abstract symmetric weave representing playback transfer.</desc>
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="32%" r="76%">
+      <stop stop-color="#292C2D"/>
+      <stop offset="0.64" stop-color="#121516"/>
+      <stop offset="1" stop-color="#050606"/>
+    </radialGradient>
+    <linearGradient id="a" x1="252" y1="288" x2="772" y2="736" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F1EDE4"/>
+      <stop offset="0.55" stop-color="#B8BDB7"/>
+      <stop offset="1" stop-color="#6AD18F"/>
+    </linearGradient>
+    <linearGradient id="b" x1="772" y1="288" x2="252" y2="736" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F1EDE4"/>
+      <stop offset="0.55" stop-color="#AEB7B5"/>
+      <stop offset="1" stop-color="#7E9CFF"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="24" stdDeviation="28" flood-color="#000" flood-opacity="0.52"/>
+    </filter>
+  </defs>
+  <rect width="1024" height="1024" rx="226" fill="url(#bg)"/>
+  <g filter="url(#shadow)" fill="none" stroke-linecap="round">
+    <path d="M272 388C392 388 424 636 512 636C600 636 632 388 752 388" stroke="url(#a)" stroke-width="56"/>
+    <path d="M272 636C392 636 424 388 512 388C600 388 632 636 752 636" stroke="url(#b)" stroke-width="56" opacity="0.82"/>
+    <path d="M348 512H676" stroke="#F1EDE4" stroke-opacity="0.18" stroke-width="34"/>
+  </g>
+  <circle cx="512" cy="512" r="28" fill="#F1EDE4"/>
+</svg>

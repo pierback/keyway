@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">Violet Threshold</title>
+  <desc id="desc">An abstract threshold glyph with a muted violet and blue edge.</desc>
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="28%" r="76%">
+      <stop stop-color="#2A2835"/>
+      <stop offset="0.64" stop-color="#13131A"/>
+      <stop offset="1" stop-color="#06060A"/>
+    </radialGradient>
+    <linearGradient id="edge" x1="304" y1="218" x2="728" y2="818" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#EEEAF4"/>
+      <stop offset="0.52" stop-color="#9A8CFF"/>
+      <stop offset="1" stop-color="#5BB7FF"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="24" stdDeviation="28" flood-color="#000000" flood-opacity="0.52"/>
+    </filter>
+  </defs>
+  <rect width="1024" height="1024" rx="226" fill="url(#bg)"/>
+  <g filter="url(#shadow)">
+    <path d="M326 274H698C732 274 754 311 738 341L558 660C539 694 489 694 470 660L286 341C270 311 292 274 326 274Z"
+      fill="none" stroke="url(#edge)" stroke-width="52" stroke-linejoin="round"/>
+    <path d="M512 348V684" stroke="#EEEAF4" stroke-width="30" stroke-linecap="round" opacity="0.35"/>
+    <path d="M400 408H624L512 604L400 408Z" fill="#EEEAF4" opacity="0.07"/>
+    <circle cx="512" cy="696" r="35" fill="#9A8CFF"/>
+  </g>
+</svg>

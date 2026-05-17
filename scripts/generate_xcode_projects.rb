@@ -31,6 +31,10 @@ def add_swift_sources(target, group, relative_paths)
   target.add_file_references(files)
 end
 
+def swift_source_names(directory)
+  Dir[File.join(directory, '*.swift')].map { |path| File.basename(path) }.sort
+end
+
 def add_resources(target, group, relative_paths)
   files = relative_paths.map { |path| group.new_file(path) }
   target.add_resources(files)
@@ -117,19 +121,10 @@ def build_menu_bar_project
     settings['SWIFT_EMIT_LOC_STRINGS'] = 'NO'
   end
 
-  add_swift_sources(target, app_group, %w[
-    SonosHandoffApp.swift
-    AppDelegate.swift
-    MenuBarController.swift
-  ])
-  add_swift_sources(target, features_group, %w[
-    TransferMenuFeature.swift
-    DoctorFeature.swift
-    SettingsFeature.swift
-  ])
-  add_swift_sources(target, support_group, %w[
-    AppEnvironment.swift
-  ])
+  menu_bar_source_root = File.join(ROOT, 'apps', 'SonosHandoffMenuBar', 'SonosHandoffMenuBar')
+  add_swift_sources(target, app_group, swift_source_names(File.join(menu_bar_source_root, 'App')))
+  add_swift_sources(target, features_group, swift_source_names(File.join(menu_bar_source_root, 'Features')))
+  add_swift_sources(target, support_group, swift_source_names(File.join(menu_bar_source_root, 'Support')))
   add_resources(target, resources_group, [
     'Assets.xcassets',
   ])

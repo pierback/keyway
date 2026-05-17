@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">Chroma Knot</title>
+  <desc id="desc">A restrained abstract knot with a cool cyan-to-lime accent.</desc>
+  <defs>
+    <radialGradient id="bg" cx="42%" cy="28%" r="76%">
+      <stop stop-color="#26323A"/>
+      <stop offset="0.64" stop-color="#11171B"/>
+      <stop offset="1" stop-color="#050708"/>
+    </radialGradient>
+    <linearGradient id="line" x1="262" y1="244" x2="774" y2="792" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#DCEEF0"/>
+      <stop offset="0.46" stop-color="#45B8FF"/>
+      <stop offset="1" stop-color="#6AF28E"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="24" stdDeviation="28" flood-color="#000000" flood-opacity="0.5"/>
+    </filter>
+  </defs>
+  <rect width="1024" height="1024" rx="226" fill="url(#bg)"/>
+  <g filter="url(#shadow)" fill="none" stroke-linecap="round">
+    <path d="M308 540C298 416 384 308 514 294C670 278 774 408 724 548C676 683 526 752 402 696C318 657 291 563 348 490C426 390 578 374 712 452"
+      stroke="url(#line)" stroke-width="50"/>
+    <path d="M700 324C606 270 458 284 370 388C274 501 318 654 452 714"
+      stroke="#E7F0EF" stroke-opacity="0.22" stroke-width="30"/>
+  </g>
+  <circle cx="548" cy="500" r="33" fill="#E7F0EF"/>
+</svg>

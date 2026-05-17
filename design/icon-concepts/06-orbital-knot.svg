@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">Orbital Knot</title>
+  <desc id="desc">An abstract interlocking handoff mark built from quiet orbital curves.</desc>
+  <defs>
+    <radialGradient id="bg" cx="48%" cy="34%" r="72%">
+      <stop stop-color="#252A2E"/>
+      <stop offset="0.66" stop-color="#111417"/>
+      <stop offset="1" stop-color="#060708"/>
+    </radialGradient>
+    <linearGradient id="line" x1="258" y1="230" x2="766" y2="790" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F3F0E8"/>
+      <stop offset="0.55" stop-color="#B9C1C2"/>
+      <stop offset="1" stop-color="#4BE083"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="22" stdDeviation="24" flood-color="#000000" flood-opacity="0.48"/>
+    </filter>
+  </defs>
+  <rect width="1024" height="1024" rx="226" fill="url(#bg)"/>
+  <g filter="url(#shadow)" fill="none" stroke-linecap="round">
+    <path d="M285 532C285 371 411 255 559 284C698 311 774 445 724 571C671 706 500 789 382 705C295 643 298 523 383 456C492 371 662 384 760 488"
+      stroke="url(#line)" stroke-width="52"/>
+    <path d="M704 296C589 242 425 275 347 398C255 543 344 705 500 724C661 744 785 624 746 470"
+      stroke="#F3F0E8" stroke-opacity="0.22" stroke-width="32"/>
+  </g>
+  <circle cx="512" cy="512" r="38" fill="#F3F0E8"/>
+</svg>
