@@ -102,6 +102,37 @@ struct SonosDirectoryTests {
     }
 
     @Test
+    func resolvesGroupingTargetsFromOneTopologyPass() async throws {
+        let runner = RecordingSonosDiscoveryCommandRunner(
+            browseOutput: "10:00:00.000 Add 2 4 local. _sonos._tcp. RINCON_A@Kitchen",
+            hostByInstance: ["RINCON_A@Kitchen": "kitchen.local"]
+        )
+        let directory = Self.directory(
+            runner: runner,
+            router: TargetDirectoryZeroconfRouter(payloadByHost: [:]),
+            topologyBody: Self.topologyEnvelope(
+                """
+                <ZoneGroups>
+                  <ZoneGroup Coordinator="RINCON_A" ID="RINCON_A:123">
+                    <ZoneGroupMember UUID="RINCON_A" ZoneName="Kitchen" Location="http://kitchen.local:1400/xml/device_description.xml"/>
+                    <ZoneGroupMember UUID="RINCON_B" ZoneName="Port" Location="http://port.local:1400/xml/device_description.xml"/>
+                    <ZoneGroupMember UUID="RINCON_C" ZoneName="Office" Location="http://office.local:1400/xml/device_description.xml"/>
+                  </ZoneGroup>
+                </ZoneGroups>
+                """
+            )
+        )
+
+        let targets = try await directory.resolveGroupingTargets(named: ["Office", "Kitchen"])
+
+        #expect(targets.map(\.roomName) == ["Office", "Kitchen"])
+        #expect(targets.map(\.host) == ["office.local", "kitchen.local"])
+        #expect(targets.map(\.deviceID) == ["RINCON_C", "RINCON_A"])
+        #expect(TargetDirectoryTopologyURLProtocol.requestCount == 1)
+        #expect(runner.resolveCount == 1)
+    }
+
+    @Test
     func keepsVisibleSpeakersMissingFromTopologyAsStandaloneGroups() async throws {
         let runner = RecordingSonosDiscoveryCommandRunner(
             browseOutput: """
@@ -196,7 +227,7 @@ struct SonosDirectoryTests {
         topologyBody: String? = nil
     ) -> SonosDirectory {
         TargetDirectoryZeroconfURLProtocol.router = router
-        TargetDirectoryTopologyURLProtocol.responseBody = topologyBody
+        TargetDirectoryTopologyURLProtocol.reset(responseBody: topologyBody)
         let zeroconfConfiguration = URLSessionConfiguration.ephemeral
         zeroconfConfiguration.protocolClasses = [TargetDirectoryZeroconfURLProtocol.self]
         let topologyConfiguration = URLSessionConfiguration.ephemeral
@@ -295,7 +326,22 @@ private final class TargetDirectoryZeroconfURLProtocol: URLProtocol, @unchecked 
 }
 
 private final class TargetDirectoryTopologyURLProtocol: URLProtocol, @unchecked Sendable {
-    nonisolated(unsafe) static var responseBody: String?
+    private static let lock = NSLock()
+    private nonisolated(unsafe) static var responseBody: String?
+    private nonisolated(unsafe) static var recordedRequestCount = 0
+
+    static func reset(responseBody: String?) {
+        lock.withLock {
+            self.responseBody = responseBody
+            recordedRequestCount = 0
+        }
+    }
+
+    static var requestCount: Int {
+        lock.withLock {
+            recordedRequestCount
+        }
+    }
 
     override class func canInit(with request: URLRequest) -> Bool {
         true
@@ -306,18 +352,26 @@ private final class TargetDirectoryTopologyURLProtocol: URLProtocol, @unchecked 
     }
 
     override func startLoading() {
+        let responseBody = Self.currentResponseBody()
         let response = HTTPURLResponse(
             url: request.url!,
-            statusCode: Self.responseBody == nil ? 500 : 200,
+            statusCode: responseBody == nil ? 500 : 200,
             httpVersion: nil,
             headerFields: ["Content-Type": "text/xml"]
         )!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: Data((Self.responseBody ?? "").utf8))
+        client?.urlProtocol(self, didLoad: Data((responseBody ?? "").utf8))
         client?.urlProtocolDidFinishLoading(self)
     }
 
     override func stopLoading() {}
+
+    private static func currentResponseBody() -> String? {
+        lock.withLock {
+            recordedRequestCount += 1
+            return responseBody
+        }
+    }
 }
 
 private final class TargetDirectoryZeroconfRouter: @unchecked Sendable {

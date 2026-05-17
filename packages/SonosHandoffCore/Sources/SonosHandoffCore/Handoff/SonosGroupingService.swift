@@ -10,8 +10,9 @@ final class SonosGroupingService: @unchecked Sendable {
     }
 
     func join(roomName: String, toCoordinatorRoomName coordinatorRoomName: String) async throws {
-        let member = try await directory.resolveGroupingTarget(named: roomName)
-        let coordinator = try await directory.resolveGroupingTarget(named: coordinatorRoomName)
+        let targets = try await directory.resolveGroupingTargets(named: [roomName, coordinatorRoomName])
+        let member = targets[0]
+        let coordinator = targets[1]
         guard member.deviceID != coordinator.deviceID || !SonosRoomName.matches(member.roomName, coordinator.roomName) else {
             return
         }

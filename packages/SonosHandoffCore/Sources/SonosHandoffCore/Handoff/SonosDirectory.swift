@@ -95,6 +95,40 @@ actor SonosDirectory {
         return try await resolveTarget(named: normalizedRoomName, needsSpotifyMetadata: false)
     }
 
+    func resolveGroupingTargets(named roomNames: [String]) async throws -> [ConnectSonosTarget] {
+        let normalizedRoomNames = roomNames.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        var targetsByRoomName: [String: ConnectSonosTarget] = [:]
+        var missingRoomNames: [String] = []
+
+        for roomName in normalizedRoomNames {
+            if let cachedTarget = cachedTarget(for: roomName) {
+                targetsByRoomName[Self.cacheKey(roomName)] = cachedTarget
+            } else {
+                missingRoomNames.append(roomName)
+            }
+        }
+
+        if !missingRoomNames.isEmpty {
+            let state = try await discoverGroupState()
+            for roomName in missingRoomNames {
+                if let speaker = state.speakers.first(where: { SonosRoomName.matches($0.roomName, roomName) }) {
+                    targetsByRoomName[Self.cacheKey(roomName)] = storeAndReturnTarget(for: speaker)
+                }
+            }
+        }
+
+        var targets: [ConnectSonosTarget] = []
+        targets.reserveCapacity(normalizedRoomNames.count)
+        for roomName in normalizedRoomNames {
+            if let target = targetsByRoomName[Self.cacheKey(roomName)] {
+                targets.append(target)
+            } else {
+                targets.append(try await resolveTarget(named: roomName, needsSpotifyMetadata: false))
+            }
+        }
+        return targets
+    }
+
     func target(for speaker: SonosSpeaker) -> ConnectSonosTarget {
         storeAndReturnTarget(for: speaker)
     }
