@@ -158,6 +158,31 @@ struct SonosGroupSuggestionTrackerTests {
     }
 
     @Test
+    func doesNotSuggestSpeakerFirstSeenWhileSpotifyStopped() {
+        let stoppedUpdate = tracker.update(
+            in: groupState,
+            selectedRoomName: nil,
+            spotifyPlaying: false,
+            previousSpeakerIDs: ["RINCON_KITCHEN", "RINCON_PORT"],
+            currentSuggestions: []
+        )
+
+        #expect(stoppedUpdate.action == .none)
+        #expect(stoppedUpdate.seenSpeakerIDs == ["RINCON_KITCHEN", "RINCON_PORT", "RINCON_OFFICE"])
+
+        let resumedUpdate = tracker.update(
+            in: groupState,
+            selectedRoomName: "Kitchen",
+            spotifyPlaying: true,
+            previousSpeakerIDs: stoppedUpdate.seenSpeakerIDs,
+            currentSuggestions: []
+        )
+
+        #expect(resumedUpdate.action == .none)
+        #expect(resumedUpdate.seenSpeakerIDs == ["RINCON_KITCHEN", "RINCON_PORT", "RINCON_OFFICE"])
+    }
+
+    @Test
     func clearsCurrentSuggestionAfterSpeakerJoinedGroup() {
         let update = tracker.update(
             in: SonosGroupState(groups: [

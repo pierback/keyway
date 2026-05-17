@@ -285,7 +285,8 @@ private final class PlaybackBackgroundSync {
         }
 
         do {
-            _ = try await environment.outputDirectory.refreshAfterBackgroundRefresh(currentRoomName: nil)
+            let refresh = try await environment.outputDirectory.refreshAfterBackgroundRefresh(currentRoomName: nil)
+            updateGroupSuggestion(refresh: refresh, selectedRoomName: nil, spotifyPlaying: false)
             notifyOpenMenuAfterDiscoveryRefresh(discoveryRefreshStarted: true, currentRoomName: nil)
         } catch {
             logger.info("SonosHandoffPlaybackSync output_cache_refresh=failed reason=no_active_playback error=\(error.localizedDescription, privacy: .public)")
