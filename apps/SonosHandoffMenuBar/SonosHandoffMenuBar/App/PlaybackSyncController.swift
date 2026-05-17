@@ -66,10 +66,7 @@ final class PlaybackSyncController: ObservableObject {
             volumeMonitor: volumeMonitor
         )
         self.transferActions = transferActions ?? PlaybackTransferActionController(environment: environment)
-        self.groupSuggestionPresenter = PlaybackGroupSuggestionPresenter(
-            store: environment.groupSuggestionStore,
-            notifier: environment.groupSuggestionNotifier
-        )
+        self.groupSuggestionPresenter = environment.groupSuggestionPresenter
         self.monitorCancellable = volumeMonitor.$snapshot.sink { [weak self] snapshot in
             guard let self else {
                 return

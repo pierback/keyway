@@ -21,15 +21,9 @@ final class PlaybackBackgroundSync {
     private var groupSuggestionActionCancellable: AnyCancellable?
     private var groupSuggestionIgnoreCancellable: AnyCancellable?
 
-    init(
-        environment: AppEnvironment,
-        groupSuggestionNotifier: PlaybackGroupSuggestionNotifier
-    ) {
+    init(environment: AppEnvironment) {
         self.environment = environment
-        self.groupSuggestionPresenter = PlaybackGroupSuggestionPresenter(
-            store: environment.groupSuggestionStore,
-            notifier: groupSuggestionNotifier
-        )
+        self.groupSuggestionPresenter = environment.groupSuggestionPresenter
         self.groupSuggestionActionCancellable = NotificationCenter.default
             .publisher(for: .sonosHandoffAcceptGroupSuggestion)
             .sink { [weak self] notification in

@@ -12,17 +12,12 @@ struct SonosHandoffApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     private let environment: AppEnvironment
     private let playbackBackgroundSync: PlaybackBackgroundSync
-    private let groupSuggestionNotifier: PlaybackGroupSuggestionNotifier
 
     init() {
         let environment = AppEnvironment.live()
         self.environment = environment
-        self.groupSuggestionNotifier = environment.groupSuggestionNotifier
         environment.groupSuggestionNotifier.prepare()
-        let playbackBackgroundSync = PlaybackBackgroundSync(
-            environment: environment,
-            groupSuggestionNotifier: environment.groupSuggestionNotifier
-        )
+        let playbackBackgroundSync = PlaybackBackgroundSync(environment: environment)
         self.playbackBackgroundSync = playbackBackgroundSync
         appDelegate.configure(environment: environment)
         SonosVolumeMonitor.shared.start(
