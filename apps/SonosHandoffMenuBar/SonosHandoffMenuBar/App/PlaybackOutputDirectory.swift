@@ -5,15 +5,9 @@ struct PlaybackOutputRefresh: Sendable {
     let rows: [PlaybackOutputRow]
     let speakers: [SonosSpeaker]
     let selectedRoomName: String?
+    let selectedGroup: SonosSpeakerGroup?
+    let groupEditRows: [PlaybackGroupEditRow]
     let menuMessage: String?
-
-    var selectedGroup: SonosSpeakerGroup? {
-        guard let selectedRoomName else {
-            return nil
-        }
-
-        return rows.first { $0.contains(roomName: selectedRoomName) }?.group
-    }
 }
 
 typealias PlaybackOutputRow = SonosOutputRow
@@ -66,6 +60,8 @@ final class PlaybackOutputDirectory {
             rows: report.outputRows,
             speakers: speakers,
             selectedRoomName: report.selectedRoomName,
+            selectedGroup: report.selectedGroup,
+            groupEditRows: report.groupEditRows,
             menuMessage: speakers.isEmpty ? "No Sonos speakers found on this network." : nil
         )
     }

@@ -18,9 +18,10 @@ final class PlaybackSyncController: ObservableObject {
     @Published private(set) var spotifyAuthRequired = false
     @Published private(set) var spotifyAuthMessage = "Spotify sign-in expired. Sign in again to sync playback."
     @Published private(set) var groupSuggestions: [PlaybackGroupSuggestion] = []
+    @Published private(set) var groupEditRows: [PlaybackGroupEditRow] = []
 
     private let outputDirectory: PlaybackOutputDirectory
-    private let groupMembershipResolver = SonosGroupMembershipResolver()
+    private let groupingInspectionResolver = SonosGroupingInspectionResolver()
     private let groupMembershipChangePlanner = SonosGroupMembershipChangePlanner()
     private let groupSuggestionTracker = SonosGroupSuggestionTracker()
     private let groupSuggestionAcceptanceResolver = SonosGroupSuggestionAcceptanceResolver()
@@ -108,13 +109,6 @@ final class PlaybackSyncController: ObservableObject {
 
     var selectedOutputGroup: SonosSpeakerGroup? {
         outputRows.first { $0.contains(roomName: selectedRoomName) }?.group
-    }
-
-    var groupEditRows: [PlaybackGroupEditRow] {
-        groupMembershipResolver.rows(
-            groups: outputRows.map(\.group),
-            selectedGroup: selectedOutputGroup
-        )
     }
 
     func appear() {
@@ -275,6 +269,7 @@ final class PlaybackSyncController: ObservableObject {
         outputRows = refresh.rows
         speakers = refresh.speakers
         selectRoomName(resolvedSelectedRoomName)
+        groupEditRows = refresh.groupEditRows
         refreshPendingGroupSuggestions(from: refresh, selectedRoomName: resolvedSelectedRoomName)
 
         if let selectedRoomName = resolvedSelectedRoomName {
@@ -809,6 +804,7 @@ final class PlaybackSyncController: ObservableObject {
         selectedRoomName = roomName
         outputSelection.setRoomName(roomName)
         volumeMonitor.setRoomName(roomName)
+        refreshGroupEditRowsFromCurrentOutputs()
     }
 
     private func applyExternalOutputSelection(_ roomName: String?) {
@@ -819,6 +815,7 @@ final class PlaybackSyncController: ObservableObject {
         sliderCommitter.cancel()
         selectedRoomName = SonosRoomName.normalized(roomName)
         volumeMonitor.setRoomName(selectedRoomName)
+        refreshGroupEditRowsFromCurrentOutputs()
         if let selectedRoomName {
             clearSpotifyAuthRequired()
             refreshVolumeStatus(roomName: selectedRoomName)
@@ -859,6 +856,16 @@ final class PlaybackSyncController: ObservableObject {
         }
 
         menuMessage = nextMessage
+    }
+
+    private func refreshGroupEditRowsFromCurrentOutputs() {
+        let report = groupingInspectionResolver.report(
+            in: SonosGroupState(groups: outputRows.map(\.group)),
+            activeRoomName: selectedRoomName,
+            spotifyPlaying: selectedRoomName != nil,
+            previousSpeakerIDs: nil
+        )
+        groupEditRows = report.groupEditRows
     }
 
     private func isCurrentVolumeOperation(_ ticket: PlaybackOperationTicket) -> Bool {
