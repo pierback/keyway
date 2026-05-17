@@ -383,6 +383,7 @@ final class PlaybackSyncController: ObservableObject {
                     menuMessage = message
                 }
                 if outcome.shouldRefreshOutputs {
+                    groupSuggestionStore.clear(id: row.speaker.id)
                     await refreshOutputs(showLoading: false)
                 }
             } catch {
