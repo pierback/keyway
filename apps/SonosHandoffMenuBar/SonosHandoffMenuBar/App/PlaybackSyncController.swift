@@ -19,7 +19,7 @@ final class PlaybackSyncController: ObservableObject {
 
     private let outputDirectory: PlaybackOutputDirectory
     private let groupMembershipResolver = SonosGroupMembershipResolver()
-    private let coordinatorReplacementResolver = SonosCoordinatorReplacementResolver()
+    private let groupMembershipChangePlanner = SonosGroupMembershipChangePlanner()
     private let outputSelectionResolver = SonosOutputSelectionResolver()
     private let outputSelection: PlaybackOutputSelection
     private let activePlaybackObserver: any SpotifyActivePlaybackObserving
@@ -359,9 +359,7 @@ final class PlaybackSyncController: ObservableObject {
         guard row.canToggle else {
             return
         }
-        guard let group = selectedOutputGroup,
-              let coordinator = group.coordinator
-        else {
+        guard let group = selectedOutputGroup else {
             return
         }
 
@@ -370,7 +368,7 @@ final class PlaybackSyncController: ObservableObject {
 
         Task { @MainActor in
             do {
-                let outcome = try await applyGroupMembershipChange(row, group: group, coordinator: coordinator)
+                let outcome = try await applyGroupMembershipChange(row, group: group)
                 groupLoadingRoomName = nil
                 if outcome.shouldRefreshOutputs {
                     await refreshOutputs(showLoading: false)
@@ -454,32 +452,27 @@ final class PlaybackSyncController: ObservableObject {
 
     private func applyGroupMembershipChange(
         _ row: PlaybackGroupEditRow,
-        group: SonosSpeakerGroup,
-        coordinator: SonosSpeaker
+        group: SonosSpeakerGroup
     ) async throws -> PlaybackGroupEditOutcome {
-        switch row.membership {
-        case .available:
+        switch groupMembershipChangePlanner.change(for: row, in: group) {
+        case .none:
+            return .unchanged
+        case .join(let roomName, let coordinatorRoomName):
             try await groupingEditor.join(
-                roomName: row.speaker.roomName,
-                toCoordinatorRoomName: coordinator.roomName
+                roomName: roomName,
+                toCoordinatorRoomName: coordinatorRoomName
             )
-            shortcutLogger.info("SonosHandoffGroupEdit result=joined room=\(row.speaker.roomName, privacy: .public) coordinator=\(coordinator.roomName, privacy: .public)")
+            shortcutLogger.info("SonosHandoffGroupEdit result=joined room=\(roomName, privacy: .public) coordinator=\(coordinatorRoomName, privacy: .public)")
             return .changed
-        case .member:
-            try await groupingEditor.removeFromGroup(roomName: row.speaker.roomName)
-            shortcutLogger.info("SonosHandoffGroupEdit result=removed room=\(row.speaker.roomName, privacy: .public)")
+        case .remove(let roomName):
+            try await groupingEditor.removeFromGroup(roomName: roomName)
+            shortcutLogger.info("SonosHandoffGroupEdit result=removed room=\(roomName, privacy: .public)")
             return .changed
-        case .coordinator:
-            guard let replacement = coordinatorReplacementResolver.replacement(
-                in: group,
-                removingCoordinatorID: row.speaker.id
-            ) else {
-                return .changed
-            }
+        case .removeCoordinator(let groupID, let coordinatorRoomName, let replacement):
             let startedAt = ContinuousClock.now
             try await groupingEditor.removeCoordinator(
-                groupID: group.id,
-                coordinatorRoomName: row.speaker.roomName,
+                groupID: groupID,
+                coordinatorRoomName: coordinatorRoomName,
                 replacementRoomName: replacement.roomName
             )
             let transferOutcome = await transferActions.transfer(
@@ -492,7 +485,7 @@ final class PlaybackSyncController: ObservableObject {
                 activeSpotifyRoomName = replacement.roomName
                 selectRoomName(replacement.roomName)
                 clearSpotifyAuthRequired()
-                shortcutLogger.info("SonosHandoffGroupEdit result=removed_coordinator_and_transferred oldCoordinator=\(row.speaker.roomName, privacy: .public) newCoordinator=\(replacement.roomName, privacy: .public) elapsed=\(String(describing: elapsed), privacy: .public)")
+                shortcutLogger.info("SonosHandoffGroupEdit result=removed_coordinator_and_transferred oldCoordinator=\(coordinatorRoomName, privacy: .public) newCoordinator=\(replacement.roomName, privacy: .public) elapsed=\(String(describing: elapsed), privacy: .public)")
                 return .changed
             case .failure(let code, _):
                 if code == .authRequired {
@@ -698,10 +691,13 @@ private extension String {
 }
 
 private enum PlaybackGroupEditOutcome {
+    case unchanged
     case changed
 
     var shouldRefreshOutputs: Bool {
         switch self {
+        case .unchanged:
+            return false
         case .changed:
             return true
         }
