@@ -10,20 +10,16 @@ struct MenuBarOutputSection: View {
 
     @ObservedObject var playback: PlaybackSyncController
     let groupEditing: Bool
-    let groupEditingPinned: Bool
-    let togglePinnedGroupEditing: @MainActor () -> Void
     let openSpotifySettings: @MainActor () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
+            HStack {
                 Text(groupEditing ? "Group" : "Output")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.secondary)
 
                 Spacer()
-
-                groupEditModeButton
             }
             .padding(.horizontal, 10)
             .padding(.top, 8)
@@ -77,43 +73,6 @@ struct MenuBarOutputSection: View {
         }
         .animation(MenuBarMotion.rowUpdate, value: playback.menuMessage)
         .animation(MenuBarMotion.rowUpdate, value: playback.spotifyAuthRequired)
-    }
-
-    private var groupEditModeButton: some View {
-        Button(action: togglePinnedGroupEditing) {
-            Image(systemName: groupEditingPinned ? "checkmark" : "hifispeaker.2")
-                .font(.system(size: groupEditingPinned ? 11 : 12, weight: .semibold))
-                .symbolRenderingMode(.monochrome)
-                .foregroundStyle(groupEditButtonForeground)
-                .frame(width: 22, height: 20)
-                .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                .background {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(groupEditingPinned ? Self.accentColor.opacity(0.18) : Color.white.opacity(0.045))
-                }
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("group-edit-mode-toggle")
-        .accessibilityLabel(groupEditButtonAccessibilityLabel)
-        .accessibilityValue(groupEditingPinned ? "Pinned" : "Off")
-        .disabled(playback.loadingRoomName != nil || playback.groupLoadingRoomName != nil)
-        .animation(MenuBarMotion.selection, value: groupEditingPinned)
-    }
-
-    private var groupEditButtonForeground: Color {
-        groupEditingPinned ? Self.accentColor.opacity(0.95) : Color.secondary.opacity(0.85)
-    }
-
-    private var groupEditButtonAccessibilityLabel: String {
-        if groupEditingPinned {
-            return "Done editing speaker group"
-        }
-
-        if groupEditing {
-            return "Keep speaker group editor open"
-        }
-
-        return "Edit speaker group"
     }
 
     @ViewBuilder

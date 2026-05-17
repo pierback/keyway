@@ -37,8 +37,6 @@ struct MenuBarController: View {
             MenuBarOutputSection(
                 playback: playback,
                 groupEditing: groupEditingActive,
-                groupEditingPinned: groupEditingPinned,
-                togglePinnedGroupEditing: togglePinnedGroupEditing,
                 openSpotifySettings: openSettingsWindow
             )
             divider
@@ -96,14 +94,24 @@ struct MenuBarController: View {
 
     private var footer: some View {
         VStack(spacing: 0) {
-            footerRow(title: "Show More", systemImage: showMore ? "chevron.down" : "chevron.right", emphasized: true) {
-                withAnimation(MenuBarMotion.modeSwitch) {
-                    showMore.toggle()
+            if groupEditingPinned {
+                footerRow(title: "Done Editing Group", systemImage: "checkmark", emphasized: true) {
+                    setPinnedGroupEditing(false)
+                }
+            } else {
+                footerRow(title: "Show More", systemImage: showMore ? "chevron.down" : "chevron.right", emphasized: true) {
+                    withAnimation(MenuBarMotion.modeSwitch) {
+                        showMore.toggle()
+                    }
                 }
             }
 
-            if showMore {
+            if showMore && !groupEditingPinned {
                 VStack(spacing: 0) {
+                    footerRow(title: "Edit Speaker Group", systemImage: "hifispeaker.2") {
+                        setPinnedGroupEditing(true)
+                    }
+
                     footerRow(title: "Settings...", systemImage: "gearshape") {
                         openSettingsWindow()
                     }
@@ -208,9 +216,10 @@ struct MenuBarController: View {
         UNUserNotificationCenter.current().add(request)
     }
 
-    private func togglePinnedGroupEditing() {
+    private func setPinnedGroupEditing(_ enabled: Bool) {
         withAnimation(MenuBarMotion.modeSwitch) {
-            groupEditingPinned.toggle()
+            groupEditingPinned = enabled
+            showMore = false
         }
     }
 
