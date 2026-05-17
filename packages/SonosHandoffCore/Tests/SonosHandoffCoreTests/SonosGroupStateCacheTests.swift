@@ -35,6 +35,26 @@ struct SonosGroupStateCacheTests {
     }
 
     @Test
+    func startBackgroundRefreshSkipsRecentCachedSnapshot() async throws {
+        let reader = StubGroupingStateReader(states: [
+            Self.state(["Kitchen"]),
+            Self.state(["Port"]),
+        ])
+        let cache = SonosGroupStateCache(
+            groupingStateReader: reader,
+            minimumBackgroundRefreshInterval: 60
+        )
+
+        let first = try await cache.refresh()
+        await cache.startBackgroundRefresh()
+        let second = try await cache.refreshAfterBackgroundRefresh()
+
+        #expect(Self.roomNames(first) == ["Kitchen"])
+        #expect(Self.roomNames(second) == ["Kitchen"])
+        #expect(await reader.callCount() == 1)
+    }
+
+    @Test
     func failedBackgroundRefreshDoesNotExposeCachedSnapshot() async throws {
         let reader = StubGroupingStateReader(results: [
             .failure(CacheTestError.discoveryFailed),

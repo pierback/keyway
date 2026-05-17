@@ -1,15 +1,26 @@
+import Foundation
+
 public actor SonosGroupStateCache {
     private let groupingStateReader: any SonosGroupingStateReading
+    private let minimumBackgroundRefreshInterval: TimeInterval
     private var cachedState: SonosGroupState?
     private var backgroundRefreshTask: Task<Void, Never>?
     private var backgroundRefreshFailed = false
+    private var lastSuccessfulRefreshAt: Date?
 
-    public init(groupingStateReader: any SonosGroupingStateReading) {
+    public init(
+        groupingStateReader: any SonosGroupingStateReading,
+        minimumBackgroundRefreshInterval: TimeInterval = 10
+    ) {
         self.groupingStateReader = groupingStateReader
+        self.minimumBackgroundRefreshInterval = minimumBackgroundRefreshInterval
     }
 
     public func startBackgroundRefresh() {
         guard backgroundRefreshTask == nil else {
+            return
+        }
+        guard shouldStartBackgroundRefresh(now: Date()) else {
             return
         }
 
@@ -43,6 +54,7 @@ public actor SonosGroupStateCache {
         let state = try await groupingStateReader.discoverGroupState()
         cachedState = state
         backgroundRefreshFailed = false
+        lastSuccessfulRefreshAt = Date()
         return state
     }
 
@@ -61,9 +73,20 @@ public actor SonosGroupStateCache {
         if let state {
             cachedState = state
             backgroundRefreshFailed = false
+            lastSuccessfulRefreshAt = Date()
         } else {
             backgroundRefreshFailed = true
         }
         backgroundRefreshTask = nil
+    }
+
+    private func shouldStartBackgroundRefresh(now: Date) -> Bool {
+        guard cachedState != nil,
+              let lastSuccessfulRefreshAt
+        else {
+            return true
+        }
+
+        return now.timeIntervalSince(lastSuccessfulRefreshAt) >= minimumBackgroundRefreshInterval
     }
 }

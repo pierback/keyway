@@ -123,7 +123,10 @@ final class PlaybackSyncController: ObservableObject {
             )
             await outputDirectory.startBackgroundRefresh()
             await syncActiveSpotifyOutput()
-            await refreshOutputs(showLoading: !hasCachedOutputs)
+            await refreshOutputs(
+                showLoading: !hasCachedOutputs,
+                waitForBackgroundRefresh: hasCachedOutputs
+            )
         }
     }
 
@@ -168,7 +171,11 @@ final class PlaybackSyncController: ObservableObject {
         )
     }
 
-    func refreshOutputs(showLoading: Bool = true, currentRoomName: String? = nil) async {
+    func refreshOutputs(
+        showLoading: Bool = true,
+        currentRoomName: String? = nil,
+        waitForBackgroundRefresh: Bool = false
+    ) async {
         let requestedRoomName = SonosRoomName.normalized(currentRoomName)
         guard !outputRefreshInProgress else {
             hasPendingOutputRefresh = true
@@ -190,9 +197,13 @@ final class PlaybackSyncController: ObservableObject {
             clearMenuMessageIfAuthenticated()
 
             do {
-                let refresh = try await outputDirectory.refresh(
-                    currentRoomName: refreshRoomName ?? preferredCurrentRoomName()
-                )
+                let currentRoomName = refreshRoomName ?? preferredCurrentRoomName()
+                let refresh: PlaybackOutputRefresh
+                if waitForBackgroundRefresh {
+                    refresh = try await outputDirectory.refreshAfterBackgroundRefresh(currentRoomName: currentRoomName)
+                } else {
+                    refresh = try await outputDirectory.refresh(currentRoomName: currentRoomName)
+                }
                 applyOutputRefresh(refresh)
             } catch {
                 outputRows = []
