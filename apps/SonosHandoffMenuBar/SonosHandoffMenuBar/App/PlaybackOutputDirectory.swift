@@ -38,6 +38,7 @@ typealias PlaybackGroupEditRow = SonosGroupMembershipRow
 final class PlaybackOutputDirectory {
     private let discoveryCache: PlaybackDiscoveryCache
     private let outputSelectionResolver = SonosOutputSelectionResolver()
+    private let outputGroupOrderingResolver = SonosOutputGroupOrderingResolver()
 
     init(environment: AppEnvironment) {
         self.discoveryCache = PlaybackDiscoveryCache(groupingStateReader: environment.groupingStateReader)
@@ -70,7 +71,11 @@ final class PlaybackOutputDirectory {
     }
 
     private func refresh(from state: SonosGroupState, currentRoomName: String?) -> PlaybackOutputRefresh {
-        let rows = state.groups.map(PlaybackOutputRow.init(group:))
+        let orderedGroups = outputGroupOrderingResolver.orderedGroups(
+            state.groups,
+            currentRoomName: currentRoomName
+        )
+        let rows = orderedGroups.map(PlaybackOutputRow.init(group:))
         let speakers = state.speakers
         let selectedRoomName = selectedRoomName(currentRoomName: currentRoomName, in: state.groups)
         return PlaybackOutputRefresh(
