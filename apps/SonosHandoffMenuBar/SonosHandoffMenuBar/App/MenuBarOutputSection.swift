@@ -181,7 +181,10 @@ struct MenuBarOutputSection: View {
 
     private func outputRow(for row: PlaybackOutputRow, selected: Bool, mixerExpanded: Bool) -> some View {
         let loading = row.coordinator.roomName == playback.loadingRoomName
-        let subtitle = loading ? "Transferring..." : nil
+        let groupJoinRow = directGroupJoinRow(for: row, selected: selected)
+        let grouping = groupJoinRow.map { $0.displayName == playback.groupLoadingRoomName } ?? false
+        let hasTrailingControl = (selected && row.isGroup) || groupJoinRow != nil
+        let subtitle = loading ? "Transferring..." : grouping ? "Adding..." : nil
 
         return HStack(spacing: 0) {
             Button {
@@ -216,6 +219,10 @@ struct MenuBarOutputSection: View {
             .accessibilityValue(selected ? "Selected" : "")
             .accessibilityHint("Hands off Spotify playback to \(row.displayName)")
 
+            if let groupJoinRow {
+                groupJoinButton(for: groupJoinRow, loading: grouping)
+            }
+
             if selected && row.isGroup {
                 Button {
                     playback.toggleMixer(for: row)
@@ -232,7 +239,7 @@ struct MenuBarOutputSection: View {
                 .accessibilityLabel(mixerExpanded ? "Collapse \(row.displayName) mixer" : "Expand \(row.displayName) mixer")
             }
         }
-        .padding(.trailing, selected && row.isGroup ? 4 : 12)
+        .padding(.trailing, hasTrailingControl ? 4 : 12)
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .background {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -240,7 +247,34 @@ struct MenuBarOutputSection: View {
         }
         .animation(MenuBarMotion.selection, value: selected)
         .animation(MenuBarMotion.selection, value: loading)
+        .animation(MenuBarMotion.selection, value: grouping)
         .padding(.horizontal, 8)
+    }
+
+    private func groupJoinButton(for row: PlaybackGroupEditRow, loading: Bool) -> some View {
+        Button {
+            playback.toggleGroupMembership(row)
+        } label: {
+            ZStack {
+                if loading {
+                    ProgressView()
+                        .controlSize(.small)
+                        .scaleEffect(0.56)
+                        .transition(MenuBarMotion.statusTransition)
+                } else {
+                    Image(systemName: "plus")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.primary.opacity(0.58))
+                        .transition(MenuBarMotion.statusTransition)
+                }
+            }
+            .frame(width: 24, height: Self.rowHeight)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(playback.loadingRoomName != nil || playback.groupLoadingRoomName != nil || !row.canToggle)
+        .accessibilityIdentifier("group-add-\(row.displayName)")
+        .accessibilityLabel("Add \(row.displayName) to current group")
     }
 
     private func memberVolumeRow(_ row: PlaybackMemberVolumeRow) -> some View {
@@ -488,6 +522,18 @@ struct MenuBarOutputSection: View {
         }
 
         return playback.isMixerPinned(for: row)
+    }
+
+    private func directGroupJoinRow(for row: PlaybackOutputRow, selected: Bool) -> PlaybackGroupEditRow? {
+        guard !selected else {
+            return nil
+        }
+
+        return playback.groupEditRows.first { editRow in
+            (editRow.id == row.id || editRow.speaker.id == row.coordinator.id)
+                && editRow.canToggle
+                && (editRow.membership == .available || editRow.membership == .availableGroup)
+        }
     }
 
     private func groupIconName(for row: PlaybackGroupEditRow) -> String {

@@ -7,7 +7,7 @@
 Current transfer behavior:
 
 - the app and `sonos-handoff-port` activate Spotify Connect on the Sonos speaker through the Sonos local network endpoint
-- the menu bar Output list renders Sonos groups as one selectable Output row and exposes Option-held group editing for the selected Spotify-on-Sonos group
+- the menu bar Output list renders Sonos groups as one selectable Output row and exposes direct plus buttons plus Option-held group editing for the selected Spotify-on-Sonos group
 - group editing can add standalone speakers, remove group members, and remove the coordinator by migrating playback to a replacement member
 - background sync prompts for newly visible standalone Sonos speakers when Spotify is already playing on a Sonos Output, with a notification action and in-menu fallback row
 - volume control talks directly to the Sonos speaker over local SOAP and defaults to 5 percent steps; CLI step overrides are clamped to 5...25

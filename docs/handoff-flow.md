@@ -17,13 +17,14 @@
 4. Select the group coordinator when the active Spotify device matches a group member, a pair group name, or a count-suffix group name.
 5. Transfer to a grouped row through the coordinator, keeping Spotify as the controller after handoff.
 
-## Option-Mode Group Editing Flow
+## Group Editing Flow
 
-1. While the menu is open, hold Option to switch the Output section into group editing.
-2. Build membership rows for the currently selected Spotify-on-Sonos group.
-3. Clicking a standalone speaker joins it to the selected group's coordinator.
-4. Clicking a non-coordinator member removes it from the group.
-5. Clicking a coordinator in a multi-speaker group removes the coordinator by selecting a replacement member, rebuilding the remaining group around that replacement, and transferring Spotify playback to the replacement with coordinator-migration verification.
+1. Build membership rows for the currently selected Spotify-on-Sonos group.
+2. In the default Output list, show a compact plus affordance on rows that can join the current group; clicking the row itself still transfers playback.
+3. While the menu is open, holding Option or choosing `Show More` -> `Edit Speaker Group` switches the Output section into full group editing.
+4. Clicking a standalone speaker joins it to the selected group's coordinator.
+5. Clicking a non-coordinator member removes it from the group.
+6. Clicking a coordinator in a multi-speaker group removes the coordinator by selecting a replacement member, rebuilding the remaining group around that replacement, and transferring Spotify playback to the replacement with coordinator-migration verification.
 
 ## Background Group Suggestion Flow
 
