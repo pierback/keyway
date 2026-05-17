@@ -23,6 +23,7 @@ final class PlaybackSyncController: ObservableObject {
     private let groupMembershipResolver = SonosGroupMembershipResolver()
     private let groupMembershipChangePlanner = SonosGroupMembershipChangePlanner()
     private let groupSuggestionTracker = SonosGroupSuggestionTracker()
+    private let groupSuggestionAcceptanceResolver = SonosGroupSuggestionAcceptanceResolver()
     private let groupSuggestionAcceptRefreshResolver = SonosGroupSuggestionAcceptRefreshResolver()
     private let outputSelectionResolver = SonosOutputSelectionResolver()
     private let outputSelection: PlaybackOutputSelection
@@ -434,21 +435,58 @@ final class PlaybackSyncController: ObservableObject {
 
         Task { @MainActor in
             do {
-                try await groupingEditor.join(
-                    roomName: suggestion.speaker.roomName,
-                    toCoordinatorRoomName: suggestion.coordinatorRoomName
-                )
-                groupSuggestionStore.clear(id: suggestion.id)
-                groupSuggestionNotifier.cancelSuggestion(id: suggestion.id)
-                groupLoadingRoomName = nil
-                shortcutLogger.info("SonosHandoffGroupSuggestion result=accepted room=\(suggestion.speaker.roomName, privacy: .public) coordinator=\(suggestion.coordinatorRoomName, privacy: .public)")
-                await refreshOutputsAfterGroupSuggestionAccept(fallbackRoomName: suggestion.coordinatorRoomName)
+                guard let activeRoomName = await activePlaybackRoomNameForGroupSuggestionRefresh() else {
+                    groupLoadingRoomName = nil
+                    guard !spotifyAuthRequired else {
+                        return
+                    }
+
+                    groupSuggestionStore.clear(id: suggestion.id)
+                    groupSuggestionNotifier.cancelSuggestion(id: suggestion.id)
+                    menuMessage = "Spotify is not playing on a Sonos group."
+                    return
+                }
+
+                let refresh = try await outputDirectory.refresh(currentRoomName: activeRoomName)
+                switch groupSuggestionAcceptanceResolver.decision(
+                    for: suggestion,
+                    selectedGroup: refresh.selectedGroup
+                ) {
+                case .accept(let coordinatorRoomName):
+                    try await groupingEditor.join(
+                        roomName: suggestion.speaker.roomName,
+                        toCoordinatorRoomName: coordinatorRoomName
+                    )
+                    groupSuggestionStore.clear(id: suggestion.id)
+                    groupSuggestionNotifier.cancelSuggestion(id: suggestion.id)
+                    groupLoadingRoomName = nil
+                    shortcutLogger.info("SonosHandoffGroupSuggestion result=accepted room=\(suggestion.speaker.roomName, privacy: .public) coordinator=\(coordinatorRoomName, privacy: .public)")
+                    await refreshOutputsAfterGroupSuggestionAccept(fallbackRoomName: coordinatorRoomName)
+                case .reject(let rejection):
+                    groupSuggestionStore.clear(id: suggestion.id)
+                    groupSuggestionNotifier.cancelSuggestion(id: suggestion.id)
+                    groupLoadingRoomName = nil
+                    menuMessage = groupSuggestionRejectionMessage(rejection)
+                    applyOutputRefresh(refresh)
+                    shortcutLogger.info("SonosHandoffGroupSuggestion result=rejected room=\(suggestion.speaker.roomName, privacy: .public) reason=\(String(describing: rejection), privacy: .public)")
+                }
             } catch {
                 groupLoadingRoomName = nil
                 menuMessage = "Could not add \(suggestion.speaker.roomName) to group."
                 shortcutLogger.error("SonosHandoffGroupSuggestion result=failure room=\(suggestion.speaker.roomName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
                 await refreshOutputs(showLoading: false)
             }
+        }
+    }
+
+    private func groupSuggestionRejectionMessage(_ rejection: SonosGroupSuggestionAcceptanceRejection) -> String {
+        switch rejection {
+        case .noActiveSonosGroup:
+            return "Spotify is not playing on a Sonos group."
+        case .targetGroupChanged:
+            return "Spotify playback moved before grouping."
+        case .speakerAlreadyGrouped:
+            return "Speaker is already in the active group."
         }
     }
 

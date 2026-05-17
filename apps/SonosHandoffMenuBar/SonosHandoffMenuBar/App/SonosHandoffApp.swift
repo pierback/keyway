@@ -125,6 +125,7 @@ private final class PlaybackBackgroundSync {
     private let groupSuggestionNotifier: PlaybackGroupSuggestionNotifier
     private let logger = Logger(subsystem: "com.fpieringer.SonosHandoffMenuBar", category: "Playback")
     private let groupSuggestionTracker = SonosGroupSuggestionTracker()
+    private let groupSuggestionAcceptanceResolver = SonosGroupSuggestionAcceptanceResolver()
     private let groupSuggestionAcceptRefreshResolver = SonosGroupSuggestionAcceptRefreshResolver()
     private var task: Task<Void, Never>?
     private var lastDiscoveryRefresh = Date.distantPast
@@ -306,13 +307,14 @@ private final class PlaybackBackgroundSync {
         }
 
         do {
-            try await environment.groupingEditor.join(
-                roomName: suggestion.speaker.roomName,
-                toCoordinatorRoomName: suggestion.coordinatorRoomName
-            )
-            environment.groupSuggestionStore.clear(id: suggestion.id)
-            groupSuggestionNotifier.cancelSuggestion(id: suggestion.id)
             let activeRoomName = await activePlaybackRoomNameForSuggestionRefresh()
+            guard let activeRoomName else {
+                environment.groupSuggestionStore.clear(id: suggestion.id)
+                groupSuggestionNotifier.cancelSuggestion(id: suggestion.id)
+                logger.info("SonosHandoffGroupSuggestion result=notification_rejected room=\(suggestion.speaker.roomName, privacy: .public) reason=no_active_sonos_group")
+                return
+            }
+
             let preRefreshPlan = groupSuggestionAcceptRefreshResolver.plan(
                 activeRoomName: activeRoomName,
                 outputSelectedRoomName: nil,
@@ -321,10 +323,41 @@ private final class PlaybackBackgroundSync {
             let refresh = try await environment.outputDirectory.refresh(
                 currentRoomName: preRefreshPlan.discoveryRoomName
             )
+            let decision = groupSuggestionAcceptanceResolver.decision(
+                for: suggestion,
+                selectedGroup: refresh.selectedGroup
+            )
+            guard case .accept(let coordinatorRoomName) = decision else {
+                environment.groupSuggestionStore.clear(id: suggestion.id)
+                groupSuggestionNotifier.cancelSuggestion(id: suggestion.id)
+                updateGroupSuggestion(
+                    refresh: refresh,
+                    selectedRoomName: refresh.selectedRoomName,
+                    spotifyPlaying: refresh.selectedRoomName != nil
+                )
+                NotificationCenter.default.post(name: .sonosHandoffRefreshOutputs, object: refresh.selectedRoomName)
+                logger.info("SonosHandoffGroupSuggestion result=notification_rejected room=\(suggestion.speaker.roomName, privacy: .public) decision=\(String(describing: decision), privacy: .public)")
+                return
+            }
+
+            try await environment.groupingEditor.join(
+                roomName: suggestion.speaker.roomName,
+                toCoordinatorRoomName: coordinatorRoomName
+            )
+            environment.groupSuggestionStore.clear(id: suggestion.id)
+            groupSuggestionNotifier.cancelSuggestion(id: suggestion.id)
+            let postRefreshPlan = groupSuggestionAcceptRefreshResolver.plan(
+                activeRoomName: activeRoomName,
+                outputSelectedRoomName: nil,
+                fallbackRoomName: coordinatorRoomName
+            )
+            let postRefresh = try await environment.outputDirectory.refresh(
+                currentRoomName: postRefreshPlan.discoveryRoomName
+            )
             let plan = groupSuggestionAcceptRefreshResolver.plan(
                 activeRoomName: activeRoomName,
-                outputSelectedRoomName: refresh.selectedRoomName,
-                fallbackRoomName: suggestion.coordinatorRoomName
+                outputSelectedRoomName: postRefresh.selectedRoomName,
+                fallbackRoomName: coordinatorRoomName
             )
             lastDiscoveryRefresh = Date()
             if let selectedRoomName = plan.selectedRoomName {
@@ -333,12 +366,12 @@ private final class PlaybackBackgroundSync {
                 clearSelection(reason: clearReason.rawValue)
             }
             updateGroupSuggestion(
-                refresh: refresh,
+                refresh: postRefresh,
                 selectedRoomName: plan.selectedRoomName,
                 spotifyPlaying: plan.spotifyPlaying
             )
             NotificationCenter.default.post(name: .sonosHandoffRefreshOutputs, object: plan.menuRefreshRoomName)
-            logger.info("SonosHandoffGroupSuggestion result=notification_accepted room=\(suggestion.speaker.roomName, privacy: .public) coordinator=\(suggestion.coordinatorRoomName, privacy: .public)")
+            logger.info("SonosHandoffGroupSuggestion result=notification_accepted room=\(suggestion.speaker.roomName, privacy: .public) coordinator=\(coordinatorRoomName, privacy: .public)")
         } catch {
             logger.error("SonosHandoffGroupSuggestion result=notification_failure room=\(suggestion.speaker.roomName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
             groupSuggestionNotifier.deliverFailure(suggestion)

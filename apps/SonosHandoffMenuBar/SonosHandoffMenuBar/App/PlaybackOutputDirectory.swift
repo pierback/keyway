@@ -6,6 +6,14 @@ struct PlaybackOutputRefresh: Sendable {
     let speakers: [SonosSpeaker]
     let selectedRoomName: String?
     let menuMessage: String?
+
+    var selectedGroup: SonosSpeakerGroup? {
+        guard let selectedRoomName else {
+            return nil
+        }
+
+        return rows.first { $0.contains(roomName: selectedRoomName) }?.group
+    }
 }
 
 typealias PlaybackOutputRow = SonosOutputRow
