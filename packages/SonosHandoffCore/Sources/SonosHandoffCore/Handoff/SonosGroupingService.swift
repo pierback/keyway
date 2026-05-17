@@ -10,17 +10,26 @@ final class SonosGroupingService: @unchecked Sendable {
     }
 
     func join(roomName: String, toCoordinatorRoomName coordinatorRoomName: String) async throws {
-        let targets = try await directory.resolveGroupingTargets(named: [roomName, coordinatorRoomName])
-        let member = targets[0]
-        let coordinator = targets[1]
-        guard member.deviceID != coordinator.deviceID || !SonosRoomName.matches(member.roomName, coordinator.roomName) else {
+        try await join(roomNames: [roomName], toCoordinatorRoomName: coordinatorRoomName)
+    }
+
+    func join(roomNames: [String], toCoordinatorRoomName coordinatorRoomName: String) async throws {
+        guard !roomNames.isEmpty else {
             return
         }
 
+        let targets = try await directory.resolveGroupingTargets(named: roomNames + [coordinatorRoomName])
+        guard let coordinator = targets.last else {
+            return
+        }
         guard coordinator.deviceID != nil else {
             throw ConnectHandoffError(.targetNotVisible, "Missing Sonos coordinator ID for \(coordinator.roomName)")
         }
-        try await avTransport.join(target: member, coordinator: coordinator)
+
+        let members = targets.dropLast().filter { member in
+            member.deviceID != coordinator.deviceID || !SonosRoomName.matches(member.roomName, coordinator.roomName)
+        }
+        try await rejoinTargets(members, to: coordinator)
     }
 
     func removeFromGroup(roomName: String) async throws {
@@ -76,12 +85,20 @@ final class SonosGroupingService: @unchecked Sendable {
     }
 
     private func rejoinMembers(_ members: [SonosSpeaker], to coordinator: ConnectSonosTarget) async throws {
+        var memberTargets: [ConnectSonosTarget] = []
+        memberTargets.reserveCapacity(members.count)
+        for member in members {
+            memberTargets.append(await directory.target(for: member))
+        }
+        try await rejoinTargets(memberTargets, to: coordinator)
+    }
+
+    private func rejoinTargets(_ members: [ConnectSonosTarget], to coordinator: ConnectSonosTarget) async throws {
         try await withThrowingTaskGroup(of: Void.self) { group in
             for member in members {
-                let memberTarget = await directory.target(for: member)
                 let avTransport = avTransport
                 group.addTask {
-                    try await avTransport.join(target: memberTarget, coordinator: coordinator)
+                    try await avTransport.join(target: member, coordinator: coordinator)
                 }
             }
 

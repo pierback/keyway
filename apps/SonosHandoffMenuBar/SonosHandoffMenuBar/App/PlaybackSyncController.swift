@@ -655,29 +655,10 @@ final class PlaybackSyncController: ObservableObject {
         _ speakers: [SonosSpeaker],
         toCoordinatorRoomName coordinatorRoomName: String
     ) async throws {
-        guard speakers.count > 1 else {
-            if let speaker = speakers.first {
-                try await groupingEditor.join(
-                    roomName: speaker.roomName,
-                    toCoordinatorRoomName: coordinatorRoomName
-                )
-            }
-            return
-        }
-
-        let groupingEditor = groupingEditor
-        try await withThrowingTaskGroup(of: Void.self) { group in
-            for speaker in speakers {
-                group.addTask {
-                    try await groupingEditor.join(
-                        roomName: speaker.roomName,
-                        toCoordinatorRoomName: coordinatorRoomName
-                    )
-                }
-            }
-
-            try await group.waitForAll()
-        }
+        try await groupingEditor.join(
+            roomNames: speakers.map(\.roomName),
+            toCoordinatorRoomName: coordinatorRoomName
+        )
     }
 
     private func groupEditMessage(for roomName: String, error: Error) -> String {

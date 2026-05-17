@@ -5,6 +5,41 @@ import Testing
 @Suite(.serialized)
 struct SonosGroupingServiceTests {
     @Test
+    func joinMultipleMembersUsesOneTopologyLookupAndConcurrentJoinRequests() async throws {
+        GroupingServiceURLProtocol.reset(
+            topologyResponse: Self.topologyEnvelope(
+                """
+                <ZoneGroups>
+                  <ZoneGroup Coordinator="RINCON_KITCHEN" ID="RINCON_KITCHEN:123">
+                    <ZoneGroupMember UUID="RINCON_KITCHEN" ZoneName="Kitchen" Location="http://kitchen.local:1400/xml/device_description.xml"/>
+                  </ZoneGroup>
+                  <ZoneGroup Coordinator="RINCON_OFFICE" ID="RINCON_OFFICE:123">
+                    <ZoneGroupMember UUID="RINCON_OFFICE" ZoneName="Office" Location="http://office.local:1400/xml/device_description.xml"/>
+                  </ZoneGroup>
+                  <ZoneGroup Coordinator="RINCON_BATH" ID="RINCON_BATH:123">
+                    <ZoneGroupMember UUID="RINCON_BATH" ZoneName="Bath" Location="http://bath.local:1400/xml/device_description.xml"/>
+                  </ZoneGroup>
+                </ZoneGroups>
+                """
+            )
+        )
+        let service = Self.groupingService()
+
+        try await service.join(
+            roomNames: ["Office", "Bath"],
+            toCoordinatorRoomName: "Kitchen"
+        )
+
+        let requests = GroupingServiceURLProtocol.snapshot()
+        #expect(requests.filter { $0.url?.path == "/ZoneGroupTopology/Control" }.count == 1)
+        let joinRequests = requests
+            .filter { $0.url?.path == "/MediaRenderer/AVTransport/Control" }
+        #expect(Set(joinRequests.compactMap { $0.url?.host }) == ["office.local", "bath.local"])
+        #expect(joinRequests.allSatisfy { $0.soapAction == "\"urn:schemas-upnp-org:service:AVTransport:1#SetAVTransportURI\"" })
+        #expect(joinRequests.allSatisfy { $0.body.contains("<CurrentURI>x-rincon:RINCON_KITCHEN</CurrentURI>") })
+    }
+
+    @Test
     func removeCoordinatorLeavesOldCoordinatorOutOfReplacementGroup() async throws {
         GroupingServiceURLProtocol.reset()
         let service = Self.groupingService()

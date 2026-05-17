@@ -40,6 +40,10 @@ public final class SpotifyConnectHandoffService: HandoffPerforming, RoomHandoffP
         try await runtime.join(roomName: roomName, toCoordinatorRoomName: coordinatorRoomName)
     }
 
+    public func join(roomNames: [String], toCoordinatorRoomName coordinatorRoomName: String) async throws {
+        try await runtime.join(roomNames: roomNames, toCoordinatorRoomName: coordinatorRoomName)
+    }
+
     public func removeFromGroup(roomName: String) async throws {
         try await runtime.removeFromGroup(roomName: roomName)
     }

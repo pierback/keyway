@@ -96,6 +96,10 @@ final class SonosRuntime: @unchecked Sendable {
         try await groupingService.join(roomName: roomName, toCoordinatorRoomName: coordinatorRoomName)
     }
 
+    func join(roomNames: [String], toCoordinatorRoomName coordinatorRoomName: String) async throws {
+        try await groupingService.join(roomNames: roomNames, toCoordinatorRoomName: coordinatorRoomName)
+    }
+
     func removeFromGroup(roomName: String) async throws {
         try await groupingService.removeFromGroup(roomName: roomName)
     }

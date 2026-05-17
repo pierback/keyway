@@ -17,6 +17,7 @@ public protocol SonosGroupingStateReading: Sendable {
 
 public protocol SonosGroupingEditing: Sendable {
     func join(roomName: String, toCoordinatorRoomName coordinatorRoomName: String) async throws
+    func join(roomNames: [String], toCoordinatorRoomName coordinatorRoomName: String) async throws
     func removeFromGroup(roomName: String) async throws
     func migrateCoordinator(groupID: String, toRoomName roomName: String) async throws
     func removeCoordinator(
