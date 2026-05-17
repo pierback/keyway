@@ -7,6 +7,9 @@
 Current transfer behavior:
 
 - the app and `sonos-handoff-port` activate Spotify Connect on the Sonos speaker through the Sonos local network endpoint
+- the menu bar Output list renders Sonos groups as one selectable Output row and exposes Option-held group editing for the selected Spotify-on-Sonos group
+- group editing can add standalone speakers, remove group members, and remove the coordinator by migrating playback to a replacement member
+- background sync prompts for newly visible standalone Sonos speakers when Spotify is already playing on a Sonos Output, with a notification action and in-menu fallback row
 - volume control talks directly to the Sonos speaker over local SOAP and defaults to 5 percent steps; CLI step overrides are clamped to 5...25
 - Spotify Web API is used only to verify that playback becomes active on the target after handoff
 - the menu bar app registers `Shift+F10/F11/F12` for Port mute/down/up, and enables held `Shift+fn+F10/F11/F12` control only when Accessibility permission allows key interception
@@ -93,6 +96,9 @@ sonos-handoff-port volume-status Port
 sonos-handoff-port volume-down Port
 sonos-handoff-port volume-up Port
 sonos-handoff-port volume-up Port --step 10
+sonos-handoff-safe-grouping-check
+sonos-handoff-safe-grouping-check --prepare-silent
+sonos-handoff-safe-grouping-check --mutate --i-understand-this-mutates-sonos-groups
 /Users/f.pieringer/projects/sonos-handoff/scripts/smoke_cli_transfer port
 /Users/f.pieringer/projects/sonos-handoff/scripts/smoke_cli_handoff Port
 /Users/f.pieringer/projects/sonos-handoff/scripts/smoke_menubar_handoff Port
@@ -118,8 +124,19 @@ Grant Accessibility to the installed app at:
 
 After granting permission, restart the app or click `Check Shortcut Status`. Logs should change from `event_tap_create_failed accessibility=false` to `mediaFallback=enabled events=systemDefined`.
 
+## Grouping Validation
+
+Run the grouping checker without flags first. Dry-run mode discovers Sonos groups and reports whether the current network is ready for a live grouping test. It does not change volume, mute state, playback, or groups.
+
+```bash
+cd /Users/f.pieringer/projects/sonos-handoff
+swift run --package-path packages/SonosHandoffCore sonos-handoff-safe-grouping-check
+```
+
+For live validation, first prepare silent mode or use mutation mode, which always mutes every discovered speaker and sets every discovered speaker to volume `0` before touching groups. Mutation mode then validates standalone join/remove and coordinator removal with the `<2s` migration timing gate.
+
 ## Notes
 
 - `sonos-handoff doctor` treats Spotify as authenticated only when both token files required by the current handoff path are present.
-- Sonos grouping automation is not part of the current Swift-only cutover.
+- Grouping validation requires at least one visible Spotify-on-Sonos Output and enough visible speakers for the selected grouping scenario.
 - The app does not use Spotify Web API available-device transfer because `/me/player/devices` can omit Sonos speakers.
