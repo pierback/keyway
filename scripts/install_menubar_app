@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DERIVED_DATA_DIR="$ROOT_DIR/.build/xcode-derived-data"
 BUILT_APP="$DERIVED_DATA_DIR/Build/Products/Debug/SonosHandoffMenuBar.app"
 APP_DIR="$HOME/Applications/Sonos Handoff.app"
+APP_PROCESS_NAME="SonosHandoffMenuBar"
+APP_PROCESS_PATTERN="$APP_DIR/Contents/MacOS/$APP_PROCESS_NAME"
 SIGNING_IDENTITY="${SONOS_HANDOFF_CODESIGN_IDENTITY:-}"
 
 if [[ -z "$SIGNING_IDENTITY" ]]; then
@@ -28,8 +30,19 @@ xcodebuild \
   -derivedDataPath "$DERIVED_DATA_DIR" \
   build
 
+if pgrep -f "$APP_PROCESS_PATTERN" >/dev/null; then
+  pkill -f "$APP_PROCESS_PATTERN"
+  for _ in {1..50}; do
+    if ! pgrep -f "$APP_PROCESS_PATTERN" >/dev/null; then
+      break
+    fi
+    sleep 0.1
+  done
+fi
+
 rm -rf "$APP_DIR"
 ditto "$BUILT_APP" "$APP_DIR"
 codesign --force --deep --sign "$SIGNING_IDENTITY" "$APP_DIR"
+open "$APP_DIR"
 
 echo "$APP_DIR"

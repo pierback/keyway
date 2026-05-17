@@ -18,6 +18,7 @@ struct MenuBarController: View {
     @State private var optionKeyPressed = false
     @State private var localModifierMonitor: Any?
     @State private var globalModifierMonitor: Any?
+    @State private var modifierPollTask: Task<Void, Never>?
 
     init(environment: AppEnvironment) {
         self.environment = environment
@@ -185,6 +186,15 @@ struct MenuBarController: View {
 
     private func startModifierMonitor() {
         applyModifierFlags(NSEvent.modifierFlags)
+        if modifierPollTask == nil {
+            modifierPollTask = Task { @MainActor in
+                while !Task.isCancelled {
+                    applyModifierFlags(NSEvent.modifierFlags)
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+            }
+        }
+
         if localModifierMonitor == nil {
             localModifierMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
                 applyModifierFlags(event.modifierFlags)
@@ -200,6 +210,8 @@ struct MenuBarController: View {
     }
 
     private func stopModifierMonitor() {
+        modifierPollTask?.cancel()
+        modifierPollTask = nil
         if let localModifierMonitor {
             NSEvent.removeMonitor(localModifierMonitor)
         }
