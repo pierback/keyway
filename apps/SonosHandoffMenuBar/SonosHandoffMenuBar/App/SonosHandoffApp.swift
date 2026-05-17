@@ -319,6 +319,11 @@ private final class PlaybackBackgroundSync {
             if let selectedRoomName = refresh.selectedRoomName {
                 selectRoomName(selectedRoomName)
             }
+            updateGroupSuggestion(
+                refresh: refresh,
+                selectedRoomName: refresh.selectedRoomName,
+                spotifyPlaying: true
+            )
             NotificationCenter.default.post(name: .sonosHandoffRefreshOutputs, object: refreshedRoomName)
             logger.info("SonosHandoffGroupSuggestion result=notification_accepted room=\(suggestion.speaker.roomName, privacy: .public) coordinator=\(suggestion.coordinatorRoomName, privacy: .public)")
         } catch {
