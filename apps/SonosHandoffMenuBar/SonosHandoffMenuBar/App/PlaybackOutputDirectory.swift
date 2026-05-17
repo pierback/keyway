@@ -22,8 +22,7 @@ typealias PlaybackGroupEditRow = SonosGroupMembershipRow
 @MainActor
 final class PlaybackOutputDirectory {
     private let discoveryCache: SonosGroupStateCache
-    private let outputSelectionResolver = SonosOutputSelectionResolver()
-    private let outputGroupOrderingResolver = SonosOutputGroupOrderingResolver()
+    private let inspectionResolver = SonosGroupingInspectionResolver()
 
     init(environment: AppEnvironment) {
         self.discoveryCache = SonosGroupStateCache(groupingStateReader: environment.groupingStateReader)
@@ -56,25 +55,18 @@ final class PlaybackOutputDirectory {
     }
 
     private func refresh(from state: SonosGroupState, currentRoomName: String?) -> PlaybackOutputRefresh {
-        let orderedGroups = outputGroupOrderingResolver.orderedGroups(
-            state.groups,
-            currentRoomName: currentRoomName
+        let report = inspectionResolver.report(
+            in: state,
+            activeRoomName: currentRoomName,
+            spotifyPlaying: currentRoomName != nil,
+            previousSpeakerIDs: nil
         )
-        let rows = orderedGroups.compactMap(PlaybackOutputRow.init(group:))
         let speakers = state.speakers
-        let selectedRoomName = selectedRoomName(currentRoomName: currentRoomName, in: state.groups)
         return PlaybackOutputRefresh(
-            rows: rows,
+            rows: report.outputRows,
             speakers: speakers,
-            selectedRoomName: selectedRoomName,
+            selectedRoomName: report.selectedRoomName,
             menuMessage: speakers.isEmpty ? "No Sonos speakers found on this network." : nil
-        )
-    }
-
-    private func selectedRoomName(currentRoomName: String?, in groups: [SonosSpeakerGroup]) -> String? {
-        outputSelectionResolver.selectedRoomName(
-            currentRoomName: currentRoomName,
-            groups: groups
         )
     }
 }
