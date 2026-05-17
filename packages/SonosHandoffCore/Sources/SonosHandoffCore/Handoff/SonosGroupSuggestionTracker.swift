@@ -65,9 +65,7 @@ public struct SonosGroupSuggestionTracker: Sendable {
         let currentSpeakerIDs = Set(state.speakers.map(\.id))
         let allCurrentSuggestionIDs = Set(currentSuggestions.map(\.id))
 
-        guard spotifyPlaying,
-              let selectedRoomName
-        else {
+        guard spotifyPlaying else {
             return SonosGroupSuggestionUpdate(
                 action: currentSuggestions.isEmpty ? .none : .clearCurrent,
                 seenSpeakerIDs: resolver.seenSpeakerIDsAfterSuggestion(
@@ -75,6 +73,14 @@ public struct SonosGroupSuggestionTracker: Sendable {
                     currentSpeakerIDs: currentSpeakerIDs,
                     suggestedSpeakerID: nil
                 ),
+                staleSuggestionIDs: allCurrentSuggestionIDs
+            )
+        }
+
+        guard let selectedRoomName else {
+            return SonosGroupSuggestionUpdate(
+                action: currentSuggestions.isEmpty ? .none : .clearCurrent,
+                seenSpeakerIDs: (previousSpeakerIDs ?? []).intersection(currentSpeakerIDs),
                 staleSuggestionIDs: allCurrentSuggestionIDs
             )
         }

@@ -253,6 +253,37 @@ struct SonosGroupSuggestionTrackerTests {
     }
 
     @Test
+    func activePlaybackWithoutVisibleGroupDoesNotMarkJoinedSpeakerSeen() {
+        let unmatchedUpdate = tracker.update(
+            in: SonosGroupState(groups: [
+                standalone("Kitchen"),
+                standalone("Port"),
+            ]),
+            selectedRoomName: nil,
+            spotifyPlaying: true,
+            previousSpeakerIDs: ["RINCON_KITCHEN"],
+            currentSuggestions: []
+        )
+
+        #expect(unmatchedUpdate.action == .none)
+        #expect(unmatchedUpdate.seenSpeakerIDs == ["RINCON_KITCHEN"])
+
+        let matchedUpdate = tracker.update(
+            in: SonosGroupState(groups: [
+                standalone("Kitchen"),
+                standalone("Port"),
+            ]),
+            selectedRoomName: "Kitchen",
+            spotifyPlaying: true,
+            previousSpeakerIDs: unmatchedUpdate.seenSpeakerIDs,
+            currentSuggestions: []
+        )
+
+        #expect(matchedUpdate.action == .present(candidate("Port", coordinator: "Kitchen", group: "Kitchen")))
+        #expect(matchedUpdate.seenSpeakerIDs == ["RINCON_KITCHEN", "RINCON_PORT"])
+    }
+
+    @Test
     func clearsCurrentSuggestionAfterSpeakerJoinedGroup() {
         let update = tracker.update(
             in: SonosGroupState(groups: [
