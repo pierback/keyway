@@ -72,6 +72,7 @@ private struct LiveGroupingValidator {
 
     private let service: SpotifyConnectHandoffService
     private let readinessResolver = SonosGroupingReadinessResolver()
+    private let inspectionResolver = SonosGroupingInspectionResolver()
     private let mutate: Bool
     private let prepareSilent: Bool
     private let restoreOriginalCoordinator: Bool
@@ -110,7 +111,9 @@ private struct LiveGroupingValidator {
             print("volume_safety=skipped")
         }
 
-        let readiness = try await readinessReport(in: initialState)
+        let playback = try await service.activePlaybackDeviceStatus()
+        printInspection(in: initialState, playback: playback)
+        let readiness = readinessResolver.report(in: initialState, playback: playback)
         printReadinessIssues(readiness)
         guard let groupingScenario = scenario(from: readiness) else {
             let reason = readiness.blockingIssues.map(\.rawValue).joined(separator: ",")
@@ -186,6 +189,40 @@ private struct LiveGroupingValidator {
     private func readinessReport(in state: SonosGroupState) async throws -> SonosGroupingReadinessReport {
         let playback = try await service.activePlaybackDeviceStatus()
         return readinessResolver.report(in: state, playback: playback)
+    }
+
+    private func printInspection(in state: SonosGroupState, playback: SpotifyPlaybackDeviceStatus?) {
+        let activeRoomName = playback.flatMap { SonosRoomName.normalized($0.deviceName) }
+        let report = inspectionResolver.report(
+            in: state,
+            activeRoomName: activeRoomName,
+            spotifyPlaying: playback?.isPlaying == true,
+            previousSpeakerIDs: nil
+        )
+
+        if let selectedRoomName = report.selectedRoomName {
+            print("selected_output=\(selectedRoomName)")
+        } else {
+            print("selected_output=none")
+        }
+
+        for row in report.outputRows {
+            print("output_row=\(row.displayName) coordinator=\(row.coordinator.roomName) grouped=\(row.isGroup)")
+        }
+
+        if report.groupEditRows.isEmpty {
+            print("group_edit_rows=none")
+        } else {
+            for row in report.groupEditRows {
+                print("group_edit_row=\(row.displayName) membership=\(row.membership.rawValueForInspection) can_toggle=\(row.canToggle) grouped=\(row.isGroup)")
+            }
+        }
+
+        if let suggestion = report.suggestionCandidate {
+            print("group_suggestion_candidate=\(suggestion.speaker.roomName) coordinator=\(suggestion.coordinatorRoomName) group=\(suggestion.groupDisplayName)")
+        } else {
+            print("group_suggestion_candidate=none")
+        }
     }
 
     private func scenario(from readiness: SonosGroupingReadinessReport) -> GroupingScenario? {
@@ -529,5 +566,20 @@ private struct ValidationError: Error {
 
     init(_ message: String) {
         self.message = message
+    }
+}
+
+private extension SonosGroupMembership {
+    var rawValueForInspection: String {
+        switch self {
+        case .coordinator:
+            return "coordinator"
+        case .member:
+            return "member"
+        case .available:
+            return "available"
+        case .availableGroup:
+            return "available_group"
+        }
     }
 }
