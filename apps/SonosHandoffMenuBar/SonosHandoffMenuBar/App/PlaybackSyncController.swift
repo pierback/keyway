@@ -399,7 +399,7 @@ final class PlaybackSyncController: ObservableObject {
             return
         }
 
-        groupLoadingRoomName = row.speaker.roomName
+        groupLoadingRoomName = row.displayName
         menuMessage = nil
 
         Task { @MainActor in
@@ -416,8 +416,8 @@ final class PlaybackSyncController: ObservableObject {
                 }
             } catch {
                 groupLoadingRoomName = nil
-                menuMessage = groupEditMessage(for: row.speaker.roomName, error: error)
-                shortcutLogger.error("SonosHandoffGroupEdit result=failure room=\(row.speaker.roomName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+                menuMessage = groupEditMessage(for: row.displayName, error: error)
+                shortcutLogger.error("SonosHandoffGroupEdit result=failure target=\(row.displayName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
                 await refreshOutputs(showLoading: false)
             }
         }
@@ -550,12 +550,15 @@ final class PlaybackSyncController: ObservableObject {
         switch groupMembershipChangePlanner.change(for: row, in: group) {
         case .none:
             return .unchanged
-        case .join(let roomName, let coordinatorRoomName):
-            try await groupingEditor.join(
-                roomName: roomName,
-                toCoordinatorRoomName: coordinatorRoomName
-            )
-            shortcutLogger.info("SonosHandoffGroupEdit result=joined room=\(roomName, privacy: .public) coordinator=\(coordinatorRoomName, privacy: .public)")
+        case .join(let speakers, let coordinatorRoomName):
+            for speaker in speakers {
+                try await groupingEditor.join(
+                    roomName: speaker.roomName,
+                    toCoordinatorRoomName: coordinatorRoomName
+                )
+            }
+            let joinedRoomNames = speakers.map(\.roomName).joined(separator: ",")
+            shortcutLogger.info("SonosHandoffGroupEdit result=joined rooms=\(joinedRoomNames, privacy: .public) coordinator=\(coordinatorRoomName, privacy: .public)")
             return .changed()
         case .remove(let roomName):
             try await groupingEditor.removeFromGroup(roomName: roomName)

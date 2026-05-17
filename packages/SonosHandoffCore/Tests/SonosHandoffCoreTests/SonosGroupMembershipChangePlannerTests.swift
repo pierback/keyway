@@ -11,7 +11,23 @@ struct SonosGroupMembershipChangePlannerTests {
             in: group(coordinator: "Kitchen", members: ["Kitchen", "Port"])
         )
 
-        #expect(change == .join(roomName: "Office", coordinatorRoomName: "Kitchen"))
+        #expect(change == .join(speakers: [speaker("Office")], coordinatorRoomName: "Kitchen"))
+    }
+
+    @Test
+    func availableGroupJoinsEveryMemberToCurrentCoordinator() {
+        let officeGroup = group(coordinator: "Office", members: ["Office", "Bath"])
+        let change = planner.change(
+            for: SonosGroupMembershipRow(
+                speaker: speaker("Office"),
+                membership: .availableGroup,
+                coordinatorRemovalAvailable: true,
+                sourceGroup: officeGroup
+            ),
+            in: group(coordinator: "Kitchen", members: ["Kitchen", "Port"])
+        )
+
+        #expect(change == .join(speakers: [speaker("Office"), speaker("Bath")], coordinatorRoomName: "Kitchen"))
     }
 
     @Test

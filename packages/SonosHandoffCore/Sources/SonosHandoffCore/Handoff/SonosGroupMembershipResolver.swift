@@ -2,25 +2,41 @@ public enum SonosGroupMembership: Equatable, Sendable {
     case coordinator
     case member
     case available
+    case availableGroup
 }
 
 public struct SonosGroupMembershipRow: Identifiable, Equatable, Sendable {
     public let speaker: SonosSpeaker
     public let membership: SonosGroupMembership
     public let coordinatorRemovalAvailable: Bool
+    public let sourceGroup: SonosSpeakerGroup?
 
     public init(
         speaker: SonosSpeaker,
         membership: SonosGroupMembership,
-        coordinatorRemovalAvailable: Bool
+        coordinatorRemovalAvailable: Bool,
+        sourceGroup: SonosSpeakerGroup? = nil
     ) {
         self.speaker = speaker
         self.membership = membership
         self.coordinatorRemovalAvailable = coordinatorRemovalAvailable
+        self.sourceGroup = sourceGroup
     }
 
     public var id: String {
-        speaker.id
+        sourceGroup?.id ?? speaker.id
+    }
+
+    public var displayName: String {
+        sourceGroup?.displayName ?? speaker.roomName
+    }
+
+    public var joinSpeakers: [SonosSpeaker] {
+        guard membership == .available || membership == .availableGroup else {
+            return []
+        }
+
+        return sourceGroup?.members ?? [speaker]
     }
 
     public var isInGroup: Bool {
@@ -29,6 +45,10 @@ public struct SonosGroupMembershipRow: Identifiable, Equatable, Sendable {
 
     public var isCoordinator: Bool {
         membership == .coordinator
+    }
+
+    public var isGroup: Bool {
+        sourceGroup?.members.count ?? 1 > 1
     }
 
     public var canToggle: Bool {
@@ -47,28 +67,13 @@ public struct SonosGroupMembershipResolver: Sendable {
             return []
         }
 
-        return orderedSpeakers(groups: groups, selectedGroup: selectedGroup).map { speaker in
-            let membership: SonosGroupMembership
-            if speaker.id == selectedGroup.coordinator?.id {
-                membership = .coordinator
-            } else if selectedGroup.members.contains(where: { $0.id == speaker.id }) {
-                membership = .member
-            } else {
-                membership = .available
-            }
-
-            return SonosGroupMembershipRow(
-                speaker: speaker,
-                membership: membership,
-                coordinatorRemovalAvailable: selectedGroup.members.count > 1
-            )
-        }
+        return orderedRows(groups: groups, selectedGroup: selectedGroup)
     }
 
-    private func orderedSpeakers(
+    private func orderedRows(
         groups: [SonosSpeakerGroup],
         selectedGroup: SonosSpeakerGroup
-    ) -> [SonosSpeaker] {
+    ) -> [SonosGroupMembershipRow] {
         var speakerByID: [String: SonosSpeaker] = [:]
         for speaker in groups.flatMap(\.members) where speakerByID[speaker.id] == nil {
             speakerByID[speaker.id] = speaker
@@ -91,17 +96,50 @@ public struct SonosGroupMembershipResolver: Sendable {
             emittedIDs.insert(member.id)
         }
 
-        let availableSpeakers = groups
-            .filter { $0.members.count == 1 }
-            .flatMap(\.members)
-            .filter { !selectedMemberIDs.contains($0.id) }
-            .sorted(by: roomNameAscending)
-        for speaker in availableSpeakers where !emittedIDs.contains(speaker.id) {
-            ordered.append(speaker)
-            emittedIDs.insert(speaker.id)
+        var rows = ordered.map { speaker in
+            let membership: SonosGroupMembership
+            if speaker.id == selectedGroup.coordinator?.id {
+                membership = .coordinator
+            } else {
+                membership = .member
+            }
+
+            return SonosGroupMembershipRow(
+                speaker: speaker,
+                membership: membership,
+                coordinatorRemovalAvailable: selectedGroup.members.count > 1
+            )
         }
 
-        return ordered
+        let availableGroups = groups
+            .filter { group in
+                !group.members.isEmpty
+                    && group.members.allSatisfy { !selectedMemberIDs.contains($0.id) }
+            }
+            .sorted(by: groupDisplayNameAscending)
+        for group in availableGroups {
+            guard let coordinator = group.coordinator,
+                  group.members.allSatisfy({ !emittedIDs.contains($0.id) })
+            else {
+                continue
+            }
+
+            rows.append(SonosGroupMembershipRow(
+                speaker: coordinator,
+                membership: group.members.count > 1 ? .availableGroup : .available,
+                coordinatorRemovalAvailable: true,
+                sourceGroup: group.members.count > 1 ? group : nil
+            ))
+            for speaker in group.members {
+                emittedIDs.insert(speaker.id)
+            }
+        }
+
+        return rows
+    }
+
+    private func groupDisplayNameAscending(_ left: SonosSpeakerGroup, _ right: SonosSpeakerGroup) -> Bool {
+        left.displayName.localizedCaseInsensitiveCompare(right.displayName) == .orderedAscending
     }
 
     private func roomNameAscending(_ left: SonosSpeaker, _ right: SonosSpeaker) -> Bool {

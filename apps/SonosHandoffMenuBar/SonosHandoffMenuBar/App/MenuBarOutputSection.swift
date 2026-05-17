@@ -247,7 +247,7 @@ struct MenuBarOutputSection: View {
     }
 
     private func groupEditRow(for row: PlaybackGroupEditRow) -> some View {
-        let loading = row.speaker.roomName == playback.groupLoadingRoomName
+        let loading = row.displayName == playback.groupLoadingRoomName
         let disabled = playback.groupLoadingRoomName != nil || playback.loadingRoomName != nil || !row.canToggle
 
         return Button {
@@ -266,7 +266,7 @@ struct MenuBarOutputSection: View {
                 .frame(width: 22, height: 22)
 
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(row.speaker.roomName)
+                    Text(row.displayName)
                         .font(.system(size: 13, weight: .regular))
                         .foregroundStyle(Color.primary.opacity(0.9))
                         .lineLimit(1)
@@ -309,7 +309,7 @@ struct MenuBarOutputSection: View {
         .disabled(disabled)
         .padding(.horizontal, 8)
         .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("group-toggle-\(row.speaker.roomName)")
+        .accessibilityIdentifier("group-toggle-\(row.displayName)")
         .accessibilityLabel(groupAccessibilityLabel(for: row))
     }
 
@@ -335,7 +335,11 @@ struct MenuBarOutputSection: View {
     }
 
     private func groupIconName(for row: PlaybackGroupEditRow) -> String {
-        row.isCoordinator ? "hifispeaker.badge.plus" : "hifispeaker"
+        if row.isGroup {
+            return "hifispeaker.2"
+        }
+
+        return row.isCoordinator ? "hifispeaker.badge.plus" : "hifispeaker"
     }
 
     private func groupIconForeground(for row: PlaybackGroupEditRow) -> Color {
@@ -348,8 +352,8 @@ struct MenuBarOutputSection: View {
 
     private func groupAccessibilityLabel(for row: PlaybackGroupEditRow) -> String {
         switch row.membership {
-        case .available:
-            return "Add \(row.speaker.roomName) to group"
+        case .available, .availableGroup:
+            return "Add \(row.displayName) to group"
         case .member:
             return "Remove \(row.speaker.roomName) from group"
         case .coordinator:

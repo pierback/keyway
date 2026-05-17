@@ -1,6 +1,6 @@
 public enum SonosGroupMembershipChange: Equatable, Sendable {
     case none
-    case join(roomName: String, coordinatorRoomName: String)
+    case join(speakers: [SonosSpeaker], coordinatorRoomName: String)
     case remove(roomName: String)
     case removeCoordinator(
         group: SonosSpeakerGroup,
@@ -23,12 +23,12 @@ public struct SonosGroupMembershipChangePlanner: Sendable {
         }
 
         switch row.membership {
-        case .available:
+        case .available, .availableGroup:
             guard let coordinator = group.coordinator else {
                 return .none
             }
             return .join(
-                roomName: row.speaker.roomName,
+                speakers: row.joinSpeakers,
                 coordinatorRoomName: coordinator.roomName
             )
         case .member:

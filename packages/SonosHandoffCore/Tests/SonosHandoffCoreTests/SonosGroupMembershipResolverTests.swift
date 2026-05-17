@@ -81,7 +81,7 @@ struct SonosGroupMembershipResolverTests {
     }
 
     @Test
-    func excludesMembersOfOtherGroupsFromAvailableSpeakers() {
+    func presentsOtherGroupsAsSingleAvailableRows() {
         let selectedGroup = group(coordinator: "Kitchen", members: ["Kitchen", "Port"])
         let rows = resolver.rows(
             groups: [
@@ -92,8 +92,10 @@ struct SonosGroupMembershipResolverTests {
             selectedGroup: selectedGroup
         )
 
-        #expect(rows.map(\.speaker.roomName) == ["Kitchen", "Port", "Hall"])
-        #expect(rows.map(\.membership) == [.coordinator, .member, .available])
+        #expect(rows.map(\.displayName) == ["Kitchen", "Port", "Hall", "Office + Bath"])
+        #expect(rows.map(\.membership) == [.coordinator, .member, .available, .availableGroup])
+        #expect(rows.map(\.isGroup) == [false, false, false, true])
+        #expect(rows[3].joinSpeakers.map(\.roomName) == ["Office", "Bath"])
     }
 
     private func standalone(_ roomName: String) -> SonosSpeakerGroup {
