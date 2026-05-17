@@ -35,7 +35,7 @@ final class PlaybackGroupSuggestionStore: ObservableObject {
     @Published private(set) var suggestions: [PlaybackGroupSuggestion] = []
 
     func present(_ suggestion: PlaybackGroupSuggestion) {
-        if let index = suggestions.firstIndex(where: { $0.id == suggestion.id }) {
+        if let index = suggestions.firstIndex(where: { $0.matches(identifier: suggestion.id) }) {
             suggestions[index] = suggestion
             return
         }
@@ -48,11 +48,10 @@ final class PlaybackGroupSuggestionStore: ObservableObject {
             return
         }
 
-        let refreshedBySpeakerID = Dictionary(
-            uniqueKeysWithValues: candidates.map { candidate in
-                (candidate.speaker.id, candidate)
-            }
-        )
+        var refreshedBySpeakerID: [String: SonosGroupSuggestionCandidate] = [:]
+        for candidate in candidates {
+            refreshedBySpeakerID[candidate.speaker.id] = candidate
+        }
         suggestions = suggestions.map { suggestion in
             guard let candidate = refreshedBySpeakerID[suggestion.speaker.id] else {
                 return suggestion
@@ -73,7 +72,7 @@ final class PlaybackGroupSuggestionStore: ObservableObject {
             return
         }
 
-        suggestions.removeAll { $0.id == id }
+        suggestions.removeAll { $0.matches(identifier: id) }
     }
 
     func clear(ids: Set<String>) {
@@ -81,7 +80,9 @@ final class PlaybackGroupSuggestionStore: ObservableObject {
             return
         }
 
-        suggestions.removeAll { ids.contains($0.id) }
+        suggestions.removeAll { suggestion in
+            ids.contains { suggestion.matches(identifier: $0) }
+        }
     }
 }
 
