@@ -105,7 +105,7 @@ public struct SonosGroupState: Equatable, Sendable {
     public let groups: [SonosSpeakerGroup]
 
     public init(groups: [SonosSpeakerGroup]) {
-        self.groups = groups
+        self.groups = groups.filter { !$0.members.isEmpty }
     }
 
     public static let empty = SonosGroupState(groups: [])

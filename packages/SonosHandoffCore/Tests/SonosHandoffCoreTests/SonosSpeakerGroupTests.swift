@@ -30,6 +30,21 @@ struct SonosSpeakerGroupTests {
         #expect(!group.contains(roomName: "Office + 1"))
     }
 
+    @Test
+    func groupStateDropsEmptyGroups() {
+        let state = SonosGroupState(groups: [
+            SonosSpeakerGroup(
+                id: "empty",
+                coordinatorID: "missing",
+                members: []
+            ),
+            speakerGroup(coordinator: "Kitchen", members: ["Kitchen"]),
+        ])
+
+        #expect(state.groups.map(\.id) == ["RINCON_KITCHEN:group"])
+        #expect(state.speakers.map(\.roomName) == ["Kitchen"])
+    }
+
     private func speakerGroup(coordinator: String, members roomNames: [String]) -> SonosSpeakerGroup {
         SonosSpeakerGroup(
             id: "RINCON_\(coordinator.uppercased()):group",
