@@ -84,6 +84,18 @@ Install the menu bar app:
 
 The installer prefers the first available Apple Development code-signing identity so macOS Accessibility permission can persist across rebuilds. If no identity exists, it falls back to ad-hoc signing and Accessibility may need to be granted again after each rebuild.
 
+Run the deterministic regression gate before larger changes:
+
+```bash
+/Users/f.pieringer/projects/sonos-handoff/scripts/regression_gate
+```
+
+This runs the shared package tests, whitespace checks, and the manual menu bar installer build. Real-device smoke tests stay opt-in because they depend on the current Spotify/Sonos state:
+
+```bash
+SONOS_HANDOFF_REAL_DEVICE_SMOKE=1 SONOS_HANDOFF_ROOM=Port /Users/f.pieringer/projects/sonos-handoff/scripts/regression_gate
+```
+
 ## CLI Commands
 
 ```text

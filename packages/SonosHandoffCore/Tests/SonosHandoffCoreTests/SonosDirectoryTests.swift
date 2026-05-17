@@ -73,10 +73,16 @@ struct SonosDirectoryTests {
     }
 
     @Test
-    func resolvesGroupingTargetFromTopologyOnlySpeaker() async throws {
+    func resolvesGroupingTargetFromVisibleTopologySpeaker() async throws {
         let runner = RecordingSonosDiscoveryCommandRunner(
-            browseOutput: "10:00:00.000 Add 2 4 local. _sonos._tcp. RINCON_A@Kitchen",
-            hostByInstance: ["RINCON_A@Kitchen": "kitchen.local"]
+            browseOutput: """
+            10:00:00.000 Add 2 4 local. _sonos._tcp. RINCON_A@Kitchen
+            10:00:00.001 Add 2 4 local. _sonos._tcp. RINCON_B@Port
+            """,
+            hostByInstance: [
+                "RINCON_A@Kitchen": "kitchen.local",
+                "RINCON_B@Port": "port.local",
+            ]
         )
         let directory = Self.directory(
             runner: runner,
@@ -98,14 +104,22 @@ struct SonosDirectoryTests {
         #expect(target.roomName == "Port")
         #expect(target.host == "port.local")
         #expect(target.deviceID == "RINCON_B")
-        #expect(runner.resolveCount == 1)
+        #expect(runner.resolveCount == 2)
     }
 
     @Test
     func resolvesGroupingTargetsFromOneTopologyPass() async throws {
         let runner = RecordingSonosDiscoveryCommandRunner(
-            browseOutput: "10:00:00.000 Add 2 4 local. _sonos._tcp. RINCON_A@Kitchen",
-            hostByInstance: ["RINCON_A@Kitchen": "kitchen.local"]
+            browseOutput: """
+            10:00:00.000 Add 2 4 local. _sonos._tcp. RINCON_A@Kitchen
+            10:00:00.001 Add 2 4 local. _sonos._tcp. RINCON_B@Port
+            10:00:00.002 Add 2 4 local. _sonos._tcp. RINCON_C@Office
+            """,
+            hostByInstance: [
+                "RINCON_A@Kitchen": "kitchen.local",
+                "RINCON_B@Port": "port.local",
+                "RINCON_C@Office": "office.local",
+            ]
         )
         let directory = Self.directory(
             runner: runner,
@@ -129,7 +143,7 @@ struct SonosDirectoryTests {
         #expect(targets.map(\.host) == ["office.local", "kitchen.local"])
         #expect(targets.map(\.deviceID) == ["RINCON_C", "RINCON_A"])
         #expect(TargetDirectoryTopologyURLProtocol.requestCount == 1)
-        #expect(runner.resolveCount == 1)
+        #expect(runner.resolveCount == 3)
     }
 
     @Test
@@ -166,8 +180,14 @@ struct SonosDirectoryTests {
     @Test
     func resolveTargetUsesCachedTopologyHostForSpotifyMetadata() async throws {
         let runner = RecordingSonosDiscoveryCommandRunner(
-            browseOutput: "10:00:00.000 Add 2 4 local. _sonos._tcp. RINCON_A@Kitchen",
-            hostByInstance: ["RINCON_A@Kitchen": "kitchen.local"]
+            browseOutput: """
+            10:00:00.000 Add 2 4 local. _sonos._tcp. RINCON_A@Kitchen
+            10:00:00.001 Add 2 4 local. _sonos._tcp. RINCON_B@Port
+            """,
+            hostByInstance: [
+                "RINCON_A@Kitchen": "kitchen.local",
+                "RINCON_B@Port": "port.local",
+            ]
         )
         let router = TargetDirectoryZeroconfRouter(
             payloadByHost: ["port.local": #"{"version":"1.2.3","deviceID":"RINCON_B"}"#]
@@ -193,7 +213,7 @@ struct SonosDirectoryTests {
         #expect(target.host == "port.local")
         #expect(target.version == "1.2.3")
         #expect(target.deviceID == "RINCON_B")
-        #expect(runner.resolveCount == 1)
+        #expect(runner.resolveCount == 2)
         #expect(router.requestedHosts() == ["port.local"])
     }
 

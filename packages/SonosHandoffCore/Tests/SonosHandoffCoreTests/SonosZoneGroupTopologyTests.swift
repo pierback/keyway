@@ -34,6 +34,32 @@ struct SonosZoneGroupTopologyTests {
     }
 
     @Test
+    func skipsTopologyMembersMissingFromVisibleSpeakers() throws {
+        let state = try SonosZoneGroupStateParser.parse(
+            Self.topologyXML,
+            visibleSpeakers: [
+                SonosSpeaker(id: "RINCON_A", roomName: "Kitchen", host: "kitchen.local"),
+            ]
+        )
+
+        #expect(state.groups.map(\.displayName) == ["Kitchen"])
+        #expect(state.speakers.map(\.roomName) == ["Kitchen"])
+    }
+
+    @Test
+    func skipsTopologyGroupWhenCoordinatorIsMissingFromVisibleSpeakers() throws {
+        let state = try SonosZoneGroupStateParser.parse(
+            Self.topologyXML,
+            visibleSpeakers: [
+                SonosSpeaker(id: "RINCON_B", roomName: "Port", host: "port.local"),
+            ]
+        )
+
+        #expect(state.groups.isEmpty)
+        #expect(state.speakers.isEmpty)
+    }
+
+    @Test
     func readsTopologyViaSOAPEnvelope() async throws {
         ZoneGroupTopologyURLProtocol.responseBody = """
         <?xml version="1.0"?>
@@ -51,8 +77,7 @@ struct SonosZoneGroupTopologyTests {
             visibleSpeakers: [SonosSpeaker(id: "RINCON_A", roomName: "Kitchen", host: "kitchen.local")]
         )
 
-        #expect(state.groups.count == 2)
-        #expect(state.groups[0].displayName == "Kitchen + Port")
+        #expect(state.groups.map(\.displayName) == ["Kitchen"])
         #expect(ZoneGroupTopologyURLProtocol.requestedURLs.map(\.path) == ["/ZoneGroupTopology/Control"])
     }
 
@@ -74,8 +99,7 @@ struct SonosZoneGroupTopologyTests {
             visibleSpeakers: [SonosSpeaker(id: "RINCON_A", roomName: "Kitchen", host: "kitchen.local")]
         )
 
-        #expect(state.groups.count == 2)
-        #expect(state.groups[0].displayName == "Kitchen + Port")
+        #expect(state.groups.map(\.displayName) == ["Kitchen"])
         #expect(ZoneGroupTopologyURLProtocol.requestedURLs.map(\.path) == ["/ZoneGroupTopology/Control"])
     }
 

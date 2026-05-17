@@ -82,7 +82,7 @@ final class PlaybackSyncController: ObservableObject {
             self.applyExternalOutputSelection(roomName)
         }
         self.groupSuggestionCancellable = groupSuggestionStore.$suggestions.sink { [weak self] suggestions in
-            self?.groupSuggestions = suggestions
+            self?.setGroupSuggestions(suggestions)
         }
         self.outputRefreshCancellable = NotificationCenter.default
             .publisher(for: .sonosHandoffRefreshOutputs)
@@ -211,7 +211,7 @@ final class PlaybackSyncController: ObservableObject {
                 }
                 applyOutputRefresh(refresh)
             } catch {
-                outputRows = []
+                setOutputRows([])
                 currentGroupState = .empty
                 selectRoomName(nil)
                 clearGroupSuggestions()
@@ -283,10 +283,10 @@ final class PlaybackSyncController: ObservableObject {
     }
 
     private func applyOutputRefresh(_ refresh: PlaybackOutputRefresh, selectedRoomName resolvedSelectedRoomName: String?) {
-        outputRows = refresh.rows
+        setOutputRows(refresh.rows)
         currentGroupState = refresh.state
         selectRoomName(resolvedSelectedRoomName)
-        groupEditRows = refresh.groupEditRows
+        setGroupEditRows(refresh.groupEditRows)
         refreshPendingGroupSuggestions(from: refresh, selectedRoomName: resolvedSelectedRoomName)
 
         if let selectedRoomName = resolvedSelectedRoomName {
@@ -419,11 +419,16 @@ final class PlaybackSyncController: ObservableObject {
                 }
                 if outcome.shouldRefreshOutputs {
                     clearSuggestionsCoveredByGroupEdit(row)
+                    let optimisticRoomName = optimisticSelectedRoomNameAfterGroupMutation(row, previousGroup: group)
                     if let observedRefresh = await refreshAfterGroupMutation(row, previousGroup: group) {
-                        applyOutputRefresh(observedRefresh)
+                        applyOutputRefresh(
+                            observedRefresh,
+                            selectedRoomName: observedRefresh.selectedRoomName ?? optimisticRoomName
+                        )
                     } else {
                         await refreshOutputs(
                             showLoading: false,
+                            currentRoomName: optimisticRoomName,
                             preserveMenuMessage: outcome.menuMessage != nil
                         )
                     }
@@ -537,7 +542,7 @@ final class PlaybackSyncController: ObservableObject {
             )
             applyOutputRefresh(refresh, selectedRoomName: plan.selectedRoomName)
         } catch {
-            outputRows = []
+            setOutputRows([])
             currentGroupState = .empty
             selectRoomName(nil)
             clearGroupSuggestions()
@@ -736,6 +741,22 @@ final class PlaybackSyncController: ObservableObject {
 
         shortcutLogger.info("SonosHandoffGroupEdit observation=timeout target=\(row.displayName, privacy: .public)")
         return nil
+    }
+
+    private func optimisticSelectedRoomNameAfterGroupMutation(
+        _ row: PlaybackGroupEditRow,
+        previousGroup: SonosSpeakerGroup
+    ) -> String? {
+        switch groupMembershipChangePlanner.change(for: row, in: previousGroup) {
+        case .none:
+            return selectedRoomName
+        case .join(_, let coordinatorRoomName):
+            return coordinatorRoomName
+        case .remove:
+            return previousGroup.coordinator?.roomName
+        case .removeCoordinator(_, _, let replacement):
+            return replacement.roomName
+        }
     }
 
     private func groupMutationObserved(
@@ -949,7 +970,31 @@ final class PlaybackSyncController: ObservableObject {
             spotifyPlaying: selectedRoomName != nil,
             previousSpeakerIDs: nil
         )
-        groupEditRows = report.groupEditRows
+        setGroupEditRows(report.groupEditRows)
+    }
+
+    private func setOutputRows(_ rows: [PlaybackOutputRow]) {
+        guard outputRows != rows else {
+            return
+        }
+
+        outputRows = rows
+    }
+
+    private func setGroupSuggestions(_ suggestions: [PlaybackGroupSuggestion]) {
+        guard groupSuggestions != suggestions else {
+            return
+        }
+
+        groupSuggestions = suggestions
+    }
+
+    private func setGroupEditRows(_ rows: [PlaybackGroupEditRow]) {
+        guard groupEditRows != rows else {
+            return
+        }
+
+        groupEditRows = rows
     }
 
     private func isCurrentVolumeOperation(_ ticket: PlaybackOperationTicket) -> Bool {

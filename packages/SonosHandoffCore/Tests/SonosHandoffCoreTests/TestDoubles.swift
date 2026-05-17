@@ -85,6 +85,10 @@ struct MockConnectTokenStatusStore: ConnectTokenStatusChecking {
         statusValue
     }
 
+    func validatedStatus() async -> ConnectTokenStatus {
+        statusValue
+    }
+
     func deleteProjectToken() throws {}
 }
 

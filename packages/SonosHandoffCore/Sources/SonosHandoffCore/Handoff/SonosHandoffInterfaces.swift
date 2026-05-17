@@ -108,7 +108,7 @@ public struct SonosSpeakerGroup: Identifiable, Equatable, Sendable {
             return true
         }
 
-        guard members.count > 1, let coordinator else {
+        guard let coordinator else {
             return false
         }
 

@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PACKAGE_DIR="$ROOT_DIR/packages/SonosHandoffCore"
+
+run() {
+  echo "+ $*"
+  "$@"
+}
+
+run swift test --package-path "$PACKAGE_DIR"
+run git -C "$ROOT_DIR" diff --check
+run "$ROOT_DIR/scripts/install_menubar_app"
+
+if [[ "${SONOS_HANDOFF_REAL_DEVICE_SMOKE:-0}" == "1" ]]; then
+  ROOM="${SONOS_HANDOFF_ROOM:-Port}"
+  run "$ROOT_DIR/scripts/smoke_cli_handoff" "$ROOM"
+  run "$ROOT_DIR/scripts/smoke_menubar_handoff" "$ROOM"
+  run "$ROOT_DIR/scripts/smoke_menubar_slider" "$ROOM"
+fi
+
+echo "regression_gate=ok"

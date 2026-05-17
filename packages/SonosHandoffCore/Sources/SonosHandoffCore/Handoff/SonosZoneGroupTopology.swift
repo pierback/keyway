@@ -63,11 +63,13 @@ private final class ZoneGroupStateParserDelegate: NSObject, XMLParserDelegate {
     }
 
     private let visibleSpeakerByID: [String: SonosSpeaker]
+    private let hasVisibilitySnapshot: Bool
     private var groups: [PendingGroup] = []
     private var currentGroup: PendingGroup?
 
     init(visibleSpeakers: [SonosSpeaker]) {
         self.visibleSpeakerByID = Dictionary(uniqueKeysWithValues: visibleSpeakers.map { ($0.id, $0) })
+        self.hasVisibilitySnapshot = !visibleSpeakers.isEmpty
     }
 
     func parser(
@@ -112,7 +114,7 @@ private final class ZoneGroupStateParserDelegate: NSObject, XMLParserDelegate {
             return
         }
 
-        if !group.members.isEmpty {
+        if groupIsVisible(group) {
             groups.append(group)
         }
         currentGroup = nil
@@ -145,10 +147,26 @@ private final class ZoneGroupStateParserDelegate: NSObject, XMLParserDelegate {
             return visibleSpeaker
         }
 
+        guard !hasVisibilitySnapshot else {
+            return nil
+        }
+
         guard let host = attributes["Location"].flatMap(Self.host(fromLocation:)) else {
             return nil
         }
         return SonosSpeaker(id: id, roomName: roomName, host: host)
+    }
+
+    private func groupIsVisible(_ group: PendingGroup) -> Bool {
+        guard !group.members.isEmpty else {
+            return false
+        }
+
+        guard hasVisibilitySnapshot else {
+            return true
+        }
+
+        return group.members.contains { $0.id == group.coordinatorID }
     }
 
     private static func host(fromLocation location: String) -> String? {

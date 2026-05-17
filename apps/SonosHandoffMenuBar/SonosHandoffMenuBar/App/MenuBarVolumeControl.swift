@@ -16,11 +16,14 @@ struct MenuBarVolumeControl: View {
             .buttonStyle(.plain)
             .foregroundStyle(.secondary.opacity(0.9))
             .opacity(playback.canControlVolume ? 1 : 0.45)
+            .animation(MenuBarMotion.selection, value: playback.canControlVolume)
             .disabled(!playback.canControlVolume)
 
             NativeVolumeSlider(playback: playback)
                 .disabled(!playback.canControlVolume || playback.volumeState.outputFixed)
                 .opacity(playback.canControlVolume && !playback.volumeState.outputFixed ? 1 : 0.45)
+                .animation(MenuBarMotion.selection, value: playback.canControlVolume)
+                .animation(MenuBarMotion.selection, value: playback.volumeState.outputFixed)
 
             Button {
                 playback.adjustVolume(.up)
@@ -32,6 +35,7 @@ struct MenuBarVolumeControl: View {
             .buttonStyle(.plain)
             .foregroundStyle(.secondary.opacity(0.9))
             .opacity(playback.canControlVolume ? 1 : 0.45)
+            .animation(MenuBarMotion.selection, value: playback.canControlVolume)
             .disabled(!playback.canControlVolume || playback.volumeState.outputFixed)
         }
         .frame(height: 18)

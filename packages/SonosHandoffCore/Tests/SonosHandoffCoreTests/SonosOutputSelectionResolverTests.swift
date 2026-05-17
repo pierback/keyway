@@ -64,6 +64,18 @@ struct SonosOutputSelectionResolverTests {
     }
 
     @Test
+    func preservesCoordinatorSelectionWhenPartialDiscoveryDropsGroupMembers() {
+        let selected = resolver.selectedRoomName(
+            currentRoomName: "Kitchen + Port",
+            groups: [
+                standaloneGroup("Kitchen"),
+            ]
+        )
+
+        #expect(selected == "Kitchen")
+    }
+
+    @Test
     func returnsNilWhenCurrentOutputIsNotVisible() {
         let selected = resolver.selectedRoomName(
             currentRoomName: "Office",

@@ -7,6 +7,9 @@ import UserNotifications
 @MainActor
 struct MenuBarController: View {
     static let settingsWindowID = "settings-window"
+    private static let footerHorizontalPadding: CGFloat = 20
+    private static let footerPrimaryRowHeight: CGFloat = 44
+    private static let footerUtilityRowHeight: CGFloat = 32
 
     let environment: AppEnvironment
     @Environment(\.openWindow) private var openWindow
@@ -41,7 +44,14 @@ struct MenuBarController: View {
         }
         .frame(width: 296)
         .padding(.vertical, 0)
-        .background(.ultraThickMaterial)
+        .background {
+            ZStack {
+                Rectangle()
+                    .fill(.thinMaterial)
+                Rectangle()
+                    .fill(Color.black.opacity(0.18))
+            }
+        }
         .onAppear {
             StatusHUD.shared.setVolumeOverlaySuppressed(true)
             startModifierMonitor()
@@ -66,44 +76,50 @@ struct MenuBarController: View {
                     .controlSize(.small)
                     .scaleEffect(0.64)
                     .frame(width: 16, height: 16)
+                    .transition(MenuBarMotion.rowTransition)
             }
         }
         .padding(.horizontal, 9)
         .padding(.top, 7)
         .padding(.bottom, 3)
+        .animation(MenuBarMotion.rowUpdate, value: playback.isRefreshingOutputs)
+        .animation(MenuBarMotion.rowUpdate, value: playback.loadingRoomName)
     }
 
     private var footer: some View {
         VStack(spacing: 0) {
             footerRow(title: "Show More", systemImage: showMore ? "chevron.down" : "chevron.right", emphasized: true) {
-                withAnimation(.easeInOut(duration: 0.14)) {
+                withAnimation(MenuBarMotion.modeSwitch) {
                     showMore.toggle()
                 }
             }
 
             if showMore {
-                footerRow(title: "Check Shortcut Status", systemImage: "keyboard") {
-                    checkShortcutStatus()
-                }
+                VStack(spacing: 0) {
+                    footerRow(title: "Settings...", systemImage: "gearshape") {
+                        openSettingsWindow()
+                    }
 
-                footerRow(title: doctorFeature.menuTitle, systemImage: "stethoscope") {
-                    doctorFeature.runDoctor(using: environment)
-                }
+                    footerRow(title: "Check Shortcut Status", systemImage: "keyboard") {
+                        checkShortcutStatus()
+                    }
 
-                if !AccessibilityPermission.isGranted() {
-                    footerRow(title: "Enable fn Volume Shortcuts...", systemImage: "accessibility") {
-                        openShortcutPermissions()
+                    footerRow(title: doctorFeature.menuTitle, systemImage: "stethoscope") {
+                        doctorFeature.runDoctor(using: environment)
+                    }
+
+                    if !AccessibilityPermission.isGranted() {
+                        footerRow(title: "Enable fn Volume Shortcuts...", systemImage: "accessibility") {
+                            openShortcutPermissions()
+                        }
+                    }
+
+                    footerRow(title: "Quit", systemImage: "power") {
+                        NSApp.terminate(nil)
                     }
                 }
-
-                footerRow(title: "Quit", systemImage: "power") {
-                    NSApp.terminate(nil)
-                }
-            }
-
-            divider
-            footerRow(title: "Sound Settings...", systemImage: nil, emphasized: true) {
-                openSettingsWindow()
+                .padding(.vertical, 6)
+                .transition(MenuBarMotion.statusTransition)
             }
         }
     }
@@ -125,17 +141,17 @@ struct MenuBarController: View {
             HStack(spacing: 8) {
                 Text(title)
                     .font(.system(size: 13, weight: emphasized ? .semibold : .regular))
-                    .foregroundStyle(emphasized ? Color.primary : Color.secondary.opacity(0.92))
+                    .foregroundStyle(emphasized ? Color.primary : Color.primary.opacity(0.82))
                 Spacer()
                 if let systemImage {
                     Image(systemName: systemImage)
                         .font(.system(size: 12, weight: .regular))
-                        .foregroundStyle(Color.secondary.opacity(0.74))
+                        .foregroundStyle(Color.secondary.opacity(0.82))
                         .frame(width: 16, height: 16)
                 }
             }
-            .frame(height: emphasized ? 29 : 27)
-            .padding(.horizontal, 14)
+            .frame(height: emphasized ? Self.footerPrimaryRowHeight : Self.footerUtilityRowHeight)
+            .padding(.horizontal, Self.footerHorizontalPadding)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -224,6 +240,11 @@ struct MenuBarController: View {
     }
 
     private func applyModifierFlags(_ flags: NSEvent.ModifierFlags) {
-        optionKeyPressed = flags.intersection(.deviceIndependentFlagsMask).contains(.option)
+        let optionPressed = flags.intersection(.deviceIndependentFlagsMask).contains(.option)
+        guard optionPressed != optionKeyPressed else {
+            return
+        }
+
+        optionKeyPressed = optionPressed
     }
 }

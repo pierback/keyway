@@ -103,9 +103,9 @@ struct SonosHandoffApp: App {
                 authCoordinator: environment.authCoordinator,
                 accessibilityAutomator: environment.accessibilityAutomator
             )
-                .frame(width: 560, height: 420)
+                .frame(width: 500, height: 310)
         }
-        .defaultSize(width: 560, height: 420)
+        .defaultSize(width: 500, height: 310)
         .windowResizability(.contentSize)
     }
 }

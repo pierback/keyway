@@ -5,6 +5,8 @@ import SwiftUI
 @MainActor
 struct SettingsFeature: View {
     static let menuTitle = "Settings"
+    private static let callbackURLText = "http://127.0.0.1:43821/callback"
+    private static let panelCornerRadius: CGFloat = 12
     private let accessibilitySettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
     private let configStore: ConfigStoring
     private let tokenStore: TokenStoring
@@ -19,16 +21,9 @@ struct SettingsFeature: View {
     @State private var authMessage: String?
     @State private var isSigningIn = false
     @State private var hasCheckedSpotifyAuthentication = false
+    @State private var showSpotifyAdvanced = false
 
-    @State private var alias = ""
-    @State private var deviceName = ""
-    @State private var targets: [SavedTarget] = []
-    @State private var statusMessage: String?
-
-    @State private var virtualDisplayName = ""
-    @State private var availableDisplayNames: [String] = []
     @State private var accessibilityGranted = false
-    @State private var desktopMessage: String?
 
     init(
         configStore: ConfigStoring = ConfigStore(),
@@ -49,193 +44,230 @@ struct SettingsFeature: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                Text("sonos-handoff")
-                    .font(.title2)
-                    .bold()
-
+            VStack(alignment: .leading, spacing: 10) {
                 spotifySection
-                Divider()
-                targetsSection
-                Divider()
-                desktopAutomationSection
+                shortcutsSection
             }
-            .padding(24)
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .frame(minWidth: 600, minHeight: 520)
+        .frame(width: 500, alignment: .topLeading)
+        .frame(minHeight: 310, alignment: .topLeading)
         .task {
             await reloadState()
         }
     }
 
     private var spotifySection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Spotify")
-                .font(.headline)
-
-            Text("Handoff uses the Spotify Desktop Connect token and a Web API verification token in Application Support. The generic Spotify sign-in below is only for refreshing the Web API token and does not replace the Desktop Connect token.")
-                .foregroundStyle(.secondary)
-
-            Text("http://127.0.0.1:43821/callback")
-                .font(.system(.body, design: .monospaced))
-                .textSelection(.enabled)
-
-            HStack {
-                TextField("Spotify Client ID", text: $spotifyClientID)
-                    .textFieldStyle(.roundedBorder)
-                Button("Save Client ID") {
-                    saveSpotifyClientID()
+        settingsPanel(title: "Spotify") {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 12) {
+                    readinessRow
+                    Spacer()
+                    spotifyAuthActionButton
                 }
-                .disabled(isSigningIn)
-            }
 
-            HStack {
-                Label(
-                    spotifyAuthStatusText,
-                    systemImage: isSpotifyAuthenticated ? "checkmark.circle.fill" : "xmark.circle"
-                )
-                .foregroundStyle(isSpotifyAuthenticated ? .green : .secondary)
-
-                Spacer()
-
-                Button("Check Tokens") {
-                    Task {
-                        await reloadSpotifyAuthState()
-                    }
-                }
-                .disabled(isSigningIn)
-
-                Button(isSigningIn ? "Signing In..." : "Sign In for Web API") {
-                    startSpotifySignIn()
-                }
-                .disabled(isSigningIn)
-
-                Button("Forget Web API Sign-In") {
-                    signOutSpotify()
-                }
-                .disabled(isSigningIn)
-            }
-
-            HStack {
-                Label(
-                    desktopTokenAvailable ? "Desktop Connect token present" : "Desktop Connect token missing",
-                    systemImage: desktopTokenAvailable ? "checkmark.circle.fill" : "xmark.circle"
-                )
-                .foregroundStyle(desktopTokenAvailable ? .green : .orange)
-
-                Label(
-                    webAPITokenAvailable ? "Web API token file valid" : "Web API token file missing or stale",
-                    systemImage: webAPITokenAvailable ? "checkmark.circle.fill" : "xmark.circle"
-                )
-                .foregroundStyle(webAPITokenAvailable ? .green : .orange)
-            }
-
-            if let authMessage {
-                Text(authMessage)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private var targetsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Saved Targets")
-                .font(.headline)
-
-            HStack {
-                TextField("Alias", text: $alias)
-                TextField("Spotify device name", text: $deviceName)
-                Button("Save", action: saveTarget)
-                    .keyboardShortcut(.defaultAction)
-            }
-
-            if targets.isEmpty {
-                Text("No saved targets yet.")
-                    .foregroundStyle(.secondary)
-            } else {
-                List {
-                    ForEach(targets, id: \.alias) { target in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(target.alias)
-                                    .font(.body.weight(.medium))
-                                Text(target.spotifyDeviceName)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Button("Delete") {
-                                deleteTarget(alias: target.alias)
-                            }
+                HStack(spacing: 8) {
+                    Button("Check") {
+                        Task {
+                            await reloadSpotifyAuthState()
                         }
                     }
-                }
-                .frame(height: 120)
-            }
+                    .controlSize(.small)
+                    .disabled(isSigningIn)
 
-            if let statusMessage {
-                Text(statusMessage)
-                    .font(.footnote)
+                    Spacer()
+
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            showSpotifyAdvanced.toggle()
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text("Advanced")
+                            Image(systemName: showSpotifyAdvanced ? "chevron.up" : "chevron.down")
+                                .font(.system(size: 9, weight: .semibold))
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.secondary)
+                }
+
+                if showSpotifyAdvanced {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Client ID")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.secondary)
+
+                        HStack(spacing: 8) {
+                            TextField("Spotify Client ID", text: $spotifyClientID)
+                                .font(.system(size: 12, design: .monospaced))
+                                .textFieldStyle(.plain)
+                                .padding(.horizontal, 10)
+                                .frame(height: 30)
+                                .background {
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .fill(Color.primary.opacity(0.06))
+                                }
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                                }
+
+                            Button("Save") {
+                                saveSpotifyClientID()
+                            }
+                            .controlSize(.small)
+                            .disabled(isSigningIn)
+                        }
+
+                        HStack(spacing: 5) {
+                            Image(systemName: "arrow.turn.down.left")
+                                .font(.system(size: 10, weight: .medium))
+                            Text(Self.callbackURLText)
+                                .font(.system(size: 11, design: .monospaced))
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                    }
+                    .padding(.top, 2)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+
+                VStack(alignment: .leading, spacing: 7) {
+                    serviceStatusRow(
+                        title: "Desktop Connect",
+                        available: desktopTokenAvailable,
+                        availableText: "Token present",
+                        missingText: "Token missing"
+                    )
+                    serviceStatusRow(
+                        title: "Web API",
+                        available: webAPITokenAvailable,
+                        availableText: "Sign-in valid",
+                        missingText: "Sign in again"
+                    )
+                }
+
+                if let authMessage {
+                    Text(authMessage)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
             }
         }
     }
 
-    private var desktopAutomationSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Desktop Automation")
-                .font(.headline)
-
-            Text("Desktop automation works best when Spotify is visible and unobstructed. A named display is optional and only used if you want this app to reposition the Spotify window before opening the Connect panel.")
-                .foregroundStyle(.secondary)
-
-            HStack {
-                TextField("Virtual display name (for example: Virtual 16:9)", text: $virtualDisplayName)
-                    .textFieldStyle(.roundedBorder)
-                Button("Save Display") {
-                    saveVirtualDisplayName()
-                }
+    @ViewBuilder
+    private var spotifyAuthActionButton: some View {
+        if webAPITokenAvailable {
+            Button("Sign Out") {
+                signOutSpotify()
             }
-
-            if !availableDisplayNames.isEmpty {
-                Text("Detected displays: \(availableDisplayNames.joined(separator: ", "))")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+            .controlSize(.small)
+            .disabled(isSigningIn)
+        } else {
+            Button(isSigningIn ? "Signing In..." : "Sign In") {
+                startSpotifySignIn()
             }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .disabled(isSigningIn)
+        }
+    }
 
-            HStack {
-                Label(
-                    accessibilityGranted ? "Accessibility granted" : "Accessibility required",
-                    systemImage: accessibilityGranted ? "checkmark.circle.fill" : "exclamationmark.circle"
+    private var shortcutsSection: some View {
+        settingsPanel(title: "Shortcuts") {
+            HStack(alignment: .center, spacing: 10) {
+                StatusBadge(
+                    title: accessibilityGranted ? "Enabled" : "Required",
+                    available: accessibilityGranted
                 )
-                .foregroundStyle(accessibilityGranted ? .green : .orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Global volume shortcuts")
+                        .font(.system(size: 13, weight: .medium))
+                    Text(accessibilityGranted ? "Global volume shortcuts can listen in the background." : "Required for Shift-fn-F11/F12 volume shortcuts.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
 
                 Spacer()
 
                 Button("Refresh") {
                     refreshAccessibilityState()
                 }
+                .controlSize(.small)
 
-                Button("Request Permission") {
+                Button("Open Settings") {
                     AccessibilityPermission.requestPrompt()
                     refreshAccessibilityState()
-                }
-
-                Button("Open Accessibility Settings") {
                     NSWorkspace.shared.open(accessibilitySettingsURL)
                 }
+                .controlSize(.small)
             }
+        }
+    }
 
-            Text("Leave this empty to keep Spotify on its current display. Only save a display name if you explicitly want transfers to move Spotify onto that screen first.")
-                .font(.footnote)
+    private var readinessRow: some View {
+        HStack(alignment: .top, spacing: 10) {
+            StatusIcon(available: isSpotifyAuthenticated)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(spotifyAuthStatusText)
+                    .font(.system(size: 14, weight: .semibold))
+                Text(spotifyAuthDetailText)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func settingsPanel<Content: View>(
+        title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.secondary)
 
-            if let desktopMessage {
-                Text(desktopMessage)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
+            content()
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: Self.panelCornerRadius, style: .continuous)
+                .fill(Color.primary.opacity(0.045))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: Self.panelCornerRadius, style: .continuous)
+                .stroke(Color.primary.opacity(0.07), lineWidth: 1)
+        }
+    }
+
+    private func serviceStatusRow(
+        title: String,
+        available: Bool,
+        availableText: String,
+        missingText: String
+    ) -> some View {
+        HStack(spacing: 8) {
+            StatusDot(available: available, size: 7)
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.primary.opacity(0.9))
+            Spacer()
+            Text(available ? availableText : missingText)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -251,25 +283,32 @@ struct SettingsFeature: View {
         return "Authentication not checked"
     }
 
+    private var spotifyAuthDetailText: String {
+        if isSpotifyAuthenticated {
+            return "Spotify Desktop Connect and Web API tokens are available."
+        }
+
+        if hasCheckedSpotifyAuthentication {
+            return "Sign in again if Spotify control stops syncing."
+        }
+
+        return "Checking token files..."
+    }
+
     private func reloadState() async {
-        availableDisplayNames = NSScreen.screens.map(\.localizedName).sorted()
         refreshAccessibilityState()
         await reloadSpotifyAuthState()
 
         do {
             let config = try configStore.load()
             spotifyClientID = config.spotifyClientID ?? ""
-            virtualDisplayName = config.spotifyVirtualDisplayName ?? ""
-            targets = config.targets.sorted {
-                $0.alias.localizedCaseInsensitiveCompare($1.alias) == .orderedAscending
-            }
         } catch {
-            statusMessage = "Could not load settings."
+            authMessage = "Could not load settings."
         }
     }
 
     private func reloadSpotifyAuthState() async {
-        let tokenStatus = connectTokenStatusStore.status()
+        let tokenStatus = await connectTokenStatusStore.validatedStatus()
         desktopTokenAvailable = tokenStatus.desktopTokenAvailable
         webAPITokenAvailable = tokenStatus.projectTokenAvailable
         isSpotifyAuthenticated = tokenStatus.isReadyForHandoff
@@ -327,73 +366,49 @@ struct SettingsFeature: View {
             authMessage = "Could not remove the Spotify token."
         }
     }
+}
 
-    private func saveTarget() {
-        let trimmedAlias = alias.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedDeviceName = deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
+private struct StatusDot: View {
+    let available: Bool
+    var size: CGFloat = 9
 
-        guard !trimmedAlias.isEmpty, !trimmedDeviceName.isEmpty else {
-            statusMessage = "Alias and Spotify device name are required."
-            return
-        }
-
-        do {
-            let config = try configStore.load()
-            let filtered = config.targets.filter {
-                $0.alias.caseInsensitiveCompare(trimmedAlias) != .orderedSame
-            }
-            let saved = SavedTarget(alias: trimmedAlias, spotifyDeviceName: trimmedDeviceName)
-            try configStore.save(
-                AppConfig(
-                    targets: filtered + [saved],
-                    spotifyClientID: config.spotifyClientID,
-                    spotifyVirtualDisplayName: config.spotifyVirtualDisplayName
-                )
-            )
-            alias = ""
-            deviceName = ""
-            statusMessage = "Saved target '\(trimmedAlias)'."
-            Task { await reloadState() }
-        } catch {
-            statusMessage = "Could not save the target."
-        }
+    var body: some View {
+        Circle()
+            .fill(available ? Color.green : Color.orange)
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
     }
+}
 
-    private func deleteTarget(alias: String) {
-        do {
-            let config = try configStore.load()
-            let filtered = config.targets.filter {
-                $0.alias.caseInsensitiveCompare(alias) != .orderedSame
-            }
-            try configStore.save(
-                AppConfig(
-                    targets: filtered,
-                    spotifyClientID: config.spotifyClientID,
-                    spotifyVirtualDisplayName: config.spotifyVirtualDisplayName
-                )
-            )
-            statusMessage = "Deleted target '\(alias)'."
-            Task { await reloadState() }
-        } catch {
-            statusMessage = "Could not delete the target."
-        }
+private struct StatusIcon: View {
+    let available: Bool
+
+    var body: some View {
+        Image(systemName: available ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+            .font(.system(size: 18, weight: .semibold))
+            .symbolRenderingMode(.hierarchical)
+            .foregroundStyle(available ? Color.green : Color.orange)
+            .frame(width: 22, height: 22)
+            .accessibilityHidden(true)
     }
+}
 
-    private func saveVirtualDisplayName() {
-        let trimmedName = virtualDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+private struct StatusBadge: View {
+    let title: String
+    let available: Bool
 
-        do {
-            let config = try configStore.load()
-            try configStore.save(
-                AppConfig(
-                    targets: config.targets,
-                    spotifyClientID: config.spotifyClientID,
-                    spotifyVirtualDisplayName: trimmedName.isEmpty ? nil : trimmedName
-                )
-            )
-            desktopMessage = trimmedName.isEmpty ? "Cleared virtual display target." : "Saved virtual display '\(trimmedName)'."
-        } catch {
-            desktopMessage = "Could not save the virtual display name."
+    var body: some View {
+        HStack(spacing: 5) {
+            StatusDot(available: available, size: 7)
+            Text(title)
+                .font(.system(size: 11, weight: .medium))
         }
+        .padding(.horizontal, 8)
+        .frame(height: 24)
+        .background {
+            Capsule(style: .continuous)
+                .fill((available ? Color.green : Color.orange).opacity(0.12))
+        }
+        .foregroundStyle(available ? Color.green : Color.orange)
     }
 }

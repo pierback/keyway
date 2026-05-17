@@ -24,6 +24,14 @@ struct SonosSpeakerGroupTests {
     }
 
     @Test
+    func degradedSingleVisibleCoordinatorStillMatchesSpotifyGroupName() {
+        let group = speakerGroup(coordinator: "Kitchen", members: ["Kitchen"])
+
+        #expect(group.contains(roomName: "Kitchen + Port"))
+        #expect(group.contains(roomName: "Kitchen + 1"))
+    }
+
+    @Test
     func containsRejectsDifferentGroupPrefix() {
         let group = speakerGroup(coordinator: "Kitchen", members: ["Kitchen", "Port"])
 

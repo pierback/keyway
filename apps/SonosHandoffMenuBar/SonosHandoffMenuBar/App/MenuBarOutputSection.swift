@@ -3,6 +3,11 @@ import SwiftUI
 
 @MainActor
 struct MenuBarOutputSection: View {
+    private static let accentColor = Color(nsColor: .controlAccentColor)
+    private static let rowHeight: CGFloat = 32
+    private static let suggestionRowHeight: CGFloat = 34
+    private static let iconSize: CGFloat = 22
+
     @ObservedObject var playback: PlaybackSyncController
     let groupEditing: Bool
     let openSpotifySettings: @MainActor () -> Void
@@ -19,26 +24,14 @@ struct MenuBarOutputSection: View {
             .padding(.horizontal, 10)
             .padding(.top, 8)
             .padding(.bottom, 6)
+            .contentTransition(.opacity)
+            .animation(MenuBarMotion.modeSwitch, value: groupEditing)
 
-            if groupEditing {
-                if playback.groupEditRows.isEmpty {
-                    emptyGroupRow
-                } else {
-                    ForEach(playback.groupEditRows) { row in
-                        groupEditRow(for: row)
-                    }
-                }
-            } else if playback.outputRows.isEmpty {
-                emptyOutputRow
-            } else {
-                ForEach(playback.groupSuggestions) { suggestion in
-                    groupSuggestionRow(suggestion)
-                }
-
-                ForEach(playback.outputRows) { row in
-                    outputRow(for: row)
-                }
-            }
+            rows
+                .animation(MenuBarMotion.modeSwitch, value: groupEditing)
+                .animation(MenuBarMotion.rowUpdate, value: playback.outputRows)
+                .animation(MenuBarMotion.rowUpdate, value: playback.groupEditRows)
+                .animation(MenuBarMotion.rowUpdate, value: playback.groupSuggestions)
 
             if let menuMessage = playback.menuMessage {
                 Text(menuMessage)
@@ -47,6 +40,7 @@ struct MenuBarOutputSection: View {
                     .lineLimit(2)
                     .padding(.horizontal, 14)
                     .padding(.top, 5)
+                    .transition(MenuBarMotion.statusTransition)
             }
 
             if playback.spotifyAuthRequired {
@@ -74,6 +68,49 @@ struct MenuBarOutputSection: View {
                 .buttonStyle(.plain)
                 .padding(.horizontal, 8)
                 .padding(.top, 6)
+                .transition(MenuBarMotion.statusTransition)
+            }
+        }
+        .animation(MenuBarMotion.rowUpdate, value: playback.menuMessage)
+        .animation(MenuBarMotion.rowUpdate, value: playback.spotifyAuthRequired)
+    }
+
+    @ViewBuilder
+    private var rows: some View {
+        if groupEditing {
+            groupRows
+                .transition(MenuBarMotion.modeTransition)
+        } else {
+            outputRows
+                .transition(MenuBarMotion.modeTransition)
+        }
+    }
+
+    @ViewBuilder
+    private var groupRows: some View {
+        if playback.groupEditRows.isEmpty {
+            emptyGroupRow
+        } else {
+            ForEach(playback.groupEditRows) { row in
+                groupEditRow(for: row)
+                    .transition(MenuBarMotion.rowTransition)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var outputRows: some View {
+        if playback.outputRows.isEmpty {
+            emptyOutputRow
+        } else {
+            ForEach(playback.groupSuggestions) { suggestion in
+                groupSuggestionRow(suggestion)
+                    .transition(MenuBarMotion.rowTransition)
+            }
+
+            ForEach(playback.outputRows) { row in
+                outputRow(for: row)
+                    .transition(MenuBarMotion.rowTransition)
             }
         }
     }
@@ -122,6 +159,7 @@ struct MenuBarOutputSection: View {
     private func outputRow(for row: PlaybackOutputRow) -> some View {
         let selected = row.contains(roomName: playback.selectedRoomName)
         let loading = row.coordinator.roomName == playback.loadingRoomName
+        let subtitle = loading ? "Transferring..." : nil
 
         return Button {
             playback.transfer(to: row)
@@ -136,43 +174,23 @@ struct MenuBarOutputSection: View {
                         .symbolRenderingMode(.monochrome)
                         .foregroundStyle(outputIconForeground(selected: selected))
                 }
-                .frame(width: 22, height: 22)
+                .frame(width: Self.iconSize, height: Self.iconSize)
 
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(row.displayName)
-                        .font(.system(size: 13, weight: .regular))
-                        .foregroundStyle(Color.primary.opacity(0.9))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-
-                    if loading {
-                        Text("Transferring...")
-                            .font(.system(size: 11, weight: .regular))
-                            .foregroundStyle(.secondary)
-                    }
-                }
+                rowTitle(row.displayName, subtitle: subtitle, dimmed: loading)
 
                 Spacer(minLength: 0)
 
-                if loading {
-                    ProgressView()
-                        .controlSize(.small)
-                        .scaleEffect(0.56)
-                        .frame(width: 18, height: 18)
-                } else if selected {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Color.primary.opacity(0.72))
-                        .frame(width: 18, height: 18)
-                }
+                rowStatus(loading: loading, selected: selected)
             }
-            .frame(maxWidth: .infinity, minHeight: 31, alignment: .leading)
+            .frame(maxWidth: .infinity, minHeight: Self.rowHeight, alignment: .leading)
             .padding(.horizontal, 12)
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .background {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color.white.opacity(selected ? 0.045 : 0))
+                    .fill(selected ? Self.accentColor.opacity(0.11) : Color.clear)
             }
+            .animation(MenuBarMotion.selection, value: selected)
+            .animation(MenuBarMotion.selection, value: loading)
         }
         .buttonStyle(.plain)
         .disabled(playback.loadingRoomName != nil || playback.groupLoadingRoomName != nil || playback.volumeState.isBusy)
@@ -194,14 +212,14 @@ struct MenuBarOutputSection: View {
                 HStack(spacing: 13) {
                     ZStack {
                         Circle()
-                            .fill(Color.white.opacity(0.075))
+                            .fill(Self.accentColor.opacity(0.18))
 
                         Image(systemName: "hifispeaker.badge.plus")
                             .font(.system(size: 12, weight: .regular))
                             .symbolRenderingMode(.monochrome)
-                            .foregroundStyle(Color.secondary.opacity(0.85))
+                            .foregroundStyle(Self.accentColor.opacity(0.95))
                     }
-                    .frame(width: 22, height: 22)
+                    .frame(width: Self.iconSize, height: Self.iconSize)
 
                     VStack(alignment: .leading, spacing: 0) {
                         Text(suggestion.speaker.roomName)
@@ -219,7 +237,7 @@ struct MenuBarOutputSection: View {
 
                     Spacer(minLength: 0)
                 }
-                .frame(maxWidth: .infinity, minHeight: 33, alignment: .leading)
+                .frame(maxWidth: .infinity, minHeight: Self.suggestionRowHeight, alignment: .leading)
                 .padding(.leading, 12)
             }
             .buttonStyle(.plain)
@@ -261,6 +279,7 @@ struct MenuBarOutputSection: View {
     private func groupEditRow(for row: PlaybackGroupEditRow) -> some View {
         let loading = row.displayName == playback.groupLoadingRoomName
         let disabled = playback.groupLoadingRoomName != nil || playback.loadingRoomName != nil || !row.canToggle
+        let subtitle = groupRowSubtitle(for: row, loading: loading)
 
         return Button {
             playback.toggleGroupMembership(row)
@@ -268,54 +287,30 @@ struct MenuBarOutputSection: View {
             HStack(spacing: 13) {
                 ZStack {
                     Circle()
-                        .fill(row.isInGroup ? Color.white.opacity(0.115) : Color.white.opacity(0.075))
+                        .fill(row.isInGroup ? Self.accentColor : Color.white.opacity(0.075))
 
                     Image(systemName: groupIconName(for: row))
                         .font(.system(size: 12, weight: .regular))
                         .symbolRenderingMode(.monochrome)
                         .foregroundStyle(groupIconForeground(for: row))
                 }
-                .frame(width: 22, height: 22)
+                .frame(width: Self.iconSize, height: Self.iconSize)
 
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(row.displayName)
-                        .font(.system(size: 13, weight: .regular))
-                        .foregroundStyle(Color.primary.opacity(0.9))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-
-                    if row.isCoordinator {
-                        Text("Coordinator")
-                            .font(.system(size: 11, weight: .regular))
-                            .foregroundStyle(.secondary)
-                    } else if loading {
-                        Text("Updating...")
-                            .font(.system(size: 11, weight: .regular))
-                            .foregroundStyle(.secondary)
-                    }
-                }
+                rowTitle(row.displayName, subtitle: subtitle, dimmed: loading)
 
                 Spacer(minLength: 0)
 
-                if loading {
-                    ProgressView()
-                        .controlSize(.small)
-                        .scaleEffect(0.56)
-                        .frame(width: 18, height: 18)
-                } else {
-                    Image(systemName: row.isInGroup ? "checkmark" : "plus")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(row.canToggle ? Color.primary.opacity(row.isInGroup ? 0.72 : 0.55) : Color.secondary.opacity(0.45))
-                        .frame(width: 18, height: 18)
-                }
+                groupRowStatus(for: row, loading: loading)
             }
-            .frame(maxWidth: .infinity, minHeight: row.isCoordinator ? 33 : 31, alignment: .leading)
+            .frame(maxWidth: .infinity, minHeight: Self.rowHeight, alignment: .leading)
             .padding(.horizontal, 12)
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .background {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color.white.opacity(row.isInGroup ? 0.045 : 0))
+                    .fill(row.isInGroup ? Self.accentColor.opacity(0.11) : Color.clear)
             }
+            .animation(MenuBarMotion.selection, value: row.isInGroup)
+            .animation(MenuBarMotion.selection, value: loading)
         }
         .buttonStyle(.plain)
         .disabled(disabled)
@@ -325,25 +320,90 @@ struct MenuBarOutputSection: View {
         .accessibilityLabel(groupAccessibilityLabel(for: row))
     }
 
+    @ViewBuilder
+    private func rowStatus(loading: Bool, selected: Bool) -> some View {
+        ZStack {
+            if loading {
+                ProgressView()
+                    .controlSize(.small)
+                    .scaleEffect(0.56)
+                    .transition(MenuBarMotion.statusTransition)
+            } else if selected {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Self.accentColor.opacity(0.95))
+                    .transition(MenuBarMotion.statusTransition)
+            }
+        }
+        .frame(width: 18, height: 18)
+    }
+
+    @ViewBuilder
+    private func groupRowStatus(for row: PlaybackGroupEditRow, loading: Bool) -> some View {
+        ZStack {
+            if loading {
+                ProgressView()
+                    .controlSize(.small)
+                    .scaleEffect(0.56)
+                    .transition(MenuBarMotion.statusTransition)
+            } else {
+                Image(systemName: row.isInGroup ? "checkmark" : "plus")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(groupStatusForeground(for: row))
+                    .transition(MenuBarMotion.statusTransition)
+            }
+        }
+        .frame(width: 18, height: 18)
+    }
+
+    private func rowTitle(_ title: String, subtitle: String?, dimmed: Bool) -> some View {
+        VStack(alignment: .leading, spacing: -1) {
+            Text(title)
+                .font(.system(size: 13, weight: .regular))
+                .foregroundStyle(Color.primary.opacity(dimmed ? 0.72 : 0.9))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .contentTransition(.opacity)
+
+            if let subtitle {
+                Text(subtitle)
+                    .font(.system(size: 10, weight: .regular))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .transition(MenuBarMotion.statusTransition)
+            }
+        }
+        .frame(height: Self.rowHeight, alignment: .center)
+        .animation(MenuBarMotion.selection, value: subtitle)
+    }
+
+    private func groupRowSubtitle(for row: PlaybackGroupEditRow, loading: Bool) -> String? {
+        if loading {
+            return "Updating..."
+        }
+
+        if row.isCoordinator {
+            return "Coordinator"
+        }
+
+        return nil
+    }
+
     private func outputIconName(for row: PlaybackOutputRow) -> String {
         if row.isGroup {
             return "hifispeaker.2"
         }
 
-        switch row.coordinator.roomName.lowercased() {
-        case "port":
-            return "hifispeaker"
-        default:
-            return "hifispeaker"
-        }
+        return "hifispeaker"
     }
 
     private func outputIconBackground(selected: Bool) -> Color {
-        selected ? Color.white.opacity(0.115) : Color.white.opacity(0.075)
+        selected ? Self.accentColor : Color.white.opacity(0.075)
     }
 
     private func outputIconForeground(selected: Bool) -> Color {
-        selected ? Color.white.opacity(0.95) : Color.secondary.opacity(0.85)
+        selected ? Color.white.opacity(0.96) : Color.secondary.opacity(0.85)
     }
 
     private func groupIconName(for row: PlaybackGroupEditRow) -> String {
@@ -359,7 +419,15 @@ struct MenuBarOutputSection: View {
             return Color.secondary.opacity(0.55)
         }
 
-        return row.isInGroup ? Color.white.opacity(0.95) : Color.secondary.opacity(0.85)
+        return row.isInGroup ? Color.white.opacity(0.96) : Color.secondary.opacity(0.85)
+    }
+
+    private func groupStatusForeground(for row: PlaybackGroupEditRow) -> Color {
+        if !row.canToggle {
+            return Color.secondary.opacity(0.45)
+        }
+
+        return row.isInGroup ? Self.accentColor.opacity(0.95) : Color.primary.opacity(0.55)
     }
 
     private func groupAccessibilityLabel(for row: PlaybackGroupEditRow) -> String {

@@ -139,11 +139,22 @@ final class PlaybackBackgroundSync {
         selectedRoomName: String?,
         spotifyPlaying: Bool
     ) {
+        guard let previousSpeakerIDs = lastSeenSpeakerIDs else {
+            lastSeenSpeakerIDs = Set(refresh.state.speakers.map(\.id))
+            let refresh = groupSuggestionTracker.refresh(
+                in: refresh.state,
+                selectedRoomName: selectedRoomName,
+                currentSuggestions: environment.groupSuggestionStore.suggestions.map(\.reference)
+            )
+            groupSuggestionPresenter.apply(refresh)
+            return
+        }
+
         let update = groupSuggestionTracker.update(
             in: refresh.state,
             selectedRoomName: selectedRoomName,
             spotifyPlaying: spotifyPlaying,
-            previousSpeakerIDs: lastSeenSpeakerIDs,
+            previousSpeakerIDs: previousSpeakerIDs,
             currentSuggestions: environment.groupSuggestionStore.suggestions.map(\.reference)
         )
         lastSeenSpeakerIDs = update.seenSpeakerIDs
