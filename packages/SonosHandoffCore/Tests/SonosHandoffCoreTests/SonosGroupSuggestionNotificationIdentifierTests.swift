@@ -43,6 +43,13 @@ struct SonosGroupSuggestionNotificationIdentifierTests {
     }
 
     @Test
+    func recognizesAllManagedNotificationIdentifiers() {
+        #expect(SonosGroupSuggestionNotificationIdentifier.isManagedID("group-suggestion-RINCON_OFFICE"))
+        #expect(SonosGroupSuggestionNotificationIdentifier.isManagedID("group-suggestion-failure-RINCON_OFFICE"))
+        #expect(!SonosGroupSuggestionNotificationIdentifier.isManagedID("other-RINCON_OFFICE"))
+    }
+
+    @Test
     func matchesExactOrRetargetedSuggestionIdentifier() {
         let notificationID = SonosGroupSuggestionNotificationIdentifier.suggestionID("RINCON_OFFICE|Port")
 

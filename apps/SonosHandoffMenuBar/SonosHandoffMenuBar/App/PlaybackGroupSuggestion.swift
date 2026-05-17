@@ -141,7 +141,7 @@ final class PlaybackGroupSuggestionNotifier {
             notificationCenter.getDeliveredNotifications { [notificationCenter] notifications in
                 let identifiers = notifications
                     .map(\.request.identifier)
-                    .filter(SonosGroupSuggestionNotificationIdentifier.isSuggestionID)
+                    .filter(SonosGroupSuggestionNotificationIdentifier.isManagedID)
                 guard !identifiers.isEmpty else {
                     return
                 }
@@ -151,7 +151,7 @@ final class PlaybackGroupSuggestionNotifier {
             notificationCenter.getPendingNotificationRequests { [notificationCenter] requests in
                 let identifiers = requests
                     .map(\.identifier)
-                    .filter(SonosGroupSuggestionNotificationIdentifier.isSuggestionID)
+                    .filter(SonosGroupSuggestionNotificationIdentifier.isManagedID)
                 guard !identifiers.isEmpty else {
                     return
                 }

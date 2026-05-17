@@ -27,6 +27,10 @@ public enum SonosGroupSuggestionNotificationIdentifier: Sendable {
         identifier.hasPrefix(suggestionPrefix) && !identifier.hasPrefix(failurePrefix)
     }
 
+    public static func isManagedID(_ identifier: String) -> Bool {
+        isSuggestionID(identifier) || identifier.hasPrefix(failurePrefix)
+    }
+
     public static func matchesSuggestionID(_ notificationIdentifier: String, ids: Set<String>) -> Bool {
         guard isSuggestionID(notificationIdentifier) else {
             return false
