@@ -254,7 +254,10 @@ private final class PlaybackBackgroundSync {
         lastSeenSpeakerIDs = update.seenSpeakerIDs
         environment.groupSuggestionStore.clear(ids: update.staleSuggestionIDs)
         groupSuggestionNotifier.cancelSuggestions(ids: update.staleSuggestionIDs)
-        environment.groupSuggestionStore.refresh(update.refreshedSuggestions)
+        let refreshedSuggestions = environment.groupSuggestionStore.refresh(update.refreshedSuggestions)
+        for suggestion in refreshedSuggestions {
+            groupSuggestionNotifier.deliverSuggestion(suggestion)
+        }
 
         switch update.action {
         case .none:

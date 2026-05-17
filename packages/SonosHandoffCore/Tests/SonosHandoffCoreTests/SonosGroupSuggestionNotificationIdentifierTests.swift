@@ -6,19 +6,19 @@ struct SonosGroupSuggestionNotificationIdentifierTests {
     func buildsSuggestionAndFailureIdentifiers() {
         #expect(
             SonosGroupSuggestionNotificationIdentifier.suggestionID("RINCON_OFFICE|Kitchen")
-                == "group-suggestion-RINCON_OFFICE|Kitchen"
+                == "group-suggestion-RINCON_OFFICE"
         )
         #expect(
             SonosGroupSuggestionNotificationIdentifier.failureID("RINCON_OFFICE|Kitchen")
-                == "group-suggestion-failure-RINCON_OFFICE|Kitchen"
+                == "group-suggestion-failure-RINCON_OFFICE"
         )
     }
 
     @Test
     func recognizesOnlyActiveSuggestionIdentifiers() {
-        #expect(SonosGroupSuggestionNotificationIdentifier.isSuggestionID("group-suggestion-RINCON_OFFICE|Kitchen"))
-        #expect(!SonosGroupSuggestionNotificationIdentifier.isSuggestionID("group-suggestion-failure-RINCON_OFFICE|Kitchen"))
-        #expect(!SonosGroupSuggestionNotificationIdentifier.isSuggestionID("other-RINCON_OFFICE|Kitchen"))
+        #expect(SonosGroupSuggestionNotificationIdentifier.isSuggestionID("group-suggestion-RINCON_OFFICE"))
+        #expect(!SonosGroupSuggestionNotificationIdentifier.isSuggestionID("group-suggestion-failure-RINCON_OFFICE"))
+        #expect(!SonosGroupSuggestionNotificationIdentifier.isSuggestionID("other-RINCON_OFFICE"))
     }
 
     @Test

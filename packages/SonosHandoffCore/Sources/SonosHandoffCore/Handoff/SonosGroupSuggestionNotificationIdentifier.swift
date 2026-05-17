@@ -3,11 +3,11 @@ public enum SonosGroupSuggestionNotificationIdentifier: Sendable {
     private static let failurePrefix = "group-suggestion-failure-"
 
     public static func suggestionID(_ suggestionID: String) -> String {
-        "\(suggestionPrefix)\(suggestionID)"
+        "\(suggestionPrefix)\(speakerID(in: suggestionID))"
     }
 
     public static func failureID(_ suggestionID: String) -> String {
-        "\(failurePrefix)\(suggestionID)"
+        "\(failurePrefix)\(speakerID(in: suggestionID))"
     }
 
     public static func isSuggestionID(_ identifier: String) -> Bool {
@@ -19,10 +19,8 @@ public enum SonosGroupSuggestionNotificationIdentifier: Sendable {
             return false
         }
 
-        let suggestionID = String(notificationIdentifier.dropFirst(suggestionPrefix.count))
-        let notificationSpeakerID = speakerID(in: suggestionID)
-        return ids.contains(suggestionID)
-            || ids.contains(notificationSpeakerID)
+        let notificationSpeakerID = String(notificationIdentifier.dropFirst(suggestionPrefix.count))
+        return ids.contains(notificationSpeakerID)
             || ids.contains { speakerID(in: $0) == notificationSpeakerID }
     }
 

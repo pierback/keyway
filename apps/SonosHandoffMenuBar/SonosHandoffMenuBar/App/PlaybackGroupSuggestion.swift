@@ -43,27 +43,33 @@ final class PlaybackGroupSuggestionStore: ObservableObject {
         suggestions.append(suggestion)
     }
 
-    func refresh(_ candidates: [SonosGroupSuggestionCandidate]) {
+    func refresh(_ candidates: [SonosGroupSuggestionCandidate]) -> [PlaybackGroupSuggestion] {
         guard !candidates.isEmpty else {
-            return
+            return []
         }
 
         var refreshedBySpeakerID: [String: SonosGroupSuggestionCandidate] = [:]
         for candidate in candidates {
             refreshedBySpeakerID[candidate.speaker.id] = candidate
         }
+        var changedSuggestions: [PlaybackGroupSuggestion] = []
         suggestions = suggestions.map { suggestion in
             guard let candidate = refreshedBySpeakerID[suggestion.speaker.id] else {
                 return suggestion
             }
 
-            return PlaybackGroupSuggestion(
+            let refreshedSuggestion = PlaybackGroupSuggestion(
                 speaker: candidate.speaker,
                 coordinatorRoomName: candidate.coordinatorRoomName,
                 groupDisplayName: candidate.groupDisplayName,
                 detectedAt: suggestion.detectedAt
             )
+            if refreshedSuggestion != suggestion {
+                changedSuggestions.append(refreshedSuggestion)
+            }
+            return refreshedSuggestion
         }
+        return changedSuggestions
     }
 
     func clear(id: String? = nil) {
@@ -124,6 +130,8 @@ final class PlaybackGroupSuggestionNotifier {
     }
 
     func deliverSuggestion(_ suggestion: PlaybackGroupSuggestion) {
+        cancelSuggestion(id: suggestion.id)
+
         let content = UNMutableNotificationContent()
         content.title = "Sonos speaker available"
         content.body = suggestion.title
@@ -145,7 +153,9 @@ final class PlaybackGroupSuggestionNotifier {
     }
 
     func cancelSuggestion(id: String) {
-        cancelSuggestions(ids: [id])
+        let identifier = SonosGroupSuggestionNotificationIdentifier.suggestionID(id)
+        notificationCenter.removePendingNotificationRequests(withIdentifiers: [identifier])
+        notificationCenter.removeDeliveredNotifications(withIdentifiers: [identifier])
     }
 
     func cancelSuggestions(ids: Set<String>) {
@@ -153,8 +163,9 @@ final class PlaybackGroupSuggestionNotifier {
             return
         }
 
-        removeMatchingNotifications(ids: ids, delivered: false)
-        removeMatchingNotifications(ids: ids, delivered: true)
+        let identifiers = ids.map(SonosGroupSuggestionNotificationIdentifier.suggestionID)
+        notificationCenter.removePendingNotificationRequests(withIdentifiers: identifiers)
+        notificationCenter.removeDeliveredNotifications(withIdentifiers: identifiers)
     }
 
     func cancelAllSuggestions() {
@@ -175,30 +186,6 @@ final class PlaybackGroupSuggestionNotifier {
             }
 
             logger.info("SonosHandoffGroupSuggestionNotification delivery=scheduled identifier=\(identifier, privacy: .public)")
-        }
-    }
-
-    private func removeMatchingNotifications(ids: Set<String>, delivered: Bool) {
-        if delivered {
-            notificationCenter.getDeliveredNotifications { [notificationCenter] notifications in
-                let identifiers = notifications
-                    .map(\.request.identifier)
-                    .filter { SonosGroupSuggestionNotificationIdentifier.matchesSuggestionID($0, ids: ids) }
-                guard !identifiers.isEmpty else {
-                    return
-                }
-                notificationCenter.removeDeliveredNotifications(withIdentifiers: identifiers)
-            }
-        } else {
-            notificationCenter.getPendingNotificationRequests { [notificationCenter] requests in
-                let identifiers = requests
-                    .map(\.identifier)
-                    .filter { SonosGroupSuggestionNotificationIdentifier.matchesSuggestionID($0, ids: ids) }
-                guard !identifiers.isEmpty else {
-                    return
-                }
-                notificationCenter.removePendingNotificationRequests(withIdentifiers: identifiers)
-            }
         }
     }
 
