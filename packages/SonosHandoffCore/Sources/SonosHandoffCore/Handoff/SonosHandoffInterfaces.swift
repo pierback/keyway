@@ -13,6 +13,7 @@ public protocol SonosSpeakerDiscovering: Sendable {
 
 public protocol SonosGroupingStateReading: Sendable {
     func discoverGroupState() async throws -> SonosGroupState
+    func discoverGroupState(visibleSpeakers: [SonosSpeaker]) async throws -> SonosGroupState
 }
 
 public protocol SonosGroupingEditing: Sendable {

@@ -6,6 +6,8 @@ import SonosHandoffCore
 @MainActor
 final class PlaybackSyncController: ObservableObject {
     private static let coordinatorMigrationTarget = Duration.seconds(2)
+    private static let groupMutationObservationAttemptsMax = 8
+    private static let groupMutationObservationRetryNanoseconds: UInt64 = 500_000_000
 
     @Published private(set) var outputRows: [PlaybackOutputRow] = []
     @Published private(set) var selectedRoomName: String?
@@ -417,10 +419,14 @@ final class PlaybackSyncController: ObservableObject {
                 }
                 if outcome.shouldRefreshOutputs {
                     clearSuggestionsCoveredByGroupEdit(row)
-                    await refreshOutputs(
-                        showLoading: false,
-                        preserveMenuMessage: outcome.menuMessage != nil
-                    )
+                    if let observedRefresh = await refreshAfterGroupMutation(row, previousGroup: group) {
+                        applyOutputRefresh(observedRefresh)
+                    } else {
+                        await refreshOutputs(
+                            showLoading: false,
+                            preserveMenuMessage: outcome.menuMessage != nil
+                        )
+                    }
                 }
             } catch {
                 groupLoadingRoomName = nil
@@ -691,6 +697,72 @@ final class PlaybackSyncController: ObservableObject {
             roomNames: speakers.map(\.roomName),
             toCoordinatorRoomName: coordinatorRoomName
         )
+    }
+
+    private func refreshAfterGroupMutation(
+        _ row: PlaybackGroupEditRow,
+        previousGroup: SonosSpeakerGroup
+    ) async -> PlaybackOutputRefresh? {
+        let change = groupMembershipChangePlanner.change(for: row, in: previousGroup)
+        let currentRoomName = preferredCurrentRoomName() ?? selectedRoomName
+        let visibleSpeakers = currentGroupState.speakers
+
+        for attempt in 1 ... Self.groupMutationObservationAttemptsMax {
+            do {
+                let refresh: PlaybackOutputRefresh
+                if visibleSpeakers.isEmpty {
+                    refresh = try await outputDirectory.refresh(currentRoomName: currentRoomName)
+                } else {
+                    refresh = try await outputDirectory.refresh(
+                        currentRoomName: currentRoomName,
+                        visibleSpeakers: visibleSpeakers
+                    )
+                }
+                if groupMutationObserved(change, in: refresh.state) {
+                    if attempt > 1 {
+                        shortcutLogger.info("SonosHandoffGroupEdit observation=ready target=\(row.displayName, privacy: .public) attempts=\(attempt, privacy: .public)")
+                    }
+                    return refresh
+                }
+            } catch {
+                shortcutLogger.info("SonosHandoffGroupEdit observation=refresh_failed target=\(row.displayName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+            }
+
+            guard attempt < Self.groupMutationObservationAttemptsMax else {
+                break
+            }
+            try? await Task.sleep(nanoseconds: Self.groupMutationObservationRetryNanoseconds)
+        }
+
+        shortcutLogger.info("SonosHandoffGroupEdit observation=timeout target=\(row.displayName, privacy: .public)")
+        return nil
+    }
+
+    private func groupMutationObserved(
+        _ change: SonosGroupMembershipChange,
+        in state: SonosGroupState
+    ) -> Bool {
+        switch change {
+        case .none:
+            return true
+        case .join(let speakers, let coordinatorRoomName):
+            return SonosGroupMutationObservation.groupContains(
+                in: state,
+                coordinatorRoomName: coordinatorRoomName,
+                memberRoomNames: speakers.map(\.roomName)
+            )
+        case .remove(let roomName):
+            return SonosGroupMutationObservation.speakerIsStandalone(
+                in: state,
+                roomName: roomName
+            )
+        case .removeCoordinator(_, let coordinatorRoomName, let replacement):
+            return SonosGroupMutationObservation.coordinatorWasRemoved(
+                in: state,
+                oldCoordinatorRoomName: coordinatorRoomName,
+                replacement: replacement
+            )
+        }
     }
 
     private func groupEditMessage(for roomName: String, error: Error) -> String {

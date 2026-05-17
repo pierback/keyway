@@ -92,6 +92,10 @@ final class SonosRuntime: @unchecked Sendable {
         try await directory.discoverGroupState()
     }
 
+    func discoverGroupState(visibleSpeakers: [SonosSpeaker]) async throws -> SonosGroupState {
+        try await directory.discoverGroupState(visibleSpeakers: visibleSpeakers)
+    }
+
     func join(roomName: String, toCoordinatorRoomName coordinatorRoomName: String) async throws {
         try await groupingService.join(roomName: roomName, toCoordinatorRoomName: coordinatorRoomName)
     }

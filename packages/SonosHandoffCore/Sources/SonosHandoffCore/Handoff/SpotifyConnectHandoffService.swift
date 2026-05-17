@@ -36,6 +36,10 @@ public final class SpotifyConnectHandoffService: HandoffPerforming, RoomHandoffP
         try await runtime.discoverGroupState()
     }
 
+    public func discoverGroupState(visibleSpeakers: [SonosSpeaker]) async throws -> SonosGroupState {
+        try await runtime.discoverGroupState(visibleSpeakers: visibleSpeakers)
+    }
+
     public func join(roomName: String, toCoordinatorRoomName coordinatorRoomName: String) async throws {
         try await runtime.join(roomName: roomName, toCoordinatorRoomName: coordinatorRoomName)
     }

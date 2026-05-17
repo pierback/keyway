@@ -58,6 +58,14 @@ public actor SonosGroupStateCache {
         return state
     }
 
+    public func refresh(visibleSpeakers: [SonosSpeaker]) async throws -> SonosGroupState {
+        let state = try await groupingStateReader.discoverGroupState(visibleSpeakers: visibleSpeakers)
+        cachedState = state
+        backgroundRefreshFailed = false
+        lastSuccessfulRefreshAt = Date()
+        return state
+    }
+
     public func refreshAfterBackgroundRefresh() async throws -> SonosGroupState {
         if let backgroundRefreshTask {
             await backgroundRefreshTask.value

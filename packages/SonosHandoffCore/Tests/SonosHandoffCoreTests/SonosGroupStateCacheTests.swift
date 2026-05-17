@@ -133,6 +133,10 @@ private actor StubGroupingStateReader: SonosGroupingStateReading {
         }
     }
 
+    func discoverGroupState(visibleSpeakers: [SonosSpeaker]) async throws -> SonosGroupState {
+        try await discoverGroupState()
+    }
+
     func callCount() -> Int {
         calls
     }

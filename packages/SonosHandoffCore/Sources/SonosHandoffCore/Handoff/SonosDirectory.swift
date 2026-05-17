@@ -33,6 +33,10 @@ actor SonosDirectory {
 
     func discoverGroupState() async throws -> SonosGroupState {
         let speakers = try await discoverSpeakers()
+        return try await discoverGroupState(visibleSpeakers: speakers)
+    }
+
+    func discoverGroupState(visibleSpeakers speakers: [SonosSpeaker]) async throws -> SonosGroupState {
         guard let topologySpeaker = speakers.first else {
             return .empty
         }

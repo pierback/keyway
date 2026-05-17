@@ -43,6 +43,14 @@ final class PlaybackOutputDirectory {
         return refresh(from: state, currentRoomName: currentRoomName)
     }
 
+    func refresh(
+        currentRoomName: String?,
+        visibleSpeakers: [SonosSpeaker]
+    ) async throws -> PlaybackOutputRefresh {
+        let state = try await discoveryCache.refresh(visibleSpeakers: visibleSpeakers)
+        return refresh(from: state, currentRoomName: currentRoomName)
+    }
+
     func refreshAfterBackgroundRefresh(currentRoomName: String?) async throws -> PlaybackOutputRefresh {
         let state = try await discoveryCache.refreshAfterBackgroundRefresh()
         return refresh(from: state, currentRoomName: currentRoomName)

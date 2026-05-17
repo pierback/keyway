@@ -69,6 +69,8 @@ struct SafeGroupingCheck {
 
 private struct LiveGroupingValidator {
     private static let coordinatorMigrationTarget = Duration.seconds(2)
+    private static let mutationObservationAttemptsMax = 8
+    private static let mutationObservationRetryNanoseconds: UInt64 = 500_000_000
 
     private let service: SpotifyConnectHandoffService
     private let readinessResolver = SonosGroupingReadinessResolver()
@@ -155,17 +157,30 @@ private struct LiveGroupingValidator {
             return
         }
 
-        try await exerciseStandaloneJoinAndRemoval(scenario: groupingScenario)
+        var exercisedMutation = false
+        if readiness.canValidateStandaloneJoinAndRemoval {
+            try await exerciseStandaloneJoinAndRemoval(scenario: groupingScenario)
+            exercisedMutation = true
+        } else {
+            print("standalone_join_remove=skipped reason=no_standalone_candidate")
+        }
+
         let stateAfterStandaloneCheck = try await service.discoverGroupState()
         let refreshedReadiness = try await readinessReport(in: stateAfterStandaloneCheck)
-        guard let refreshedScenario = scenario(from: refreshedReadiness),
-              refreshedReadiness.blockingIssues.isEmpty
-        else {
-            let reason = refreshedReadiness.blockingIssues.map(\.rawValue).joined(separator: ",")
-            throw ValidationError("Coordinator validation is not ready after standalone check: \(reason)")
+        if refreshedReadiness.canValidateCoordinatorRemoval {
+            guard let refreshedScenario = scenario(from: refreshedReadiness) else {
+                throw ValidationError("Coordinator validation is ready, but no scenario could be built.")
+            }
+            try await exerciseCoordinatorRemoval(scenario: refreshedScenario)
+            exercisedMutation = true
+        } else {
+            print("coordinator_remove=skipped reason=\(skipReason(from: refreshedReadiness))")
         }
-        try await exerciseCoordinatorRemoval(scenario: refreshedScenario)
-        print("safe_grouping_check=ok")
+
+        guard exercisedMutation else {
+            throw ValidationError("No grouping mutation was exercised.")
+        }
+        print("safe_grouping_check=ok scope=\(readiness.validationScope.rawValue)")
     }
 
     private func safeGroupingStatus(
@@ -263,6 +278,12 @@ private struct LiveGroupingValidator {
         }
     }
 
+    private func skipReason(from readiness: SonosGroupingReadinessReport) -> String {
+        let issues = readiness.blockingIssues.isEmpty ? readiness.capabilityIssues : readiness.blockingIssues
+        let reason = issues.map(\.rawValue).joined(separator: ",")
+        return reason.isEmpty ? "not_available" : reason
+    }
+
     private func forceSafeVolumeState(for speakers: [SonosSpeaker]) async throws {
         print("volume_safety=forcing_zero_muted")
         try await withThrowingTaskGroup(of: Void.self) { group in
@@ -302,22 +323,30 @@ private struct LiveGroupingValidator {
             toCoordinatorRoomName: scenario.coordinator.roomName
         )
         do {
-            let joinedState = try await service.discoverGroupState()
-            try requireGroup(
-                in: joinedState,
-                containing: scenario.coordinator.roomName,
-                alsoContaining: standaloneSpeaker.roomName,
+            _ = try await waitForGroupState(
+                label: "standalone_join",
+                visibleSpeakers: groupingSpeakers(for: scenario),
                 message: "Standalone speaker did not join the active group."
-            )
+            ) { state in
+                SonosGroupMutationObservation.groupContains(
+                    in: state,
+                    coordinatorRoomName: scenario.coordinator.roomName,
+                    memberRoomNames: [standaloneSpeaker.roomName]
+                )
+            }
             print("standalone_join=ok room=\(standaloneSpeaker.roomName)")
 
             try await prepareSafeMutation(label: "standalone_remove")
             try await service.removeFromGroup(roomName: standaloneSpeaker.roomName)
-            let removedState = try await service.discoverGroupState()
-            guard removedState.groups.contains(where: { group in
-                group.members.count == 1 && group.contains(roomName: standaloneSpeaker.roomName)
-            }) else {
-                throw ValidationError("Standalone speaker did not become standalone after removal.")
+            _ = try await waitForGroupState(
+                label: "standalone_remove",
+                visibleSpeakers: groupingSpeakers(for: scenario),
+                message: "Standalone speaker did not become standalone after removal."
+            ) { state in
+                SonosGroupMutationObservation.speakerIsStandalone(
+                    in: state,
+                    roomName: standaloneSpeaker.roomName
+                )
             }
         } catch {
             try await rollbackStandaloneJoin(roomName: standaloneSpeaker.roomName, originalError: error)
@@ -337,13 +366,17 @@ private struct LiveGroupingValidator {
                 roomName: replacement.roomName,
                 toCoordinatorRoomName: scenario.coordinator.roomName
             )
-            let rolledBackState = try await service.discoverGroupState()
-            try requireGroup(
-                in: rolledBackState,
-                containing: scenario.coordinator.roomName,
-                alsoContaining: replacement.roomName,
+            _ = try await waitForGroupState(
+                label: "coordinator_rollback",
+                visibleSpeakers: scenario.group.members,
                 message: "Coordinator preparation rollback did not rejoin \(replacement.roomName) to \(scenario.coordinator.roomName)."
-            )
+            ) { state in
+                SonosGroupMutationObservation.groupContains(
+                    in: state,
+                    coordinatorRoomName: scenario.coordinator.roomName,
+                    memberRoomNames: [replacement.roomName]
+                )
+            }
             print("coordinator_rollback=ok room=\(replacement.roomName) coordinator=\(scenario.coordinator.roomName)")
         } catch {
             throw ValidationError(
@@ -399,12 +432,17 @@ private struct LiveGroupingValidator {
                 )
             }
 
-            let migratedState = try await service.discoverGroupState()
-            try requireCoordinatorRemoved(
-                in: migratedState,
-                oldCoordinator: scenario.coordinator,
-                replacement: replacement
-            )
+            _ = try await waitForGroupState(
+                label: "coordinator_remove",
+                visibleSpeakers: scenario.group.members,
+                message: "\(scenario.coordinator.roomName) is still grouped with \(replacement.roomName)."
+            ) { state in
+                SonosGroupMutationObservation.coordinatorWasRemoved(
+                    in: state,
+                    oldCoordinatorRoomName: scenario.coordinator.roomName,
+                    replacement: replacement
+                )
+            }
             print("coordinator_remove=ok old=\(scenario.coordinator.roomName) replacement=\(replacement.roomName) prepare_elapsed=\(prepareElapsed) transfer_elapsed=\(transferElapsed) elapsed=\(operationElapsed) safety_inclusive_elapsed=\(safetyInclusiveElapsed)")
         } catch {
             if restoreOriginalCoordinator {
@@ -451,7 +489,17 @@ private struct LiveGroupingValidator {
             try await service.join(roomName: member.roomName, toCoordinatorRoomName: oldCoordinator.roomName)
         }
 
-        let restoredState = try await service.discoverGroupState()
+        let restoredState = try await waitForGroupState(
+            label: "coordinator_restore",
+            visibleSpeakers: originalGroup.members,
+            message: "Original group members did not rejoin \(oldCoordinator.roomName)."
+        ) { state in
+            SonosGroupMutationObservation.groupContains(
+                in: state,
+                coordinatorRoomName: oldCoordinator.roomName,
+                memberRoomNames: originalGroup.members.map(\.roomName)
+            )
+        }
         guard let restoredGroup = restoredState.groups.first(where: { $0.contains(roomName: oldCoordinator.roomName) }),
               originalGroup.members.allSatisfy({ restoredGroup.contains(roomName: $0.roomName) })
         else {
@@ -515,34 +563,37 @@ private struct LiveGroupingValidator {
         try await verifySafeVolumeState(for: state.speakers)
     }
 
-    private func requireCoordinatorRemoved(
-        in state: SonosGroupState,
-        oldCoordinator: SonosSpeaker,
-        replacement: SonosSpeaker
-    ) throws {
-        guard let replacementGroup = state.groups.first(where: { $0.contains(roomName: replacement.roomName) }) else {
-            throw ValidationError("Replacement coordinator group was not visible after coordinator removal.")
+    private func waitForGroupState(
+        label: String,
+        visibleSpeakers: [SonosSpeaker],
+        message: String,
+        matching predicate: (SonosGroupState) -> Bool
+    ) async throws -> SonosGroupState {
+        for attempt in 1 ... Self.mutationObservationAttemptsMax {
+            let state = try await service.discoverGroupState(visibleSpeakers: visibleSpeakers)
+            if predicate(state) {
+                if attempt > 1 {
+                    print("group_observation=\(label) attempts=\(attempt)")
+                }
+                return state
+            }
+
+            guard attempt < Self.mutationObservationAttemptsMax else {
+                break
+            }
+            try await Task.sleep(nanoseconds: Self.mutationObservationRetryNanoseconds)
         }
-        guard replacementGroup.coordinator?.id == replacement.id else {
-            throw ValidationError("\(replacement.roomName) is not the coordinator after coordinator removal.")
-        }
-        guard !replacementGroup.contains(roomName: oldCoordinator.roomName) else {
-            throw ValidationError("\(oldCoordinator.roomName) is still grouped with \(replacement.roomName).")
-        }
+
+        throw ValidationError(message)
     }
 
-    private func requireGroup(
-        in state: SonosGroupState,
-        containing roomName: String,
-        alsoContaining otherRoomName: String?,
-        message: String
-    ) throws {
-        guard let group = state.groups.first(where: { $0.contains(roomName: roomName) }) else {
-            throw ValidationError(message)
+    private func groupingSpeakers(for scenario: GroupingScenario) -> [SonosSpeaker] {
+        var speakers = scenario.group.members
+        if let standaloneSpeaker = scenario.standaloneSpeaker,
+           !speakers.contains(where: { $0.id == standaloneSpeaker.id }) {
+            speakers.append(standaloneSpeaker)
         }
-        if let otherRoomName, !group.contains(roomName: otherRoomName) {
-            throw ValidationError(message)
-        }
+        return speakers
     }
 
     private func printGroups(_ state: SonosGroupState, prefix: String) {
