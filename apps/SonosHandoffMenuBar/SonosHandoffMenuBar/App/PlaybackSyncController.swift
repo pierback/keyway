@@ -198,6 +198,7 @@ final class PlaybackSyncController: ObservableObject {
                 outputRows = []
                 currentGroupState = .empty
                 selectRoomName(nil)
+                clearGroupSuggestions()
                 operationGate.cancelVolume()
                 volumeState.clearStatus()
                 menuMessage = "Could not search for Sonos speakers."
@@ -491,6 +492,11 @@ final class PlaybackSyncController: ObservableObject {
         shortcutLogger.info("SonosHandoffGroupSuggestion result=ignored source=menu id=\(id, privacy: .public)")
     }
 
+    private func clearGroupSuggestions() {
+        groupSuggestionStore.clear()
+        groupSuggestionNotifier.cancelAllSuggestions()
+    }
+
     private func groupSuggestionRejectionMessage(_ rejection: SonosGroupSuggestionAcceptanceRejection) -> String {
         switch rejection {
         case .noActiveSonosGroup:
@@ -522,6 +528,7 @@ final class PlaybackSyncController: ObservableObject {
             outputRows = []
             currentGroupState = .empty
             selectRoomName(nil)
+            clearGroupSuggestions()
             operationGate.cancelVolume()
             volumeState.clearStatus()
             menuMessage = "Could not search for Sonos speakers."

@@ -185,8 +185,7 @@ private final class PlaybackBackgroundSync {
                   let activeRoomName = SonosRoomName.normalized(status.deviceName)
             else {
                 hasShownAuthPrompt = false
-                environment.groupSuggestionStore.clear()
-                groupSuggestionNotifier.cancelAllSuggestions()
+                clearGroupSuggestions()
                 clearSelection(reason: "no_active_spotify_playback")
                 await refreshOutputCacheWithoutPlayback(discoveryRefreshStarted: discoveryRefreshStarted)
                 return
@@ -194,8 +193,7 @@ private final class PlaybackBackgroundSync {
 
             guard status.isPlaying else {
                 hasShownAuthPrompt = false
-                environment.groupSuggestionStore.clear()
-                groupSuggestionNotifier.cancelAllSuggestions()
+                clearGroupSuggestions()
                 clearSelection(reason: "spotify_playback_paused")
                 await refreshOutputCacheWithoutPlayback(discoveryRefreshStarted: discoveryRefreshStarted)
                 return
@@ -226,13 +224,13 @@ private final class PlaybackBackgroundSync {
             logger.info("SonosHandoffPlaybackSync state=selected room=\(selectedRoomName, privacy: .public) spotifyVolume=\(status.volumePercent ?? -1, privacy: .public)")
         } catch {
             if SpotifyAuthRecovery.isAuthRequired(error) {
-                environment.groupSuggestionStore.clear()
-                groupSuggestionNotifier.cancelAllSuggestions()
+                clearGroupSuggestions()
                 clearSelection(reason: "spotify_auth_required")
                 showAuthPromptIfNeeded(error)
                 return
             }
 
+            clearGroupSuggestions()
             logger.info("SonosHandoffPlaybackSync state=unavailable error=\(error.localizedDescription, privacy: .public)")
         }
     }
@@ -278,8 +276,7 @@ private final class PlaybackBackgroundSync {
         case .keepCurrent:
             return
         case .clearCurrent:
-            environment.groupSuggestionStore.clear()
-            groupSuggestionNotifier.cancelAllSuggestions()
+            clearGroupSuggestions()
             return
         case .present(let candidate):
             let suggestion = PlaybackGroupSuggestion(candidate: candidate, detectedAt: Date())
@@ -295,6 +292,11 @@ private final class PlaybackBackgroundSync {
         }
 
         NotificationCenter.default.post(name: .sonosHandoffApplyCachedOutputs, object: currentRoomName)
+    }
+
+    private func clearGroupSuggestions() {
+        environment.groupSuggestionStore.clear()
+        groupSuggestionNotifier.cancelAllSuggestions()
     }
 
     private func refreshOutputCacheWithoutPlayback(discoveryRefreshStarted: Bool) async {
@@ -406,8 +408,7 @@ private final class PlaybackBackgroundSync {
             return SonosRoomName.normalized(status.deviceName)
         } catch {
             if SpotifyAuthRecovery.isAuthRequired(error) {
-                environment.groupSuggestionStore.clear()
-                groupSuggestionNotifier.cancelAllSuggestions()
+                clearGroupSuggestions()
                 clearSelection(reason: "spotify_auth_required")
                 showAuthPromptIfNeeded(error)
                 return nil
