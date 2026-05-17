@@ -19,6 +19,20 @@ struct SonosGroupSuggestionTrackerTests {
     }
 
     @Test
+    func presentsSuggestionWhenStandaloneSpeakerJoinsNetworkDuringPlayback() {
+        let update = tracker.update(
+            in: groupState,
+            selectedRoomName: "Kitchen",
+            spotifyPlaying: true,
+            previousSpeakerIDs: ["RINCON_KITCHEN", "RINCON_PORT"],
+            currentSuggestion: nil
+        )
+
+        #expect(update.action == .present(candidate("Office", coordinator: "Kitchen", group: "Kitchen + Port")))
+        #expect(update.seenSpeakerIDs == ["RINCON_KITCHEN", "RINCON_PORT", "RINCON_OFFICE"])
+    }
+
+    @Test
     func keepsCurrentSuggestionAndRecordsItAsSeen() {
         let update = tracker.update(
             in: groupState,
