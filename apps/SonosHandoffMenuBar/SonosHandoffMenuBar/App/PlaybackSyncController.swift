@@ -18,6 +18,7 @@ final class PlaybackSyncController: ObservableObject {
     @Published private(set) var groupSuggestion: PlaybackGroupSuggestion?
 
     private let outputDirectory: PlaybackOutputDirectory
+    private let outputSelectionResolver = SonosOutputSelectionResolver()
     private let outputSelection: PlaybackOutputSelection
     private let activePlaybackObserver: any SpotifyActivePlaybackObserving
     private let volumeMonitor: SonosVolumeMonitor
@@ -263,13 +264,15 @@ final class PlaybackSyncController: ObservableObject {
     }
 
     private func selectedRoomName(forActiveSpotifyRoomName roomName: String) -> String? {
-        if let exactSpeaker = speakers.first(where: { SonosRoomName.matches($0.roomName, roomName) }) {
-            return exactSpeaker.roomName
+        if let selectedRoomName = outputSelectionResolver.selectedRoomName(
+            currentRoomName: roomName,
+            groups: outputRows.map(\.group)
+        ) {
+            return selectedRoomName
         }
 
-        return outputRows
-            .first(where: { $0.contains(roomName: roomName) })?
-            .coordinator
+        return speakers
+            .first(where: { SonosRoomName.matches($0.roomName, roomName) })?
             .roomName
     }
 
