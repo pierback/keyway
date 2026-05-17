@@ -109,7 +109,7 @@ private struct LiveGroupingValidator {
         let readiness = try await readinessReport(in: initialState)
         printReadinessIssues(readiness)
         guard let groupingScenario = scenario(from: readiness) else {
-            let reason = readiness.issues.map(\.rawValue).joined(separator: ",")
+            let reason = readiness.blockingIssues.map(\.rawValue).joined(separator: ",")
             if !mutate {
                 print("grouping_scenario=not_ready reason=\(reason)")
                 print(prepareSilent ? "safe_grouping_check=prepared_not_ready" : "safe_grouping_check=dry_run_not_ready")
@@ -118,8 +118,8 @@ private struct LiveGroupingValidator {
             throw ValidationError("Grouping validation is not ready: \(reason)")
         }
 
-        if !readiness.issues.isEmpty {
-            let reason = readiness.issues.map(\.rawValue).joined(separator: ",")
+        if !readiness.blockingIssues.isEmpty {
+            let reason = readiness.blockingIssues.map(\.rawValue).joined(separator: ",")
             printScenario(groupingScenario)
             if !mutate {
                 print("grouping_scenario=not_ready reason=\(reason)")
@@ -137,13 +137,18 @@ private struct LiveGroupingValidator {
             return
         }
 
+        guard readiness.canValidateAnyMutation else {
+            let reason = readiness.capabilityIssues.map(\.rawValue).joined(separator: ",")
+            throw ValidationError("No grouping mutation can be validated: \(reason)")
+        }
+
         try await exerciseStandaloneJoinAndRemoval(scenario: groupingScenario)
         let stateAfterStandaloneCheck = try await service.discoverGroupState()
         let refreshedReadiness = try await readinessReport(in: stateAfterStandaloneCheck)
         guard let refreshedScenario = scenario(from: refreshedReadiness),
-              refreshedReadiness.issues.isEmpty
+              refreshedReadiness.blockingIssues.isEmpty
         else {
-            let reason = refreshedReadiness.issues.map(\.rawValue).joined(separator: ",")
+            let reason = refreshedReadiness.blockingIssues.map(\.rawValue).joined(separator: ",")
             throw ValidationError("Coordinator validation is not ready after standalone check: \(reason)")
         }
         try await exerciseCoordinatorRemoval(scenario: refreshedScenario)

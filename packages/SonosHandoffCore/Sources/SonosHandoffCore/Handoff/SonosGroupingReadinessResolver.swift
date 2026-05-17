@@ -5,6 +5,19 @@ public enum SonosGroupingReadinessIssue: String, Equatable, Sendable {
     case activeSpotifyRoomNotVisible = "active_spotify_room_not_visible"
     case noStandaloneCandidate = "no_standalone_candidate"
     case noCoordinatorReplacement = "no_coordinator_replacement"
+
+    public var blocksValidation: Bool {
+        switch self {
+        case .noVisibleSpeakers,
+             .noActiveSpotifyPlayback,
+             .spotifyPlaybackNotPlaying,
+             .activeSpotifyRoomNotVisible:
+            return true
+        case .noStandaloneCandidate,
+             .noCoordinatorReplacement:
+            return false
+        }
+    }
 }
 
 public struct SonosGroupingReadinessReport: Equatable, Sendable {
@@ -33,6 +46,26 @@ public struct SonosGroupingReadinessReport: Equatable, Sendable {
 
     public var hasActiveVisibleGroup: Bool {
         activeRoomName != nil && activeGroup != nil && coordinator != nil
+    }
+
+    public var blockingIssues: [SonosGroupingReadinessIssue] {
+        issues.filter(\.blocksValidation)
+    }
+
+    public var capabilityIssues: [SonosGroupingReadinessIssue] {
+        issues.filter { !$0.blocksValidation }
+    }
+
+    public var canValidateStandaloneJoinAndRemoval: Bool {
+        blockingIssues.isEmpty && standaloneSpeaker != nil
+    }
+
+    public var canValidateCoordinatorRemoval: Bool {
+        blockingIssues.isEmpty && coordinatorReplacement != nil
+    }
+
+    public var canValidateAnyMutation: Bool {
+        canValidateStandaloneJoinAndRemoval || canValidateCoordinatorRemoval
     }
 }
 
