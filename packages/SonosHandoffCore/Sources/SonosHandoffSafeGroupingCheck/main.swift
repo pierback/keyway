@@ -55,7 +55,7 @@ struct SafeGroupingCheck {
               2. removes that speaker again
               3. if possible, removes the current coordinator and transfers playback to a
                  replacement using coordinator-migration verification, failing if the operation
-                 takes longer than 2 seconds
+                 takes longer than 2 seconds, excluding checker-only safety preparation
             Dry-run and prepared modes print grouping_validation_scope=full when both mutation
             paths are available, or a narrower scope when only part of the validation can run.
 
@@ -296,22 +296,27 @@ private struct LiveGroupingValidator {
 
         try await prepareSafeMutation(label: "coordinator_remove")
         let clock = ContinuousClock()
-        let startedAt = clock.now
+        let safetyInclusiveStartedAt = clock.now
         do {
+            let removeStartedAt = clock.now
             try await service.removeCoordinator(
                 in: scenario.group,
                 coordinatorRoomName: scenario.coordinator.roomName,
                 replacementRoomName: replacement.roomName
             )
+            let removeElapsed = removeStartedAt.duration(to: clock.now)
             try await prepareSafeMutation(label: "coordinator_transfer")
+            let transferStartedAt = clock.now
             let transfer = await service.transfer(toRoomName: replacement.roomName, verification: .coordinatorMigration)
-            let elapsed = startedAt.duration(to: clock.now)
+            let transferElapsed = transferStartedAt.duration(to: clock.now)
+            let operationElapsed = removeElapsed + transferElapsed
+            let safetyInclusiveElapsed = safetyInclusiveStartedAt.duration(to: clock.now)
             guard case .success = transfer else {
                 throw ValidationError("Coordinator migration transfer failed: \(transfer)")
             }
-            guard elapsed <= Self.coordinatorMigrationTarget else {
+            guard operationElapsed <= Self.coordinatorMigrationTarget else {
                 throw ValidationError(
-                    "Coordinator migration exceeded target: elapsed=\(elapsed) target=\(Self.coordinatorMigrationTarget)"
+                    "Coordinator migration exceeded target: elapsed=\(operationElapsed) target=\(Self.coordinatorMigrationTarget)"
                 )
             }
 
@@ -321,7 +326,7 @@ private struct LiveGroupingValidator {
                 oldCoordinator: scenario.coordinator,
                 replacement: replacement
             )
-            print("coordinator_remove=ok old=\(scenario.coordinator.roomName) replacement=\(replacement.roomName) elapsed=\(elapsed)")
+            print("coordinator_remove=ok old=\(scenario.coordinator.roomName) replacement=\(replacement.roomName) elapsed=\(operationElapsed) safety_inclusive_elapsed=\(safetyInclusiveElapsed)")
         } catch {
             if restoreOriginalCoordinator {
                 try await restoreOriginalCoordinatorRoleAfterFailureIfNeeded(
