@@ -17,6 +17,7 @@ struct AppEnvironment: @unchecked Sendable {
     let outputSelection: PlaybackOutputSelection
     let outputDirectory: PlaybackOutputDirectory
     let groupSuggestionStore: PlaybackGroupSuggestionStore
+    let groupSuggestionNotifier: PlaybackGroupSuggestionNotifier
 
     @MainActor
     static func live() -> AppEnvironment {
@@ -28,6 +29,7 @@ struct AppEnvironment: @unchecked Sendable {
         let spotifyConnectService = SpotifyConnectHandoffService(configStore: configStore)
         let outputSelection = PlaybackOutputSelection()
         let groupSuggestionStore = PlaybackGroupSuggestionStore()
+        let groupSuggestionNotifier = PlaybackGroupSuggestionNotifier()
         let outputDirectory = PlaybackOutputDirectory(
             groupingStateReader: spotifyConnectService,
             configStore: configStore
@@ -53,7 +55,8 @@ struct AppEnvironment: @unchecked Sendable {
             accessibilityAutomator: accessibilityAutomator,
             outputSelection: outputSelection,
             outputDirectory: outputDirectory,
-            groupSuggestionStore: groupSuggestionStore
+            groupSuggestionStore: groupSuggestionStore,
+            groupSuggestionNotifier: groupSuggestionNotifier
         )
     }
 }

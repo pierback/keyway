@@ -2,7 +2,7 @@ import Combine
 import Foundation
 import os
 import SonosHandoffCore
-import UserNotifications
+@preconcurrency import UserNotifications
 
 struct PlaybackGroupSuggestion: Identifiable, Equatable, Sendable {
     let speaker: SonosSpeaker
@@ -144,6 +144,24 @@ final class PlaybackGroupSuggestionNotifier {
         deliver(content, identifier: "group-suggestion-failure-\(suggestion.id)")
     }
 
+    func cancelSuggestion(id: String) {
+        cancelSuggestions(ids: [id])
+    }
+
+    func cancelSuggestions(ids: Set<String>) {
+        guard !ids.isEmpty else {
+            return
+        }
+
+        removeMatchingNotifications(ids: ids, delivered: false)
+        removeMatchingNotifications(ids: ids, delivered: true)
+    }
+
+    func cancelAllSuggestions() {
+        removeAllMatchingNotifications(delivered: false)
+        removeAllMatchingNotifications(delivered: true)
+    }
+
     private func deliver(_ content: UNNotificationContent, identifier: String) {
         let request = UNNotificationRequest(
             identifier: identifier,
@@ -158,5 +176,66 @@ final class PlaybackGroupSuggestionNotifier {
 
             logger.info("SonosHandoffGroupSuggestionNotification delivery=scheduled identifier=\(identifier, privacy: .public)")
         }
+    }
+
+    private func removeMatchingNotifications(ids: Set<String>, delivered: Bool) {
+        if delivered {
+            notificationCenter.getDeliveredNotifications { [notificationCenter] notifications in
+                let identifiers = notifications
+                    .map(\.request.identifier)
+                    .filter { Self.notificationIdentifier($0, matchesAny: ids) }
+                guard !identifiers.isEmpty else {
+                    return
+                }
+                notificationCenter.removeDeliveredNotifications(withIdentifiers: identifiers)
+            }
+        } else {
+            notificationCenter.getPendingNotificationRequests { [notificationCenter] requests in
+                let identifiers = requests
+                    .map(\.identifier)
+                    .filter { Self.notificationIdentifier($0, matchesAny: ids) }
+                guard !identifiers.isEmpty else {
+                    return
+                }
+                notificationCenter.removePendingNotificationRequests(withIdentifiers: identifiers)
+            }
+        }
+    }
+
+    private func removeAllMatchingNotifications(delivered: Bool) {
+        if delivered {
+            notificationCenter.getDeliveredNotifications { [notificationCenter] notifications in
+                let identifiers = notifications
+                    .map(\.request.identifier)
+                    .filter(Self.isSuggestionNotificationIdentifier)
+                guard !identifiers.isEmpty else {
+                    return
+                }
+                notificationCenter.removeDeliveredNotifications(withIdentifiers: identifiers)
+            }
+        } else {
+            notificationCenter.getPendingNotificationRequests { [notificationCenter] requests in
+                let identifiers = requests
+                    .map(\.identifier)
+                    .filter(Self.isSuggestionNotificationIdentifier)
+                guard !identifiers.isEmpty else {
+                    return
+                }
+                notificationCenter.removePendingNotificationRequests(withIdentifiers: identifiers)
+            }
+        }
+    }
+
+    nonisolated private static func notificationIdentifier(_ notificationIdentifier: String, matchesAny ids: Set<String>) -> Bool {
+        guard isSuggestionNotificationIdentifier(notificationIdentifier) else {
+            return false
+        }
+
+        let suggestionID = notificationIdentifier.dropFirst("group-suggestion-".count)
+        return ids.contains(String(suggestionID)) || ids.contains { suggestionID.hasPrefix("\($0)|") }
+    }
+
+    nonisolated private static func isSuggestionNotificationIdentifier(_ identifier: String) -> Bool {
+        identifier.hasPrefix("group-suggestion-") && !identifier.hasPrefix("group-suggestion-failure-")
     }
 }

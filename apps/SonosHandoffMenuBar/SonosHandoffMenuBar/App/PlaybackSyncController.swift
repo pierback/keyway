@@ -30,6 +30,7 @@ final class PlaybackSyncController: ObservableObject {
     private let volumeActions: PlaybackVolumeActionController
     private let transferActions: PlaybackTransferActionController
     private let groupSuggestionStore: PlaybackGroupSuggestionStore
+    private let groupSuggestionNotifier: PlaybackGroupSuggestionNotifier
     private let shortcutLogger = os.Logger(subsystem: "com.fpieringer.SonosHandoffMenuBar", category: "Shortcuts")
     private var monitorCancellable: AnyCancellable?
     private var outputSelectionCancellable: AnyCancellable?
@@ -56,6 +57,7 @@ final class PlaybackSyncController: ObservableObject {
         self.volumeMonitor = volumeMonitor
         self.groupingEditor = environment.groupingEditor
         self.groupSuggestionStore = environment.groupSuggestionStore
+        self.groupSuggestionNotifier = environment.groupSuggestionNotifier
         self.volumeActions = volumeActions ?? PlaybackVolumeActionController(
             environment: environment,
             volumeMonitor: volumeMonitor
@@ -384,6 +386,7 @@ final class PlaybackSyncController: ObservableObject {
                 }
                 if outcome.shouldRefreshOutputs {
                     groupSuggestionStore.clear(id: row.speaker.id)
+                    groupSuggestionNotifier.cancelSuggestion(id: row.speaker.id)
                     await refreshOutputs(showLoading: false)
                 }
             } catch {
@@ -411,6 +414,7 @@ final class PlaybackSyncController: ObservableObject {
                     toCoordinatorRoomName: suggestion.coordinatorRoomName
                 )
                 groupSuggestionStore.clear(id: suggestion.id)
+                groupSuggestionNotifier.cancelSuggestion(id: suggestion.id)
                 groupLoadingRoomName = nil
                 shortcutLogger.info("SonosHandoffGroupSuggestion result=accepted room=\(suggestion.speaker.roomName, privacy: .public) coordinator=\(suggestion.coordinatorRoomName, privacy: .public)")
                 await refreshOutputs(showLoading: false)
