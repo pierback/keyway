@@ -269,12 +269,7 @@ private final class PlaybackBackgroundSync {
             groupSuggestionNotifier.cancelAllSuggestions()
             return
         case .present(let candidate):
-            let suggestion = PlaybackGroupSuggestion(
-                speaker: candidate.speaker,
-                coordinatorRoomName: candidate.coordinatorRoomName,
-                groupDisplayName: candidate.groupDisplayName,
-                detectedAt: Date()
-            )
+            let suggestion = PlaybackGroupSuggestion(candidate: candidate, detectedAt: Date())
             environment.groupSuggestionStore.present(suggestion)
             groupSuggestionNotifier.deliverSuggestion(suggestion)
             logger.info("SonosHandoffGroupSuggestion state=prompted room=\(candidate.speaker.roomName, privacy: .public) group=\(candidate.groupDisplayName, privacy: .public)")

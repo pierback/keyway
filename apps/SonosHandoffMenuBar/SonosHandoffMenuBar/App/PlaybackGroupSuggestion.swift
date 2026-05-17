@@ -4,31 +4,7 @@ import os
 import SonosHandoffCore
 @preconcurrency import UserNotifications
 
-struct PlaybackGroupSuggestion: Identifiable, Equatable, Sendable {
-    let speaker: SonosSpeaker
-    let coordinatorRoomName: String
-    let groupDisplayName: String
-    let detectedAt: Date
-
-    var id: String {
-        "\(speaker.id)|\(coordinatorRoomName)"
-    }
-
-    var title: String {
-        "Add \(speaker.roomName) to \(groupDisplayName)?"
-    }
-
-    var reference: SonosGroupSuggestionReference {
-        SonosGroupSuggestionReference(
-            speakerID: speaker.id,
-            coordinatorRoomName: coordinatorRoomName
-        )
-    }
-
-    func matches(identifier: String) -> Bool {
-        reference.matches(identifier: identifier)
-    }
-}
+typealias PlaybackGroupSuggestion = SonosGroupSuggestion
 
 @MainActor
 final class PlaybackGroupSuggestionStore: ObservableObject {
@@ -58,12 +34,7 @@ final class PlaybackGroupSuggestionStore: ObservableObject {
                 return suggestion
             }
 
-            let refreshedSuggestion = PlaybackGroupSuggestion(
-                speaker: candidate.speaker,
-                coordinatorRoomName: candidate.coordinatorRoomName,
-                groupDisplayName: candidate.groupDisplayName,
-                detectedAt: suggestion.detectedAt
-            )
+            let refreshedSuggestion = suggestion.refreshed(with: candidate)
             if refreshedSuggestion != suggestion {
                 changedSuggestions.append(refreshedSuggestion)
             }
