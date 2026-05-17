@@ -7,7 +7,6 @@ import SonosHandoffCore
 final class PlaybackSyncController: ObservableObject {
     private static let coordinatorMigrationTarget = Duration.seconds(2)
 
-    @Published private(set) var speakers: [SonosSpeaker] = []
     @Published private(set) var outputRows: [PlaybackOutputRow] = []
     @Published private(set) var selectedRoomName: String?
     @Published private(set) var loadingRoomName: String?
@@ -197,7 +196,6 @@ final class PlaybackSyncController: ObservableObject {
                 applyOutputRefresh(refresh)
             } catch {
                 outputRows = []
-                speakers = []
                 currentGroupState = .empty
                 selectRoomName(nil)
                 operationGate.cancelVolume()
@@ -269,7 +267,6 @@ final class PlaybackSyncController: ObservableObject {
 
     private func applyOutputRefresh(_ refresh: PlaybackOutputRefresh, selectedRoomName resolvedSelectedRoomName: String?) {
         outputRows = refresh.rows
-        speakers = refresh.speakers
         currentGroupState = refresh.state
         selectRoomName(resolvedSelectedRoomName)
         groupEditRows = refresh.groupEditRows
@@ -523,7 +520,6 @@ final class PlaybackSyncController: ObservableObject {
             applyOutputRefresh(refresh, selectedRoomName: plan.selectedRoomName)
         } catch {
             outputRows = []
-            speakers = []
             currentGroupState = .empty
             selectRoomName(nil)
             operationGate.cancelVolume()
