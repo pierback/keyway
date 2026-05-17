@@ -17,7 +17,8 @@ public struct SonosGroupSuggestionResolver: Sendable {
         in state: SonosGroupState,
         selectedRoomName: String?,
         spotifyPlaying: Bool,
-        previousSpeakerIDs: Set<String>?
+        previousSpeakerIDs: Set<String>?,
+        excludingSpeakerIDs: Set<String> = []
     ) -> SonosGroupSuggestionCandidate? {
         guard spotifyPlaying,
               let selectedRoomName,
@@ -32,7 +33,7 @@ public struct SonosGroupSuggestionResolver: Sendable {
             in: state,
             previousSpeakerIDs: previousSpeakerIDs,
             currentGroupMemberIDs: currentGroupMemberIDs
-        )
+        ).subtracting(excludingSpeakerIDs)
         guard !eligibleSpeakerIDs.isEmpty else {
             return nil
         }

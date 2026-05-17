@@ -27,7 +27,7 @@ struct MenuBarOutputSection: View {
             } else if playback.outputRows.isEmpty {
                 emptyOutputRow
             } else {
-                if let suggestion = playback.groupSuggestion {
+                ForEach(playback.groupSuggestions) { suggestion in
                     groupSuggestionRow(suggestion)
                 }
 

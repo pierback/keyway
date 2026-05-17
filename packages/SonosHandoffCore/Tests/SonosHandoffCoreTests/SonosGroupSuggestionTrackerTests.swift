@@ -11,7 +11,7 @@ struct SonosGroupSuggestionTrackerTests {
             selectedRoomName: "Kitchen",
             spotifyPlaying: true,
             previousSpeakerIDs: nil,
-            currentSuggestion: nil
+            currentSuggestions: []
         )
 
         #expect(update.action == .present(candidate("Office", coordinator: "Kitchen", group: "Kitchen + Port")))
@@ -25,7 +25,7 @@ struct SonosGroupSuggestionTrackerTests {
             selectedRoomName: "Kitchen",
             spotifyPlaying: true,
             previousSpeakerIDs: ["RINCON_KITCHEN", "RINCON_PORT"],
-            currentSuggestion: nil
+            currentSuggestions: []
         )
 
         #expect(update.action == .present(candidate("Office", coordinator: "Kitchen", group: "Kitchen + Port")))
@@ -39,14 +39,41 @@ struct SonosGroupSuggestionTrackerTests {
             selectedRoomName: "Kitchen",
             spotifyPlaying: true,
             previousSpeakerIDs: ["RINCON_KITCHEN", "RINCON_PORT"],
-            currentSuggestion: SonosGroupSuggestionReference(
-                speakerID: "RINCON_OFFICE",
-                coordinatorRoomName: "Kitchen"
-            )
+            currentSuggestions: [
+                SonosGroupSuggestionReference(
+                    speakerID: "RINCON_OFFICE",
+                    coordinatorRoomName: "Kitchen"
+                ),
+            ]
         )
 
         #expect(update.action == .keepCurrent)
         #expect(update.seenSpeakerIDs == ["RINCON_KITCHEN", "RINCON_PORT", "RINCON_OFFICE"])
+        #expect(update.staleSuggestionIDs.isEmpty)
+    }
+
+    @Test
+    func presentsNewJoinedSpeakerWhileKeepingExistingSuggestionPending() {
+        let update = tracker.update(
+            in: SonosGroupState(groups: [
+                group(coordinator: "Kitchen", members: ["Kitchen", "Port"]),
+                standalone("Office"),
+                standalone("Bath"),
+            ]),
+            selectedRoomName: "Kitchen",
+            spotifyPlaying: true,
+            previousSpeakerIDs: ["RINCON_KITCHEN", "RINCON_PORT", "RINCON_OFFICE"],
+            currentSuggestions: [
+                SonosGroupSuggestionReference(
+                    speakerID: "RINCON_OFFICE",
+                    coordinatorRoomName: "Kitchen"
+                ),
+            ]
+        )
+
+        #expect(update.action == .present(candidate("Bath", coordinator: "Kitchen", group: "Kitchen + Port")))
+        #expect(update.seenSpeakerIDs == ["RINCON_KITCHEN", "RINCON_PORT", "RINCON_OFFICE", "RINCON_BATH"])
+        #expect(update.staleSuggestionIDs.isEmpty)
     }
 
     @Test
@@ -56,14 +83,17 @@ struct SonosGroupSuggestionTrackerTests {
             selectedRoomName: "Kitchen",
             spotifyPlaying: false,
             previousSpeakerIDs: ["RINCON_KITCHEN"],
-            currentSuggestion: SonosGroupSuggestionReference(
-                speakerID: "RINCON_OFFICE",
-                coordinatorRoomName: "Kitchen"
-            )
+            currentSuggestions: [
+                SonosGroupSuggestionReference(
+                    speakerID: "RINCON_OFFICE",
+                    coordinatorRoomName: "Kitchen"
+                ),
+            ]
         )
 
         #expect(update.action == .clearCurrent)
         #expect(update.seenSpeakerIDs == ["RINCON_KITCHEN", "RINCON_PORT", "RINCON_OFFICE"])
+        #expect(update.staleSuggestionIDs == ["RINCON_OFFICE|Kitchen"])
     }
 
     @Test
@@ -75,10 +105,12 @@ struct SonosGroupSuggestionTrackerTests {
             selectedRoomName: "Kitchen",
             spotifyPlaying: true,
             previousSpeakerIDs: ["RINCON_KITCHEN", "RINCON_PORT", "RINCON_OFFICE"],
-            currentSuggestion: SonosGroupSuggestionReference(
-                speakerID: "RINCON_OFFICE",
-                coordinatorRoomName: "Kitchen"
-            )
+            currentSuggestions: [
+                SonosGroupSuggestionReference(
+                    speakerID: "RINCON_OFFICE",
+                    coordinatorRoomName: "Kitchen"
+                ),
+            ]
         )
 
         #expect(update.action == .clearCurrent)
@@ -95,10 +127,12 @@ struct SonosGroupSuggestionTrackerTests {
             selectedRoomName: "Kitchen",
             spotifyPlaying: true,
             previousSpeakerIDs: ["RINCON_KITCHEN", "RINCON_PORT", "RINCON_OFFICE"],
-            currentSuggestion: SonosGroupSuggestionReference(
-                speakerID: "RINCON_OFFICE",
-                coordinatorRoomName: "Kitchen"
-            )
+            currentSuggestions: [
+                SonosGroupSuggestionReference(
+                    speakerID: "RINCON_OFFICE",
+                    coordinatorRoomName: "Kitchen"
+                ),
+            ]
         )
 
         #expect(update.action == .present(candidate("Bath", coordinator: "Kitchen", group: "Kitchen + 2")))

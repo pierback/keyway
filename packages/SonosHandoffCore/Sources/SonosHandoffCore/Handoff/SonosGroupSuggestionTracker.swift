@@ -6,6 +6,10 @@ public struct SonosGroupSuggestionReference: Equatable, Sendable {
         self.speakerID = speakerID
         self.coordinatorRoomName = coordinatorRoomName
     }
+
+    public var id: String {
+        "\(speakerID)|\(coordinatorRoomName)"
+    }
 }
 
 public enum SonosGroupSuggestionAction: Equatable, Sendable {
@@ -18,10 +22,16 @@ public enum SonosGroupSuggestionAction: Equatable, Sendable {
 public struct SonosGroupSuggestionUpdate: Equatable, Sendable {
     public let action: SonosGroupSuggestionAction
     public let seenSpeakerIDs: Set<String>
+    public let staleSuggestionIDs: Set<String>
 
-    public init(action: SonosGroupSuggestionAction, seenSpeakerIDs: Set<String>) {
+    public init(
+        action: SonosGroupSuggestionAction,
+        seenSpeakerIDs: Set<String>,
+        staleSuggestionIDs: Set<String> = []
+    ) {
         self.action = action
         self.seenSpeakerIDs = seenSpeakerIDs
+        self.staleSuggestionIDs = staleSuggestionIDs
     }
 }
 
@@ -35,63 +45,90 @@ public struct SonosGroupSuggestionTracker: Sendable {
         selectedRoomName: String?,
         spotifyPlaying: Bool,
         previousSpeakerIDs: Set<String>?,
-        currentSuggestion: SonosGroupSuggestionReference?
+        currentSuggestions: [SonosGroupSuggestionReference]
     ) -> SonosGroupSuggestionUpdate {
         let currentSpeakerIDs = Set(state.speakers.map(\.id))
+        let allCurrentSuggestionIDs = Set(currentSuggestions.map(\.id))
 
         guard spotifyPlaying,
               let selectedRoomName
         else {
             return SonosGroupSuggestionUpdate(
-                action: currentSuggestion == nil ? .none : .clearCurrent,
+                action: currentSuggestions.isEmpty ? .none : .clearCurrent,
                 seenSpeakerIDs: resolver.seenSpeakerIDsAfterSuggestion(
                     previousSpeakerIDs: previousSpeakerIDs,
                     currentSpeakerIDs: currentSpeakerIDs,
                     suggestedSpeakerID: nil
-                )
+                ),
+                staleSuggestionIDs: allCurrentSuggestionIDs
             )
         }
 
-        if let currentSuggestion,
-           resolver.suggestionStillValid(
-               speakerID: currentSuggestion.speakerID,
-               coordinatorRoomName: currentSuggestion.coordinatorRoomName,
-               in: state,
-               selectedRoomName: selectedRoomName
-           ) {
-            return SonosGroupSuggestionUpdate(
-                action: .keepCurrent,
-                seenSpeakerIDs: resolver.seenSpeakerIDsAfterSuggestion(
-                    previousSpeakerIDs: previousSpeakerIDs,
-                    currentSpeakerIDs: currentSpeakerIDs,
-                    suggestedSpeakerID: currentSuggestion.speakerID
-                )
+        let validSuggestions = currentSuggestions.filter { suggestion in
+            resolver.suggestionStillValid(
+                speakerID: suggestion.speakerID,
+                coordinatorRoomName: suggestion.coordinatorRoomName,
+                in: state,
+                selectedRoomName: selectedRoomName
             )
         }
+        let staleSuggestionIDs = allCurrentSuggestionIDs.subtracting(validSuggestions.map(\.id))
+        let validSuggestionSpeakerIDs = Set(validSuggestions.map(\.speakerID))
 
         if let candidate = resolver.suggestion(
             in: state,
             selectedRoomName: selectedRoomName,
             spotifyPlaying: spotifyPlaying,
-            previousSpeakerIDs: previousSpeakerIDs
+            previousSpeakerIDs: previousSpeakerIDs,
+            excludingSpeakerIDs: validSuggestionSpeakerIDs
         ) {
             return SonosGroupSuggestionUpdate(
                 action: .present(candidate),
-                seenSpeakerIDs: resolver.seenSpeakerIDsAfterSuggestion(
+                seenSpeakerIDs: seenSpeakerIDs(
                     previousSpeakerIDs: previousSpeakerIDs,
                     currentSpeakerIDs: currentSpeakerIDs,
+                    validSuggestionSpeakerIDs: validSuggestionSpeakerIDs,
                     suggestedSpeakerID: candidate.speaker.id
-                )
+                ),
+                staleSuggestionIDs: staleSuggestionIDs
+            )
+        }
+
+        if !validSuggestions.isEmpty {
+            return SonosGroupSuggestionUpdate(
+                action: .keepCurrent,
+                seenSpeakerIDs: seenSpeakerIDs(
+                    previousSpeakerIDs: previousSpeakerIDs,
+                    currentSpeakerIDs: currentSpeakerIDs,
+                    validSuggestionSpeakerIDs: validSuggestionSpeakerIDs,
+                    suggestedSpeakerID: nil
+                ),
+                staleSuggestionIDs: staleSuggestionIDs
             )
         }
 
         return SonosGroupSuggestionUpdate(
-            action: currentSuggestion == nil ? .none : .clearCurrent,
+            action: currentSuggestions.isEmpty ? .none : .clearCurrent,
             seenSpeakerIDs: resolver.seenSpeakerIDsAfterSuggestion(
                 previousSpeakerIDs: previousSpeakerIDs,
                 currentSpeakerIDs: currentSpeakerIDs,
                 suggestedSpeakerID: nil
-            )
+            ),
+            staleSuggestionIDs: staleSuggestionIDs
         )
+    }
+
+    private func seenSpeakerIDs(
+        previousSpeakerIDs: Set<String>?,
+        currentSpeakerIDs: Set<String>,
+        validSuggestionSpeakerIDs: Set<String>,
+        suggestedSpeakerID: String?
+    ) -> Set<String> {
+        var seenSpeakerIDs = previousSpeakerIDs ?? []
+        seenSpeakerIDs.formUnion(validSuggestionSpeakerIDs)
+        if let suggestedSpeakerID {
+            seenSpeakerIDs.insert(suggestedSpeakerID)
+        }
+        return seenSpeakerIDs.intersection(currentSpeakerIDs)
     }
 }

@@ -28,17 +28,32 @@ struct PlaybackGroupSuggestion: Identifiable, Equatable, Sendable {
 
 @MainActor
 final class PlaybackGroupSuggestionStore: ObservableObject {
-    @Published private(set) var suggestion: PlaybackGroupSuggestion?
+    @Published private(set) var suggestions: [PlaybackGroupSuggestion] = []
 
     func present(_ suggestion: PlaybackGroupSuggestion) {
-        self.suggestion = suggestion
+        if let index = suggestions.firstIndex(where: { $0.id == suggestion.id }) {
+            suggestions[index] = suggestion
+            return
+        }
+
+        suggestions.append(suggestion)
     }
 
     func clear(id: String? = nil) {
-        guard id == nil || suggestion?.id == id else {
+        guard let id else {
+            suggestions = []
             return
         }
-        suggestion = nil
+
+        suggestions.removeAll { $0.id == id }
+    }
+
+    func clear(ids: Set<String>) {
+        guard !ids.isEmpty else {
+            return
+        }
+
+        suggestions.removeAll { ids.contains($0.id) }
     }
 }
 

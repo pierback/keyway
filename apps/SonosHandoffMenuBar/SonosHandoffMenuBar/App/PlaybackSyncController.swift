@@ -17,7 +17,7 @@ final class PlaybackSyncController: ObservableObject {
     @Published private(set) var menuMessage: String?
     @Published private(set) var spotifyAuthRequired = false
     @Published private(set) var spotifyAuthMessage = "Spotify sign-in expired. Sign in again to sync playback."
-    @Published private(set) var groupSuggestion: PlaybackGroupSuggestion?
+    @Published private(set) var groupSuggestions: [PlaybackGroupSuggestion] = []
 
     private let outputDirectory: PlaybackOutputDirectory
     private let groupMembershipResolver = SonosGroupMembershipResolver()
@@ -73,8 +73,8 @@ final class PlaybackSyncController: ObservableObject {
             }
             self.applyExternalOutputSelection(roomName)
         }
-        self.groupSuggestionCancellable = groupSuggestionStore.$suggestion.sink { [weak self] suggestion in
-            self?.groupSuggestion = suggestion
+        self.groupSuggestionCancellable = groupSuggestionStore.$suggestions.sink { [weak self] suggestions in
+            self?.groupSuggestions = suggestions
         }
         self.outputRefreshCancellable = NotificationCenter.default
             .publisher(for: .sonosHandoffRefreshOutputs)
@@ -395,8 +395,7 @@ final class PlaybackSyncController: ObservableObject {
     }
 
     func acceptGroupSuggestion(id: String? = nil) {
-        guard let suggestion = groupSuggestion,
-              id == nil || suggestion.id == id
+        guard let suggestion = groupSuggestions.first(where: { id == nil || $0.id == id })
         else {
             return
         }

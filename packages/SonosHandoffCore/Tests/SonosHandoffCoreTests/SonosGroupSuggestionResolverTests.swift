@@ -155,6 +155,19 @@ struct SonosGroupSuggestionResolverTests {
     }
 
     @Test
+    func skipsAlreadyPendingSuggestionWhenChoosingNextJoinedSpeaker() {
+        let candidate = resolver.suggestion(
+            in: groupStateWithOfficeAndBath,
+            selectedRoomName: "Kitchen",
+            spotifyPlaying: true,
+            previousSpeakerIDs: ["RINCON_KITCHEN", "RINCON_PORT"],
+            excludingSpeakerIDs: ["RINCON_OFFICE"]
+        )
+
+        #expect(candidate?.speaker.roomName == "Bath")
+    }
+
+    @Test
     func recordingNoSuggestionMarksCurrentSpeakersSeen() {
         let seenSpeakerIDs = resolver.seenSpeakerIDsAfterSuggestion(
             previousSpeakerIDs: ["RINCON_KITCHEN"],

@@ -244,9 +244,10 @@ private final class PlaybackBackgroundSync {
             selectedRoomName: selectedRoomName,
             spotifyPlaying: spotifyPlaying,
             previousSpeakerIDs: lastSeenSpeakerIDs,
-            currentSuggestion: environment.groupSuggestionStore.suggestion?.reference
+            currentSuggestions: environment.groupSuggestionStore.suggestions.map(\.reference)
         )
         lastSeenSpeakerIDs = update.seenSpeakerIDs
+        environment.groupSuggestionStore.clear(ids: update.staleSuggestionIDs)
 
         switch update.action {
         case .none:
@@ -291,8 +292,7 @@ private final class PlaybackBackgroundSync {
     }
 
     private func acceptGroupSuggestion(id: String?) async {
-        guard let suggestion = environment.groupSuggestionStore.suggestion,
-              id == nil || suggestion.id == id
+        guard let suggestion = environment.groupSuggestionStore.suggestions.first(where: { id == nil || $0.id == id })
         else {
             return
         }
