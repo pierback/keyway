@@ -133,7 +133,7 @@ final class PlaybackGroupSuggestionNotifier {
             "suggestionID": suggestion.id,
         ]
 
-        deliver(content, identifier: "group-suggestion-\(suggestion.id)")
+        deliver(content, identifier: SonosGroupSuggestionNotificationIdentifier.suggestionID(suggestion.id))
     }
 
     func deliverFailure(_ suggestion: PlaybackGroupSuggestion) {
@@ -141,7 +141,7 @@ final class PlaybackGroupSuggestionNotifier {
         content.title = "Could not group speaker"
         content.body = "Could not add \(suggestion.speaker.roomName) to \(suggestion.groupDisplayName)."
 
-        deliver(content, identifier: "group-suggestion-failure-\(suggestion.id)")
+        deliver(content, identifier: SonosGroupSuggestionNotificationIdentifier.failureID(suggestion.id))
     }
 
     func cancelSuggestion(id: String) {
@@ -183,7 +183,7 @@ final class PlaybackGroupSuggestionNotifier {
             notificationCenter.getDeliveredNotifications { [notificationCenter] notifications in
                 let identifiers = notifications
                     .map(\.request.identifier)
-                    .filter { Self.notificationIdentifier($0, matchesAny: ids) }
+                    .filter { SonosGroupSuggestionNotificationIdentifier.matchesSuggestionID($0, ids: ids) }
                 guard !identifiers.isEmpty else {
                     return
                 }
@@ -193,7 +193,7 @@ final class PlaybackGroupSuggestionNotifier {
             notificationCenter.getPendingNotificationRequests { [notificationCenter] requests in
                 let identifiers = requests
                     .map(\.identifier)
-                    .filter { Self.notificationIdentifier($0, matchesAny: ids) }
+                    .filter { SonosGroupSuggestionNotificationIdentifier.matchesSuggestionID($0, ids: ids) }
                 guard !identifiers.isEmpty else {
                     return
                 }
@@ -207,7 +207,7 @@ final class PlaybackGroupSuggestionNotifier {
             notificationCenter.getDeliveredNotifications { [notificationCenter] notifications in
                 let identifiers = notifications
                     .map(\.request.identifier)
-                    .filter(Self.isSuggestionNotificationIdentifier)
+                    .filter(SonosGroupSuggestionNotificationIdentifier.isSuggestionID)
                 guard !identifiers.isEmpty else {
                     return
                 }
@@ -217,7 +217,7 @@ final class PlaybackGroupSuggestionNotifier {
             notificationCenter.getPendingNotificationRequests { [notificationCenter] requests in
                 let identifiers = requests
                     .map(\.identifier)
-                    .filter(Self.isSuggestionNotificationIdentifier)
+                    .filter(SonosGroupSuggestionNotificationIdentifier.isSuggestionID)
                 guard !identifiers.isEmpty else {
                     return
                 }
@@ -226,16 +226,4 @@ final class PlaybackGroupSuggestionNotifier {
         }
     }
 
-    nonisolated private static func notificationIdentifier(_ notificationIdentifier: String, matchesAny ids: Set<String>) -> Bool {
-        guard isSuggestionNotificationIdentifier(notificationIdentifier) else {
-            return false
-        }
-
-        let suggestionID = notificationIdentifier.dropFirst("group-suggestion-".count)
-        return ids.contains(String(suggestionID)) || ids.contains { suggestionID.hasPrefix("\($0)|") }
-    }
-
-    nonisolated private static func isSuggestionNotificationIdentifier(_ identifier: String) -> Bool {
-        identifier.hasPrefix("group-suggestion-") && !identifier.hasPrefix("group-suggestion-failure-")
-    }
 }
