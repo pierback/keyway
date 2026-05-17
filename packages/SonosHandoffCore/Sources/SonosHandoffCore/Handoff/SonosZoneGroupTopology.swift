@@ -18,15 +18,27 @@ struct SonosZoneGroupTopology {
             """
         )
 
-        guard let rawState = SonosRuntimeSupport.firstMatch(
+        let stateXML = try stateXML(from: response)
+        return try SonosZoneGroupStateParser.parse(stateXML, visibleSpeakers: visibleSpeakers)
+    }
+
+    private func stateXML(from response: String) throws -> String {
+        if let rawState = SonosRuntimeSupport.firstMatch(
             #"<CurrentZoneGroupState(?:\s[^>]*)?>(.*?)</CurrentZoneGroupState>"#,
             in: response
-        ) else {
-            throw ConnectHandoffError(.unsupported, "Could not read Sonos group topology.")
+        ) {
+            return SonosRuntimeSupport.xmlUnescape(rawState)
         }
 
-        let stateXML = SonosRuntimeSupport.xmlUnescape(rawState)
-        return try SonosZoneGroupStateParser.parse(stateXML, visibleSpeakers: visibleSpeakers)
+        let unescapedResponse = SonosRuntimeSupport.xmlUnescape(response)
+        if let zoneGroups = SonosRuntimeSupport.firstMatch(
+            #"(<ZoneGroups(?:\s[^>]*)?>.*?</ZoneGroups>)"#,
+            in: unescapedResponse
+        ) {
+            return zoneGroups
+        }
+
+        throw ConnectHandoffError(.unsupported, "Could not read Sonos group topology.")
     }
 }
 

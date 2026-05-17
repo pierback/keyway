@@ -56,6 +56,29 @@ struct SonosZoneGroupTopologyTests {
         #expect(ZoneGroupTopologyURLProtocol.requestedURLs.map(\.path) == ["/ZoneGroupTopology/Control"])
     }
 
+    @Test
+    func readsTopologyViaDirectZoneGroupStateEnvelope() async throws {
+        ZoneGroupTopologyURLProtocol.responseBody = """
+        <?xml version="1.0"?>
+        <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><u:GetZoneGroupStateResponse xmlns:u="urn:schemas-upnp-org:service:ZoneGroupTopology:1"><ZoneGroupState><ZoneGroupState>\(Self.topologyXML.xmlEscaped)</ZoneGroupState></ZoneGroupState></u:GetZoneGroupStateResponse></s:Body></s:Envelope>
+        """
+        ZoneGroupTopologyURLProtocol.requestedURLs = []
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ZoneGroupTopologyURLProtocol.self]
+        let topology = SonosZoneGroupTopology(
+            soapClient: SonosSOAPClient(urlSession: URLSession(configuration: configuration))
+        )
+
+        let state = try await topology.groupState(
+            host: "kitchen.local",
+            visibleSpeakers: [SonosSpeaker(id: "RINCON_A", roomName: "Kitchen", host: "kitchen.local")]
+        )
+
+        #expect(state.groups.count == 2)
+        #expect(state.groups[0].displayName == "Kitchen + Port")
+        #expect(ZoneGroupTopologyURLProtocol.requestedURLs.map(\.path) == ["/ZoneGroupTopology/Control"])
+    }
+
     private static let topologyXML = """
     <ZoneGroups>
       <ZoneGroup Coordinator="RINCON_A" ID="RINCON_A:123">
