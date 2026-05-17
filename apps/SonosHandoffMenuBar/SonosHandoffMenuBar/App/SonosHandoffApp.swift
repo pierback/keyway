@@ -84,6 +84,7 @@ struct SonosHandoffApp: App {
     private static func preferredStartupRoomName(environment: AppEnvironment) async -> String? {
         do {
             if let status = try await environment.activePlaybackObserver.activePlaybackDeviceStatus(),
+               status.isPlaying,
                let roomName = SonosRoomName.normalized(status.deviceName)
             {
                 return roomName
@@ -170,6 +171,14 @@ private final class PlaybackBackgroundSync {
                 hasShownAuthPrompt = false
                 environment.groupSuggestionStore.clear()
                 clearSelection(reason: "no_active_spotify_playback")
+                await refreshOutputCacheWithoutPlayback(discoveryRefreshStarted: discoveryRefreshStarted)
+                return
+            }
+
+            guard status.isPlaying else {
+                hasShownAuthPrompt = false
+                environment.groupSuggestionStore.clear()
+                clearSelection(reason: "spotify_playback_paused")
                 await refreshOutputCacheWithoutPlayback(discoveryRefreshStarted: discoveryRefreshStarted)
                 return
             }
