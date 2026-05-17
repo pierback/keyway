@@ -41,6 +41,7 @@ enum PlaybackGroupMembership: Equatable, Sendable {
 struct PlaybackGroupEditRow: Identifiable, Equatable, Sendable {
     let speaker: SonosSpeaker
     let membership: PlaybackGroupMembership
+    let coordinatorRemovalAvailable: Bool
 
     var id: String {
         speaker.id
@@ -52,6 +53,10 @@ struct PlaybackGroupEditRow: Identifiable, Equatable, Sendable {
 
     var isCoordinator: Bool {
         membership == .coordinator
+    }
+
+    var canToggle: Bool {
+        !isCoordinator || coordinatorRemovalAvailable
     }
 }
 

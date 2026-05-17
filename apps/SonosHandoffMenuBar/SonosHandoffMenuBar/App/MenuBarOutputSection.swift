@@ -227,7 +227,7 @@ struct MenuBarOutputSection: View {
 
     private func groupEditRow(for row: PlaybackGroupEditRow) -> some View {
         let loading = row.speaker.roomName == playback.groupLoadingRoomName
-        let disabled = playback.groupLoadingRoomName != nil || playback.loadingRoomName != nil
+        let disabled = playback.groupLoadingRoomName != nil || playback.loadingRoomName != nil || !row.canToggle
 
         return Button {
             playback.toggleGroupMembership(row)
@@ -240,7 +240,7 @@ struct MenuBarOutputSection: View {
                     Image(systemName: groupIconName(for: row))
                         .font(.system(size: 12, weight: .regular))
                         .symbolRenderingMode(.monochrome)
-                        .foregroundStyle(row.isInGroup ? Color.white.opacity(0.95) : Color.secondary.opacity(0.85))
+                        .foregroundStyle(groupIconForeground(for: row))
                 }
                 .frame(width: 22, height: 22)
 
@@ -272,7 +272,7 @@ struct MenuBarOutputSection: View {
                 } else {
                     Image(systemName: row.isInGroup ? "checkmark" : "plus")
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Color.primary.opacity(row.isInGroup ? 0.72 : 0.55))
+                        .foregroundStyle(row.canToggle ? Color.primary.opacity(row.isInGroup ? 0.72 : 0.55) : Color.secondary.opacity(0.45))
                         .frame(width: 18, height: 18)
                 }
             }
@@ -317,6 +317,14 @@ struct MenuBarOutputSection: View {
         row.isCoordinator ? "hifispeaker.badge.plus" : "hifispeaker"
     }
 
+    private func groupIconForeground(for row: PlaybackGroupEditRow) -> Color {
+        if !row.canToggle {
+            return Color.secondary.opacity(0.55)
+        }
+
+        return row.isInGroup ? Color.white.opacity(0.95) : Color.secondary.opacity(0.85)
+    }
+
     private func groupAccessibilityLabel(for row: PlaybackGroupEditRow) -> String {
         switch row.membership {
         case .available:
@@ -324,6 +332,9 @@ struct MenuBarOutputSection: View {
         case .member:
             return "Remove \(row.speaker.roomName) from group"
         case .coordinator:
+            guard row.coordinatorRemovalAvailable else {
+                return "\(row.speaker.roomName) is the coordinator"
+            }
             return "Move coordinator and remove \(row.speaker.roomName) from group"
         }
     }

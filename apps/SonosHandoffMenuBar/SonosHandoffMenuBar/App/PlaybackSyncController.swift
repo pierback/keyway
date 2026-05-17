@@ -103,7 +103,11 @@ final class PlaybackSyncController: ObservableObject {
             } else {
                 membership = .available
             }
-            return PlaybackGroupEditRow(speaker: speaker, membership: membership)
+            return PlaybackGroupEditRow(
+                speaker: speaker,
+                membership: membership,
+                coordinatorRemovalAvailable: selectedOutputGroup.members.count > 1
+            )
         }
     }
 
@@ -347,6 +351,9 @@ final class PlaybackSyncController: ObservableObject {
     }
 
     func toggleGroupMembership(_ row: PlaybackGroupEditRow) {
+        guard row.canToggle else {
+            return
+        }
         guard let group = selectedOutputGroup,
               let coordinator = group.coordinator
         else {
