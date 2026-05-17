@@ -42,7 +42,8 @@ struct SafeGroupingCheck {
               sonos-handoff-safe-grouping-check --mutate \(acknowledgement)
 
             Default mode only discovers Sonos groups and prints the grouping scenario that would be
-            tested. It does not change speaker volume, mute state, or groups.
+            tested, including any missing readiness prerequisite. It does not change speaker volume,
+            mute state, or groups.
 
             \(prepareSilentFlag) mode discovers Sonos groups, mutes every discovered speaker, sets
             every discovered speaker to volume 0, verifies that safety state, and prints the
@@ -66,6 +67,7 @@ private struct LiveGroupingValidator {
     private static let coordinatorMigrationTarget = Duration.seconds(2)
 
     private let service: SpotifyConnectHandoffService
+    private let readinessResolver = SonosGroupingReadinessResolver()
     private let mutate: Bool
     private let prepareSilent: Bool
     private let restoreOriginalCoordinator: Bool
@@ -104,14 +106,79 @@ private struct LiveGroupingValidator {
             print("volume_safety=skipped")
         }
 
-        let groupingScenario: GroupingScenario
-        do {
-            groupingScenario = try await scenario(in: initialState)
-        } catch let error as ValidationError where !mutate {
-            print("grouping_scenario=not_ready reason=\(error.message)")
-            print(prepareSilent ? "safe_grouping_check=prepared_not_ready" : "safe_grouping_check=dry_run_not_ready")
+        let readiness = try await readinessReport(in: initialState)
+        printReadinessIssues(readiness)
+        guard let groupingScenario = scenario(from: readiness) else {
+            let reason = readiness.issues.map(\.rawValue).joined(separator: ",")
+            if !mutate {
+                print("grouping_scenario=not_ready reason=\(reason)")
+                print(prepareSilent ? "safe_grouping_check=prepared_not_ready" : "safe_grouping_check=dry_run_not_ready")
+                return
+            }
+            throw ValidationError("Grouping validation is not ready: \(reason)")
+        }
+
+        if !readiness.issues.isEmpty {
+            let reason = readiness.issues.map(\.rawValue).joined(separator: ",")
+            printScenario(groupingScenario)
+            if !mutate {
+                print("grouping_scenario=not_ready reason=\(reason)")
+                print(prepareSilent ? "safe_grouping_check=prepared_not_ready" : "safe_grouping_check=dry_run_not_ready")
+                return
+            }
+            throw ValidationError("Grouping validation is not ready: \(reason)")
+        }
+
+        printScenario(groupingScenario)
+
+        guard mutate else {
+            print("grouping_mutation=skipped")
+            print(prepareSilent ? "safe_grouping_check=ready" : "safe_grouping_check=dry_run")
             return
         }
+
+        try await exerciseStandaloneJoinAndRemoval(scenario: groupingScenario)
+        let stateAfterStandaloneCheck = try await service.discoverGroupState()
+        let refreshedReadiness = try await readinessReport(in: stateAfterStandaloneCheck)
+        guard let refreshedScenario = scenario(from: refreshedReadiness),
+              refreshedReadiness.issues.isEmpty
+        else {
+            let reason = refreshedReadiness.issues.map(\.rawValue).joined(separator: ",")
+            throw ValidationError("Coordinator validation is not ready after standalone check: \(reason)")
+        }
+        try await exerciseCoordinatorRemoval(scenario: refreshedScenario)
+        print("safe_grouping_check=ok")
+    }
+
+    private func readinessReport(in state: SonosGroupState) async throws -> SonosGroupingReadinessReport {
+        let playback = try await service.activePlaybackDeviceStatus()
+        return readinessResolver.report(in: state, playback: playback)
+    }
+
+    private func scenario(from readiness: SonosGroupingReadinessReport) -> GroupingScenario? {
+        guard let activeRoomName = readiness.activeRoomName,
+              let activeGroup = readiness.activeGroup,
+              let coordinator = readiness.coordinator
+        else {
+            return nil
+        }
+
+        return GroupingScenario(
+            activeRoomName: activeRoomName,
+            group: activeGroup,
+            coordinator: coordinator,
+            standaloneSpeaker: readiness.standaloneSpeaker,
+            coordinatorReplacement: readiness.coordinatorReplacement
+        )
+    }
+
+    private func printReadinessIssues(_ readiness: SonosGroupingReadinessReport) {
+        for issue in readiness.issues {
+            print("readiness_issue=\(issue.rawValue)")
+        }
+    }
+
+    private func printScenario(_ groupingScenario: GroupingScenario) {
         print("active_spotify_room=\(groupingScenario.activeRoomName)")
         print("active_group=\(groupingScenario.group.displayName)")
         if let standalone = groupingScenario.standaloneSpeaker {
@@ -124,48 +191,6 @@ private struct LiveGroupingValidator {
         } else {
             print("coordinator_replacement_candidate=none")
         }
-
-        guard mutate else {
-            print("grouping_mutation=skipped")
-            print(prepareSilent ? "safe_grouping_check=ready" : "safe_grouping_check=dry_run")
-            return
-        }
-
-        try await exerciseStandaloneJoinAndRemoval(scenario: groupingScenario)
-        let stateAfterStandaloneCheck = try await service.discoverGroupState()
-        let refreshedScenario = try await scenario(in: stateAfterStandaloneCheck)
-        try await exerciseCoordinatorRemoval(scenario: refreshedScenario)
-        print("safe_grouping_check=ok")
-    }
-
-    private func scenario(in state: SonosGroupState) async throws -> GroupingScenario {
-        guard let playback = try await service.activePlaybackDeviceStatus(),
-              playback.isPlaying,
-              let activeRoomName = SonosRoomName.normalized(playback.deviceName)
-        else {
-            throw ValidationError("Spotify must be playing on a visible Sonos room before mutation validation.")
-        }
-
-        guard let group = state.groups.first(where: { $0.contains(roomName: activeRoomName) }),
-              let coordinator = group.coordinator
-        else {
-            throw ValidationError("Active Spotify room is not part of the discovered Sonos group state.")
-        }
-
-        let standaloneSpeaker = state.groups
-            .filter { $0.members.count == 1 }
-            .flatMap(\.members)
-            .first { speaker in
-                !group.members.contains(where: { $0.id == speaker.id })
-            }
-        let replacement = group.members.first { $0.id != coordinator.id }
-        return GroupingScenario(
-            activeRoomName: activeRoomName,
-            group: group,
-            coordinator: coordinator,
-            standaloneSpeaker: standaloneSpeaker,
-            coordinatorReplacement: replacement
-        )
     }
 
     private func forceSafeVolumeState(for speakers: [SonosSpeaker]) async throws {
