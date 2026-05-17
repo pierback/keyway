@@ -32,33 +32,7 @@ struct PlaybackOutputRow: Identifiable, Equatable, Sendable {
     }
 }
 
-enum PlaybackGroupMembership: Equatable, Sendable {
-    case coordinator
-    case member
-    case available
-}
-
-struct PlaybackGroupEditRow: Identifiable, Equatable, Sendable {
-    let speaker: SonosSpeaker
-    let membership: PlaybackGroupMembership
-    let coordinatorRemovalAvailable: Bool
-
-    var id: String {
-        speaker.id
-    }
-
-    var isInGroup: Bool {
-        membership == .coordinator || membership == .member
-    }
-
-    var isCoordinator: Bool {
-        membership == .coordinator
-    }
-
-    var canToggle: Bool {
-        !isCoordinator || coordinatorRemovalAvailable
-    }
-}
+typealias PlaybackGroupEditRow = SonosGroupMembershipRow
 
 @MainActor
 final class PlaybackOutputDirectory {

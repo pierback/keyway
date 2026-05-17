@@ -18,6 +18,7 @@ final class PlaybackSyncController: ObservableObject {
     @Published private(set) var groupSuggestion: PlaybackGroupSuggestion?
 
     private let outputDirectory: PlaybackOutputDirectory
+    private let groupMembershipResolver = SonosGroupMembershipResolver()
     private let outputSelectionResolver = SonosOutputSelectionResolver()
     private let outputSelection: PlaybackOutputSelection
     private let activePlaybackObserver: any SpotifyActivePlaybackObserving
@@ -102,25 +103,10 @@ final class PlaybackSyncController: ObservableObject {
     }
 
     var groupEditRows: [PlaybackGroupEditRow] {
-        guard let selectedOutputGroup else {
-            return []
-        }
-
-        return speakers.map { speaker in
-            let membership: PlaybackGroupMembership
-            if speaker.id == selectedOutputGroup.coordinatorID {
-                membership = .coordinator
-            } else if selectedOutputGroup.members.contains(where: { $0.id == speaker.id }) {
-                membership = .member
-            } else {
-                membership = .available
-            }
-            return PlaybackGroupEditRow(
-                speaker: speaker,
-                membership: membership,
-                coordinatorRemovalAvailable: selectedOutputGroup.members.count > 1
-            )
-        }
+        groupMembershipResolver.rows(
+            speakers: speakers,
+            selectedGroup: selectedOutputGroup
+        )
     }
 
     func appear() {
