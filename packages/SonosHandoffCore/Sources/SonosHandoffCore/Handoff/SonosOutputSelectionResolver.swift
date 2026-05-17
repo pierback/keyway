@@ -9,12 +9,6 @@ public struct SonosOutputSelectionResolver: Sendable {
             return nil
         }
 
-        if let visibleCurrent = groups
-            .flatMap(\.members)
-            .first(where: { SonosRoomName.matches($0.roomName, currentRoomName) }) {
-            return visibleCurrent.roomName
-        }
-
         if let matchingGroup = groups.first(where: { $0.contains(roomName: currentRoomName) }) {
             return matchingGroup.coordinator?.roomName
         }

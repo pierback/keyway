@@ -28,6 +28,18 @@ struct SonosOutputSelectionResolverTests {
     }
 
     @Test
+    func selectsGroupCoordinatorWhenCurrentOutputMatchesGroupMember() {
+        let selected = resolver.selectedRoomName(
+            currentRoomName: "Port",
+            groups: [
+                group(coordinator: "Kitchen", members: ["Kitchen", "Port"]),
+            ]
+        )
+
+        #expect(selected == "Kitchen")
+    }
+
+    @Test
     func selectsGroupCoordinatorWhenSpotifyUsesCountSuffix() {
         let selected = resolver.selectedRoomName(
             currentRoomName: "Kitchen + 1",
