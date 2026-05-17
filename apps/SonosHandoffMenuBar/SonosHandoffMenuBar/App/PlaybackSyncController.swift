@@ -266,12 +266,16 @@ final class PlaybackSyncController: ObservableObject {
     }
 
     private func applyOutputRefresh(_ refresh: PlaybackOutputRefresh) {
+        applyOutputRefresh(refresh, selectedRoomName: refresh.selectedRoomName)
+    }
+
+    private func applyOutputRefresh(_ refresh: PlaybackOutputRefresh, selectedRoomName resolvedSelectedRoomName: String?) {
         outputRows = refresh.rows
         speakers = refresh.speakers
-        selectRoomName(refresh.selectedRoomName)
-        refreshPendingGroupSuggestions(from: refresh)
+        selectRoomName(resolvedSelectedRoomName)
+        refreshPendingGroupSuggestions(from: refresh, selectedRoomName: resolvedSelectedRoomName)
 
-        if let selectedRoomName = refresh.selectedRoomName {
+        if let selectedRoomName = resolvedSelectedRoomName {
             clearSpotifyAuthRequired()
             refreshVolumeStatus(roomName: selectedRoomName)
         } else {
@@ -281,14 +285,14 @@ final class PlaybackSyncController: ObservableObject {
         }
     }
 
-    private func refreshPendingGroupSuggestions(from refresh: PlaybackOutputRefresh) {
+    private func refreshPendingGroupSuggestions(from refresh: PlaybackOutputRefresh, selectedRoomName: String?) {
         guard !groupSuggestionStore.suggestions.isEmpty else {
             return
         }
 
         let update = groupSuggestionTracker.refresh(
             in: SonosGroupState(groups: refresh.rows.map(\.group)),
-            selectedRoomName: refresh.selectedRoomName,
+            selectedRoomName: selectedRoomName,
             currentSuggestions: groupSuggestionStore.suggestions.map(\.reference)
         )
         groupSuggestionStore.clear(ids: update.staleSuggestionIDs)
@@ -437,13 +441,56 @@ final class PlaybackSyncController: ObservableObject {
                 groupSuggestionNotifier.cancelSuggestion(id: suggestion.id)
                 groupLoadingRoomName = nil
                 shortcutLogger.info("SonosHandoffGroupSuggestion result=accepted room=\(suggestion.speaker.roomName, privacy: .public) coordinator=\(suggestion.coordinatorRoomName, privacy: .public)")
-                await refreshOutputs(showLoading: false)
+                await refreshOutputsAfterGroupSuggestionAccept(fallbackRoomName: suggestion.coordinatorRoomName)
             } catch {
                 groupLoadingRoomName = nil
                 menuMessage = "Could not add \(suggestion.speaker.roomName) to group."
                 shortcutLogger.error("SonosHandoffGroupSuggestion result=failure room=\(suggestion.speaker.roomName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
                 await refreshOutputs(showLoading: false)
             }
+        }
+    }
+
+    private func refreshOutputsAfterGroupSuggestionAccept(fallbackRoomName: String) async {
+        let activeRoomName = await activePlaybackRoomNameForGroupSuggestionRefresh()
+
+        do {
+            let refresh = try await outputDirectory.refresh(currentRoomName: activeRoomName ?? fallbackRoomName)
+            let selectedRoomName = activeRoomName == nil ? nil : refresh.selectedRoomName
+            applyOutputRefresh(refresh, selectedRoomName: selectedRoomName)
+        } catch {
+            outputRows = []
+            speakers = []
+            selectRoomName(nil)
+            operationGate.cancelVolume()
+            volumeState.clearStatus()
+            menuMessage = "Could not search for Sonos speakers."
+            shortcutLogger.error("SonosHandoffDiscovery result=failure source=group_suggestion_accept error=\(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func activePlaybackRoomNameForGroupSuggestionRefresh() async -> String? {
+        do {
+            guard let status = try await activePlaybackObserver.activePlaybackDeviceStatus(),
+                  status.isPlaying
+            else {
+                activeSpotifyRoomName = nil
+                return nil
+            }
+
+            let roomName = SonosRoomName.normalized(status.deviceName)
+            activeSpotifyRoomName = roomName
+            clearSpotifyAuthRequired()
+            return roomName
+        } catch {
+            if SpotifyAuthRecovery.isAuthRequired(error) {
+                requireSpotifyAuth(error)
+                return nil
+            }
+
+            activeSpotifyRoomName = nil
+            shortcutLogger.info("SonosHandoffGroupSuggestion active_playback=unavailable error=\(error.localizedDescription, privacy: .public)")
+            return nil
         }
     }
 
