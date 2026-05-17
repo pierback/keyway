@@ -31,6 +31,35 @@ struct SonosGroupSuggestionResolverTests {
     }
 
     @Test
+    func suggestsStandaloneSpeakerWhenPlaybackIsOnOneSpeaker() {
+        let candidate = resolver.suggestion(
+            in: SonosGroupState(groups: [
+                standalone("Kitchen"),
+                standalone("Port"),
+            ]),
+            selectedRoomName: "Kitchen",
+            spotifyPlaying: true,
+            previousSpeakerIDs: nil
+        )
+
+        #expect(candidate?.speaker.roomName == "Port")
+        #expect(candidate?.coordinatorRoomName == "Kitchen")
+        #expect(candidate?.groupDisplayName == "Kitchen")
+    }
+
+    @Test
+    func doesNotSuggestAlreadySeenStandaloneSpeakerAfterInitialSnapshot() {
+        let candidate = resolver.suggestion(
+            in: groupState,
+            selectedRoomName: "Kitchen",
+            spotifyPlaying: true,
+            previousSpeakerIDs: ["RINCON_KITCHEN", "RINCON_PORT", "RINCON_OFFICE"]
+        )
+
+        #expect(candidate == nil)
+    }
+
+    @Test
     func doesNotSuggestWhenSpotifyIsNotPlaying() {
         let candidate = resolver.suggestion(
             in: groupState,
