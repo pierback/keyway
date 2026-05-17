@@ -16,7 +16,8 @@ struct MenuBarController: View {
 
     @State private var showMore = false
     @State private var optionKeyPressed = false
-    @State private var modifierMonitor: Any?
+    @State private var localModifierMonitor: Any?
+    @State private var globalModifierMonitor: Any?
 
     init(environment: AppEnvironment) {
         self.environment = environment
@@ -183,22 +184,34 @@ struct MenuBarController: View {
     }
 
     private func startModifierMonitor() {
-        optionKeyPressed = NSEvent.modifierFlags.contains(.option)
-        guard modifierMonitor == nil else {
-            return
+        applyModifierFlags(NSEvent.modifierFlags)
+        if localModifierMonitor == nil {
+            localModifierMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
+                applyModifierFlags(event.modifierFlags)
+                return event
+            }
         }
 
-        modifierMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
-            optionKeyPressed = event.modifierFlags.contains(.option)
-            return event
+        if globalModifierMonitor == nil {
+            globalModifierMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { event in
+                applyModifierFlags(event.modifierFlags)
+            }
         }
     }
 
     private func stopModifierMonitor() {
-        if let modifierMonitor {
-            NSEvent.removeMonitor(modifierMonitor)
+        if let localModifierMonitor {
+            NSEvent.removeMonitor(localModifierMonitor)
         }
-        modifierMonitor = nil
+        if let globalModifierMonitor {
+            NSEvent.removeMonitor(globalModifierMonitor)
+        }
+        localModifierMonitor = nil
+        globalModifierMonitor = nil
         optionKeyPressed = false
+    }
+
+    private func applyModifierFlags(_ flags: NSEvent.ModifierFlags) {
+        optionKeyPressed = flags.intersection(.deviceIndependentFlagsMask).contains(.option)
     }
 }
