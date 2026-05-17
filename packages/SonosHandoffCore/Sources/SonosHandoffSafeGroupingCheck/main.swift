@@ -53,9 +53,10 @@ struct SafeGroupingCheck {
             repeats that safety preparation immediately before every grouping/transfer mutation, then:
               1. adds one standalone speaker to the current Spotify-on-Sonos group
               2. removes that speaker again
-              3. if possible, removes the current coordinator and transfers playback to a
-                 replacement using coordinator-migration verification, failing if the operation
-                 takes longer than 2 seconds, excluding checker-only safety preparation
+              3. if possible, makes a replacement member standalone, transfers playback to that
+                 replacement using coordinator-migration verification, then rejoins remaining
+                 members, failing if prepare+transfer takes longer than 2 seconds, excluding
+                 checker-only safety preparation and post-transfer regrouping
             Dry-run and prepared modes print grouping_validation_scope=full when both mutation
             paths are available, or a narrower scope when only part of the validation can run.
 
@@ -294,22 +295,31 @@ private struct LiveGroupingValidator {
             return
         }
 
-        try await prepareSafeMutation(label: "coordinator_remove")
         let clock = ContinuousClock()
         let safetyInclusiveStartedAt = clock.now
         do {
-            let removeStartedAt = clock.now
-            try await service.removeCoordinator(
+            try await prepareSafeMutation(label: "coordinator_prepare")
+            let prepareStartedAt = clock.now
+            try await service.prepareCoordinatorRemoval(
                 in: scenario.group,
                 coordinatorRoomName: scenario.coordinator.roomName,
                 replacementRoomName: replacement.roomName
             )
-            let removeElapsed = removeStartedAt.duration(to: clock.now)
+            let prepareElapsed = prepareStartedAt.duration(to: clock.now)
+
             try await prepareSafeMutation(label: "coordinator_transfer")
             let transferStartedAt = clock.now
             let transfer = await service.transfer(toRoomName: replacement.roomName, verification: .coordinatorMigration)
             let transferElapsed = transferStartedAt.duration(to: clock.now)
-            let operationElapsed = removeElapsed + transferElapsed
+
+            try await prepareSafeMutation(label: "coordinator_finish")
+            try await service.finishCoordinatorRemoval(
+                in: scenario.group,
+                coordinatorRoomName: scenario.coordinator.roomName,
+                replacementRoomName: replacement.roomName
+            )
+
+            let operationElapsed = prepareElapsed + transferElapsed
             let safetyInclusiveElapsed = safetyInclusiveStartedAt.duration(to: clock.now)
             guard case .success = transfer else {
                 throw ValidationError("Coordinator migration transfer failed: \(transfer)")
@@ -326,7 +336,7 @@ private struct LiveGroupingValidator {
                 oldCoordinator: scenario.coordinator,
                 replacement: replacement
             )
-            print("coordinator_remove=ok old=\(scenario.coordinator.roomName) replacement=\(replacement.roomName) elapsed=\(operationElapsed) safety_inclusive_elapsed=\(safetyInclusiveElapsed)")
+            print("coordinator_remove=ok old=\(scenario.coordinator.roomName) replacement=\(replacement.roomName) prepare_elapsed=\(prepareElapsed) transfer_elapsed=\(transferElapsed) elapsed=\(operationElapsed) safety_inclusive_elapsed=\(safetyInclusiveElapsed)")
         } catch {
             if restoreOriginalCoordinator {
                 try await restoreOriginalCoordinatorRoleAfterFailureIfNeeded(
