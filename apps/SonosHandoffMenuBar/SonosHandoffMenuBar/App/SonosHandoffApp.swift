@@ -248,6 +248,7 @@ private final class PlaybackBackgroundSync {
         )
         lastSeenSpeakerIDs = update.seenSpeakerIDs
         environment.groupSuggestionStore.clear(ids: update.staleSuggestionIDs)
+        environment.groupSuggestionStore.refresh(update.refreshedSuggestions)
 
         switch update.action {
         case .none:

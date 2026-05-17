@@ -39,6 +39,36 @@ final class PlaybackGroupSuggestionStore: ObservableObject {
         suggestions.append(suggestion)
     }
 
+    func refresh(_ candidates: [SonosGroupSuggestionCandidate]) {
+        guard !candidates.isEmpty else {
+            return
+        }
+
+        let refreshedByID = Dictionary(
+            uniqueKeysWithValues: candidates.map { candidate in
+                (
+                    SonosGroupSuggestionReference(
+                        speakerID: candidate.speaker.id,
+                        coordinatorRoomName: candidate.coordinatorRoomName
+                    ).id,
+                    candidate
+                )
+            }
+        )
+        suggestions = suggestions.map { suggestion in
+            guard let candidate = refreshedByID[suggestion.id] else {
+                return suggestion
+            }
+
+            return PlaybackGroupSuggestion(
+                speaker: candidate.speaker,
+                coordinatorRoomName: candidate.coordinatorRoomName,
+                groupDisplayName: candidate.groupDisplayName,
+                detectedAt: suggestion.detectedAt
+            )
+        }
+    }
+
     func clear(id: String? = nil) {
         guard let id else {
             suggestions = []

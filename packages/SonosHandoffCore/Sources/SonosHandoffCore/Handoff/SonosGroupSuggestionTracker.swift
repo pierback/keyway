@@ -23,15 +23,18 @@ public struct SonosGroupSuggestionUpdate: Equatable, Sendable {
     public let action: SonosGroupSuggestionAction
     public let seenSpeakerIDs: Set<String>
     public let staleSuggestionIDs: Set<String>
+    public let refreshedSuggestions: [SonosGroupSuggestionCandidate]
 
     public init(
         action: SonosGroupSuggestionAction,
         seenSpeakerIDs: Set<String>,
-        staleSuggestionIDs: Set<String> = []
+        staleSuggestionIDs: Set<String> = [],
+        refreshedSuggestions: [SonosGroupSuggestionCandidate] = []
     ) {
         self.action = action
         self.seenSpeakerIDs = seenSpeakerIDs
         self.staleSuggestionIDs = staleSuggestionIDs
+        self.refreshedSuggestions = refreshedSuggestions
     }
 }
 
@@ -74,6 +77,14 @@ public struct SonosGroupSuggestionTracker: Sendable {
         }
         let staleSuggestionIDs = allCurrentSuggestionIDs.subtracting(validSuggestions.map(\.id))
         let validSuggestionSpeakerIDs = Set(validSuggestions.map(\.speakerID))
+        let refreshedSuggestions = validSuggestions.compactMap { suggestion in
+            resolver.refreshedSuggestion(
+                speakerID: suggestion.speakerID,
+                coordinatorRoomName: suggestion.coordinatorRoomName,
+                in: state,
+                selectedRoomName: selectedRoomName
+            )
+        }
 
         if let candidate = resolver.suggestion(
             in: state,
@@ -90,7 +101,8 @@ public struct SonosGroupSuggestionTracker: Sendable {
                     validSuggestionSpeakerIDs: validSuggestionSpeakerIDs,
                     suggestedSpeakerID: candidate.speaker.id
                 ),
-                staleSuggestionIDs: staleSuggestionIDs
+                staleSuggestionIDs: staleSuggestionIDs,
+                refreshedSuggestions: refreshedSuggestions
             )
         }
 
@@ -103,7 +115,8 @@ public struct SonosGroupSuggestionTracker: Sendable {
                     validSuggestionSpeakerIDs: validSuggestionSpeakerIDs,
                     suggestedSpeakerID: nil
                 ),
-                staleSuggestionIDs: staleSuggestionIDs
+                staleSuggestionIDs: staleSuggestionIDs,
+                refreshedSuggestions: refreshedSuggestions
             )
         }
 

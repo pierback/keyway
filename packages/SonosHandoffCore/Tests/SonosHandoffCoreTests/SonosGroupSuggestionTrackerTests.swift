@@ -50,6 +50,7 @@ struct SonosGroupSuggestionTrackerTests {
         #expect(update.action == .keepCurrent)
         #expect(update.seenSpeakerIDs == ["RINCON_KITCHEN", "RINCON_PORT", "RINCON_OFFICE"])
         #expect(update.staleSuggestionIDs.isEmpty)
+        #expect(update.refreshedSuggestions == [candidate("Office", coordinator: "Kitchen", group: "Kitchen + Port")])
     }
 
     @Test
@@ -74,6 +75,29 @@ struct SonosGroupSuggestionTrackerTests {
         #expect(update.action == .present(candidate("Bath", coordinator: "Kitchen", group: "Kitchen + Port")))
         #expect(update.seenSpeakerIDs == ["RINCON_KITCHEN", "RINCON_PORT", "RINCON_OFFICE", "RINCON_BATH"])
         #expect(update.staleSuggestionIDs.isEmpty)
+        #expect(update.refreshedSuggestions == [candidate("Office", coordinator: "Kitchen", group: "Kitchen + Port")])
+    }
+
+    @Test
+    func refreshesPendingSuggestionAfterAnotherSpeakerJoinedGroup() {
+        let update = tracker.update(
+            in: SonosGroupState(groups: [
+                group(coordinator: "Kitchen", members: ["Kitchen", "Port", "Office"]),
+                standalone("Bath"),
+            ]),
+            selectedRoomName: "Kitchen",
+            spotifyPlaying: true,
+            previousSpeakerIDs: ["RINCON_KITCHEN", "RINCON_PORT", "RINCON_OFFICE", "RINCON_BATH"],
+            currentSuggestions: [
+                SonosGroupSuggestionReference(
+                    speakerID: "RINCON_BATH",
+                    coordinatorRoomName: "Kitchen"
+                ),
+            ]
+        )
+
+        #expect(update.action == .keepCurrent)
+        #expect(update.refreshedSuggestions == [candidate("Bath", coordinator: "Kitchen", group: "Kitchen + 2")])
     }
 
     @Test

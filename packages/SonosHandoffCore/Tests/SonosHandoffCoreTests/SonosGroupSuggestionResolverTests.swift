@@ -96,6 +96,23 @@ struct SonosGroupSuggestionResolverTests {
     }
 
     @Test
+    func refreshesCurrentSuggestionWithLatestGroupDisplayName() {
+        let candidate = resolver.refreshedSuggestion(
+            speakerID: "RINCON_BATH",
+            coordinatorRoomName: "Kitchen",
+            in: SonosGroupState(groups: [
+                group(coordinator: "Kitchen", members: ["Kitchen", "Port", "Office"]),
+                standalone("Bath"),
+            ]),
+            selectedRoomName: "Kitchen"
+        )
+
+        #expect(candidate?.speaker.roomName == "Bath")
+        #expect(candidate?.coordinatorRoomName == "Kitchen")
+        #expect(candidate?.groupDisplayName == "Kitchen + 2")
+    }
+
+    @Test
     func clearsCurrentSuggestionAfterSpeakerJoinedCurrentGroup() {
         let keepSuggestion = resolver.suggestionStillValid(
             speakerID: "RINCON_OFFICE",
