@@ -15,6 +15,13 @@ struct PlaybackGroupSuggestion: Identifiable, Equatable, Sendable {
     var title: String {
         "Add \(speaker.roomName) to \(groupDisplayName)?"
     }
+
+    var reference: SonosGroupSuggestionReference {
+        SonosGroupSuggestionReference(
+            speakerID: speaker.id,
+            coordinatorRoomName: coordinatorRoomName
+        )
+    }
 }
 
 @MainActor
