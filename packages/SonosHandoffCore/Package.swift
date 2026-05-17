@@ -20,6 +20,10 @@ let package = Package(
             name: "sonos-handoff-hotkeys",
             targets: ["SonosHandoffHotkeys"]
         ),
+        .executable(
+            name: "sonos-handoff-safe-grouping-check",
+            targets: ["SonosHandoffSafeGroupingCheck"]
+        ),
     ],
     targets: [
         .target(
@@ -31,6 +35,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "SonosHandoffHotkeys",
+            dependencies: ["SonosHandoffCore"]
+        ),
+        .executableTarget(
+            name: "SonosHandoffSafeGroupingCheck",
             dependencies: ["SonosHandoffCore"]
         ),
         .testTarget(

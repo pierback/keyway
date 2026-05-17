@@ -1,0 +1,401 @@
+import Foundation
+import SonosHandoffCore
+
+private let acknowledgement = "--i-understand-this-mutates-sonos-groups"
+private let mutateFlag = "--mutate"
+private let prepareSilentFlag = "--prepare-silent"
+private let restoreFlag = "--restore-original-coordinator"
+
+@main
+struct SafeGroupingCheck {
+    static func main() async {
+        let arguments = Set(CommandLine.arguments.dropFirst())
+        if arguments.contains("--help") || arguments.contains("-h") {
+            printUsage()
+            return
+        }
+
+        do {
+            let validator = LiveGroupingValidator(
+                service: SpotifyConnectHandoffService(configStore: ConfigStore()),
+                mutate: arguments.contains(mutateFlag),
+                prepareSilent: arguments.contains(prepareSilentFlag),
+                restoreOriginalCoordinator: arguments.contains(restoreFlag),
+                acknowledgedMutation: arguments.contains(acknowledgement)
+            )
+            try await validator.run()
+        } catch let error as ValidationError {
+            fputs("sonos-handoff-safe-grouping-check: \(error.message)\n", stderr)
+            exit(1)
+        } catch {
+            fputs("sonos-handoff-safe-grouping-check: \(error.localizedDescription)\n", stderr)
+            exit(1)
+        }
+    }
+
+    private static func printUsage() {
+        print(
+            """
+            Usage:
+              sonos-handoff-safe-grouping-check
+              sonos-handoff-safe-grouping-check \(prepareSilentFlag)
+              sonos-handoff-safe-grouping-check --mutate \(acknowledgement)
+
+            Default mode only discovers Sonos groups and prints the grouping scenario that would be
+            tested. It does not change speaker volume, mute state, or groups.
+
+            \(prepareSilentFlag) mode discovers Sonos groups, mutes every discovered speaker, sets
+            every discovered speaker to volume 0, verifies that safety state, and prints the
+            grouping scenario that would be tested.
+
+            Mutation mode always performs the same volume-0/muted safety preparation first, then:
+              1. adds one standalone speaker to the current Spotify-on-Sonos group
+              2. removes that speaker again
+              3. if possible, removes the current coordinator and transfers playback to a
+                 replacement using coordinator-migration verification
+
+            Use \(restoreFlag) with mutation mode to add the old coordinator back and migrate the
+            coordinator role back after the coordinator-removal check.
+            """
+        )
+    }
+}
+
+private struct LiveGroupingValidator {
+    private let service: SpotifyConnectHandoffService
+    private let mutate: Bool
+    private let prepareSilent: Bool
+    private let restoreOriginalCoordinator: Bool
+    private let acknowledgedMutation: Bool
+
+    init(
+        service: SpotifyConnectHandoffService,
+        mutate: Bool,
+        prepareSilent: Bool,
+        restoreOriginalCoordinator: Bool,
+        acknowledgedMutation: Bool
+    ) {
+        self.service = service
+        self.mutate = mutate
+        self.prepareSilent = prepareSilent
+        self.restoreOriginalCoordinator = restoreOriginalCoordinator
+        self.acknowledgedMutation = acknowledgedMutation
+    }
+
+    func run() async throws {
+        guard !mutate || acknowledgedMutation else {
+            throw ValidationError("Mutation mode requires \(acknowledgement).")
+        }
+
+        let initialState = try await service.discoverGroupState()
+        guard !initialState.speakers.isEmpty else {
+            throw ValidationError("No Sonos speakers discovered.")
+        }
+
+        print("discovered_speakers=\(initialState.speakers.map(\.roomName).joined(separator: ","))")
+        printGroups(initialState, prefix: "initial")
+        if mutate || prepareSilent {
+            try await forceSafeVolumeState(for: initialState.speakers)
+            try await verifySafeVolumeState(for: initialState.speakers)
+        } else {
+            print("volume_safety=skipped")
+        }
+
+        let groupingScenario: GroupingScenario
+        do {
+            groupingScenario = try await scenario(in: initialState)
+        } catch let error as ValidationError where !mutate {
+            print("grouping_scenario=not_ready reason=\(error.message)")
+            print(prepareSilent ? "safe_grouping_check=prepared_not_ready" : "safe_grouping_check=dry_run_not_ready")
+            return
+        }
+        print("active_spotify_room=\(groupingScenario.activeRoomName)")
+        print("active_group=\(groupingScenario.group.displayName)")
+        if let standalone = groupingScenario.standaloneSpeaker {
+            print("standalone_candidate=\(standalone.roomName)")
+        } else {
+            print("standalone_candidate=none")
+        }
+        if let replacement = groupingScenario.coordinatorReplacement {
+            print("coordinator_replacement_candidate=\(replacement.roomName)")
+        } else {
+            print("coordinator_replacement_candidate=none")
+        }
+
+        guard mutate else {
+            print("grouping_mutation=skipped")
+            print(prepareSilent ? "safe_grouping_check=ready" : "safe_grouping_check=dry_run")
+            return
+        }
+
+        try await exerciseStandaloneJoinAndRemoval(scenario: groupingScenario)
+        let stateAfterStandaloneCheck = try await service.discoverGroupState()
+        let refreshedScenario = try await scenario(in: stateAfterStandaloneCheck)
+        try await exerciseCoordinatorRemoval(scenario: refreshedScenario)
+        print("safe_grouping_check=ok")
+    }
+
+    private func scenario(in state: SonosGroupState) async throws -> GroupingScenario {
+        guard let playback = try await service.activePlaybackDeviceStatus(),
+              playback.isPlaying,
+              let activeRoomName = SonosRoomName.normalized(playback.deviceName)
+        else {
+            throw ValidationError("Spotify must be playing on a visible Sonos room before mutation validation.")
+        }
+
+        guard let group = state.groups.first(where: { $0.contains(roomName: activeRoomName) }),
+              let coordinator = group.coordinator
+        else {
+            throw ValidationError("Active Spotify room is not part of the discovered Sonos group state.")
+        }
+
+        let standaloneSpeaker = state.groups
+            .filter { $0.members.count == 1 }
+            .flatMap(\.members)
+            .first { speaker in
+                !group.members.contains(where: { $0.id == speaker.id })
+            }
+        let replacement = group.members.first { $0.id != coordinator.id }
+        return GroupingScenario(
+            activeRoomName: activeRoomName,
+            group: group,
+            coordinator: coordinator,
+            standaloneSpeaker: standaloneSpeaker,
+            coordinatorReplacement: replacement
+        )
+    }
+
+    private func forceSafeVolumeState(for speakers: [SonosSpeaker]) async throws {
+        print("volume_safety=forcing_zero_muted")
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for speaker in speakers {
+                let service = service
+                group.addTask {
+                    _ = try await service.setVolume(roomName: speaker.roomName, volume: 0)
+                    _ = try await service.setMute(roomName: speaker.roomName, muted: true)
+                }
+            }
+            try await group.waitForAll()
+        }
+    }
+
+    private func verifySafeVolumeState(for speakers: [SonosSpeaker]) async throws {
+        for speaker in speakers {
+            let status = try await service.volumeStatus(roomName: speaker.roomName)
+            guard status.volume == 0, status.muted else {
+                throw ValidationError(
+                    "\(speaker.roomName) is not safe for live grouping tests: volume=\(status.volume) muted=\(status.muted)"
+                )
+            }
+            print("volume_safety_room=\(speaker.roomName) volume=0 muted=true")
+        }
+        print("volume_safety=ok")
+    }
+
+    private func exerciseStandaloneJoinAndRemoval(scenario: GroupingScenario) async throws {
+        guard let standaloneSpeaker = scenario.standaloneSpeaker else {
+            print("standalone_join_remove=skipped reason=no_standalone_candidate")
+            return
+        }
+
+        try await service.join(
+            roomName: standaloneSpeaker.roomName,
+            toCoordinatorRoomName: scenario.coordinator.roomName
+        )
+        do {
+            let joinedState = try await service.discoverGroupState()
+            try requireGroup(
+                in: joinedState,
+                containing: scenario.coordinator.roomName,
+                alsoContaining: standaloneSpeaker.roomName,
+                message: "Standalone speaker did not join the active group."
+            )
+            print("standalone_join=ok room=\(standaloneSpeaker.roomName)")
+
+            try await service.removeFromGroup(roomName: standaloneSpeaker.roomName)
+            let removedState = try await service.discoverGroupState()
+            guard removedState.groups.contains(where: { group in
+                group.members.count == 1 && group.contains(roomName: standaloneSpeaker.roomName)
+            }) else {
+                throw ValidationError("Standalone speaker did not become standalone after removal.")
+            }
+        } catch {
+            try await rollbackStandaloneJoin(roomName: standaloneSpeaker.roomName, originalError: error)
+            throw error
+        }
+        print("standalone_remove=ok room=\(standaloneSpeaker.roomName)")
+    }
+
+    private func exerciseCoordinatorRemoval(scenario: GroupingScenario) async throws {
+        guard let replacement = scenario.coordinatorReplacement else {
+            print("coordinator_remove=skipped reason=no_replacement_candidate")
+            return
+        }
+
+        let clock = ContinuousClock()
+        let startedAt = clock.now
+        do {
+            try await service.removeCoordinator(
+                groupID: scenario.group.id,
+                coordinatorRoomName: scenario.coordinator.roomName,
+                replacementRoomName: replacement.roomName
+            )
+            let transfer = await service.transfer(toRoomName: replacement.roomName, verification: .coordinatorMigration)
+            let elapsed = startedAt.duration(to: clock.now)
+            guard case .success = transfer else {
+                throw ValidationError("Coordinator migration transfer failed: \(transfer)")
+            }
+
+            let migratedState = try await service.discoverGroupState()
+            try requireCoordinatorRemoved(
+                in: migratedState,
+                oldCoordinator: scenario.coordinator,
+                replacement: replacement
+            )
+            print("coordinator_remove=ok old=\(scenario.coordinator.roomName) replacement=\(replacement.roomName) elapsed=\(elapsed)")
+        } catch {
+            if restoreOriginalCoordinator {
+                try await restoreOriginalCoordinatorRoleAfterFailureIfNeeded(
+                    originalGroup: scenario.group,
+                    replacement: replacement,
+                    originalError: error
+                )
+            }
+            throw error
+        }
+
+        guard restoreOriginalCoordinator else {
+            print("coordinator_restore=skipped")
+            return
+        }
+
+        try await restoreOriginalCoordinatorRole(
+            originalGroup: scenario.group
+        )
+    }
+
+    private func rollbackStandaloneJoin(roomName: String, originalError: Error) async throws {
+        do {
+            try await service.removeFromGroup(roomName: roomName)
+            print("standalone_rollback=ok room=\(roomName)")
+        } catch {
+            throw ValidationError(
+                "Standalone check failed: \(describe(originalError)); rollback failed for \(roomName): \(describe(error))"
+            )
+        }
+    }
+
+    private func restoreOriginalCoordinatorRole(originalGroup: SonosSpeakerGroup) async throws {
+        guard let oldCoordinator = originalGroup.coordinator else {
+            throw ValidationError("Original coordinator is missing from \(originalGroup.displayName).")
+        }
+
+        try await service.removeFromGroup(roomName: oldCoordinator.roomName)
+        for member in originalGroup.members where member.id != oldCoordinator.id {
+            try await service.join(roomName: member.roomName, toCoordinatorRoomName: oldCoordinator.roomName)
+        }
+
+        let restoredState = try await service.discoverGroupState()
+        guard let restoredGroup = restoredState.groups.first(where: { $0.contains(roomName: oldCoordinator.roomName) }),
+              originalGroup.members.allSatisfy({ restoredGroup.contains(roomName: $0.roomName) })
+        else {
+            throw ValidationError("Original group members did not rejoin \(oldCoordinator.roomName).")
+        }
+
+        if restoredGroup.coordinator?.id != oldCoordinator.id {
+            try await service.migrateCoordinator(groupID: restoredGroup.id, toRoomName: oldCoordinator.roomName)
+        }
+        let restoredTransfer = await service.transfer(toRoomName: oldCoordinator.roomName, verification: .coordinatorMigration)
+        guard case .success = restoredTransfer else {
+            throw ValidationError("Original coordinator transfer failed during restore: \(restoredTransfer)")
+        }
+        print("coordinator_restore=ok room=\(oldCoordinator.roomName)")
+    }
+
+    private func restoreOriginalCoordinatorRoleAfterFailureIfNeeded(
+        originalGroup: SonosSpeakerGroup,
+        replacement: SonosSpeaker,
+        originalError: Error
+    ) async throws {
+        guard let oldCoordinator = originalGroup.coordinator else {
+            throw ValidationError("Coordinator migration failed: \(describe(originalError)); original coordinator is missing.")
+        }
+
+        let latestState = try? await service.discoverGroupState()
+        if latestState?.groups.contains(where: { group in
+            group.contains(roomName: oldCoordinator.roomName)
+                && originalGroup.members.allSatisfy { group.contains(roomName: $0.roomName) }
+        }) == true {
+            print("coordinator_restore=skipped reason=group_still_intact_after_failure")
+            return
+        }
+
+        do {
+            try await restoreOriginalCoordinatorRole(originalGroup: originalGroup)
+        } catch {
+            throw ValidationError(
+                "Coordinator migration failed: \(describe(originalError)); restore failed: \(describe(error))"
+            )
+        }
+    }
+
+    private func describe(_ error: Error) -> String {
+        if let error = error as? ValidationError {
+            return error.message
+        }
+        return error.localizedDescription
+    }
+
+    private func requireCoordinatorRemoved(
+        in state: SonosGroupState,
+        oldCoordinator: SonosSpeaker,
+        replacement: SonosSpeaker
+    ) throws {
+        guard let replacementGroup = state.groups.first(where: { $0.contains(roomName: replacement.roomName) }) else {
+            throw ValidationError("Replacement coordinator group was not visible after coordinator removal.")
+        }
+        guard replacementGroup.coordinator?.id == replacement.id else {
+            throw ValidationError("\(replacement.roomName) is not the coordinator after coordinator removal.")
+        }
+        guard !replacementGroup.contains(roomName: oldCoordinator.roomName) else {
+            throw ValidationError("\(oldCoordinator.roomName) is still grouped with \(replacement.roomName).")
+        }
+    }
+
+    private func requireGroup(
+        in state: SonosGroupState,
+        containing roomName: String,
+        alsoContaining otherRoomName: String?,
+        message: String
+    ) throws {
+        guard let group = state.groups.first(where: { $0.contains(roomName: roomName) }) else {
+            throw ValidationError(message)
+        }
+        if let otherRoomName, !group.contains(roomName: otherRoomName) {
+            throw ValidationError(message)
+        }
+    }
+
+    private func printGroups(_ state: SonosGroupState, prefix: String) {
+        for group in state.groups {
+            let coordinatorName = group.coordinator?.roomName ?? "unknown"
+            print("\(prefix)_group=\(group.displayName) coordinator=\(coordinatorName) members=\(group.roomNames.joined(separator: ","))")
+        }
+    }
+}
+
+private struct GroupingScenario {
+    let activeRoomName: String
+    let group: SonosSpeakerGroup
+    let coordinator: SonosSpeaker
+    let standaloneSpeaker: SonosSpeaker?
+    let coordinatorReplacement: SonosSpeaker?
+}
+
+private struct ValidationError: Error {
+    let message: String
+
+    init(_ message: String) {
+        self.message = message
+    }
+}
