@@ -486,6 +486,16 @@ final class PlaybackSyncController: ObservableObject {
         }
     }
 
+    func ignoreGroupSuggestion(id: String) {
+        guard groupSuggestions.contains(where: { $0.matches(identifier: id) }) else {
+            return
+        }
+
+        groupSuggestionStore.clear(id: id)
+        groupSuggestionNotifier.cancelSuggestion(id: id)
+        shortcutLogger.info("SonosHandoffGroupSuggestion result=ignored source=menu id=\(id, privacy: .public)")
+    }
+
     private func groupSuggestionRejectionMessage(_ rejection: SonosGroupSuggestionAcceptanceRejection) -> String {
         switch rejection {
         case .noActiveSonosGroup:

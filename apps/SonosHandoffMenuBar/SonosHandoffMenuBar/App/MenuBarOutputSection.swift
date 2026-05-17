@@ -187,63 +187,75 @@ struct MenuBarOutputSection: View {
     private func groupSuggestionRow(_ suggestion: PlaybackGroupSuggestion) -> some View {
         let loading = suggestion.speaker.roomName == playback.groupLoadingRoomName
 
-        return Button {
-            playback.acceptGroupSuggestion(id: suggestion.id)
-        } label: {
-            HStack(spacing: 13) {
-                ZStack {
-                    Circle()
-                        .fill(Color.white.opacity(0.075))
+        return HStack(spacing: 0) {
+            Button {
+                playback.acceptGroupSuggestion(id: suggestion.id)
+            } label: {
+                HStack(spacing: 13) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.white.opacity(0.075))
 
-                    Image(systemName: "hifispeaker.badge.plus")
-                        .font(.system(size: 12, weight: .regular))
-                        .symbolRenderingMode(.monochrome)
-                        .foregroundStyle(Color.secondary.opacity(0.85))
+                        Image(systemName: "hifispeaker.badge.plus")
+                            .font(.system(size: 12, weight: .regular))
+                            .symbolRenderingMode(.monochrome)
+                            .foregroundStyle(Color.secondary.opacity(0.85))
+                    }
+                    .frame(width: 22, height: 22)
+
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(suggestion.speaker.roomName)
+                            .font(.system(size: 13, weight: .regular))
+                            .foregroundStyle(Color.primary.opacity(0.9))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+
+                        Text("Add to \(suggestion.groupDisplayName)")
+                            .font(.system(size: 11, weight: .regular))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+
+                    Spacer(minLength: 0)
                 }
-                .frame(width: 22, height: 22)
-
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(suggestion.speaker.roomName)
-                        .font(.system(size: 13, weight: .regular))
-                        .foregroundStyle(Color.primary.opacity(0.9))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-
-                    Text("Add to \(suggestion.groupDisplayName)")
-                        .font(.system(size: 11, weight: .regular))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
-
-                Spacer(minLength: 0)
-
-                if loading {
-                    ProgressView()
-                        .controlSize(.small)
-                        .scaleEffect(0.56)
-                        .frame(width: 18, height: 18)
-                } else {
-                    Image(systemName: "plus")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Color.primary.opacity(0.55))
-                        .frame(width: 18, height: 18)
-                }
+                .frame(maxWidth: .infinity, minHeight: 33, alignment: .leading)
+                .padding(.leading, 12)
             }
-            .frame(maxWidth: .infinity, minHeight: 33, alignment: .leading)
-            .padding(.horizontal, 12)
-            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .background {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color.white.opacity(0.045))
+            .buttonStyle(.plain)
+            .disabled(playback.groupLoadingRoomName != nil || playback.loadingRoomName != nil)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("group-suggestion-\(suggestion.speaker.roomName)")
+            .accessibilityLabel("Add \(suggestion.speaker.roomName) to \(suggestion.groupDisplayName)")
+
+            if loading {
+                ProgressView()
+                    .controlSize(.small)
+                    .scaleEffect(0.56)
+                    .frame(width: 26, height: 26)
+            } else {
+                Button {
+                    playback.ignoreGroupSuggestion(id: suggestion.id)
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color.primary.opacity(0.48))
+                        .frame(width: 26, height: 26)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .disabled(playback.groupLoadingRoomName != nil || playback.loadingRoomName != nil)
+                .accessibilityIdentifier("ignore-group-suggestion-\(suggestion.speaker.roomName)")
+                .accessibilityLabel("Ignore grouping suggestion for \(suggestion.speaker.roomName)")
             }
         }
-        .buttonStyle(.plain)
-        .disabled(playback.groupLoadingRoomName != nil || playback.loadingRoomName != nil)
         .padding(.horizontal, 8)
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("group-suggestion-\(suggestion.speaker.roomName)")
-        .accessibilityLabel("Add \(suggestion.speaker.roomName) to \(suggestion.groupDisplayName)")
+        .padding(.trailing, 2)
+        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.white.opacity(0.045))
+        }
     }
 
     private func groupEditRow(for row: PlaybackGroupEditRow) -> some View {
