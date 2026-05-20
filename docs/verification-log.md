@@ -69,6 +69,11 @@ Last updated: 2026-05-20
   - `volume-mute-on=ok`
   - `volume-mute-off=ok`
   - `restored_muted=false`
+- `scripts/smoke_overlay_browser_controls`: passed against the installed app with Spotify, QuickTime Player, and Helium media targets active. The smoke opened the actual media-key chooser, toggled Expanded Controls with Tab, selected the browser-like target, and verified visible Accessibility text:
+  - `Expanded Controls`
+  - `Browser`
+  - `Disabled`
+  - `Volume disabled without browser extension`
 - Media-key constants for Play/Pause, Next, and Previous were checked against local SDK headers:
   - `NX_KEYTYPE_PLAY = 16`
   - `NX_KEYTYPE_NEXT = 17`
@@ -79,11 +84,9 @@ Last updated: 2026-05-20
 
 - Full transport routing, overlay keyboard operation from hardware media keys, and routing confirmation still need a hardware media-key run now that the event tap is enabled.
 - Spotify Active Device Volume still needs a run against an unrestricted Spotify active device. The current active device is Sonos `Port`, and Spotify reports it as `restricted=true`, so volume write-back is correctly skipped.
-- Expanded Controls browser volume disabled-state still needs a manual UI pass in the overlay.
 
 ## Next Required Acceptance Checks
 
 1. Re-run media-key checks for Play/Pause, Next, Previous, chooser, pinning, focused target, prominent-window target, recent target, and single target.
 2. Re-run full overlay keyboard and routing confirmation checks with live media-key presses.
 3. Move Spotify playback to an unrestricted active device, then verify Spotify Active Device Volume.
-4. Open Expanded Controls and verify browser volume appears clearly disabled without requiring an extension.

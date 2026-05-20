@@ -20,4 +20,8 @@ if [[ "${SONOS_HANDOFF_REAL_DEVICE_SMOKE:-0}" == "1" ]]; then
   run "$ROOT_DIR/scripts/smoke_menubar_slider" "$ROOM"
 fi
 
+if [[ "${KEYWAY_OVERLAY_UI_SMOKE:-0}" == "1" ]]; then
+  run "$ROOT_DIR/scripts/smoke_overlay_browser_controls"
+fi
+
 echo "regression_gate=ok"

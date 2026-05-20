@@ -91,6 +91,14 @@ Keyway is complete only when this runbook passes on a fresh local install withou
 - [ ] Confirm browser volume is clearly disabled when no no-extension backend exists.
 - [ ] Confirm no browser extension is required.
 
+Repeatable browser disabled-state smoke:
+
+```bash
+KEYWAY_APP="$HOME/Applications/Keyway.app" /Users/f.pieringer/projects/keyway/scripts/smoke_overlay_browser_controls
+```
+
+This smoke requires at least two active Now Playing targets, including one browser or browser-wrapper target, so the routing policy opens the chooser instead of auto-routing a single target. It verifies the actual overlay exposes `Expanded Controls`, `Browser`, `Disabled`, and `Volume disabled without browser extension` through Accessibility.
+
 ## 9. Routing Confirmation
 
 - [ ] Trigger automatic routing without the overlay.

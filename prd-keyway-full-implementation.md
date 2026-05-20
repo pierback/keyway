@@ -110,6 +110,7 @@ As of 2026-05-20, the main implementation is present on branch `keyway-planning`
 - Accessibility is granted to the installed `com.fpieringer.Keyway` bundle on the local machine, and Keyway persists `mediaFallback=enabled` in `~/Library/Application Support/keyway/shortcut-runtime-status.json`.
 - `SONOS_HANDOFF_REAL_DEVICE_SMOKE=1 SONOS_HANDOFF_ROOM=Port scripts/regression_gate` passes, including CLI Spotify-to-Sonos handoff, menu-bar handoff, and menu-bar Sonos volume smoke paths.
 - Sonos mute was verified directly through the local CLI and restored to its original state.
+- Expanded Controls browser volume disabled-state is verified by `scripts/smoke_overlay_browser_controls`, which opens the actual overlay, toggles controls with Tab, selects the browser target, and confirms the visible disabled no-extension state.
 - QuickTime target discovery has been verified with local media playback.
 - Settings normal-window behavior has been verified through the menu bar UI; System Events reports Keyway as visible and not background-only while Settings is open.
 - Focused Target routing now checks the global foreground Media Target first, then a prominently visible, unobscured Media Target window on the display containing the pointer before falling back to Pinned Target, Recent Target, or chooser.

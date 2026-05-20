@@ -14,4 +14,4 @@ xcuserdata/
 .env
 .env.local
 vendor/
-
+.antigravitycli/

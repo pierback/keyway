@@ -1,0 +1,376 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_DIR="${KEYWAY_APP:-$HOME/Applications/Keyway.app}"
+DEFAULTS_DOMAIN="com.fpieringer.Keyway"
+PINNED_KEY="keyway.mediaTarget.pinnedIdentity"
+RECENT_KEY="keyway.mediaTarget.recentIdentity"
+HELPER_SCRIPT="$APP_DIR/Contents/Resources/MediaRemoteHelper/keyway-mediaremote-helper.pl"
+HELPER_DYLIB="$APP_DIR/Contents/Resources/MediaRemoteHelper/libkeyway_mediaremote.dylib"
+PINNED_VALUE=""
+RECENT_VALUE=""
+PINNED_PRESENT=0
+RECENT_PRESENT=0
+TARGET_INFO_FILE="$(mktemp -t keyway-overlay-targets.XXXXXX)"
+VISIBLE_STATE_FILE="$(mktemp -t keyway-overlay-visible-apps.XXXXXX)"
+
+if [[ ! -d "$APP_DIR" ]]; then
+  echo "smoke_overlay_browser_controls: missing app bundle: $APP_DIR" >&2
+  echo "Run scripts/install_menubar_app first." >&2
+  exit 1
+fi
+
+if [[ -x "$HELPER_SCRIPT" && -f "$HELPER_DYLIB" ]]; then
+  helper_snapshot="$(printf '%s\n' '{"type":"refresh","requestID":"overlay-browser-smoke"}' | /usr/bin/perl "$HELPER_SCRIPT" "$HELPER_DYLIB")"
+else
+  echo "smoke_overlay_browser_controls: bundled MediaRemote helper files are missing" >&2
+  exit 1
+fi
+
+printf '%s\n' "$helper_snapshot" | /usr/bin/swift -e '
+import Foundation
+
+struct Envelope: Decodable {
+    let type: String
+}
+
+struct Snapshot: Decodable {
+    let type: String
+    let targets: [Target]
+}
+
+struct Target: Decodable {
+    let displayName: String
+    let bundleIdentifier: String
+    let parentBundleIdentifier: String
+
+    var bundleIdentities: [String] {
+        [bundleIdentifier, parentBundleIdentifier]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    var isBrowserLike: Bool {
+        bundleIdentities
+            .map { $0.lowercased() }
+            .contains { identity in
+                identity.contains("safari")
+                    || identity.contains("chrome")
+                    || identity.contains("firefox")
+                    || identity.contains("brave")
+                    || identity.contains("arc")
+                    || identity.contains("helium")
+                    || identity.contains("browser")
+            }
+    }
+}
+
+let input = String(data: FileHandle.standardInput.readDataToEndOfFile(), encoding: .utf8) ?? ""
+let decoder = JSONDecoder()
+let snapshot = input
+    .split(separator: "\n")
+    .compactMap { line -> Snapshot? in
+        guard let data = line.data(using: .utf8),
+              (try? decoder.decode(Envelope.self, from: data).type) == "snapshot"
+        else {
+            return nil
+        }
+        return try? decoder.decode(Snapshot.self, from: data)
+    }
+    .last
+
+guard let snapshot else {
+    fputs("helper snapshot was missing\n", stderr)
+    exit(2)
+}
+
+print("target_count=\(snapshot.targets.count)")
+print("browser_count=\(snapshot.targets.filter(\.isBrowserLike).count)")
+var seenBundles = Set<String>()
+for target in snapshot.targets {
+    for bundleID in target.bundleIdentities where seenBundles.insert(bundleID).inserted {
+        print("target_bundle\t\(bundleID)")
+    }
+}
+' >"$TARGET_INFO_FILE"
+
+target_count="$(awk -F= '/^target_count=/{ print $2; exit }' "$TARGET_INFO_FILE")"
+browser_count="$(awk -F= '/^browser_count=/{ print $2; exit }' "$TARGET_INFO_FILE")"
+if [[ -z "$target_count" || "$target_count" -lt 2 ]]; then
+  echo "$helper_snapshot"
+  echo "smoke_overlay_browser_controls: chooser requires at least two Now Playing targets; found ${target_count:-0}" >&2
+  echo "Start Spotify or QuickTime plus a browser/browser-wrapper media session before running this check." >&2
+  exit 1
+fi
+if [[ -z "$browser_count" || "$browser_count" -lt 1 ]]; then
+  echo "$helper_snapshot"
+  echo "smoke_overlay_browser_controls: no browser-like Now Playing target found" >&2
+  echo "Start a browser or browser-wrapper media session before running this check." >&2
+  exit 1
+fi
+
+remember_default() {
+  local key="$1"
+  if value="$(defaults read "$DEFAULTS_DOMAIN" "$key" 2>/dev/null)"; then
+    printf '%s' "$value"
+    return 0
+  fi
+  return 1
+}
+
+if PINNED_VALUE="$(remember_default "$PINNED_KEY")"; then
+  PINNED_PRESENT=1
+fi
+if RECENT_VALUE="$(remember_default "$RECENT_KEY")"; then
+  RECENT_PRESENT=1
+fi
+
+restore_defaults() {
+  if [[ "$PINNED_PRESENT" == "1" ]]; then
+    defaults write "$DEFAULTS_DOMAIN" "$PINNED_KEY" "$PINNED_VALUE" >/dev/null
+  else
+    defaults delete "$DEFAULTS_DOMAIN" "$PINNED_KEY" >/dev/null 2>&1 || true
+  fi
+
+  if [[ "$RECENT_PRESENT" == "1" ]]; then
+    defaults write "$DEFAULTS_DOMAIN" "$RECENT_KEY" "$RECENT_VALUE" >/dev/null
+  else
+    defaults delete "$DEFAULTS_DOMAIN" "$RECENT_KEY" >/dev/null 2>&1 || true
+  fi
+}
+
+close_overlay() {
+  osascript >/dev/null 2>&1 <<'APPLESCRIPT' || true
+tell application "System Events"
+  if exists process "Keyway" then
+    tell process "Keyway" to set frontmost to true
+    key code 53
+  end if
+end tell
+APPLESCRIPT
+}
+
+restore_visible_apps() {
+  while IFS=$'\t' read -r bundle_id was_visible; do
+    [[ -n "$bundle_id" ]] || continue
+    osascript - "$bundle_id" "$was_visible" >/dev/null 2>&1 <<'APPLESCRIPT' || true
+on run argv
+  set bundleID to item 1 of argv
+  set wasVisible to item 2 of argv
+  tell application "System Events"
+    repeat with appProcess in application processes
+      try
+        if bundle identifier of appProcess is bundleID then set visible of appProcess to (wasVisible is "true")
+      end try
+    end repeat
+  end tell
+end run
+APPLESCRIPT
+  done <"$VISIBLE_STATE_FILE"
+}
+
+cleanup() {
+  close_overlay
+  restore_defaults
+  restore_visible_apps
+  rm -f "$TARGET_INFO_FILE"
+  rm -f "$VISIBLE_STATE_FILE"
+}
+trap cleanup EXIT
+
+clear_routing_memory() {
+  defaults delete "$DEFAULTS_DOMAIN" "$PINNED_KEY" >/dev/null 2>&1 || true
+  defaults delete "$DEFAULTS_DOMAIN" "$RECENT_KEY" >/dev/null 2>&1 || true
+}
+
+hide_media_windows_for_chooser() {
+  : >"$VISIBLE_STATE_FILE"
+  while IFS=$'\t' read -r kind bundle_id; do
+    [[ "$kind" == "target_bundle" && -n "$bundle_id" ]] || continue
+    osascript - "$bundle_id" >>"$VISIBLE_STATE_FILE" <<'APPLESCRIPT'
+on run argv
+  set bundleID to item 1 of argv
+  tell application "System Events"
+    repeat with appProcess in application processes
+      try
+        if bundle identifier of appProcess is bundleID then
+          return bundleID & tab & ((visible of appProcess) as text)
+        end if
+      end try
+    end repeat
+  end tell
+  return ""
+end run
+APPLESCRIPT
+    osascript - "$bundle_id" >/dev/null 2>&1 <<'APPLESCRIPT' || true
+on run argv
+  set bundleID to item 1 of argv
+  tell application "System Events"
+    repeat with appProcess in application processes
+      try
+        if bundle identifier of appProcess is bundleID then set visible of appProcess to false
+      end try
+    end repeat
+  end tell
+end run
+APPLESCRIPT
+  done <"$TARGET_INFO_FILE"
+}
+
+post_play_pause_media_key() {
+  /usr/bin/swift -e '
+import AppKit
+import Foundation
+
+let keyCode = 16
+let keyDownState = 0x0A
+let keyUpState = 0x0B
+
+func post(_ state: Int) {
+    let data1 = (keyCode << 16) | (state << 8)
+    guard let event = NSEvent.otherEvent(
+        with: .systemDefined,
+        location: .zero,
+        modifierFlags: [],
+        timestamp: ProcessInfo.processInfo.systemUptime,
+        windowNumber: 0,
+        context: nil,
+        subtype: 8,
+        data1: data1,
+        data2: -1
+    )?.cgEvent else {
+        exit(2)
+    }
+    event.post(tap: .cghidEventTap)
+}
+
+post(keyDownState)
+usleep(120_000)
+post(keyUpState)
+'
+}
+
+keyway_window_text() {
+  osascript <<'APPLESCRIPT'
+on collectTexts(e, depth)
+  if depth > 8 then return ""
+  tell application "System Events"
+    set output to ""
+    try
+      if role of e is "AXStaticText" then set output to output & (value of e as text) & linefeed
+    end try
+    try
+      repeat with c in UI elements of e
+        set output to output & my collectTexts(c, depth + 1)
+      end repeat
+    end try
+    return output
+  end tell
+end collectTexts
+
+tell application "System Events"
+  tell process "Keyway"
+    if (count of windows) is 0 then return ""
+    return my collectTexts(window 1, 0)
+  end tell
+end tell
+APPLESCRIPT
+}
+
+send_overlay_key() {
+  local key_code="$1"
+  osascript <<APPLESCRIPT
+tell application "System Events"
+  tell process "Keyway" to set frontmost to true
+  key code $key_code
+end tell
+APPLESCRIPT
+}
+
+open "$APP_DIR"
+sleep 1.0
+clear_routing_memory
+hide_media_windows_for_chooser
+open -a Finder
+sleep 0.6
+post_play_pause_media_key
+
+overlay_text=""
+for _ in {1..30}; do
+  sleep 0.2
+  overlay_text="$(keyway_window_text || true)"
+  if grep -q '^Media Targets$' <<<"$overlay_text"; then
+    break
+  fi
+done
+
+if ! grep -q '^Media Targets$' <<<"$overlay_text"; then
+  echo "$overlay_text"
+  echo "smoke_overlay_browser_controls: media target overlay did not open" >&2
+  exit 1
+fi
+
+send_overlay_key 48
+for _ in {1..20}; do
+  sleep 0.2
+  overlay_text="$(keyway_window_text || true)"
+  if grep -q '^Expanded Controls$' <<<"$overlay_text"; then
+    break
+  fi
+done
+
+if ! grep -q '^Expanded Controls$' <<<"$overlay_text"; then
+  echo "$overlay_text"
+  echo "smoke_overlay_browser_controls: expanded controls did not open with Tab" >&2
+  exit 1
+fi
+
+for _ in {1..30}; do
+  overlay_text="$(keyway_window_text || true)"
+  if grep -q '^Browser$' <<<"$overlay_text"; then
+    break
+  fi
+  sleep 0.2
+done
+
+if ! grep -q '^Browser$' <<<"$overlay_text"; then
+  echo "$overlay_text"
+  echo "smoke_overlay_browser_controls: expanded controls did not expose the browser row" >&2
+  exit 1
+fi
+
+for ((step = 0; step < target_count; step += 1)); do
+  overlay_text="$(keyway_window_text || true)"
+  if grep -q '^Volume disabled without browser extension$' <<<"$overlay_text"; then
+    break
+  fi
+  send_overlay_key 125
+  sleep 0.5
+done
+
+for _ in {1..10}; do
+  overlay_text="$(keyway_window_text || true)"
+  if grep -q '^Browser$' <<<"$overlay_text" \
+    && grep -q '^Disabled$' <<<"$overlay_text" \
+    && grep -q '^Volume disabled without browser extension$' <<<"$overlay_text"; then
+    break
+  fi
+  sleep 0.2
+done
+
+printf '%s\n' "$overlay_text"
+
+if ! grep -q '^Browser$' <<<"$overlay_text"; then
+  echo "smoke_overlay_browser_controls: browser control row is missing" >&2
+  exit 1
+fi
+if ! grep -q '^Disabled$' <<<"$overlay_text"; then
+  echo "smoke_overlay_browser_controls: browser row does not show Disabled" >&2
+  exit 1
+fi
+if ! grep -q '^Volume disabled without browser extension$' <<<"$overlay_text"; then
+  echo "smoke_overlay_browser_controls: browser volume disabled explanation is missing" >&2
+  exit 1
+fi
+
+echo "smoke_overlay_browser_controls=ok"

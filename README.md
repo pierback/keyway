@@ -64,6 +64,12 @@ Run real-device smoke checks when the configured Sonos room is discoverable:
 SONOS_HANDOFF_REAL_DEVICE_SMOKE=1 SONOS_HANDOFF_ROOM=<room-name> /Users/f.pieringer/projects/keyway/scripts/regression_gate
 ```
 
+Run the overlay browser-volume disabled-state smoke while at least two Now Playing targets are active, including one browser or browser-wrapper target:
+
+```bash
+/Users/f.pieringer/projects/keyway/scripts/smoke_overlay_browser_controls
+```
+
 ## Runtime Setup
 
 1. Launch `/Users/f.pieringer/Applications/Keyway.app`.
