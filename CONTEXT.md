@@ -1,191 +1,250 @@
-# Context
+# Keyway
 
-## Domain Terms
+Keyway is a macOS menu bar utility that routes transport keys and media controls to the intended app, session, or output.
 
-### Spotify Connect Handoff
+## Language
 
-The product flow that activates a Sonos speaker as the Spotify playback device while keeping Spotify as the controller. It does not rely on Spotify Web API available-device transfer because Sonos speakers may be omitted from that device list.
+**Keyway**:
+A macOS menu bar utility for routing transport keys and media controls to the intended target.
+_Avoid_: Sonos Handoff, Baton, Cue
 
-### Sonos Runtime
+**Media Target Router**:
+A Keyway capability that routes a hardware media command to a selected active media session.
+_Avoid_: Media chooser, media switcher, media controller
 
-The core Module that assembles the Spotify Connect Handoff runtime graph behind the public `SpotifyConnectHandoffService` Adapter. It delegates discovery, volume, Spotify playback, and transfer workflows to narrower Modules so callers do not know zeroconf paths, SOAP actions, DNS-SD parsing, token file formats, or active-device polling rules.
+**Media Target Chooser**:
+A transient UI state where the user selects the media session that should receive a pending media command.
+_Avoid_: Modal app, player list
 
-### Sonos Directory
+**Media Overlay**:
+The centered transient UI that can appear in compact command-routing form or expand to expose richer controls.
+_Avoid_: Modal, popup, panel
 
-The core actor that owns Output target resolution, Spotify zeroconf metadata lookup, visible speaker discovery, and the short-lived target cache. The menu app's Output list and Sonos Runtime's handoff path both depend on this Module so discovery behavior stays consistent.
+**Command Palette Overlay**:
+The Raycast-like visual form of the Media Overlay, centered on the Overlay Display.
+_Avoid_: Alcove-like overlay, notch overlay
 
-### Sonos Volume Service
-
-The core Module that owns Sonos Output volume actions at the room-name Interface. It resolves the Output through Sonos Directory, delegates RenderingControl SOAP calls to Sonos Rendering Control, and asks Spotify Playback Service to mirror confirmed local volume writes back to Spotify when the Output is active.
-
-### Spotify Playback Service
-
-The core Module that owns active Spotify device lookup, active-device verification, and best-effort Spotify active-device volume mirroring. It is the playback-state seam used by startup sync, transfer verification, and volume mirroring.
-
-### Spotify Connect Transfer Service
-
-The core Module that owns Spotify Connect Handoff workflow execution after a room name has been chosen. It resolves the Output through Sonos Directory, exchanges Spotify Desktop credentials for a Sonos activation code, calls Sonos Spotify Zeroconf `addUser`, and runs Sonos Transfer Verification plus Spotify active-device verification.
-
-### Sonos Speaker Discovery
-
-The core Module that owns discovery of visible Sonos Outputs for the menu app list. It browses `_sonos._tcp`, resolves discovered instances into host-backed `SonosSpeaker` rows with bounded parallel host resolution, drops unresolved instances, deduplicates speakers, and returns the list sorted by room name.
-
-### Sonos Room Name
-
-The core Module that owns room-name normalization and equality across Spotify, Sonos, and the menu app. Output discovery, Output selection, Volume Monitor reconciliation, and Playback Sync stale-result checks use it so whitespace trimming and case-insensitive room matching cannot drift across the sync loop.
-
-### Sonos Output Selection Resolver
-
-The core Module that chooses the selected Output from the currently visible Sonos speakers and the current menu selection. It preserves a visible current Output and finally chooses the first visible Output, so discovery-driven Output removal and startup fallback use one tested rule.
-
-### Sonos Output Preference Resolver
-
-The core Module that owns Output fallback policy: the `Port` fallback and the ordered preferred room list used by shortcut volume fallback. Shortcut Volume Actions use this Module so missing-selection fallback cannot drift.
-
-### Sonos DNS-SD Resolver
-
-The core Module that owns local DNS-SD browse and host resolution for Sonos devices. Sonos Speaker Discovery uses it for Output list discovery, and Sonos Directory uses it for targeted room resolution so the menu list, transfer, and volume paths share the same network visibility rules.
-
-### Sonos DNS-SD Record Parser
-
-The core Module that owns DNS-SD browse and resolve-output parsing for Sonos devices. It extracts Sonos instances, decoded room names, speaker IDs, and resolved hosts so Output discovery and targeted Output resolution cannot drift in how they interpret `dns-sd` output.
-
-### Sonos Discovery Command Runner
-
-The core Adapter that owns bounded shell execution for local Sonos discovery commands. It runs `dns-sd`, captures stdout and stderr through a bounded output buffer, terminates early when a stop condition matches, and gives Sonos DNS-SD Resolver a small command/result Interface instead of exposing `Process` lifecycle details.
-
-### Sonos Rendering Control
-
-The core Module that owns Sonos RenderingControl SOAP actions for volume, mute, fixed-output status, and volume status. It is the core-side counterpart to the app's Volume Monitor.
-
-### Speaker Volume Control State
-
-The core Module that owns the selected Output volume-control state transitions used by the menu app: busy status, status clearing, slider percentage conversion, local write application, mute application, Sonos status application, and monitor snapshot application. Playback Sync publishes this state, but the transition rules live in core so slider writes, Sonos reads, and external monitor updates share one tested state model.
-
-### Sonos Spotify Zeroconf Client
-
-The core Adapter for Sonos `/spotifyzc` calls. It owns the HTTP method, form encoding, response validation, and metadata extraction used by the Sonos Directory and Sonos Runtime.
-
-### Spotify Connect Bridge
-
-The core Module that owns Spotify Desktop token refresh, Spotify Connect authorization-code exchange for Sonos activation, Spotify Web API active-device verification, and best-effort Spotify active-device volume mirroring. It reads and refreshes the project Web API token only through the Project Web API Token Store. Volume mirroring is queued and non-blocking from the Sonos volume write path so Spotify API latency cannot hold the menu busy after Sonos confirmed the local change.
-
-### Spotify Desktop Credential Provider
-
-The core Module that owns the `spotify-desktop-connect-tokens.json` file used for Spotify Connect Handoff. It selects the preferred Desktop login, validates and refreshes expired Desktop streaming tokens through the Spotify Connect Token Client, persists refreshed Desktop tokens, and maps missing or unreadable Desktop token files to app-facing Settings recovery errors.
-
-### Spotify Connect Token Client
-
-The core Adapter for Spotify Accounts token endpoints used by Spotify Connect Handoff. It owns refresh-token HTTP requests, Spotify Connect token exchange request construction, Accounts JSON validation, auth failure mapping, and token expiry normalization.
-
-### Spotify Project Access Token Provider
-
-The core Module that owns project Web API access-token readiness for active-device verification and Spotify volume mirroring. It loads tokens through the Project Web API Token Store, rejects missing or malformed project tokens with app-facing sign-in recovery errors, refreshes expired access tokens through the Spotify Connect Token Client, and persists replacements back through the store.
-
-### Spotify Active Device Waiter
-
-The core Module that owns bounded Spotify Web API active-device polling. Spotify Connect Bridge uses it for two policies: transfer verification waits until the selected Output is active and playing, while volume mirroring waits only until the selected Output is the active device.
-
-### Spotify Volume Mirror Queue
-
-The core Module that owns best-effort Spotify volume mirror scheduling after Sonos confirms a local volume write. It runs at most one Spotify Web API mirror request at a time and coalesces queued intermediate writes to the latest room/volume so held shortcuts and quick slider changes cannot build a stale Spotify API backlog. Spotify Connect Bridge waits briefly, with a hard attempt bound, for Spotify's active device to catch up to the selected Sonos room before it writes active-device volume.
-
-### Project Web API Token Store
-
-The core Module that owns the `project-webapi-token.json` file format, persistence, completeness checks, and deletion. Spotify login writes through it, readiness checks validate through it, and Spotify Connect Bridge refreshes through it so token schema rules stay in one place.
-
-### Spotify Auth Callback Server
-
-The core Module that owns the local browser callback listener for Spotify login. It opens the authorization URL only after the listener is ready, validates callback state, returns the browser response text, applies the callback timeout, and hands the authorization code back to Spotify login.
-
-### Spotify Auth Callback Request
-
-The core Module that parses and validates the local Spotify login callback request. It owns callback path matching, state validation, and authorization-code extraction so the callback listener does not duplicate HTTP parsing and auth failure mapping.
-
-### Spotify Authorization Request
-
-The core Module that builds the Spotify OAuth authorization URL used by app sign-in. It owns callback state, redirect URI wiring, scope selection, and PKCE verifier/challenge generation so the Spotify Auth Coordinator stays focused on login workflow and token persistence.
-
-### Sonos Transfer Verification
-
-The core Module that owns post-activation AVTransport checks for Spotify Connect Handoff. It verifies that the target enters Spotify Connect mode, sends Play, and treats a still-active Spotify Connect URI as ready even when Sonos transport state lags behind, so the menu app does not show false transfer failures after handoff has actually landed.
-
-### Playback Sync
-
-The menu app Module that owns the currently selected output, discovered Sonos speakers, transfer progress, volume reads/writes, slider debounce, and reconciliation of external Sonos/Spotify volume changes back into UI state. It publishes Speaker Volume Control State from core rather than owning volume transition rules itself. The menu view renders Playback Sync state and forwards user intent. Volume controls are enabled only after Playback Sync has a fresh status for the selected Output.
-
-### Playback Operation Gate
-
-The menu app Module that owns freshness tickets and cancellation for asynchronous Playback Sync work. Volume and transfer tasks must be started through this Module, and Playback Sync applies their results only while the ticket still matches the selected or loading Output. Starting newer Playback Sync work cancels stale work before it can wait in the Volume Command Queue and later run against the wrong Output.
-
-### Playback Slider Committer
-
-The menu app Module that owns slider editing state, debounced slider commit scheduling, and pending slider commit cancellation. Playback Sync asks it to schedule or cancel slider commits, while Playback Sync remains responsible for validating Output tickets and applying volume state.
-
-### Menu Bar View
-
-The menu app Module that renders the native macOS-style Sound drop-down. It is presentation-only: `MenuBarController` owns high-level menu orchestration, while `MenuBarVolumeControl` and `MenuBarOutputSection` render the volume and Output surfaces from Playback Sync state.
-
-### Playback Output Directory
-
-The menu app Module that turns local Sonos discovery into the current Output list plus selected Output. It delegates speaker discovery caching to Playback Discovery Cache and selected-Output policy to the Sonos Output Selection Resolver so the app owns published state, while core owns the fallback rule.
-
-### Playback Discovery Cache
-
-The menu app actor that owns cached Output discovery results and in-flight background discovery. Startup monitor seeding and menu refreshes both use this actor so opening the menu does not create a second slow discovery path when a background refresh is already running.
-
-### Playback Output Selection
-
-The menu app Module that owns the live selected Output name shared by Playback Sync, startup monitor seeding, and Shortcut Volume Actions. Saved config remains only the fallback used when no live Output has been selected yet.
-
-### Playback Transfer Suggestion
-
-The menu app Module path that prompts for newly visible Sonos Outputs while Spotify is playing on a non-Sonos active device. It uses core transfer-suggestion tracking to avoid prompting for speakers first seen while Spotify is stopped, delivers a notification with Move and Ignore actions, and accepts by running the same room handoff path as menu Output selection.
-
-### Playback Volume Actions
-
-The menu app Module that executes menu-triggered Output volume reads and writes through the Speaker Volume Command Queue. Playback Sync owns the published UI state and validation that results still belong to the selected Output, while Playback Slider Committer owns slider edit/debounce mechanics.
-
-### Playback Transfer Actions
-
-The menu app Module that executes menu-triggered Output transfer. It owns calls through the Sonos Runtime Adapter and transfer logging; Playback Sync owns only the loading, selection, and failure state, and validates that transfer results still belong to the current in-flight Output generation.
-
-### Volume Monitor
-
-The menu app Module that polls the selected Output for Sonos volume and mute state and publishes the latest reported state back to Playback Sync. It does not poll a hard-coded room before an Output exists; app startup keeps retrying discovery through Playback Output Directory until an Output can seed the monitor.
-
-### Speaker Volume Monitor Reconciler
-
-The core Module that decides how a polled Sonos volume status changes the Volume Monitor snapshot and whether it should produce Status HUD feedback. It also owns local-change snapshot overlay rules. Local write echo suppression only suppresses HUD feedback; it must not suppress snapshot updates.
-
-### Speaker Volume Command Queue
-
-The core Module that serializes app-triggered Sonos volume reads and writes for the selected Output. Slider commits, menu step changes, shortcut changes, mute toggles, monitor polls, and explicit status refreshes pass through this queue so Playback Sync does not publish stale results from overlapping Sonos requests. The queue uses an explicit FIFO operation slot with a bounded waiter list rather than a retained task chain, so long-running menu sessions do not keep old operations alive and queued callers that are cancelled before acquiring the slot are removed without running stale Sonos operations.
-
-### Output
-
-A Sonos room visible on the local network and selectable in the menu app. The Output list is discovery-driven: when a Sonos speaker is not discovered, it should not be shown as an Output.
-
-### Shortcut Runtime
-
-The menu app Module that owns global keyboard shortcuts for Sonos volume and mute. It coordinates Carbon hotkey registration, the Accessibility-gated media/function-key event tap, held volume repeats, shortcut readiness reporting, and volume intent forwarding to Shortcut Volume Actions. `VolumeHotkeyController` owns shortcut policy, not OS registration mechanics.
-
-### Shortcut Carbon HotKey Registrar
-
-The menu app Module that owns Carbon hotkey handler installation and `Shift+F10/F11/F12` registration. It does not register `Shift+fn+F10/F11/F12`; the Accessibility-gated Shortcut Event Tap is the sole fn-key handler so volume and mute shortcuts cannot double-fire. It hides Carbon references, hotkey IDs, modifier masks, and registration logging behind a small hotkey-id callback.
-
-### Shortcut Event Tap
-
-The menu app Module that owns the Accessibility-gated `CGEvent` tap lifecycle for media/function-key interception. It hides tap creation, run-loop source installation, tap enablement, and callback bridging behind a small event callback.
-
-### Shortcut Runtime Reporter
-
-The menu app Module that owns shortcut runtime status transitions. It translates Carbon registration, Accessibility permission, and media fallback outcomes into `ShortcutRuntimeStatus` updates so the Shortcut Runtime does not scatter status mutation across registration branches.
-
-### Shortcut Volume Actions
-
-The menu app Module that executes shortcut-triggered Sonos volume and mute changes. It owns live Output lookup, in-flight shortcut write coalescing, Status HUD feedback, and Volume Monitor echo suppression while sending all Sonos reads/writes through the Volume Command Queue. It receives the same live App Environment volume Adapter and Playback Output Selection as Playback Sync, so shortcut writes target the same selected Output as the menu and share one runtime graph with menu writes, monitor polls, and Spotify volume mirroring.
-
-### Status HUD
-
-The menu app Module that owns the temporary macOS-style floating feedback surface used for shortcut and external volume changes. `StatusHUD` exposes a small feedback Interface to playback and shortcut Modules, while `StatusHUDPanel` owns the AppKit panel construction and layout. It is presentation-only; playback state belongs to Playback Sync.
+**Command Header**:
+The non-editable header text that names the pending routing action in the Command Palette Overlay.
+_Avoid_: Search field, filter input
+
+**Routing Confirmation**:
+A brief non-interactive visual acknowledgement shown after automatic routing.
+_Avoid_: Notification, toast
+
+**Keyway Settings**:
+A normal macOS settings window for configuring Keyway capabilities and permissions.
+_Avoid_: Settings overlay, preferences popover
+
+**Menu Bar Item**:
+The always-visible status item that provides access to Keyway status, settings, and recovery actions.
+_Avoid_: Hidden agent
+
+**Config Import**:
+A one-time copy of existing Sonos Handoff local configuration into Keyway's application support directory.
+_Avoid_: Shared config, migration
+
+**Distinct App Transition**:
+The development period where Keyway and the old Sonos Handoff app are treated as separate applications.
+_Avoid_: In-place migration, shared runtime
+
+**Sonos Capability Regression Boundary**:
+The existing Sonos handoff and Sonos volume behavior that Keyway must preserve while it rebrands and expands the app.
+_Avoid_: Best-effort preservation
+
+**Media Target**:
+An app-level media session that macOS exposes through Now Playing and can plausibly receive media commands.
+_Avoid_: Audio source, browser tab, output stream
+
+**Focused Target**:
+The Media Target most likely intended by the user because its app or window currently has foreground attention.
+_Avoid_: Frontmost media app, active screen app
+
+**Foreground App Target**:
+A Media Target whose application is the current global foreground app.
+_Avoid_: Active app
+
+**Prominent Window Target**:
+A Media Target whose window is visibly prominent on the active display when no Foreground App Target exists.
+_Avoid_: Visible app, active screen app
+
+**Pinned Target**:
+A user-selected Media Target that should be preferred when there is no stronger immediate focus signal.
+_Avoid_: Default app, sticky target
+
+**Recent Target**:
+The most recently selected Media Target that remains available for routing future ambiguous commands.
+_Avoid_: Sticky target, default app
+
+**Target Selection Policy**:
+The ordered decision process that chooses a Media Target before falling back to the chooser.
+_Avoid_: Heuristic, routing guess
+
+**Primary Target**:
+The Media Target that the router would choose automatically at the moment the Media Overlay appears.
+_Avoid_: Active row, default selection
+
+**Pending Command**:
+A hardware media command being held until the router chooses or receives a Media Target.
+_Avoid_: Shortcut, action
+
+**Transport Key**:
+A hardware key for play/pause, next, or previous.
+_Avoid_: Media key, volume key
+
+**Expanded Controls**:
+The richer Media Overlay state for inspecting targets and adjusting controls beyond routing a Pending Command.
+_Avoid_: Separate mixer, volume modal
+
+**Audio Target Control**:
+Target-specific volume or mute control exposed inside Expanded Controls.
+_Avoid_: Browser volume routing, system volume control
+
+**MediaRemote Helper**:
+The isolated helper backend that loads Keyway's private MediaRemote bridge through `/usr/bin/perl`.
+_Avoid_: Native MediaRemote client, direct private API calls
+
+**Helper Message**:
+A newline-delimited JSON message exchanged between Keyway and the MediaRemote Helper.
+_Avoid_: XPC message, ad hoc stdout
+
+**Spotify Active Device Volume**:
+The volume of the current Spotify playback device as controlled through Spotify or the active Sonos Output.
+_Avoid_: Spotify app volume
+
+**Overlay Display**:
+The display where the Media Overlay appears.
+_Avoid_: Active screen
+
+## Relationships
+
+- **Keyway** contains the **Media Target Router** capability.
+- **Keyway** may contain a Sonos handoff capability without making Sonos the product identity.
+- Sonos Outputs are playback destinations for the Sonos handoff capability, not top-level **Media Targets** unless macOS exposes them as Now Playing clients.
+- A **Media Target Router** may show a **Media Target Chooser** when more than one media session can receive a command.
+- A **Media Target Chooser** is the compact command-routing form of the **Media Overlay**.
+- The **Media Overlay** uses a **Command Palette Overlay** visual direction rather than an Alcove-style notch surface.
+- The **Command Palette Overlay** does not include search; it uses a **Command Header** instead.
+- A **Media Target** is included because it is visible to Now Playing, not because it is merely producing audio.
+- The **Target Selection Policy** prefers a single **Media Target**, then a **Focused Target**, then a **Pinned Target**, then a **Recent Target**, then the **Media Target Chooser**.
+- The **Primary Target** is shown as the first target in the **Media Overlay**.
+- The **Media Overlay** orders targets as **Primary Target**, **Pinned Target** if different, other playing targets, then inactive targets.
+- **Recent Target** is not displayed as its own group; it may explain why a target is the **Primary Target**.
+- A **Pinned Target** is set explicitly by the user and is used only while it remains a valid **Media Target**.
+- A **Recent Target** is automatic: selecting a target updates it, and it expires when that target disappears.
+- Pinning solves background ambiguity; it does not override a clear **Focused Target**.
+- A **Recent Target** is weaker than a **Pinned Target** and exists to avoid repeated choices when no pin has been set.
+- The selected target is pinned or unpinned with `P` in the **Media Overlay**.
+- A **Pinned Target** is persisted by bundle identifier and ignored while unavailable rather than forgotten.
+- A **Focused Target** is first resolved as a **Foreground App Target**, then as a **Prominent Window Target**.
+- A **Media Target Chooser** resolves a **Pending Command**; selecting a target dispatches that command to the target.
+- Cancelling the **Media Target Chooser** discards the **Pending Command**.
+- **Expanded Controls** are reached from the **Media Overlay** by an explicit shortcut, not by hardware volume keys.
+- In compact command-routing form, the **Media Overlay** uses up/down to change target, enter to dispatch the **Pending Command**, escape to cancel, and tab to toggle **Expanded Controls**.
+- In compact command-routing form, plain number keys `1` through `9` immediately dispatch the **Pending Command** to the corresponding visible target.
+- In **Expanded Controls**, left/right adjust the selected target's volume when supported, and mute is a target-specific control.
+- In **Expanded Controls**, number keys change selection without immediately dispatching a **Pending Command**.
+- **Audio Target Control** is required for Sonos and Spotify where controllable without companion browser software.
+- Spotify **Audio Target Control** means **Spotify Active Device Volume**, not a Mac app-local volume.
+- Browser **Media Target** transport routing is required, but browser **Audio Target Control** may be disabled when it would require a browser extension.
+- Keyway uses the **MediaRemote Helper** for private Now Playing session access.
+- The **MediaRemote Helper** is a long-running process so target snapshots and command dispatch stay low-latency.
+- Keyway and the **MediaRemote Helper** communicate using **Helper Messages**.
+- A **Routing Confirmation** appears only when routing succeeds without showing the **Media Overlay**.
+- **Keyway Settings** behaves like a normal Dock-visible app while the settings window is visible, even though Keyway is menu-bar-first by default.
+- Keyway always shows a **Menu Bar Item**.
+- **Config Import** copies from the old Sonos Handoff support directory into Keyway's support directory without modifying the old files.
+- During the **Distinct App Transition**, Keyway uses its own bundle identity and does not manage the old Sonos Handoff app process.
+- The **Sonos Capability Regression Boundary** protects existing Sonos handoff and volume behavior; visual presentation may change, but core behavior must remain intact.
+- When enabled, the **Media Target Router** suppresses original **Transport Key** events and dispatches the resulting **Pending Command** itself.
+- Hardware volume and mute keys are not **Transport Keys** in v1.
+- The **Overlay Display** is the display containing the mouse pointer, falling back to the main display.
+
+## Example dialogue
+
+> **Dev:** "When the play/pause key is pressed, should the **Media Target Router** always show the **Media Target Chooser**?"
+> **Domain expert:** "No. Show the **Media Target Chooser** only when there is more than one plausible target."
+
+> **Dev:** "Is this still Sonos Handoff?"
+> **Domain expert:** "No. The broader product is **Keyway**; Sonos handoff can become one capability inside it."
+
+> **Dev:** "Should a Sonos room appear next to Spotify and QuickTime in the compact routing list?"
+> **Domain expert:** "No. Sonos Outputs appear under expanded Spotify/Sonos controls, not as top-level **Media Targets**."
+
+> **Dev:** "Should QuickTime Player be a **Media Target**?"
+> **Domain expert:** "Yes, when QuickTime exposes its playback through Now Playing; an app that only produces audio is not enough."
+
+> **Dev:** "Spotify was selected last, but QuickTime is the foreground app. Which receives play/pause?"
+> **Domain expert:** "QuickTime, because the **Focused Target** wins before the **Recent Target**."
+
+> **Dev:** "Can the user pin Spotify as the permanent target?"
+> **Domain expert:** "Yes, as a **Pinned Target**, but it still does not override a clear **Focused Target**."
+
+> **Dev:** "If nothing is pinned, should the router remember that Spotify was chosen last?"
+> **Domain expert:** "Yes, as a weak **Recent Target** fallback."
+
+> **Dev:** "What should row 1 mean in the overlay?"
+> **Domain expert:** "Row 1 is the **Primary Target**, meaning the target the router would choose automatically right now."
+
+> **Dev:** "What happens if pinned Spotify is closed?"
+> **Domain expert:** "The **Pinned Target** is ignored while unavailable and becomes usable again when Spotify returns."
+
+> **Dev:** "Do we intercept volume keys too?"
+> **Domain expert:** "No. v1 owns **Transport Keys** only; volume and mute keys remain system behavior."
+
+> **Dev:** "Where should the overlay appear with multiple monitors?"
+> **Domain expert:** "Use the **Overlay Display**, which is the display currently containing the pointer."
+
+> **Dev:** "Should the overlay look like Alcove around the menu bar?"
+> **Domain expert:** "No. Use a centered **Command Palette Overlay** closer to Raycast."
+
+> **Dev:** "Should the Raycast-like overlay have a search box?"
+> **Domain expert:** "No. Use the Raycast visual style, but replace search with a **Command Header**."
+
+> **Dev:** "If the router automatically sends play/pause to Spotify, should anything appear?"
+> **Domain expert:** "Yes, show a brief **Routing Confirmation** so the user knows which target received the command."
+
+> **Dev:** "Should settings be another overlay?"
+> **Domain expert:** "No. **Keyway Settings** is a normal macOS settings window and should be reachable through Cmd-Tab while visible."
+
+> **Dev:** "Can Keyway hide completely and rely only on shortcuts?"
+> **Domain expert:** "No. The **Menu Bar Item** is always visible so permissions and routing state are recoverable."
+
+> **Dev:** "Should Keyway keep using the old Sonos Handoff config directory?"
+> **Domain expert:** "No. Use **Config Import** so the old app remains usable while Keyway owns its own state."
+
+> **Dev:** "Can Keyway and old Sonos Handoff coexist while Keyway is unfinished?"
+> **Domain expert:** "Yes. During the **Distinct App Transition**, they are separate apps with separate identity and state."
+
+> **Dev:** "Can Keyway redesign the old Sonos menu?"
+> **Domain expert:** "Yes, but the **Sonos Capability Regression Boundary** means existing Sonos handoff and volume behavior must still work."
+
+> **Dev:** "Zed is foreground, Spotify is playing, and Helium video is visibly floating on the display. Which target wins?"
+> **Domain expert:** "Helium can win as the **Prominent Window Target** if there is no **Foreground App Target**."
+
+> **Dev:** "If the chooser appears after pressing play/pause, does selecting Spotify only set a future preference?"
+> **Domain expert:** "No, it sends the current **Pending Command** to Spotify immediately."
+
+> **Dev:** "Should volume controls appear every time a hardware media key needs routing?"
+> **Domain expert:** "No, the **Media Overlay** starts compact and can reveal **Expanded Controls** only when explicitly requested."
+
+> **Dev:** "Should browser targets expose volume sliders?"
+> **Domain expert:** "Only if Keyway can control them without a browser extension; browser transport routing remains required."
+
+> **Dev:** "Why does Keyway use `/usr/bin/perl` for media sessions?"
+> **Domain expert:** "Because direct third-party MediaRemote calls are filtered, so private API access is isolated in the **MediaRemote Helper**."
+
+> **Dev:** "Should the helper launch once per media key?"
+> **Domain expert:** "No. The **MediaRemote Helper** is long-running and streams state to Keyway."
+
+> **Dev:** "How should Keyway talk to the helper?"
+> **Domain expert:** "Use **Helper Messages** as newline-delimited JSON over standard input and output."
+
+> **Dev:** "Does the Spotify slider control the Mac app's private volume?"
+> **Domain expert:** "No. It controls **Spotify Active Device Volume**."
+
+## Flagged ambiguities
+
+- "Chooser" was used to describe the whole app, but the resolved product concept is **Media Target Router**; **Media Target Chooser** is only the temporary selection UI.
+- "Audio source" was considered as a target concept, but the resolved term is **Media Target**; targets are Now Playing sessions, not arbitrary audible processes.
+- "Frontmost on the active screen" was narrowed to **Focused Target**, because macOS has one frontmost app while displays, spaces, and windows add ambiguity.
