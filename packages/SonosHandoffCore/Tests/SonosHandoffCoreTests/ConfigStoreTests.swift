@@ -20,7 +20,7 @@ struct ConfigStoreTests {
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         let configURL = root.appendingPathComponent("nested/config.json")
         let store = ConfigStore(configURL: configURL)
-        let config = AppConfig(targets: [SavedTarget(alias: "office", spotifyDeviceName: "Office")])
+        let config = AppConfig(spotifyClientID: "client-id")
 
         try store.save(config)
 
@@ -42,4 +42,3 @@ struct ConfigStoreTests {
         }
     }
 }
-

@@ -2,12 +2,10 @@
 
 ## Overview
 
-The repository is split into three layers:
+The repository is split into two layers:
 
 ```text
-Menu Bar App  ----\
-                    >  SonosHandoffCore
-CLI            ----/
+Menu Bar App  ---->  SonosHandoffCore
 ```
 
 ## Responsibilities
@@ -15,7 +13,7 @@ CLI            ----/
 ### `SonosHandoffMenuBar`
 
 - owns the native macOS status item lifecycle
-- exposes transfer, doctor, settings, Output volume, and Output mute actions
+- exposes transfer, settings, Output volume, and Output mute actions
 - keeps the native-style Sound drop-down presentation in the Menu Bar View Module
 - keeps Output discovery, grouped Output selection, transfer progress, group editing, volume writes, slider debounce, and external volume reconciliation in the Playback Sync Module
 - keeps global shortcut registration and key-repeat handling in the Shortcut Runtime Module
@@ -25,19 +23,13 @@ CLI            ----/
 - enables the held `fn+F10/F11/F12` key-intercept path only after Accessibility permission allows the app to intercept and suppress native media/function-key events
 - delegates all non-UI work to `SonosHandoffCore`
 
-### `SonosHandoffCLI`
-
-- exposes scriptable subcommands
-- delegates auth, target management, transfer, and diagnostics to `SonosHandoffCore`
-- returns stable text output and exit codes
-
 ### `SonosHandoffCore`
 
 - shared models and errors
 - config loading and saving
 - keychain abstraction
 - Spotify token status and playback-state verification boundaries
-- Accessibility automation boundary
+- Accessibility permission boundary
 - public handoff Adapter through `SpotifyConnectHandoffService`
 - Sonos Runtime for Spotify Connect activation orchestration and handoff verification
 - Sonos Directory for actor-owned Output target resolution, speaker discovery, Spotify zeroconf metadata lookup, and target caching
@@ -55,17 +47,16 @@ CLI            ----/
 - Spotify Desktop Credential Provider for Desktop Connect token selection, refresh, and persistence
 - Spotify Connect Token Client for Spotify Accounts token refresh and Spotify Connect token exchange
 - Spotify Project Access Token Provider for Web API token readiness and refresh
-- diagnostics aggregation
 
 ## Important Modules
 
 ### Playback Sync
 
-`PlaybackSyncController` is the menu app seam for user-facing playback state. The SwiftUI menu reads its published state and sends user intent to it. `SonosRoomName` lives in `SonosHandoffCore` and owns room-name normalization and equality for the full sync loop, so Output discovery, selected Output persistence, monitor reconciliation, and stale-result checks use one definition of the same Sonos room. `PlaybackOutputDirectory` owns grouped Output selection and config loading, delegates background discovery and cached discovery results to the `PlaybackDiscoveryCache` actor, then delegates saved Output preference ordering to `SonosOutputPreferenceResolver` and selected-Output policy to `SonosOutputSelectionResolver`: preserve the visible current Output, fall back through preferred Outputs, then choose the first visible Output. `PlaybackOutputSelection` owns the live selected Output name shared by Playback Sync, startup monitor seeding, and Shortcut Volume Actions, so shortcuts target the same Output the menu currently shows before falling back through the same core Output preference rule as menu startup. Group editing is derived in core through `SonosGroupMembershipResolver`, `SonosGroupMembershipChangePlanner`, and `SonosCoordinatorReplacementResolver`; the menu app can expose available rows as direct plus actions in the Output list or render the full edit list through Option/Show More, then applies the resulting add/remove/remove-coordinator changes through `SonosGroupingService` and transfers playback to the replacement coordinator with coordinator-migration verification. Background playback sync uses `SonosGroupSuggestionTracker` to keep one current group suggestion in `PlaybackGroupSuggestionStore`; the menu renders that store as an in-menu fallback row while the app also delivers a macOS notification action for the same suggestion. `PlaybackOperationGate` owns freshness tickets and cancellation for asynchronous Playback Sync work, so transfer and volume results are applied only while they still belong to the selected or loading Output, and stale work is cancelled before it can wait in the Speaker Volume Command Queue and later run against the wrong Output. `SpeakerVolumeControlState` lives in `SonosHandoffCore` and owns the selected-Output volume UI state transitions: busy, clear, slider percent conversion, local write, mute, Sonos status, and monitor snapshot application. `PlaybackSliderCommitter` owns slider editing state, debounced slider commit scheduling, and pending slider commit cancellation; Playback Sync owns only the resulting volume command and selected-Output validation. `PlaybackTransferActionController` owns menu-triggered Output transfer calls and transfer logging. `PlaybackVolumeActionController` owns menu-triggered Output volume reads/writes through the Speaker Volume Command Queue. Debounced slider writes keep dragging audible without marking the menu volume state busy, while the final release write owns the busy state and refresh path. `SpeakerVolumeCommandQueue` lives in `SonosHandoffCore` and serializes app-triggered volume reads and writes so slider commits, step changes, shortcut changes, mute toggles, monitor polls, and status refreshes cannot publish stale Sonos results out of order; it uses an explicit FIFO operation slot with a bounded waiter list so an idle menu session does not retain old operation chains, and cancelled waiters are removed before they can run stale Sonos operations. `SonosVolumeMonitor` owns external volume polling, but polling now crosses the same Speaker Volume Command Queue seam as writes and waits until an Output is selected. App startup keeps seeding the monitor through `PlaybackOutputDirectory` until discovery finds an Output, so a transient launch-time discovery miss cannot permanently disable external volume reflection. `SpeakerVolumeMonitorReconciler` lives in `SonosHandoffCore` and owns monitor snapshot, local-change overlay, and feedback decisions so local-write echo suppression hides only duplicate HUD feedback, not the latest Sonos state published back into the menu.
+`PlaybackSyncController` is the menu app seam for user-facing playback state. The SwiftUI menu reads its published state and sends user intent to it. `SonosRoomName` lives in `SonosHandoffCore` and owns room-name normalization and equality for the full sync loop, so Output discovery, selected Output persistence, monitor reconciliation, and stale-result checks use one definition of the same Sonos room. `PlaybackOutputDirectory` owns grouped Output selection, delegates background discovery and cached discovery results to the `PlaybackDiscoveryCache` actor, then delegates selected-Output policy to `SonosOutputSelectionResolver`: preserve the visible current Output, then choose the first visible Output. `PlaybackOutputSelection` owns the live selected Output name shared by Playback Sync, startup monitor seeding, and Shortcut Volume Actions, so shortcuts target the same Output the menu currently shows before falling back to the core `Port` fallback. Group editing is derived in core through `SonosGroupMembershipResolver`, `SonosGroupMembershipChangePlanner`, and `SonosCoordinatorReplacementResolver`; the menu app can expose available rows as direct plus actions in the Output list or render the full edit list through Option/Show More, then applies the resulting add/remove/remove-coordinator changes through `SonosGroupingService` and transfers playback to the replacement coordinator with coordinator-migration verification. Background playback sync uses `SonosGroupSuggestionTracker` to keep one current group suggestion in `PlaybackGroupSuggestionStore`; the menu renders that store as an in-menu fallback row while the app also delivers a macOS notification action for the same suggestion. `PlaybackOperationGate` owns freshness tickets and cancellation for asynchronous Playback Sync work, so transfer and volume results are applied only while they still belong to the selected or loading Output, and stale work is cancelled before it can wait in the Speaker Volume Command Queue and later run against the wrong Output. `SpeakerVolumeControlState` lives in `SonosHandoffCore` and owns the selected-Output volume UI state transitions: busy, clear, slider percent conversion, local write, mute, Sonos status, and monitor snapshot application. `PlaybackSliderCommitter` owns slider editing state, debounced slider commit scheduling, and pending slider commit cancellation; Playback Sync owns only the resulting volume command and selected-Output validation. `PlaybackTransferActionController` owns menu-triggered Output transfer calls and transfer logging. `PlaybackVolumeActionController` owns menu-triggered Output volume reads/writes through the Speaker Volume Command Queue. Debounced slider writes keep dragging audible without marking the menu volume state busy, while the final release write owns the busy state and refresh path. `SpeakerVolumeCommandQueue` lives in `SonosHandoffCore` and serializes app-triggered volume reads and writes so slider commits, step changes, shortcut changes, mute toggles, monitor polls, and status refreshes cannot publish stale Sonos results out of order; it uses an explicit FIFO operation slot with a bounded waiter list so an idle menu session does not retain old operation chains, and cancelled waiters are removed before they can run stale Sonos operations. `SonosVolumeMonitor` owns external volume polling, but polling now crosses the same Speaker Volume Command Queue seam as writes and waits until an Output is selected. App startup keeps seeding the monitor through `PlaybackOutputDirectory` until discovery finds an Output, so a transient launch-time discovery miss cannot permanently disable external volume reflection. `SpeakerVolumeMonitorReconciler` lives in `SonosHandoffCore` and owns monitor snapshot, local-change overlay, and feedback decisions so local-write echo suppression hides only duplicate HUD feedback, not the latest Sonos state published back into the menu.
 
 ### Menu Bar View
 
-`MenuBarController` owns high-level menu orchestration: app lifecycle actions, settings/doctor commands, and the Show More section. `MenuBarVolumeControl` owns the compact Sound slider row, and `MenuBarOutputSection` owns the Output list rows and transfer loading affordance. Those SwiftUI Modules render Playback Sync state and forward intent, but do not read Sonos, Spotify, or token state directly.
+`MenuBarController` owns high-level menu orchestration: app lifecycle actions, settings commands, and the Show More section. `MenuBarVolumeControl` owns the compact Sound slider row, and `MenuBarOutputSection` owns the Output list rows and transfer loading affordance. Those SwiftUI Modules render Playback Sync state and forward intent, but do not read Sonos, Spotify, or token state directly.
 
 ### Sonos Runtime
 
@@ -103,7 +94,7 @@ CLI            ----/
 
 ### Shortcut Runtime
 
-`VolumeHotkeyController` is the app seam for global volume shortcuts. It owns shortcut policy: parsed shortcut outcomes, held-key repeat coalescing, Carbon duplicate suppression, mute handling, and volume intent dispatch. `AppDelegate` configures it with the same live App Environment used by the menu, so shortcuts do not construct a separate `SpotifyConnectHandoffService` or `ConfigStore`. `ShortcutCarbonHotKeyRegistrar` owns Carbon handler installation and plain function-key registration. `ShortcutEventTap` owns the Accessibility-gated `CGEvent` tap lifecycle and is the sole handler for `Shift+fn+F10/F11/F12`, so fn shortcuts cannot double-fire through Carbon and the event tap. `ShortcutEventParser` owns OS key-code decoding. `ShortcutRuntimeReporter` owns shortcut readiness transitions into `ShortcutRuntimeStatus`, including Accessibility permission, fn fallback state, and Carbon registration state. `ShortcutVolumeActionController` owns live Output lookup through Playback Output Selection, in-flight shortcut write coalescing, HUD feedback, and Volume Monitor echo suppression; when no live Output exists yet, it falls back through `SonosOutputPreferenceResolver` instead of carrying a separate saved-target rule. Shortcut volume writes cross the shared Speaker Volume Command Queue seam, shared live volume Adapter, and shared selected-Output seam, so shortcut writes, menu writes, monitor reads, and Spotify volume mirroring stay ordered inside one runtime graph. The result is locality: Carbon, event-tap, key decoding, status reporting, and Sonos volume writes can change independently.
+`VolumeHotkeyController` is the app seam for global volume shortcuts. It owns shortcut policy: parsed shortcut outcomes, held-key repeat coalescing, Carbon duplicate suppression, mute handling, and volume intent dispatch. `AppDelegate` configures it with the same live App Environment used by the menu, so shortcuts do not construct a separate `SpotifyConnectHandoffService` or `ConfigStore`. `ShortcutCarbonHotKeyRegistrar` owns Carbon handler installation and plain function-key registration. `ShortcutEventTap` owns the Accessibility-gated `CGEvent` tap lifecycle and is the sole handler for `Shift+fn+F10/F11/F12`, so fn shortcuts cannot double-fire through Carbon and the event tap. `ShortcutEventParser` owns OS key-code decoding. `ShortcutRuntimeReporter` owns shortcut readiness transitions into `ShortcutRuntimeStatus`, including Accessibility permission, fn fallback state, and Carbon registration state. `ShortcutVolumeActionController` owns live Output lookup through Playback Output Selection, in-flight shortcut write coalescing, HUD feedback, and Volume Monitor echo suppression; when no live Output exists yet, it falls back through `SonosOutputPreferenceResolver`. Shortcut volume writes cross the shared Speaker Volume Command Queue seam, shared live volume Adapter, and shared selected-Output seam, so shortcut writes, menu writes, monitor reads, and Spotify volume mirroring stay ordered inside one runtime graph. The result is locality: Carbon, event-tap, key decoding, status reporting, and Sonos volume writes can change independently.
 
 ### Status HUD
 
@@ -113,7 +104,7 @@ CLI            ----/
 
 The product goal is to keep Spotify as the controller after handoff. The Spotify Web API available-devices endpoint can omit Sonos speakers, so the core flow does not rely on Spotify Web API device discovery or Web API transfer:
 
-1. resolve a saved target alias
+1. select a visible Output row
 2. resolve the Sonos speaker through Sonos Directory
 3. activate its Spotify Connect endpoint through Sonos Spotify Zeroconf Client
 4. verify that Sonos entered Spotify Connect mode and request Play

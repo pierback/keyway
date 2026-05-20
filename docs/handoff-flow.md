@@ -2,7 +2,7 @@
 
 ## Transfer Runtime Flow
 
-1. Resolve a saved alias to an exact Spotify/Sonos room name.
+1. Select an exact Spotify/Sonos room name from the discovered Output list.
 2. Discover the Sonos speaker on the local network and read its Spotify zeroconf metadata.
 3. Refresh the stored Spotify Desktop Connect token.
 4. Exchange the desktop token for a Spotify Connect authorization code scoped to Sonos.
@@ -60,12 +60,7 @@ Spotify Web API available-device transfer remains excluded because `/me/player/d
 
 ## Expected Failure Codes
 
-- `noActivePlayback`
-- `targetNotConfigured`
 - `targetNotVisible`
-- `spotifyAppNotInstalled`
-- `spotifyAppNotRunning`
-- `accessibilityNotGranted`
 - `authRequired`
 - `transferVerificationFailed`
 - `unsupported`

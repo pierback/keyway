@@ -1,8 +1,6 @@
 import Foundation
 
 final class SonosRuntime: @unchecked Sendable {
-    private let configStore: ConfigStoring
-    private let targetResolver: TargetResolver
     private let directory: SonosDirectory
     private let volumeService: SonosVolumeService
     private let groupingService: SonosGroupingService
@@ -10,15 +8,11 @@ final class SonosRuntime: @unchecked Sendable {
     private let transferService: SpotifyConnectTransferService
 
     init(
-        configStore: ConfigStoring,
-        targetResolver: TargetResolver = TargetResolver(),
         loginID: String? = nil,
         appSupport: URL = URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent("Library/Application Support/sonos-handoff", isDirectory: true),
         urlSession: URLSession = .shared
     ) {
-        self.configStore = configStore
-        self.targetResolver = targetResolver
         let soapClient = SonosSOAPClient(urlSession: urlSession)
         let zeroconfClient = SonosSpotifyZeroconfClient(urlSession: urlSession)
         let directory = SonosDirectory(
@@ -55,22 +49,6 @@ final class SonosRuntime: @unchecked Sendable {
             transferVerifier: transferVerifier,
             coordinatorMigrationTransferVerifier: coordinatorMigrationTransferVerifier
         )
-    }
-
-    func transfer(to alias: String) async -> TransferResult {
-        do {
-            let config = try configStore.load()
-            guard let target = targetResolver.resolve(alias: alias, in: config) else {
-                return .failure(code: .targetNotConfigured, message: "No saved target found for alias '\(alias)'.")
-            }
-
-            try await transferService.transferToRoom(named: target.spotifyDeviceName, verification: .full)
-            return .success
-        } catch let error as ConnectHandoffError {
-            return .failure(code: error.code, message: error.message)
-        } catch {
-            return .failure(code: .unsupported, message: error.localizedDescription)
-        }
     }
 
     func transfer(toRoomName roomName: String, verification: RoomHandoffVerificationMode) async -> TransferResult {

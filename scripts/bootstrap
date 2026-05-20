@@ -39,20 +39,6 @@ swift build --package-path "$CORE_DIR"
 echo "Running shared package tests"
 swift test --package-path "$CORE_DIR"
 
-echo "Building CLI target"
-xcodebuild \
-  -workspace "$WORKSPACE" \
-  -scheme SonosHandoffCLI \
-  -destination "platform=macOS" \
-  build
-
-echo "Running CLI tests"
-xcodebuild \
-  -workspace "$WORKSPACE" \
-  -scheme SonosHandoffCLI \
-  -destination "platform=macOS" \
-  test
-
 echo "Building menu bar target"
 xcodebuild \
   -workspace "$WORKSPACE" \

@@ -10,7 +10,8 @@ Current transfer behavior:
 - the menu bar Output list renders Sonos groups as one selectable Output row and exposes direct plus buttons plus Option-held group editing for the selected Spotify-on-Sonos group
 - group editing can add standalone speakers, remove group members, and remove the coordinator by migrating playback to a replacement member
 - background sync prompts for newly visible standalone Sonos speakers when Spotify is already playing on a Sonos Output, with a notification action and in-menu fallback row
-- volume control talks directly to the Sonos speaker over local SOAP and defaults to 5 percent steps; CLI step overrides are clamped to 5...25
+- background sync prompts to move Spotify playback to newly visible Sonos Outputs when Spotify is playing on another active device
+- volume control talks directly to the Sonos speaker over local SOAP and defaults to 5 percent steps; developer-tool step overrides are clamped to 5...25
 - Spotify Web API is used only to verify that playback becomes active on the target after handoff
 - the menu bar app registers `Shift+F10/F11/F12` for Port mute/down/up, and enables held `Shift+fn+F10/F11/F12` control only when Accessibility permission allows key interception
 - handoff requires the desktop Connect token and Web API token files in `~/Library/Application Support/sonos-handoff`
@@ -23,8 +24,7 @@ Current transfer behavior:
 
 ## Project Layout
 
-- `apps/SonosHandoffMenuBar`: native macOS status item app
-- `apps/SonosHandoffCLI`: command-line interface
+- `SonosHandoffMenuBar`: native macOS status item app
 - `packages/SonosHandoffCore`: shared types and services
 - `docs`: architecture and runtime flow notes
 
@@ -45,7 +45,6 @@ This script:
 - ensures the `xcodeproj` Ruby gem is available
 - regenerates the Xcode workspace and projects
 - builds and tests `SonosHandoffCore`
-- builds and tests the CLI target
 - builds the menu bar app target
 
 ## Build
@@ -62,12 +61,6 @@ Run package tests:
 ```bash
 cd /Users/f.pieringer/projects/sonos-handoff/packages/SonosHandoffCore
 swift test
-```
-
-Build the CLI from Xcode:
-
-```bash
-xcodebuild -workspace /Users/f.pieringer/projects/sonos-handoff/SonosHandoff.xcworkspace -scheme SonosHandoffCLI build
 ```
 
 Build the menu bar app from Xcode:
@@ -96,13 +89,9 @@ This runs the shared package tests, whitespace checks, and the manual menu bar i
 SONOS_HANDOFF_REAL_DEVICE_SMOKE=1 SONOS_HANDOFF_ROOM=Port /Users/f.pieringer/projects/sonos-handoff/scripts/regression_gate
 ```
 
-## CLI Commands
+## Developer Tools
 
 ```text
-sonos-handoff target add <alias>
-sonos-handoff target list
-sonos-handoff transfer <alias>
-sonos-handoff doctor
 sonos-handoff-port handoff Port
 sonos-handoff-port volume-status Port
 sonos-handoff-port volume-down Port
@@ -111,8 +100,7 @@ sonos-handoff-port volume-up Port --step 10
 sonos-handoff-safe-grouping-check
 sonos-handoff-safe-grouping-check --prepare-silent
 sonos-handoff-safe-grouping-check --mutate --i-understand-this-mutates-sonos-groups
-/Users/f.pieringer/projects/sonos-handoff/scripts/smoke_cli_transfer port
-/Users/f.pieringer/projects/sonos-handoff/scripts/smoke_cli_handoff Port
+/Users/f.pieringer/projects/sonos-handoff/scripts/smoke_port_handoff Port
 /Users/f.pieringer/projects/sonos-handoff/scripts/smoke_menubar_handoff Port
 /Users/f.pieringer/projects/sonos-handoff/scripts/smoke_menubar_hotkey Port
 ```
@@ -122,9 +110,8 @@ sonos-handoff-safe-grouping-check --mutate --i-understand-this-mutates-sonos-gro
 1. Ensure these files exist in `~/Library/Application Support/sonos-handoff`:
    - `spotify-desktop-connect-tokens.json`
    - `project-webapi-token.json`
-2. Save a target alias and exact Spotify/Sonos room name in the app settings.
-3. Run `sonos-handoff doctor` and confirm both token checks and saved targets are valid.
-4. Keep Spotify actively playing before handoff.
+2. Use `Settings...` -> `Spotify` to confirm Desktop Connect and Web API token readiness.
+3. Keep Spotify actively playing before handoff.
 
 Physical `Shift+fn+F10/F11/F12` uses the Mac media/function keys, so the installed app must be enabled in Accessibility before held repeat is reliable; otherwise the app leaves the `Shift+fn` path disabled and shows a permission HUD. Plain `Shift+F10/F11/F12` remains the Carbon fallback for mute/down/up.
 
@@ -149,6 +136,5 @@ For live validation, first prepare silent mode or use mutation mode, which alway
 
 ## Notes
 
-- `sonos-handoff doctor` treats Spotify as authenticated only when both token files required by the current handoff path are present.
 - Grouping validation requires at least one visible Spotify-on-Sonos Output and enough visible speakers for the selected grouping scenario.
 - The app does not use Spotify Web API available-device transfer because `/me/player/devices` can omit Sonos speakers.

@@ -15,7 +15,7 @@ run "$ROOT_DIR/scripts/install_menubar_app"
 
 if [[ "${SONOS_HANDOFF_REAL_DEVICE_SMOKE:-0}" == "1" ]]; then
   ROOM="${SONOS_HANDOFF_ROOM:-Port}"
-  run "$ROOT_DIR/scripts/smoke_cli_handoff" "$ROOM"
+  run "$ROOT_DIR/scripts/smoke_port_handoff" "$ROOM"
   run "$ROOT_DIR/scripts/smoke_menubar_handoff" "$ROOM"
   run "$ROOT_DIR/scripts/smoke_menubar_slider" "$ROOM"
 fi

@@ -17,7 +17,7 @@ struct SafeGroupingCheck {
 
         do {
             let validator = LiveGroupingValidator(
-                service: SpotifyConnectHandoffService(configStore: ConfigStore()),
+                service: SpotifyConnectHandoffService(),
                 mutate: arguments.contains(mutateFlag),
                 prepareSilent: arguments.contains(prepareSilentFlag),
                 restoreOriginalCoordinator: arguments.contains(restoreFlag),

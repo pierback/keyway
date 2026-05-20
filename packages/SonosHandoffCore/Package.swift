@@ -17,10 +17,6 @@ let package = Package(
             targets: ["SonosHandoffPortCLI"]
         ),
         .executable(
-            name: "sonos-handoff-hotkeys",
-            targets: ["SonosHandoffHotkeys"]
-        ),
-        .executable(
             name: "sonos-handoff-safe-grouping-check",
             targets: ["SonosHandoffSafeGroupingCheck"]
         ),
@@ -31,10 +27,6 @@ let package = Package(
         ),
         .executableTarget(
             name: "SonosHandoffPortCLI",
-            dependencies: ["SonosHandoffCore"]
-        ),
-        .executableTarget(
-            name: "SonosHandoffHotkeys",
             dependencies: ["SonosHandoffCore"]
         ),
         .executableTarget(

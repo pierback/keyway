@@ -36,11 +36,11 @@ The core Module that owns room-name normalization and equality across Spotify, S
 
 ### Sonos Output Selection Resolver
 
-The core Module that chooses the selected Output from the currently visible Sonos speakers, the current menu selection, and saved target preferences. It preserves a visible current Output, falls back through preferred Outputs, and finally chooses the first visible Output, so discovery-driven Output removal and startup fallback use one tested rule.
+The core Module that chooses the selected Output from the currently visible Sonos speakers and the current menu selection. It preserves a visible current Output and finally chooses the first visible Output, so discovery-driven Output removal and startup fallback use one tested rule.
 
 ### Sonos Output Preference Resolver
 
-The core Module that owns saved Output preference policy: preferred target alias matching, the `Port` fallback, and the ordered preferred room list used by menu Output selection and shortcut volume fallback. Playback Output Directory and Shortcut Volume Actions both use this Module so saved target preference, missing-config fallback, and selected-Output fallback cannot drift.
+The core Module that owns Output fallback policy: the `Port` fallback and the ordered preferred room list used by shortcut volume fallback. Shortcut Volume Actions use this Module so missing-selection fallback cannot drift.
 
 ### Sonos DNS-SD Resolver
 
@@ -128,7 +128,7 @@ The menu app Module that renders the native macOS-style Sound drop-down. It is p
 
 ### Playback Output Directory
 
-The menu app Module that turns local Sonos discovery and saved target preference into the current Output list plus selected Output. It delegates speaker discovery caching to Playback Discovery Cache and selected-Output policy to the Sonos Output Selection Resolver so the app owns config loading and published state, while core owns the fallback rule.
+The menu app Module that turns local Sonos discovery into the current Output list plus selected Output. It delegates speaker discovery caching to Playback Discovery Cache and selected-Output policy to the Sonos Output Selection Resolver so the app owns published state, while core owns the fallback rule.
 
 ### Playback Discovery Cache
 
@@ -137,6 +137,10 @@ The menu app actor that owns cached Output discovery results and in-flight backg
 ### Playback Output Selection
 
 The menu app Module that owns the live selected Output name shared by Playback Sync, startup monitor seeding, and Shortcut Volume Actions. Saved config remains only the fallback used when no live Output has been selected yet.
+
+### Playback Transfer Suggestion
+
+The menu app Module path that prompts for newly visible Sonos Outputs while Spotify is playing on a non-Sonos active device. It uses core transfer-suggestion tracking to avoid prompting for speakers first seen while Spotify is stopped, delivers a notification with Move and Ignore actions, and accepts by running the same room handoff path as menu Output selection.
 
 ### Playback Volume Actions
 

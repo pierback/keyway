@@ -1,27 +1,19 @@
 import Foundation
 
-public final class SpotifyConnectHandoffService: HandoffPerforming, RoomHandoffPerforming, SonosSpeakerDiscovering, SonosGroupingStateReading, SonosGroupingEditing, SpeakerVolumeAdjusting, SpotifyActivePlaybackObserving, @unchecked Sendable {
+public final class SpotifyConnectHandoffService: RoomHandoffPerforming, SonosSpeakerDiscovering, SonosGroupingStateReading, SonosGroupingEditing, SpeakerVolumeAdjusting, SpotifyActivePlaybackObserving, @unchecked Sendable {
     private let runtime: SonosRuntime
 
     public init(
-        configStore: ConfigStoring,
-        targetResolver: TargetResolver = TargetResolver(),
         loginID: String? = nil,
         appSupport: URL = URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent("Library/Application Support/sonos-handoff", isDirectory: true),
         urlSession: URLSession = .shared
     ) {
         self.runtime = SonosRuntime(
-            configStore: configStore,
-            targetResolver: targetResolver,
             loginID: loginID,
             appSupport: appSupport,
             urlSession: urlSession
         )
-    }
-
-    public func transfer(to alias: String) async -> TransferResult {
-        await runtime.transfer(to: alias)
     }
 
     public func transfer(toRoomName roomName: String, verification: RoomHandoffVerificationMode) async -> TransferResult {
