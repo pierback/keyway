@@ -3,6 +3,55 @@ import Foundation
 import os
 import SonosHandoffCore
 
+enum MediaRouteStatusKind: String, Equatable {
+    case auto
+    case focused
+    case pinned
+    case recent
+    case chooser
+    case unavailable
+
+    var title: String {
+        switch self {
+        case .auto:
+            return "Auto"
+        case .focused:
+            return "Focused"
+        case .pinned:
+            return "Pinned"
+        case .recent:
+            return "Recent"
+        case .chooser:
+            return "Chooser"
+        case .unavailable:
+            return "Unavailable"
+        }
+    }
+}
+
+struct MediaRouteStatus: Equatable {
+    var kind: MediaRouteStatusKind
+    var target: MediaRemoteTarget?
+    var targetCount: Int
+
+    var subtitle: String {
+        switch kind {
+        case .auto:
+            return targetCount == 1 ? "Single media target" : "Automatic routing"
+        case .focused:
+            return "Foreground or visible window"
+        case .pinned:
+            return "Pinned target"
+        case .recent:
+            return "Last chosen target"
+        case .chooser:
+            return "Choose target"
+        case .unavailable:
+            return "Start Spotify, browser media, or QuickTime"
+        }
+    }
+}
+
 @MainActor
 final class MediaTransportActionController {
     private enum RoutingReason: String {
@@ -43,6 +92,42 @@ final class MediaTransportActionController {
         route(command: command, targets: targets)
     }
 
+    func showChooser(command: MediaRemoteTransportCommand = .playPause) {
+        mediaRemoteController.refreshSnapshot()
+        let targets = sortedTargets(mediaRemoteController.targets)
+        guard !targets.isEmpty else {
+            StatusHUD.shared.show(title: "Media Targets", message: "Looking for Now Playing sessions...")
+            Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 180_000_000)
+                self?.showChooserUsingCurrentSnapshot(command: command)
+            }
+            return
+        }
+
+        showChooser(command: command, targets: targets)
+    }
+
+    func currentRouteStatus() -> MediaRouteStatus {
+        let targets = sortedTargets(mediaRemoteController.targets)
+        guard !targets.isEmpty else {
+            return MediaRouteStatus(kind: .unavailable, target: nil, targetCount: 0)
+        }
+
+        if let decision = automaticTarget(from: targets) {
+            return MediaRouteStatus(
+                kind: statusKind(for: decision.reason),
+                target: decision.target,
+                targetCount: targets.count
+            )
+        }
+
+        return MediaRouteStatus(
+            kind: .chooser,
+            target: mediaRemoteController.activeTarget ?? targets.first,
+            targetCount: targets.count
+        )
+    }
+
     private func routeUsingCurrentSnapshot(command: MediaRemoteTransportCommand) {
         let targets = sortedTargets(mediaRemoteController.targets)
         guard !targets.isEmpty else {
@@ -57,12 +142,30 @@ final class MediaTransportActionController {
         route(command: command, targets: targets)
     }
 
+    private func showChooserUsingCurrentSnapshot(command: MediaRemoteTransportCommand) {
+        let targets = sortedTargets(mediaRemoteController.targets)
+        guard !targets.isEmpty else {
+            StatusHUD.shared.finish(
+                title: "No Media Target",
+                message: "Start Spotify, a browser video, or QuickTime playback.",
+                dismissAfter: 2.4
+            )
+            return
+        }
+
+        showChooser(command: command, targets: targets)
+    }
+
     private func route(command: MediaRemoteTransportCommand, targets: [MediaRemoteTarget]) {
         if let decision = automaticTarget(from: targets) {
             send(command: command, to: decision.target, reason: decision.reason)
             return
         }
 
+        showChooser(command: command, targets: targets)
+    }
+
+    private func showChooser(command: MediaRemoteTransportCommand, targets: [MediaRemoteTarget]) {
         overlayController.show(
             command: command,
             targets: targets,
@@ -76,6 +179,21 @@ final class MediaTransportActionController {
                 self?.logger.info("MediaTransport pin target=\(target.appName, privacy: .public) pinned=\(pinned, privacy: .public)")
             }
         )
+    }
+
+    private func statusKind(for reason: RoutingReason) -> MediaRouteStatusKind {
+        switch reason {
+        case .single:
+            return .auto
+        case .focused:
+            return .focused
+        case .pinned:
+            return .pinned
+        case .recent:
+            return .recent
+        case .chooser:
+            return .chooser
+        }
     }
 
     private func automaticTarget(from targets: [MediaRemoteTarget]) -> (target: MediaRemoteTarget, reason: RoutingReason)? {

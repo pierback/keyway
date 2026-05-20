@@ -4,32 +4,54 @@ import SwiftUI
 @MainActor
 struct MenuBarOutputSection: View {
     private static let accentColor = Color(nsColor: .controlAccentColor)
-    private static let rowHeight: CGFloat = 32
-    private static let suggestionRowHeight: CGFloat = 34
-    private static let iconSize: CGFloat = 22
-    private static let trailingControlSize: CGFloat = 24
+    private static let rowHeight: CGFloat = 28
+    private static let suggestionRowHeight: CGFloat = 30
+    private static let iconSize: CGFloat = 20
+    private static let trailingControlSize: CGFloat = 22
 
     @ObservedObject var playback: PlaybackSyncController
     let groupEditing: Bool
     let openSpotifySettings: @MainActor () -> Void
 
+    @State private var forceGroupEditing = false
+
+    private var groupEditingActive: Bool {
+        groupEditing || forceGroupEditing
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text(groupEditing ? "Group" : "Output")
+                Text(groupEditingActive ? "Group" : "Output")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.secondary)
 
                 Spacer()
+
+                Button {
+                    withAnimation(MenuBarMotion.modeSwitch) {
+                        forceGroupEditing.toggle()
+                    }
+                } label: {
+                    Image(systemName: groupEditingActive ? "checklist.checked" : "checklist")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(groupEditingActive ? Self.accentColor : .secondary.opacity(0.85))
+                        .frame(width: 22, height: 22)
+                        .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 4))
+                }
+                .buttonStyle(.plain)
+                .help(groupEditingActive ? "Exit Grouping Mode" : "Enter Grouping Mode")
+                .accessibilityIdentifier("toggle-group-editing")
+                .accessibilityLabel(groupEditingActive ? "Hide Grouping" : "Show Grouping")
             }
-            .padding(.horizontal, 10)
-            .padding(.top, 8)
-            .padding(.bottom, 6)
+            .padding(.horizontal, 8)
+            .padding(.top, 6)
+            .padding(.bottom, 4)
             .contentTransition(.opacity)
-            .animation(MenuBarMotion.modeSwitch, value: groupEditing)
+            .animation(MenuBarMotion.modeSwitch, value: groupEditingActive)
 
             rows
-                .animation(MenuBarMotion.modeSwitch, value: groupEditing)
+                .animation(MenuBarMotion.modeSwitch, value: groupEditingActive)
                 .animation(MenuBarMotion.rowUpdate, value: playback.outputRows)
                 .animation(MenuBarMotion.rowUpdate, value: playback.groupEditRows)
                 .animation(MenuBarMotion.rowUpdate, value: playback.groupSuggestions)
@@ -78,7 +100,7 @@ struct MenuBarOutputSection: View {
 
     @ViewBuilder
     private var rows: some View {
-        if groupEditing {
+        if groupEditingActive {
             groupRows
                 .transition(MenuBarMotion.modeTransition)
         } else {
@@ -190,7 +212,7 @@ struct MenuBarOutputSection: View {
             Button {
                 playback.transfer(to: row)
             } label: {
-                HStack(spacing: 13) {
+                HStack(spacing: 11) {
                     ZStack {
                         Circle()
                             .fill(outputIconBackground(selected: selected))
@@ -209,7 +231,7 @@ struct MenuBarOutputSection: View {
                     rowStatus(loading: loading, selected: selected)
                 }
                 .frame(maxWidth: .infinity, minHeight: Self.rowHeight, alignment: .leading)
-                .padding(.leading, 12)
+                .padding(.leading, 10)
             }
             .buttonStyle(.plain)
             .disabled(playback.loadingRoomName != nil || playback.groupLoadingRoomName != nil || playback.volumeState.isBusy)

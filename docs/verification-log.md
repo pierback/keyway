@@ -84,15 +84,63 @@ Last updated: 2026-05-20
   - Keyway logs a native notification request with stable `identifier=keyway.status`.
   - No chooser or legacy custom Keyway popup window appears for automatic routing.
   - No `MediaRemoteHelper parse_error` is emitted.
+- `scripts/smoke_transport_routing_confirmation` and `scripts/smoke_overlay_browser_controls` now support `KEYWAY_PHYSICAL_MEDIA_KEYS=1` for final acceptance. In physical mode the scripts prompt for real hardware media-key presses while keeping the same log/UI assertions; the transport script also verifies plain hardware Volume Up, Volume Down, and Mute do not produce Keyway media-key volume/mute interception logs.
 - Media-key constants for Play/Pause, Next, and Previous were checked against local SDK headers:
   - `NX_KEYTYPE_PLAY = 16`
   - `NX_KEYTYPE_NEXT = 17`
   - `NX_KEYTYPE_PREVIOUS = 18`
 - Focused Target routing now includes a Prominent Window Target fallback: when the global foreground app is not a Media Target, Keyway checks prominently visible, unobscured layer-0 windows on the display containing the mouse pointer before falling back to Pinned Target, Recent Target, or chooser.
+- Antigravity/Gemini UI review was requested again for the popover spacing pass, but `agy --print` was blocked by Antigravity quota:
+  - `RESOURCE_EXHAUSTED (code 429): Individual quota reached.`
+  - Reset reported in the CLI log as roughly 162 hours.
+- Menu bar popover spacing pass completed against the installed app:
+  - Left-click opens the anchored Control Center-style popover.
+  - Popover screenshot saved at `/tmp/keyway-popover-final-spacing.png`.
+  - The popover now uses compact route and Sonos cards, a small `Change` affordance, restored Sonos output/group controls, a compact alternate-target strip, and no dead footer space.
+  - The popover background is transparent outside the rounded material; the previous black backing is gone.
+- Option-click and Command-click status item paths were verified with synthetic menu bar clicks:
+  - Option-click opened a centered chooser window.
+  - Command-click opened a centered chooser window.
+- Centered overlay focus-loss behavior was verified:
+  - Before activating Finder, System Events reported `keyway_windows_before_focus_loss=1`.
+  - After activating Finder, System Events reported `keyway_windows_after_focus_loss=0`.
+  - The final implementation relies on `NSPanel.hidesOnDeactivate` rather than closing on every `resignKey`, because the latter made Accessibility-driven keyboard smoke checks flaky while Keyway was still active.
+- `scripts/install_menubar_app`: passed after the final popover and overlay focus changes.
+- `swift test --package-path packages/SonosHandoffCore`: passed with 236 tests in 47 suites.
+- `scripts/smoke_transport_routing_confirmation`: passed after the final UI pass.
+- `scripts/smoke_overlay_browser_controls`: passed after the final UI pass, including Expanded Controls and browser disabled-state text.
+- Codex review found two popover regressions after the first pass:
+  - The new popover did not suppress volume/mute notifications while open.
+  - The new popover triggered `playback.appear()` twice per open.
+- Both review findings were fixed:
+  - The popover now suppresses volume notifications on appear and restores them on disappear.
+  - `playback.appear()` now runs only from the SwiftUI popover lifecycle.
+- After those fixes:
+  - `scripts/install_menubar_app`: passed.
+  - `swift test --package-path packages/SonosHandoffCore`: passed with 236 tests in 47 suites.
+  - `scripts/smoke_overlay_browser_controls`: passed.
+  - `scripts/smoke_transport_routing_confirmation`: passed when rerun alone. A concurrent run with the overlay smoke was discarded because the overlay smoke intentionally kept a chooser window open and interfered with transport's no-chooser assertion.
+- `scripts/acceptance_preflight`: still blocked by current local Spotify state:
+  - `sonos-handoff-port: Spotify has no active playback`
+  - App identity, config import, MediaRemote helper, Accessibility/media-key readiness, Sonos `Port` discovery, and legacy file integrity passed before that block.
+- Follow-up codex-review found one chooser startup race:
+  - Option-click/Command-click could refresh MediaRemote asynchronously and immediately report `No Media Target` before the helper returned its first snapshot.
+- The chooser startup race was fixed by retrying the direct chooser path against the refreshed snapshot before posting the no-target notification.
+- Final verification after that fix:
+  - `xcodebuild -workspace Keyway.xcworkspace -scheme Keyway -configuration Debug -destination 'platform=macOS' build CODE_SIGNING_ALLOWED=NO`: passed.
+  - `swift test --package-path packages/SonosHandoffCore`: passed with 236 tests in 47 suites.
+  - `scripts/install_menubar_app`: passed and installed `/Users/f.pieringer/Applications/Keyway.app`.
+  - `scripts/smoke_overlay_browser_controls`: passed on the installed app, including Expanded Controls and browser disabled-state text.
+  - `scripts/smoke_transport_routing_confirmation`: passed on the installed app with QuickTime Player as the safe target.
+  - `/Users/f.pieringer/.codex/skills/codex-review/scripts/codex-review --full-access`: clean, no accepted/actionable findings.
+  - Codex-review also ran a Release build successfully; the only reported warning was the pre-existing missing `AccentColor` asset catalog warning.
 
 ## Not Yet Passed Locally
 
 - Live physical-key verification is still needed for full hardware Play/Pause, Next, Previous behavior and overlay keyboard operation. Synthetic HID media-key routing now passes for pinned automatic routing and native notification confirmation.
+- The physical-key verification scripts are ready but have not yet been run in this log:
+  - `KEYWAY_PHYSICAL_MEDIA_KEYS=1 scripts/smoke_transport_routing_confirmation`
+  - `KEYWAY_PHYSICAL_MEDIA_KEYS=1 scripts/smoke_overlay_browser_controls`
 - Spotify Active Device Volume still needs a run against an unrestricted Spotify active device. The current active device is Sonos `Port`, and Spotify reports it as `restricted=true`, so volume write-back is correctly skipped.
 
 ## Next Required Acceptance Checks

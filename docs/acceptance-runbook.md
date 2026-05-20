@@ -75,6 +75,9 @@ Keyway is complete only when this runbook passes on a fresh local install withou
 
 - [ ] Confirm Keyway shows a polished Raycast-like centered overlay.
 - [ ] Confirm overlay appears on the display containing the mouse pointer.
+- [ ] Confirm Option-clicking the Keyway menu bar item opens the centered overlay directly.
+- [ ] Confirm Command-clicking the Keyway menu bar item opens the centered overlay directly.
+- [ ] Confirm the centered overlay closes when focus moves to another app.
 - [ ] Confirm overlay has no search field.
 - [ ] Confirm Up/Down changes selected target.
 - [ ] Confirm Enter routes the Pending Command.
@@ -82,6 +85,17 @@ Keyway is complete only when this runbook passes on a fresh local install withou
 - [ ] Confirm Tab toggles Expanded Controls.
 - [ ] Confirm number keys quick-select targets in compact mode.
 - [ ] Confirm `P` pins and unpins the selected target.
+
+## 7A. Menu Bar Daily Controls
+
+- [ ] Confirm left-clicking the Keyway menu bar item opens an anchored Control Center-style popover.
+- [ ] Confirm the popover background is translucent/transparent outside the rounded material, not a black rectangle.
+- [ ] Confirm the route tile shows the current routing state, target identity, compact metadata, Play/Pause, Previous, Next, and a compact Change control.
+- [ ] Confirm Change opens the centered media target overlay and dismisses the popover.
+- [ ] Confirm the Sonos tile includes the selected/fallback room, Sonos volume, mute, and output/group controls.
+- [ ] Confirm the compact media target strip shows alternate Now Playing targets and pin/unpin state when available.
+- [ ] Confirm right-clicking the Keyway menu bar item opens the native utility menu.
+- [ ] Confirm no search field appears in the menu bar popover.
 
 ## 8. Audio Controls
 
@@ -99,6 +113,14 @@ KEYWAY_APP="$HOME/Applications/Keyway.app" /Users/f.pieringer/projects/keyway/sc
 
 This smoke requires at least two active Now Playing targets, including one browser or browser-wrapper target, so the routing policy opens the chooser instead of auto-routing a single target. It verifies the actual overlay exposes `Expanded Controls`, `Browser`, `Disabled`, and `Volume disabled without browser extension` through Accessibility.
 
+Physical media-key overlay acceptance mode:
+
+```bash
+KEYWAY_PHYSICAL_MEDIA_KEYS=1 KEYWAY_APP="$HOME/Applications/Keyway.app" /Users/f.pieringer/projects/keyway/scripts/smoke_overlay_browser_controls
+```
+
+This mode uses a real hardware Play/Pause press to open the ambiguous-target chooser, then verifies the overlay keyboard path and browser disabled-state through Accessibility.
+
 ## 9. Routing Confirmation
 
 - [ ] Trigger automatic routing without the overlay.
@@ -114,6 +136,14 @@ KEYWAY_APP="$HOME/Applications/Keyway.app" /Users/f.pieringer/projects/keyway/sc
 ```
 
 This smoke pins a safe Now Playing target, posts synthetic Play/Pause, Next, and Previous media-key events through the HID event tap, verifies Keyway suppresses and routes each command by Pinned Target, checks native-notification request logs, rejects legacy custom Keyway popup windows, and fails on MediaRemote helper parse errors. When QuickTime Player is the target and no QuickTime Now Playing session exists, it creates and cleans up a temporary silent local media file.
+
+Physical media-key acceptance mode:
+
+```bash
+KEYWAY_PHYSICAL_MEDIA_KEYS=1 KEYWAY_APP="$HOME/Applications/Keyway.app" /Users/f.pieringer/projects/keyway/scripts/smoke_transport_routing_confirmation
+```
+
+This mode uses the same routing setup and assertions, but prompts for real hardware Previous, Play/Pause, and Next key presses instead of posting synthetic HID events. It also prompts for plain hardware Volume Up, Volume Down, and Mute presses and fails if Keyway logs a plain media-key volume or mute interception.
 
 ## 10. Settings
 

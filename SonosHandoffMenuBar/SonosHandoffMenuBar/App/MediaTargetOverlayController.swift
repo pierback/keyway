@@ -99,6 +99,7 @@ final class MediaTargetOverlayController {
         )
         panel.level = .modalPanel
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
+        panel.hidesOnDeactivate = true
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
@@ -259,10 +260,10 @@ final class MediaTargetOverlayController {
 
     private func panelSize() -> NSSize {
         let visibleRows = min(model.targets.count, 6)
-        let listHeight = CGFloat(max(1, visibleRows)) * 64
-        let expandedHeight: CGFloat = model.expanded ? 162 : 0
-        let height = min(640, 94 + listHeight + expandedHeight + 48)
-        return NSSize(width: 720, height: height)
+        let listHeight = CGFloat(max(1, visibleRows)) * 56
+        let expandedHeight: CGFloat = model.expanded ? 146 : 0
+        let height = min(600, 78 + listHeight + expandedHeight + 42)
+        return NSSize(width: 680, height: height)
     }
 
     private func screenContainingMouse() -> NSScreen {
@@ -295,6 +296,7 @@ private final class MediaTargetOverlayPanel: NSPanel {
         }
         super.keyDown(with: event)
     }
+
 }
 
 private struct MediaTargetOverlayView: View {
@@ -319,29 +321,29 @@ private struct MediaTargetOverlayView: View {
             footer
         }
         .background {
-            RoundedRectangle(cornerRadius: 26, style: .continuous)
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.94))
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 26, style: .continuous)
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
                         .stroke(Color.white.opacity(0.18), lineWidth: 1)
                 }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
-        .frame(width: 720)
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .frame(width: 680)
     }
 
     private var header: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 11) {
             Image(systemName: model.command.symbolName)
-                .font(.system(size: 17, weight: .semibold))
+                .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(.primary)
-                .frame(width: 36, height: 36)
-                .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .frame(width: 34, height: 34)
+                .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("Media Targets")
-                    .font(.system(size: 21, weight: .semibold))
+                    .font(.system(size: 19, weight: .semibold))
                 Text("\(model.command.displayName) will be routed to the selected target")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
@@ -353,24 +355,24 @@ private struct MediaTargetOverlayView: View {
                 Text("Expanded Controls")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .padding(.horizontal, 10)
-                    .frame(height: 28)
+                    .padding(.horizontal, 9)
+                    .frame(height: 26)
                     .background(Color.primary.opacity(0.08), in: Capsule())
             }
         }
-        .padding(.horizontal, 22)
-        .frame(height: 92)
+        .padding(.horizontal, 20)
+        .frame(height: 76)
     }
 
     private var targetList: some View {
         ScrollView {
-            LazyVStack(spacing: 4) {
+            LazyVStack(spacing: 3) {
                 ForEach(Array(model.targets.enumerated()), id: \.element.id) { index, target in
                     targetRow(index: index, target: target)
                 }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
         }
         .scrollIndicators(.hidden)
     }
@@ -386,13 +388,13 @@ private struct MediaTargetOverlayView: View {
                 Text("\(index + 1)")
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
                     .foregroundStyle(.secondary)
-                    .frame(width: 24, height: 24)
-                    .background(Color.primary.opacity(selected ? 0.14 : 0.08), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .frame(width: 23, height: 23)
+                    .background(Color.primary.opacity(selected ? 0.14 : 0.08), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
 
                 Image(nsImage: target.appIcon)
                     .resizable()
-                    .frame(width: 34, height: 34)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .frame(width: 32, height: 32)
+                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
@@ -420,11 +422,11 @@ private struct MediaTargetOverlayView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .padding(.horizontal, 12)
-            .frame(height: 58)
+            .padding(.horizontal, 11)
+            .frame(height: 52)
             .contentShape(Rectangle())
             .background {
-                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(selected ? Color.primary.opacity(0.12) : Color.clear)
             }
         }
@@ -435,8 +437,8 @@ private struct MediaTargetOverlayView: View {
     }
 
     private var expandedControls: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
                 audioRow(
                     control: model.audioSnapshot.sonos,
                     systemImage: "hifispeaker.fill",
@@ -481,8 +483,8 @@ private struct MediaTargetOverlayView: View {
                 }
             )
         }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 10)
     }
 
     private func audioRow<Trailing: View>(
@@ -494,7 +496,7 @@ private struct MediaTargetOverlayView: View {
             Image(systemName: systemImage)
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(control.isEnabled ? Color.primary : Color.secondary)
-                .frame(width: 26, height: 26)
+                .frame(width: 24, height: 24)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(control.title)
@@ -510,7 +512,7 @@ private struct MediaTargetOverlayView: View {
             trailing()
         }
         .padding(.horizontal, 10)
-        .frame(height: 44)
+        .frame(height: 40)
         .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
@@ -527,7 +529,7 @@ private struct MediaTargetOverlayView: View {
     }
 
     private var footer: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 12) {
             footerHint("↑↓", "Select")
             footerHint("Enter", "Route")
             footerHint("Esc", "Close")
@@ -539,8 +541,8 @@ private struct MediaTargetOverlayView: View {
             }
             Spacer()
         }
-        .padding(.horizontal, 22)
-        .frame(height: 46)
+        .padding(.horizontal, 20)
+        .frame(height: 42)
     }
 
     private func footerHint(_ key: String, _ label: String) -> some View {

@@ -7,6 +7,7 @@ PINNED_KEY="keyway.mediaTarget.pinnedIdentity"
 RECENT_KEY="keyway.mediaTarget.recentIdentity"
 HELPER_SCRIPT="$APP_DIR/Contents/Resources/MediaRemoteHelper/keyway-mediaremote-helper.pl"
 HELPER_DYLIB="$APP_DIR/Contents/Resources/MediaRemoteHelper/libkeyway_mediaremote.dylib"
+PHYSICAL_MEDIA_KEYS="${KEYWAY_PHYSICAL_MEDIA_KEYS:-0}"
 PINNED_VALUE=""
 RECENT_VALUE=""
 PINNED_PRESENT=0
@@ -17,6 +18,11 @@ VISIBLE_STATE_FILE="$(mktemp -t keyway-overlay-visible-apps.XXXXXX)"
 if [[ ! -d "$APP_DIR" ]]; then
   echo "smoke_overlay_browser_controls: missing app bundle: $APP_DIR" >&2
   echo "Run scripts/install_menubar_app first." >&2
+  exit 1
+fi
+
+if [[ "$PHYSICAL_MEDIA_KEYS" == "1" && ! -r /dev/tty ]]; then
+  echo "smoke_overlay_browser_controls: physical media-key mode requires an interactive terminal" >&2
   exit 1
 fi
 
@@ -250,6 +256,14 @@ post(keyUpState)
 '
 }
 
+trigger_play_pause_media_key() {
+  if [[ "$PHYSICAL_MEDIA_KEYS" == "1" ]]; then
+    printf '\nPress the physical Play/Pause media key now. Waiting for the Keyway chooser...\n' >/dev/tty
+  else
+    post_play_pause_media_key
+  fi
+}
+
 keyway_window_text() {
   osascript <<'APPLESCRIPT'
 on collectTexts(e, depth)
@@ -270,6 +284,7 @@ end collectTexts
 
 tell application "System Events"
   tell process "Keyway"
+    set frontmost to true
     if (count of windows) is 0 then return ""
     return my collectTexts(window 1, 0)
   end tell
@@ -289,11 +304,12 @@ APPLESCRIPT
 
 open "$APP_DIR"
 sleep 1.0
+close_overlay
 clear_routing_memory
 hide_media_windows_for_chooser
 open -a Finder
 sleep 0.6
-post_play_pause_media_key
+trigger_play_pause_media_key
 
 overlay_text=""
 for _ in {1..30}; do

@@ -104,12 +104,7 @@ struct KeywayApp: App {
     }
 
     var body: some Scene {
-        MenuBarExtra("Keyway", systemImage: "play.rectangle.on.rectangle") {
-            MenuBarController(environment: environment)
-        }
-        .menuBarExtraStyle(.window)
-
-        Window(SettingsFeature.menuTitle, id: MenuBarController.settingsWindowID) {
+        Settings {
             SettingsFeature(
                 configStore: environment.configStore,
                 tokenStore: environment.tokenStore,
@@ -123,10 +118,5 @@ struct KeywayApp: App {
                 .frame(width: SettingsFeature.preferredWindowSize.width)
                 .frame(minHeight: SettingsFeature.preferredWindowSize.height)
         }
-        .defaultSize(
-            width: SettingsFeature.preferredWindowSize.width,
-            height: SettingsFeature.preferredWindowSize.height
-        )
-        .windowResizability(.contentSize)
     }
 }

@@ -8,6 +8,7 @@ import SonosHandoffCore
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "Hotkeys")
     private var volumeHotkeys: VolumeHotkeyController?
+    private var statusItemController: KeywayStatusItemController?
 
     func configure(environment: AppEnvironment) {
         volumeHotkeys = VolumeHotkeyController(
@@ -15,10 +16,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             outputSelection: environment.outputSelection,
             mediaTransportActions: environment.mediaTransportActionController
         )
+        statusItemController = KeywayStatusItemController(environment: environment)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
+        statusItemController?.start()
         NotificationCenter.default.addObserver(
             forName: .sonosHandoffRefreshHotkeys,
             object: nil,

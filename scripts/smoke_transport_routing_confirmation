@@ -8,6 +8,7 @@ RECENT_KEY="keyway.mediaTarget.recentIdentity"
 HELPER_SCRIPT="$APP_DIR/Contents/Resources/MediaRemoteHelper/keyway-mediaremote-helper.pl"
 HELPER_DYLIB="$APP_DIR/Contents/Resources/MediaRemoteHelper/libkeyway_mediaremote.dylib"
 TARGET_BUNDLE="${KEYWAY_ROUTING_TARGET_BUNDLE:-com.apple.QuickTimePlayerX}"
+PHYSICAL_MEDIA_KEYS="${KEYWAY_PHYSICAL_MEDIA_KEYS:-0}"
 TARGET_INFO_FILE="$(mktemp -t keyway-routing-target.XXXXXX)"
 VISIBLE_STATE_FILE="$(mktemp -t keyway-routing-visible-apps.XXXXXX)"
 CREATED_TARGET_FILE=""
@@ -26,6 +27,11 @@ fi
 
 if [[ ! -x "$HELPER_SCRIPT" || ! -f "$HELPER_DYLIB" ]]; then
   echo "smoke_transport_routing_confirmation: bundled MediaRemote helper files are missing" >&2
+  exit 1
+fi
+
+if [[ "$PHYSICAL_MEDIA_KEYS" == "1" && ! -r /dev/tty ]]; then
+  echo "smoke_transport_routing_confirmation: physical media-key mode requires an interactive terminal" >&2
   exit 1
 fi
 
@@ -514,13 +520,49 @@ command_display_name() {
 }
 
 recent_keyway_logs() {
+  recent_keyway_logs_since "$SMOKE_START"
+}
+
+recent_keyway_logs_since() {
+  local start_time="$1"
   /usr/bin/log show \
-    --start "$SMOKE_START" \
+    --start "$start_time" \
     --info \
     --debug \
     --style compact \
     --predicate 'subsystem == "com.fpieringer.Keyway" && (category == "Hotkeys" || category == "MediaTransport" || category == "MediaRemote" || category == "Notifications")' \
     2>/dev/null || true
+}
+
+prompt_physical_transport_key() {
+  local command="$1"
+  local start_time="$2"
+  local display_name logs
+  display_name="$(command_display_name "$command")"
+
+  printf '\nPress the physical %s media key now. Waiting up to 20 seconds...\n' "$display_name" >/dev/tty
+  logs=""
+  for _ in {1..40}; do
+    sleep 0.5
+    logs="$(recent_keyway_logs_since "$start_time")"
+    if grep -Fq "action=transport_${command} source=media_key" <<<"$logs"; then
+      return 0
+    fi
+  done
+
+  printf '%s\n' "$logs"
+  echo "smoke_transport_routing_confirmation: timed out waiting for physical $display_name key" >&2
+  return 1
+}
+
+trigger_media_key() {
+  local command="$1"
+  local start_time="$2"
+  if [[ "$PHYSICAL_MEDIA_KEYS" == "1" ]]; then
+    prompt_physical_transport_key "$command" "$start_time"
+  else
+    post_media_key "$command"
+  fi
 }
 
 assert_no_custom_keyway_popup() {
@@ -543,18 +585,19 @@ assert_no_custom_keyway_popup() {
 
 assert_routing_confirmation() {
   local command="$1"
-  local display_name expected_title logs
+  local display_name expected_title logs command_start
   ensure_target_ready_for_command
   display_name="$(command_display_name "$command")"
   expected_title="$display_name → $target_app"
 
   sleep 5.5
-  post_media_key "$command"
+  command_start="$(date '+%Y-%m-%d %H:%M:%S')"
+  trigger_media_key "$command" "$command_start"
 
   logs=""
   for _ in {1..20}; do
     sleep 0.35
-    logs="$(recent_keyway_logs)"
+    logs="$(recent_keyway_logs_since "$command_start")"
     if grep -Fq "action=transport_${command} source=media_key" <<<"$logs" \
       && grep -Fq "MediaTransport route command=${command} target=${target_app} reason=pinned target" <<<"$logs" \
       && grep -Fq "KeywayNotification request title=${expected_title} message=Routed by pinned target identifier=keyway.status" <<<"$logs"; then
@@ -588,6 +631,29 @@ assert_routing_confirmation() {
   echo "routed_${command}=ok"
 }
 
+assert_plain_volume_keys_not_intercepted() {
+  local logs volume_start
+  [[ "$PHYSICAL_MEDIA_KEYS" == "1" ]] || return 0
+
+  volume_start="$(date '+%Y-%m-%d %H:%M:%S')"
+  cat >/dev/tty <<'MESSAGE'
+
+Press the plain hardware Volume Up, Volume Down, and Mute keys once each now.
+Do not hold Shift/Fn/Cmd. Press Return here after those three plain hardware-key presses.
+MESSAGE
+  IFS= read -r _ </dev/tty
+  sleep 1.0
+
+  logs="$(recent_keyway_logs_since "$volume_start")"
+  if grep -E 'action=volume_(up|down)|action=mute_toggle|action=volume_hold_stop' <<<"$logs" | grep -Fq 'source=media_key'; then
+    printf '%s\n' "$logs"
+    echo "smoke_transport_routing_confirmation: Keyway intercepted a plain hardware volume or mute key" >&2
+    exit 1
+  fi
+
+  echo "plain_volume_and_mute_keys=pass_through"
+}
+
 open "$APP_DIR"
 sleep 1.0
 defaults write "$DEFAULTS_DOMAIN" "$PINNED_KEY" "$target_identity" >/dev/null
@@ -602,5 +668,6 @@ echo "target_identity=$target_identity"
 assert_routing_confirmation previous
 assert_routing_confirmation playPause
 assert_routing_confirmation next
+assert_plain_volume_keys_not_intercepted
 
 echo "smoke_transport_routing_confirmation=ok"

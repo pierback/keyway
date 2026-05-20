@@ -72,20 +72,35 @@ Run the overlay browser-volume disabled-state smoke while at least two Now Playi
 /Users/f.pieringer/projects/keyway/scripts/smoke_overlay_browser_controls
 ```
 
+For final hardware-key acceptance, run the same overlay smoke in physical media-key mode and press the real Play/Pause key when prompted:
+
+```bash
+KEYWAY_PHYSICAL_MEDIA_KEYS=1 /Users/f.pieringer/projects/keyway/scripts/smoke_overlay_browser_controls
+```
+
 Run the transport routing confirmation smoke while at least two Now Playing targets are active. The script can create a temporary silent QuickTime Player target when QuickTime is selected as the safe routing target:
 
 ```bash
 /Users/f.pieringer/projects/keyway/scripts/smoke_transport_routing_confirmation
 ```
 
+For final hardware-key acceptance, run the same transport smoke in physical media-key mode and press real Previous, Play/Pause, Next, Volume Up, Volume Down, and Mute keys when prompted:
+
+```bash
+KEYWAY_PHYSICAL_MEDIA_KEYS=1 /Users/f.pieringer/projects/keyway/scripts/smoke_transport_routing_confirmation
+```
+
 ## Runtime Setup
 
 1. Launch `/Users/f.pieringer/Applications/Keyway.app`.
-2. Open Settings from the menu bar app.
-3. Confirm `General` reports config import status.
-4. Confirm `Spotify` reports Desktop Connect and Web API token readiness.
-5. Confirm `Helper Status` reports the MediaRemote helper as running.
-6. Approve Accessibility for Keyway in System Settings if macOS shows the prompt or `Permissions` reports it missing.
+2. Left-click the menu bar icon for the compact Control Center-style daily controls.
+3. Option-click or Command-click the menu bar icon to open the centered media target chooser directly.
+4. Right-click the menu bar icon for the native utility menu.
+5. Open Settings from the menu bar app.
+6. Confirm `General` reports config import status.
+7. Confirm `Spotify` reports Desktop Connect and Web API token readiness.
+8. Confirm `Helper Status` reports the MediaRemote helper as running.
+9. Approve Accessibility for Keyway in System Settings if macOS shows the prompt or `Permissions` reports it missing.
 
 After Accessibility is granted, restart Keyway or use Settings to refresh shortcuts. Keyway writes shortcut readiness to `~/Library/Application Support/keyway/shortcut-runtime-status.json`; `mediaFallback=enabled` means the media-key event tap is ready.
 
