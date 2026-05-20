@@ -17,6 +17,7 @@ Last updated: 2026-05-20
 - `xcodebuild -workspace Keyway.xcworkspace -scheme Keyway -configuration Debug -destination 'platform=macOS' -derivedDataPath .build/xcode-derived-data build`: passed.
 - `scripts/install_menubar_app`: passed and installed `/Users/f.pieringer/Applications/Keyway.app`.
 - `scripts/regression_gate`: passed in default mode again at 2026-05-20 17:22 local time.
+- `scripts/acceptance_preflight`: ran successfully and reported `acceptance_preflight=blocked` with exit code 2 because Accessibility and Sonos room discovery are still unavailable locally.
 - `codex-review --parallel-tests "scripts/regression_gate"`: initially reported overlay chooser state findings; fixed in `53e5590`; rerun clean with no accepted/actionable findings.
 - Installed bundle id: `com.fpieringer.Keyway`.
 - Installed app signature uses identifier `com.fpieringer.Keyway` and TeamIdentifier `7Q44SDV7BM`.

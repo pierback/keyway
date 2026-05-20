@@ -105,12 +105,12 @@ When this PRD is complete, the following will be true:
 
 ## Implementation Status
 
-As of 2026-05-20, the main implementation is present on branch `keyway-planning` and the deterministic regression gate passes. The remaining blockers are verification blockers, not accepted scope removals:
+As of 2026-05-20, the main implementation is present on branch `keyway-planning` and the deterministic regression gate passes. `scripts/acceptance_preflight` summarizes current local acceptance readiness and exits `2` while local environment blockers remain. The remaining blockers are verification blockers, not accepted scope removals:
 
 - Accessibility has not yet been granted to the new `com.fpieringer.Keyway` bundle on the local machine, so media-key interception cannot be manually confirmed until that permission is granted.
 - The configured Sonos rooms were not discoverable on the current network, so real-device Sonos smoke checks could not be run.
-- QuickTime target discovery still needs a local media playback check.
-- Settings Cmd-Tab behavior still needs a manual check with the Settings window visible.
+- QuickTime target discovery has been verified with local media playback.
+- Settings normal-window behavior has been verified through the menu bar UI; System Events reports Keyway as visible and not background-only while Settings is open.
 
 The current verification record is maintained in `docs/verification-log.md`.
 

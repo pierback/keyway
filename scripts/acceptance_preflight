@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PACKAGE_DIR="$ROOT_DIR/packages/SonosHandoffCore"
+APP_DIR="${KEYWAY_APP:-$HOME/Applications/Keyway.app}"
+LEGACY_SUPPORT_DIR="$HOME/Library/Application Support/sonos-handoff"
+KEYWAY_SUPPORT_DIR="$HOME/Library/Application Support/keyway"
+ROOM="${SONOS_HANDOFF_ROOM:-Port}"
+STATUS="pass"
+
+pass() {
+  printf 'pass: %s\n' "$*"
+}
+
+block() {
+  printf 'block: %s\n' "$*"
+  if [[ "$STATUS" == "pass" ]]; then
+    STATUS="blocked"
+  fi
+}
+
+fail() {
+  printf 'fail: %s\n' "$*"
+  STATUS="fail"
+}
+
+section() {
+  printf '\n== %s ==\n' "$*"
+}
+
+file_sha() {
+  shasum -a 256 "$1" | awk '{ print $1 }'
+}
+
+section "App"
+if [[ -d "$APP_DIR" ]]; then
+  pass "installed app exists at $APP_DIR"
+else
+  fail "installed app is missing at $APP_DIR"
+fi
+
+if [[ -f "$APP_DIR/Contents/Info.plist" ]]; then
+  bundle_id="$(plutil -extract CFBundleIdentifier raw "$APP_DIR/Contents/Info.plist" 2>/dev/null || true)"
+  if [[ "$bundle_id" == "com.fpieringer.Keyway" ]]; then
+    pass "bundle id is com.fpieringer.Keyway"
+  else
+    fail "bundle id is ${bundle_id:-missing}"
+  fi
+else
+  fail "Info.plist is missing"
+fi
+
+if codesign_output="$(codesign -dv "$APP_DIR" 2>&1)"; then
+  identifier="$(sed -n 's/^Identifier=//p' <<<"$codesign_output")"
+  team_id="$(sed -n 's/^TeamIdentifier=//p' <<<"$codesign_output")"
+  pass "codesign identifier=${identifier:-unknown} team=${team_id:-unknown}"
+else
+  fail "codesign metadata could not be read"
+fi
+
+if pgrep -f "$APP_DIR/Contents/MacOS/Keyway" >/dev/null; then
+  pass "Keyway process is running"
+else
+  block "Keyway process is not running; launch the installed app"
+fi
+
+section "Config Import"
+if [[ -d "$KEYWAY_SUPPORT_DIR" ]]; then
+  pass "Keyway support directory exists"
+else
+  fail "Keyway support directory is missing: $KEYWAY_SUPPORT_DIR"
+fi
+
+for filename in config.json spotify-desktop-connect-tokens.json project-webapi-token.json; do
+  keyway_file="$KEYWAY_SUPPORT_DIR/$filename"
+  legacy_file="$LEGACY_SUPPORT_DIR/$filename"
+  if [[ -f "$keyway_file" ]]; then
+    pass "Keyway has $filename"
+  else
+    block "Keyway is missing $filename"
+  fi
+
+  if [[ -f "$legacy_file" && -f "$keyway_file" ]]; then
+    if [[ "$(file_sha "$legacy_file")" == "$(file_sha "$keyway_file")" ]]; then
+      pass "$filename matches legacy checksum"
+    else
+      block "$filename differs from legacy; confirm this is intentional Keyway state"
+    fi
+  fi
+done
+
+section "MediaRemote Helper"
+helper_script="$APP_DIR/Contents/Resources/MediaRemoteHelper/keyway-mediaremote-helper.pl"
+helper_dylib="$APP_DIR/Contents/Resources/MediaRemoteHelper/libkeyway_mediaremote.dylib"
+
+if pgrep -f "$helper_script $helper_dylib" >/dev/null; then
+  pass "app-owned /usr/bin/perl MediaRemote helper is running"
+else
+  block "app-owned MediaRemote helper is not running"
+fi
+
+if [[ -x "$helper_script" && -f "$helper_dylib" ]]; then
+  helper_output="$(printf '%s\n' '{"type":"ping","requestID":"preflight-ping"}' '{"type":"refresh","requestID":"preflight-refresh"}' | /usr/bin/perl "$helper_script" "$helper_dylib")"
+  printf '%s\n' "$helper_output"
+  if grep -q '"type":"pong"' <<<"$helper_output"; then
+    pass "helper responds to NDJSON ping"
+  else
+    fail "helper did not return pong"
+  fi
+  if grep -q '"type":"snapshot"' <<<"$helper_output"; then
+    pass "helper returns NDJSON snapshot"
+  else
+    fail "helper did not return snapshot"
+  fi
+  target_count="$(grep -o '"bundleIdentifier":"' <<<"$helper_output" | wc -l | tr -d ' ')"
+  if (( target_count >= 2 )); then
+    pass "helper reports $target_count media targets"
+  else
+    block "helper reports only $target_count media target(s); start Spotify and a browser or QuickTime session"
+  fi
+else
+  fail "bundled MediaRemote helper files are missing"
+fi
+
+section "Accessibility And Media Keys"
+hotkey_logs="$(/usr/bin/log show --last 30m --info --debug --style compact --predicate 'subsystem == "com.fpieringer.Keyway" && category == "Hotkeys"' 2>/dev/null || true)"
+if grep -q 'mediaFallback=enabled' <<<"$hotkey_logs"; then
+  pass "Keyway event tap has reached mediaFallback=enabled"
+elif grep -q 'accessibility=false' <<<"$hotkey_logs"; then
+  block "Accessibility is not granted for Keyway; media-key interception cannot pass yet"
+else
+  block "No enabled media-key event-tap log found; refresh shortcuts from Settings after granting Accessibility"
+fi
+
+section "Spotify And Sonos"
+if playback_output="$(swift run --package-path "$PACKAGE_DIR" sonos-handoff-port playback-status 2>&1)"; then
+  printf '%s\n' "$playback_output"
+  pass "Spotify playback status is readable"
+else
+  printf '%s\n' "$playback_output"
+  block "Spotify playback status is not ready"
+fi
+
+if sonos_output="$(swift run --package-path "$PACKAGE_DIR" sonos-handoff-port sonos-status "$ROOM" 2>&1)"; then
+  printf '%s\n' "$sonos_output"
+  pass "Sonos room '$ROOM' is discoverable"
+else
+  printf '%s\n' "$sonos_output"
+  block "Sonos room '$ROOM' is not discoverable"
+fi
+
+section "Result"
+case "$STATUS" in
+  pass)
+    echo "acceptance_preflight=pass"
+    exit 0
+    ;;
+  blocked)
+    echo "acceptance_preflight=blocked"
+    exit 2
+    ;;
+  *)
+    echo "acceptance_preflight=fail"
+    exit 1
+    ;;
+esac

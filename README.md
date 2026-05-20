@@ -50,6 +50,14 @@ Run the deterministic regression gate:
 /Users/f.pieringer/projects/keyway/scripts/regression_gate
 ```
 
+Summarize the current local acceptance readiness:
+
+```bash
+/Users/f.pieringer/projects/keyway/scripts/acceptance_preflight
+```
+
+`acceptance_preflight=blocked` means the installed app is intact but one or more required local conditions, such as Accessibility permission or a discoverable Sonos room, still prevents the full acceptance runbook from passing.
+
 Run real-device smoke checks when the configured Sonos room is discoverable:
 
 ```bash
@@ -86,6 +94,7 @@ sonos-handoff-port volume-mute <room>
 /Users/f.pieringer/projects/keyway/scripts/smoke_port_handoff <room>
 /Users/f.pieringer/projects/keyway/scripts/smoke_menubar_handoff <room>
 /Users/f.pieringer/projects/keyway/scripts/smoke_menubar_slider <room>
+/Users/f.pieringer/projects/keyway/scripts/acceptance_preflight
 ```
 
 ## Notes
