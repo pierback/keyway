@@ -3,10 +3,10 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PACKAGE_DIR="$ROOT_DIR/packages/SonosHandoffCore"
-APP_DIR="${SONOS_HANDOFF_APP:-$HOME/Applications/Sonos Handoff.app}"
+APP_DIR="${KEYWAY_APP:-$HOME/Applications/Keyway.app}"
 ROOM="${1:-${SONOS_HANDOFF_ROOM:-Port}}"
 DELTA="${SONOS_HANDOFF_SLIDER_DELTA:-10}"
-RELAUNCH="${SONOS_HANDOFF_RELAUNCH:-1}"
+RELAUNCH="${KEYWAY_RELAUNCH:-1}"
 PREPARE_PLAYBACK="${SONOS_HANDOFF_PREPARE_PLAYBACK:-1}"
 
 if [[ ! -d "$APP_DIR" ]]; then
@@ -55,7 +55,7 @@ spotify_restricted() {
 }
 
 open_menu() {
-  osascript -e 'tell application "System Events" to tell process "SonosHandoffMenuBar" to click menu bar item 1 of menu bar 2'
+  osascript -e 'tell application "System Events" to tell process "Keyway" to click menu bar item 1 of menu bar 2'
 }
 
 press_transfer_button() {
@@ -235,7 +235,7 @@ exit(2)
 
 show_recent_logs() {
   /usr/bin/log show --last 2m --info --debug --style compact \
-    --predicate 'subsystem == "com.fpieringer.SonosHandoffMenuBar" && category == "Shortcuts"' \
+    --predicate 'subsystem == "com.fpieringer.Keyway" && category == "Shortcuts"' \
     | grep 'SonosHandoffVolumeSet' \
     | tail -n 20 || true
 }
@@ -261,7 +261,7 @@ else
 fi
 
 if [[ "$RELAUNCH" == "1" ]]; then
-  pkill -x SonosHandoffMenuBar >/dev/null 2>&1 || true
+  pkill -x Keyway >/dev/null 2>&1 || true
   sleep 0.5
 fi
 
@@ -289,9 +289,9 @@ sleep 1.5
 open_menu
 sleep 1.0
 
-pid="$(pgrep -x SonosHandoffMenuBar | head -n 1)"
+pid="$(pgrep -x Keyway | head -n 1)"
 if [[ -z "$pid" ]]; then
-  echo "smoke_menubar_slider: SonosHandoffMenuBar is not running" >&2
+  echo "smoke_menubar_slider: Keyway is not running" >&2
   exit 1
 fi
 

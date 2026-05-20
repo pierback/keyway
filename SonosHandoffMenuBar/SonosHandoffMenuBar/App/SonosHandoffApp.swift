@@ -4,8 +4,8 @@ import SonosHandoffCore
 import SwiftUI
 
 @main
-struct SonosHandoffApp: App {
-    private static let logger = Logger(subsystem: "com.fpieringer.SonosHandoffMenuBar", category: "Playback")
+struct KeywayApp: App {
+    private static let logger = Logger(subsystem: AppIdentity.loggerSubsystem, category: "Playback")
     private static let volumeMonitorSeedRetryNanoseconds: UInt64 = 5_000_000_000
     private static let volumeMonitorSeedAttemptsMax = 3
 
@@ -101,7 +101,7 @@ struct SonosHandoffApp: App {
     }
 
     var body: some Scene {
-        MenuBarExtra("Sonos", systemImage: "hifispeaker") {
+        MenuBarExtra("Keyway", systemImage: "play.rectangle.on.rectangle") {
             MenuBarController(environment: environment)
         }
         .menuBarExtraStyle(.window)
@@ -112,7 +112,9 @@ struct SonosHandoffApp: App {
                 tokenStore: environment.tokenStore,
                 connectTokenStatusStore: environment.connectTokenStatusStore,
                 authCoordinator: environment.authCoordinator,
-                accessibilityAutomator: environment.accessibilityAutomator
+                accessibilityAutomator: environment.accessibilityAutomator,
+                configImportService: environment.configImportService,
+                initialConfigImportReport: environment.configImportReport
             )
                 .frame(width: SettingsFeature.preferredWindowSize.width)
                 .frame(minHeight: SettingsFeature.preferredWindowSize.height)

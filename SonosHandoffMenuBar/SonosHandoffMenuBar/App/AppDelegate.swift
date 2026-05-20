@@ -6,7 +6,7 @@ import SonosHandoffCore
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
-    private let logger = Logger(subsystem: "com.fpieringer.SonosHandoffMenuBar", category: "Hotkeys")
+    private let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "Hotkeys")
     private var volumeHotkeys: VolumeHotkeyController?
 
     func configure(environment: AppEnvironment) {

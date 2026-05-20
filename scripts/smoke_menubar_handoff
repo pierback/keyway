@@ -3,9 +3,9 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PACKAGE_DIR="$ROOT_DIR/packages/SonosHandoffCore"
-APP_DIR="${SONOS_HANDOFF_APP:-$HOME/Applications/Sonos Handoff.app}"
+APP_DIR="${KEYWAY_APP:-$HOME/Applications/Keyway.app}"
 ROOM="${1:-${SONOS_HANDOFF_ROOM:-Port}}"
-RELAUNCH="${SONOS_HANDOFF_RELAUNCH:-1}"
+RELAUNCH="${KEYWAY_RELAUNCH:-1}"
 PREPARE_ROOM="${SONOS_HANDOFF_PREPARE_ROOM:-}"
 BUTTON_ID="transfer-to-${ROOM}"
 STATUS_FILE="$(mktemp -t sonos-handoff-ui-handoff.XXXXXX)"
@@ -27,7 +27,7 @@ cli() {
 }
 
 open_menu() {
-  osascript -e 'tell application "System Events" to tell process "SonosHandoffMenuBar" to click menu bar item 1 of menu bar 2'
+  osascript -e 'tell application "System Events" to tell process "Keyway" to click menu bar item 1 of menu bar 2'
 }
 
 press_transfer_button() {
@@ -92,7 +92,7 @@ exit(2)
 
 show_recent_logs() {
   /usr/bin/log show --last 3m --info --debug --style compact \
-    --predicate 'subsystem == "com.fpieringer.SonosHandoffMenuBar" && category == "Transfer"' \
+    --predicate 'subsystem == "com.fpieringer.Keyway" && category == "Transfer"' \
     | tee "$LOG_FILE" \
     | tail -n 40 || true
 }
@@ -101,10 +101,10 @@ wait_for_transfer_logs() {
   local pid="$1"
   for _ in {1..12}; do
     /usr/bin/log show --last 3m --info --debug --style compact \
-      --predicate 'subsystem == "com.fpieringer.SonosHandoffMenuBar" && category == "Transfer"' \
+      --predicate 'subsystem == "com.fpieringer.Keyway" && category == "Transfer"' \
       >"$LOG_FILE" || true
-    if grep -F "SonosHandoffMenuBar[$pid:" "$LOG_FILE" | grep -q "state=started room=${ROOM}" \
-      && grep -F "SonosHandoffMenuBar[$pid:" "$LOG_FILE" | grep -q "state=succeeded room=${ROOM}"; then
+    if grep -F "Keyway[$pid:" "$LOG_FILE" | grep -q "state=started room=${ROOM}" \
+      && grep -F "Keyway[$pid:" "$LOG_FILE" | grep -q "state=succeeded room=${ROOM}"; then
       return 0
     fi
     sleep 0.5
@@ -121,7 +121,7 @@ verify_playback_room() {
 }
 
 if [[ "$RELAUNCH" == "1" ]]; then
-  pkill -x SonosHandoffMenuBar >/dev/null 2>&1 || true
+  pkill -x Keyway >/dev/null 2>&1 || true
   sleep 0.5
 fi
 
@@ -147,9 +147,9 @@ sleep 1.5
 open_menu
 sleep 1.5
 
-pid="$(pgrep -x SonosHandoffMenuBar | head -n 1)"
+pid="$(pgrep -x Keyway | head -n 1)"
 if [[ -z "$pid" ]]; then
-  echo "smoke_menubar_handoff: SonosHandoffMenuBar is not running" >&2
+  echo "smoke_menubar_handoff: Keyway is not running" >&2
   exit 1
 fi
 

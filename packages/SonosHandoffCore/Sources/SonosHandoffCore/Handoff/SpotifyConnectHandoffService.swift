@@ -5,8 +5,7 @@ public final class SpotifyConnectHandoffService: RoomHandoffPerforming, SonosSpe
 
     public init(
         loginID: String? = nil,
-        appSupport: URL = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent("Library/Application Support/sonos-handoff", isDirectory: true),
+        appSupport: URL = ConfigPaths.applicationSupportDirectory,
         urlSession: URLSession = .shared
     ) {
         self.runtime = SonosRuntime(

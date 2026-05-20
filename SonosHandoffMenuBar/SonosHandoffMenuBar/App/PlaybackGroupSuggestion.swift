@@ -372,7 +372,7 @@ enum PlaybackSuggestionNotificationAuthorization {
 @MainActor
 final class PlaybackGroupSuggestionNotifier {
     private let notificationCenter: UNUserNotificationCenter
-    private let logger = Logger(subsystem: "com.fpieringer.SonosHandoffMenuBar", category: "Playback")
+    private let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "Playback")
 
     init(notificationCenter: UNUserNotificationCenter = .current()) {
         self.notificationCenter = notificationCenter
@@ -442,7 +442,7 @@ final class PlaybackGroupSuggestionNotifier {
 @MainActor
 final class PlaybackTransferSuggestionNotifier {
     private let notificationCenter: UNUserNotificationCenter
-    private let logger = Logger(subsystem: "com.fpieringer.SonosHandoffMenuBar", category: "Playback")
+    private let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "Playback")
 
     init(notificationCenter: UNUserNotificationCenter = .current()) {
         self.notificationCenter = notificationCenter

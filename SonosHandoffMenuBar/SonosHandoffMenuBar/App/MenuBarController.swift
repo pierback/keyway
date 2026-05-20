@@ -147,6 +147,7 @@ struct MenuBarController: View {
 
     private func openSettingsWindow() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            _ = NSApp.setActivationPolicy(.regular)
             NSApp.activate(ignoringOtherApps: true)
             openWindow(id: Self.settingsWindowID)
         }

@@ -24,7 +24,7 @@ struct SpotifyConnectBridgeTests {
             Issue.record("Expected missing Desktop Connect token to require Spotify authentication.")
         } catch let error as ConnectHandoffError {
             #expect(error.code == .authRequired)
-            #expect(error.message.contains("Sonos Handoff Settings"))
+            #expect(error.message.contains("Keyway Settings"))
             #expect(!error.message.localizedCaseInsensitiveContains("CLI"))
         }
     }

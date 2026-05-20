@@ -4,7 +4,7 @@ import os
 
 @MainActor
 final class ShortcutCarbonHotKeyRegistrar {
-    private let logger = Logger(subsystem: "com.fpieringer.SonosHandoffMenuBar", category: "Hotkeys")
+    private let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "Hotkeys")
     private let onHotKey: @MainActor (UInt32) -> Void
     private var eventHandler: EventHandlerRef?
     private var volumeDownHotKey: EventHotKeyRef?

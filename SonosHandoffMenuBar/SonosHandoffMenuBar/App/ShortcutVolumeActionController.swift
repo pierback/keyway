@@ -14,7 +14,7 @@ final class ShortcutVolumeActionController {
         let scope: PlaybackVolumeScope
     }
 
-    private let logger = Logger(subsystem: "com.fpieringer.SonosHandoffMenuBar", category: "Hotkeys")
+    private let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "Hotkeys")
     private let volumeService: any SpeakerVolumeAdjusting
     private let outputSelection: PlaybackOutputSelection
     private let outputPreferenceResolver = SonosOutputPreferenceResolver()

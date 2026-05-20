@@ -5,7 +5,7 @@ import SonosHandoffCore
 
 @MainActor
 final class VolumeHotkeyController {
-    private let logger = Logger(subsystem: "com.fpieringer.SonosHandoffMenuBar", category: "Hotkeys")
+    private let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "Hotkeys")
     private let volumeActions: ShortcutVolumeActionController
     private let runtimeReporter: ShortcutRuntimeReporter
     private var lastCarbonAction: (direction: VolumeDirection, timestamp: CFAbsoluteTime)?

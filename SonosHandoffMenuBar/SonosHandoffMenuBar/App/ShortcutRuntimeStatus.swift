@@ -100,11 +100,11 @@ final class ShortcutRuntimeStatus {
 }
 
 extension Notification.Name {
-    static let sonosHandoffRefreshHotkeys = Notification.Name("com.fpieringer.SonosHandoffMenuBar.refreshHotkeys")
-    static let sonosHandoffAcceptGroupSuggestion = Notification.Name("com.fpieringer.SonosHandoffMenuBar.acceptGroupSuggestion")
-    static let sonosHandoffIgnoreGroupSuggestion = Notification.Name("com.fpieringer.SonosHandoffMenuBar.ignoreGroupSuggestion")
-    static let sonosHandoffAcceptTransferSuggestion = Notification.Name("com.fpieringer.SonosHandoffMenuBar.acceptTransferSuggestion")
-    static let sonosHandoffIgnoreTransferSuggestion = Notification.Name("com.fpieringer.SonosHandoffMenuBar.ignoreTransferSuggestion")
-    static let sonosHandoffRefreshOutputs = Notification.Name("com.fpieringer.SonosHandoffMenuBar.refreshOutputs")
-    static let sonosHandoffApplyCachedOutputs = Notification.Name("com.fpieringer.SonosHandoffMenuBar.applyCachedOutputs")
+    static let sonosHandoffRefreshHotkeys = Notification.Name("com.fpieringer.Keyway.refreshHotkeys")
+    static let sonosHandoffAcceptGroupSuggestion = Notification.Name("com.fpieringer.Keyway.acceptGroupSuggestion")
+    static let sonosHandoffIgnoreGroupSuggestion = Notification.Name("com.fpieringer.Keyway.ignoreGroupSuggestion")
+    static let sonosHandoffAcceptTransferSuggestion = Notification.Name("com.fpieringer.Keyway.acceptTransferSuggestion")
+    static let sonosHandoffIgnoreTransferSuggestion = Notification.Name("com.fpieringer.Keyway.ignoreTransferSuggestion")
+    static let sonosHandoffRefreshOutputs = Notification.Name("com.fpieringer.Keyway.refreshOutputs")
+    static let sonosHandoffApplyCachedOutputs = Notification.Name("com.fpieringer.Keyway.applyCachedOutputs")
 }

@@ -75,18 +75,19 @@ def build_menu_bar_project
   reset_project(project_path)
 
   project = Xcodeproj::Project.new(project_path)
-  app_root = project.main_group.new_group('SonosHandoffMenuBar', 'SonosHandoffMenuBar')
+  app_root = project.main_group.new_group('Keyway', 'SonosHandoffMenuBar')
   app_group = app_root.new_group('App', 'App')
   features_group = app_root.new_group('Features', 'Features')
   resources_group = app_root.new_group('Resources', 'Resources')
   support_group = app_root.new_group('Support', 'Support')
 
-  target = project.new_target(:application, 'SonosHandoffMenuBar', :osx, '14.0', nil, :swift)
+  target = project.new_target(:application, 'Keyway', :osx, '14.0', nil, :swift)
   configure_base_settings(
     target,
-    bundle_id: 'com.fpieringer.SonosHandoffMenuBar',
+    bundle_id: 'com.fpieringer.Keyway',
     deployment_target: '14.0',
-    info_plist: 'SonosHandoffMenuBar/Resources/Info.plist'
+    info_plist: 'SonosHandoffMenuBar/Resources/Info.plist',
+    product_name: 'Keyway'
   )
   target.build_configurations.each do |config|
     settings = config.build_settings
@@ -105,13 +106,13 @@ def build_menu_bar_project
 
   add_local_package_dependency(project, target, '../packages/SonosHandoffCore', 'SonosHandoffCore')
 
-  create_shared_scheme(project, 'SonosHandoffMenuBar', target)
+  create_shared_scheme(project, 'Keyway', target)
   normalize_system_framework_refs(project, 'Cocoa.framework')
   project.save
 end
 
 def write_workspace
-  workspace_dir = File.join(ROOT, 'SonosHandoff.xcworkspace')
+  workspace_dir = File.join(ROOT, 'Keyway.xcworkspace')
   FileUtils.mkdir_p(File.join(workspace_dir, 'xcshareddata'))
   File.write(
     File.join(workspace_dir, 'contents.xcworkspacedata'),

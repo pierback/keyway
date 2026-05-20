@@ -9,8 +9,7 @@ final class SonosRuntime: @unchecked Sendable {
 
     init(
         loginID: String? = nil,
-        appSupport: URL = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent("Library/Application Support/sonos-handoff", isDirectory: true),
+        appSupport: URL = ConfigPaths.applicationSupportDirectory,
         urlSession: URLSession = .shared
     ) {
         let soapClient = SonosSOAPClient(urlSession: urlSession)

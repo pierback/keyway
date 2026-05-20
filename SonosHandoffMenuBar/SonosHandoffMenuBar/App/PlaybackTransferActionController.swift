@@ -20,7 +20,7 @@ struct PlaybackTransferOutcome: Sendable {
 @MainActor
 final class PlaybackTransferActionController {
     private let roomHandoffService: any RoomHandoffPerforming
-    private let logger = os.Logger(subsystem: "com.fpieringer.SonosHandoffMenuBar", category: "Transfer")
+    private let logger = os.Logger(subsystem: "com.fpieringer.Keyway", category: "Transfer")
 
     init(environment: AppEnvironment) {
         self.roomHandoffService = environment.roomHandoffService

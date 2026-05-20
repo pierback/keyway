@@ -14,9 +14,9 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "5EEF4A0DE6A8EBFE7899D598"
-               BuildableName = "SonosHandoffMenuBar.app"
-               BlueprintName = "SonosHandoffMenuBar"
+               BlueprintIdentifier = "41AA970AB0B6A9F44F0A6DA6"
+               BuildableName = "Keyway.app"
+               BlueprintName = "Keyway"
                ReferencedContainer = "container:SonosHandoffMenuBar.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
@@ -30,9 +30,9 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "5EEF4A0DE6A8EBFE7899D598"
-            BuildableName = "SonosHandoffMenuBar.app"
-            BlueprintName = "SonosHandoffMenuBar"
+            BlueprintIdentifier = "41AA970AB0B6A9F44F0A6DA6"
+            BuildableName = "Keyway.app"
+            BlueprintName = "Keyway"
             ReferencedContainer = "container:SonosHandoffMenuBar.xcodeproj">
          </BuildableReference>
       </MacroExpansion>
@@ -53,9 +53,9 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "5EEF4A0DE6A8EBFE7899D598"
-            BuildableName = "SonosHandoffMenuBar.app"
-            BlueprintName = "SonosHandoffMenuBar"
+            BlueprintIdentifier = "41AA970AB0B6A9F44F0A6DA6"
+            BuildableName = "Keyway.app"
+            BlueprintName = "Keyway"
             ReferencedContainer = "container:SonosHandoffMenuBar.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
@@ -70,9 +70,9 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "5EEF4A0DE6A8EBFE7899D598"
-            BuildableName = "SonosHandoffMenuBar.app"
-            BlueprintName = "SonosHandoffMenuBar"
+            BlueprintIdentifier = "41AA970AB0B6A9F44F0A6DA6"
+            BuildableName = "Keyway.app"
+            BlueprintName = "Keyway"
             ReferencedContainer = "container:SonosHandoffMenuBar.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>

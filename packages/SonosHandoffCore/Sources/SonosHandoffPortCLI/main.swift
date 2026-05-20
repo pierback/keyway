@@ -20,8 +20,7 @@ private let explicitHost = optionValue("--host")
 private let explicitLoginID = optionValue("--login-id")
 private let desktopClientID = "65b708073fc0480ea92a077233ca87bd"
 private let sonosClientID = "9b377073ea334637b1406f329ce005de"
-private let appSupport = URL(fileURLWithPath: NSHomeDirectory())
-    .appendingPathComponent("Library/Application Support/sonos-handoff", isDirectory: true)
+private let appSupport = ConfigPaths.applicationSupportDirectory
 private let desktopTokenURL = appSupport.appendingPathComponent("spotify-desktop-connect-tokens.json")
 private let projectTokenStore = ProjectWebAPITokenStore(applicationSupportDirectory: appSupport)
 

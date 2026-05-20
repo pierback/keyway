@@ -82,7 +82,7 @@ struct SpotifyDesktopCredentialProviderTests {
             Issue.record("Expected malformed Desktop Connect token to require auth recovery.")
         } catch let error as ConnectHandoffError {
             #expect(error.code == .authRequired)
-            #expect(error.message.contains("Sonos Handoff Settings"))
+            #expect(error.message.contains("Keyway Settings"))
         } catch {
             Issue.record("Expected ConnectHandoffError, got \(error).")
         }

@@ -11,7 +11,7 @@ final class PlaybackBackgroundSync {
     private let environment: AppEnvironment
     private let groupSuggestionPresenter: PlaybackGroupSuggestionPresenter
     private let transferSuggestionPresenter: PlaybackTransferSuggestionPresenter
-    private let logger = Logger(subsystem: "com.fpieringer.SonosHandoffMenuBar", category: "Playback")
+    private let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "Playback")
     private let groupSuggestionTracker = SonosGroupSuggestionTracker()
     private let transferSuggestionTracker = SonosTransferSuggestionTracker()
     private let groupSuggestionAcceptanceResolver = SonosGroupSuggestionAcceptanceResolver()

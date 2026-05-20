@@ -38,7 +38,7 @@ final class PlaybackSyncController: ObservableObject {
     private let transferActions: PlaybackTransferActionController
     private let groupSuggestionStore: PlaybackGroupSuggestionStore
     private let groupSuggestionPresenter: PlaybackGroupSuggestionPresenter
-    private let shortcutLogger = os.Logger(subsystem: "com.fpieringer.SonosHandoffMenuBar", category: "Shortcuts")
+    private let shortcutLogger = os.Logger(subsystem: "com.fpieringer.Keyway", category: "Shortcuts")
     private var monitorCancellable: AnyCancellable?
     private var outputSelectionCancellable: AnyCancellable?
     private var groupSuggestionCancellable: AnyCancellable?

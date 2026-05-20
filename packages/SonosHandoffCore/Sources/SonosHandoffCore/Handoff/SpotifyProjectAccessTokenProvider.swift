@@ -5,8 +5,8 @@ struct SpotifyProjectAccessTokenProvider: Sendable {
     private let tokenClient: SpotifyConnectTokenClient
     private let tokenRefreshLeewaySeconds: Int
 
-    private static let missingWebAPITokenMessage = "Spotify Web API sign-in is missing. Open Sonos Handoff Settings and sign in to Spotify again."
-    private static let incompleteWebAPITokenMessage = "Spotify Web API sign-in is incomplete. Open Sonos Handoff Settings and sign in to Spotify again."
+    private static let missingWebAPITokenMessage = "Spotify Web API sign-in is missing. Open Keyway Settings and sign in to Spotify again."
+    private static let incompleteWebAPITokenMessage = "Spotify Web API sign-in is incomplete. Open Keyway Settings and sign in to Spotify again."
 
     init(
         applicationSupportDirectory: URL,

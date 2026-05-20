@@ -1,6 +1,8 @@
 import SonosHandoffCore
 
 struct AppEnvironment: @unchecked Sendable {
+    let configImportService: ConfigImportService
+    let configImportReport: ConfigImportReport
     let configStore: any ConfigStoring
     let tokenStore: any TokenStoring
     let connectTokenStatusStore: any ConnectTokenStatusChecking
@@ -22,6 +24,8 @@ struct AppEnvironment: @unchecked Sendable {
 
     @MainActor
     static func live() -> AppEnvironment {
+        let configImportService = ConfigImportService()
+        let configImportReport = configImportService.importLegacyState()
         let configStore = ConfigStore()
         let tokenStore = KeychainTokenStore()
         let connectTokenStatusStore = ConnectTokenStatusStore()
@@ -46,6 +50,8 @@ struct AppEnvironment: @unchecked Sendable {
         )
 
         return AppEnvironment(
+            configImportService: configImportService,
+            configImportReport: configImportReport,
             configStore: configStore,
             tokenStore: tokenStore,
             connectTokenStatusStore: connectTokenStatusStore,

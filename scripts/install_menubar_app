@@ -3,11 +3,11 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DERIVED_DATA_DIR="$ROOT_DIR/.build/xcode-derived-data"
-BUILT_APP="$DERIVED_DATA_DIR/Build/Products/Debug/SonosHandoffMenuBar.app"
-APP_DIR="$HOME/Applications/Sonos Handoff.app"
-APP_PROCESS_NAME="SonosHandoffMenuBar"
+BUILT_APP="$DERIVED_DATA_DIR/Build/Products/Debug/Keyway.app"
+APP_DIR="$HOME/Applications/Keyway.app"
+APP_PROCESS_NAME="Keyway"
 APP_PROCESS_PATTERN="$APP_DIR/Contents/MacOS/$APP_PROCESS_NAME"
-SIGNING_IDENTITY="${SONOS_HANDOFF_CODESIGN_IDENTITY:-}"
+SIGNING_IDENTITY="${KEYWAY_CODESIGN_IDENTITY:-}"
 
 if [[ -z "$SIGNING_IDENTITY" ]]; then
   SIGNING_IDENTITY="$(
@@ -23,8 +23,8 @@ if [[ -z "$SIGNING_IDENTITY" ]]; then
 fi
 
 xcodebuild \
-  -workspace "$ROOT_DIR/SonosHandoff.xcworkspace" \
-  -scheme SonosHandoffMenuBar \
+  -workspace "$ROOT_DIR/Keyway.xcworkspace" \
+  -scheme Keyway \
   -configuration Debug \
   -destination 'platform=macOS' \
   -derivedDataPath "$DERIVED_DATA_DIR" \

@@ -7,17 +7,18 @@ import SwiftUI
 @MainActor
 struct SettingsFeature: View {
     static let menuTitle = "Settings"
-    static let preferredWindowSize = CGSize(width: 640, height: 500)
+    static let preferredWindowSize = CGSize(width: 720, height: 680)
     private static let callbackURLText = "http://127.0.0.1:43821/callback"
     private static let panelCornerRadius: CGFloat = 12
     private let accessibilitySettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
     private let notificationSettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.notifications")!
-    private let logger = Logger(subsystem: "com.fpieringer.SonosHandoffMenuBar", category: "Settings")
+    private let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "Settings")
     private let configStore: ConfigStoring
     private let tokenStore: TokenStoring
     private let connectTokenStatusStore: ConnectTokenStatusChecking
     private let authCoordinator: SpotifyAuthCoordinating
     private let accessibilityAutomator: AccessibilityAutomating
+    private let configImportService: ConfigImportService
 
     @State private var spotifyClientID = ""
     @State private var isSpotifyAuthenticated = false
@@ -37,36 +38,137 @@ struct SettingsFeature: View {
     @State private var isRequestingNotifications = false
     @State private var notificationSettingsFallbackAvailable = false
     @State private var notificationMessage: String?
+    @State private var configImportReport: ConfigImportReport?
 
     init(
         configStore: ConfigStoring = ConfigStore(),
         tokenStore: TokenStoring = KeychainTokenStore(),
         connectTokenStatusStore: ConnectTokenStatusChecking = ConnectTokenStatusStore(),
         authCoordinator: SpotifyAuthCoordinating? = nil,
-        accessibilityAutomator: AccessibilityAutomating = SpotifyUIAutomator()
+        accessibilityAutomator: AccessibilityAutomating = SpotifyUIAutomator(),
+        configImportService: ConfigImportService = ConfigImportService(),
+        initialConfigImportReport: ConfigImportReport? = nil
     ) {
         self.configStore = configStore
         self.tokenStore = tokenStore
         self.connectTokenStatusStore = connectTokenStatusStore
         self.accessibilityAutomator = accessibilityAutomator
+        self.configImportService = configImportService
         self.authCoordinator = authCoordinator ?? SpotifyAuthCoordinator(
             tokenStore: tokenStore,
             configStore: configStore
         )
+        _configImportReport = State(initialValue: initialConfigImportReport)
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            spotifySection
-            notificationsSection
-            shortcutsSection
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                generalSection
+                transportRoutingSection
+                overlaySection
+                audioControlsSection
+                sonosSection
+                spotifySection
+                shortcutsSection
+                permissionsSection
+                helperStatusSection
+                diagnosticsSection
+            }
+            .padding(18)
+            .frame(width: Self.preferredWindowSize.width, alignment: .topLeading)
         }
-        .padding(18)
         .frame(width: Self.preferredWindowSize.width, alignment: .topLeading)
         .frame(minHeight: Self.preferredWindowSize.height, alignment: .topLeading)
-        .fixedSize(horizontal: false, vertical: true)
         .task {
             await reloadState()
+        }
+        .onDisappear {
+            _ = NSApp.setActivationPolicy(.accessory)
+        }
+    }
+
+    private var generalSection: some View {
+        settingsPanel(title: "General") {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top, spacing: 10) {
+                    StatusBadge(
+                        title: configImportBadgeTitle,
+                        available: !(configImportReport?.hasFailures ?? false) && !(configImportReport?.hasConflicts ?? false)
+                    )
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Local app state")
+                            .font(.system(size: 13, weight: .medium))
+                        Text(configImportSummary)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(3)
+                    }
+                    .layoutPriority(1)
+
+                    Spacer()
+
+                    Button("Run Import") {
+                        runConfigImport()
+                    }
+                    .controlSize(.small)
+                }
+
+                VStack(alignment: .leading, spacing: 5) {
+                    settingsPathRow(title: "Keyway", url: ConfigPaths.applicationSupportDirectory)
+                    settingsPathRow(title: "Legacy", url: ConfigPaths.legacyApplicationSupportDirectory)
+                }
+            }
+        }
+    }
+
+    private var transportRoutingSection: some View {
+        settingsPanel(title: "Transport Routing") {
+            serviceStatusRow(
+                title: "Media keys",
+                available: accessibilityGranted,
+                availableText: "Play/Pause, Next, Previous",
+                missingText: "Accessibility required"
+            )
+            Text("Routing policy: Focused Target, Pinned Target, Recent Target, chooser.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var overlaySection: some View {
+        settingsPanel(title: "Overlay") {
+            HStack(spacing: 8) {
+                StatusDot(available: true, size: 7)
+                Text("Centered on the display containing the mouse pointer")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("Up/Down, Enter, Escape, Tab, 1-9, P")
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var audioControlsSection: some View {
+        settingsPanel(title: "Audio Controls") {
+            VStack(alignment: .leading, spacing: 7) {
+                serviceStatusRow(title: "Sonos", available: true, availableText: "Volume and mute", missingText: "")
+                serviceStatusRow(title: "Spotify", available: webAPITokenAvailable, availableText: "Active Device Volume", missingText: "Sign in required")
+                serviceStatusRow(title: "Browser", available: false, availableText: "", missingText: "Volume disabled without browser extension")
+            }
+        }
+    }
+
+    private var sonosSection: some View {
+        settingsPanel(title: "Sonos") {
+            VStack(alignment: .leading, spacing: 7) {
+                serviceStatusRow(title: "Discovery", available: true, availableText: "Enabled", missingText: "")
+                serviceStatusRow(title: "Handoff", available: isSpotifyAuthenticated, availableText: "Ready", missingText: "Token files required")
+                serviceStatusRow(title: "Volume", available: true, availableText: "Enabled", missingText: "")
+            }
         }
     }
 
@@ -200,9 +302,9 @@ struct SettingsFeature: View {
                     available: accessibilityGranted
                 )
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Global volume shortcuts")
+                    Text("Global keyboard control")
                         .font(.system(size: 13, weight: .medium))
-                    Text(accessibilityGranted ? "Global volume shortcuts can listen in the background." : "Required for Shift-fn-F11/F12 volume shortcuts.")
+                    Text(accessibilityGranted ? "Keyboard routing can listen in the background." : "Required for media-key routing and expanded control shortcuts.")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
@@ -226,9 +328,30 @@ struct SettingsFeature: View {
         }
     }
 
-    private var notificationsSection: some View {
-        settingsPanel(title: "Notifications") {
+    private var permissionsSection: some View {
+        settingsPanel(title: "Permissions") {
             VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .center, spacing: 10) {
+                    StatusBadge(
+                        title: accessibilityGranted ? "Enabled" : "Required",
+                        available: accessibilityGranted
+                    )
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Accessibility")
+                            .font(.system(size: 13, weight: .medium))
+                        Text(accessibilityGranted ? "Keyway can intercept keyboard events." : "Enable Accessibility for Keyway in System Settings.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Open Settings") {
+                        AccessibilityPermission.requestPrompt()
+                        refreshShortcutState()
+                        NSWorkspace.shared.open(accessibilitySettingsURL)
+                    }
+                    .controlSize(.small)
+                }
+
                 HStack(alignment: .center, spacing: 10) {
                     StatusBadge(
                         title: notificationBadgeTitle,
@@ -266,6 +389,34 @@ struct SettingsFeature: View {
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
+                }
+            }
+        }
+    }
+
+    private var helperStatusSection: some View {
+        settingsPanel(title: "Helper Status") {
+            serviceStatusRow(
+                title: "MediaRemote helper",
+                available: false,
+                availableText: "Running",
+                missingText: "Not connected yet"
+            )
+        }
+    }
+
+    private var diagnosticsSection: some View {
+        settingsPanel(title: "Diagnostics") {
+            VStack(alignment: .leading, spacing: 7) {
+                if let configImportReport {
+                    ForEach(configImportReport.fileResults, id: \.file.rawValue) { result in
+                        settingsDiagnosticRow(title: result.file.fileName, detail: fileStatusText(result.status))
+                    }
+                    settingsDiagnosticRow(title: "spotify keychain", detail: keychainStatusText(configImportReport.keychainStatus))
+                } else {
+                    Text("No diagnostics recorded yet.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
                 }
             }
         }
@@ -328,6 +479,32 @@ struct SettingsFeature: View {
         }
     }
 
+    private func settingsPathRow(title: String, url: URL) -> some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(.system(size: 11, weight: .medium))
+                .frame(width: 48, alignment: .leading)
+            Text(url.path)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+        }
+    }
+
+    private func settingsDiagnosticRow(title: String, detail: String) -> some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.primary.opacity(0.9))
+            Spacer()
+            Text(detail)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+        }
+    }
+
     private var spotifyAuthStatusText: String {
         if isSpotifyAuthenticated {
             return "Ready for Sonos handoff"
@@ -350,6 +527,42 @@ struct SettingsFeature: View {
         }
 
         return "Checking token files..."
+    }
+
+    private var configImportBadgeTitle: String {
+        guard let configImportReport else {
+            return "Not Run"
+        }
+
+        if configImportReport.hasFailures {
+            return "Failed"
+        }
+
+        if configImportReport.hasConflicts {
+            return "Conflict"
+        }
+
+        return configImportReport.copiedCount > 0 ? "Imported" : "Ready"
+    }
+
+    private var configImportSummary: String {
+        guard let configImportReport else {
+            return "Keyway will copy old Sonos Handoff config and token files into its own support directory."
+        }
+
+        if configImportReport.hasConflicts {
+            return "Import found existing Keyway files that differ from old Sonos Handoff files. Keyway did not overwrite them."
+        }
+
+        if configImportReport.hasFailures {
+            return "Import hit an error. Check Diagnostics and re-run import after fixing the file or Keychain access issue."
+        }
+
+        if configImportReport.copiedCount > 0 {
+            return "Copied \(configImportReport.copiedCount) legacy item\(configImportReport.copiedCount == 1 ? "" : "s") into Keyway without modifying old Sonos Handoff files."
+        }
+
+        return "No legacy items needed copying, or the Keyway copies already match."
     }
 
     private var notificationsEnabled: Bool {
@@ -445,6 +658,13 @@ struct SettingsFeature: View {
             spotifyClientID = config.spotifyClientID ?? ""
         } catch {
             authMessage = "Could not load settings."
+        }
+    }
+
+    private func runConfigImport() {
+        configImportReport = configImportService.importLegacyState()
+        Task {
+            await reloadSpotifyAuthState()
         }
     }
 
@@ -572,6 +792,34 @@ struct SettingsFeature: View {
             Task { await reloadSpotifyAuthState() }
         } catch {
             authMessage = "Could not remove the Spotify token."
+        }
+    }
+
+    private func fileStatusText(_ status: ConfigImportFileStatus) -> String {
+        switch status {
+        case .copied:
+            return "copied"
+        case .missingLegacyFile:
+            return "not found in legacy dir"
+        case .alreadyImported:
+            return "already imported"
+        case .conflict:
+            return "different existing Keyway file"
+        case .failed(let message):
+            return "failed: \(message)"
+        }
+    }
+
+    private func keychainStatusText(_ status: ConfigImportKeychainStatus) -> String {
+        switch status {
+        case .copied:
+            return "copied"
+        case .missingLegacyToken:
+            return "not found in legacy keychain"
+        case .alreadyImported:
+            return "already imported"
+        case .failed(let message):
+            return "failed: \(message)"
         }
     }
 }

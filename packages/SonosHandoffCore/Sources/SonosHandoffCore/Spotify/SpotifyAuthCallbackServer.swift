@@ -28,7 +28,7 @@ enum SpotifyAuthCallbackServer {
         }
 
         return try await withCheckedThrowingContinuation { continuation in
-            let queue = DispatchQueue(label: "sonos-handoff.spotify-auth")
+            let queue = DispatchQueue(label: "keyway.spotify-auth")
             let resolver = SpotifyAuthCallbackResolver(
                 expectedState: expectedState,
                 continuation: continuation,
@@ -165,14 +165,14 @@ private final class SpotifyAuthCallbackResolver: @unchecked Sendable {
                     self.sendResponse(
                         connection: connection,
                         listener: listener,
-                        body: "Spotify sign-in completed. You can close this window and return to sonos-handoff.",
+                        body: "Spotify sign-in completed. You can close this window and return to Keyway.",
                         result: .success(())
                     )
                 } catch {
                     self.sendResponse(
                         connection: connection,
                         listener: listener,
-                        body: "Spotify sign-in failed while saving the token. You can close this window and try again from sonos-handoff.",
+                        body: "Spotify sign-in failed while saving the token. You can close this window and try again from Keyway.",
                         result: .failure(error)
                     )
                 }

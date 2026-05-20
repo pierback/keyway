@@ -9,7 +9,7 @@ final class SonosVolumeMonitor: ObservableObject {
 
     @Published private(set) var snapshot: SpeakerVolumeSnapshot?
 
-    private let logger = Logger(subsystem: "com.fpieringer.SonosHandoffMenuBar", category: "VolumeMonitor")
+    private let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "VolumeMonitor")
     private var volumeService: (any SpeakerVolumeAdjusting)?
     private var volumeCommands: SpeakerVolumeCommandQueue = .shared
     private var pollTask: Task<Void, Never>?

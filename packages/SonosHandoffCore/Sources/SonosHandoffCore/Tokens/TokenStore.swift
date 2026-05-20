@@ -13,10 +13,16 @@ public enum TokenStoreError: Error, Equatable {
 }
 
 public struct KeychainTokenStore: TokenStoring {
-    private let service = "sonos-handoff.spotify"
-    private let account = "refresh-token"
+    private let service: String
+    private let account: String
 
-    public init() {}
+    public init(
+        service: String = AppIdentity.spotifyKeychainService,
+        account: String = AppIdentity.spotifyRefreshTokenAccount
+    ) {
+        self.service = service
+        self.account = account
+    }
 
     public func saveRefreshToken(_ token: String) throws {
         guard let data = token.data(using: .utf8) else {
