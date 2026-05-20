@@ -103,6 +103,17 @@ When this PRD is complete, the following will be true:
 - The Media Overlay feels polished enough for daily use.
 - Routing decisions are understandable through Primary Target, pinning, recency, and confirmation feedback.
 
+## Implementation Status
+
+As of 2026-05-20, the main implementation is present on branch `keyway-planning` and the deterministic regression gate passes. The remaining blockers are verification blockers, not accepted scope removals:
+
+- Accessibility has not yet been granted to the new `com.fpieringer.Keyway` bundle on the local machine, so media-key interception cannot be manually confirmed until that permission is granted.
+- The configured Sonos rooms were not discoverable on the current network, so real-device Sonos smoke checks could not be run.
+- QuickTime target discovery still needs a local media playback check.
+- Settings Cmd-Tab behavior still needs a manual check with the Settings window visible.
+
+The current verification record is maintained in `docs/verification-log.md`.
+
 ---
 
 ## Acceptance Criteria
@@ -195,7 +206,8 @@ When this PRD is complete, the following will be true:
 
 - New Keyway app support directory.
 - One-time copied config/token files from old Sonos Handoff directory.
-- New persisted Keyway state for Pinned Target, Recent Target, overlay preferences, routing enablement, and helper diagnostics.
+- New persisted Keyway state for Pinned Target and Recent Target.
+- Runtime Keyway state for overlay expansion and helper diagnostics.
 
 ---
 

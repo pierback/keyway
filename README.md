@@ -1,140 +1,94 @@
-# sonos-handoff
+# Keyway
 
-`sonos-handoff` is a native macOS menu bar app for handing off the current Spotify playback session to a Sonos speaker while keeping Spotify as the playback controller.
+Keyway is a local macOS menu bar app for choosing which Now Playing app receives Play/Pause, Next, and Previous. It keeps the existing Sonos handoff and volume workflows, adds MediaRemote target discovery through a bundled `/usr/bin/perl` helper, and shows a centered Raycast-like chooser when routing is ambiguous.
 
-## Current Status
+Keyway is intentionally local-only for now. It does not include App Store, notarization, or commercial publishing scripts.
 
-Current transfer behavior:
+## Current Scope
 
-- the app and `sonos-handoff-port` activate Spotify Connect on the Sonos speaker through the Sonos local network endpoint
-- the menu bar Output list renders Sonos groups as one selectable Output row and exposes direct plus buttons plus Option-held group editing for the selected Spotify-on-Sonos group
-- group editing can add standalone speakers, remove group members, and remove the coordinator by migrating playback to a replacement member
-- background sync prompts for newly visible standalone Sonos speakers when Spotify is already playing on a Sonos Output, with a notification action and in-menu fallback row
-- background sync prompts to move Spotify playback to newly visible Sonos Outputs when Spotify is playing on another active device
-- volume control talks directly to the Sonos speaker over local SOAP and defaults to 5 percent steps; developer-tool step overrides are clamped to 5...25
-- Spotify Web API is used only to verify that playback becomes active on the target after handoff
-- the menu bar app registers `Shift+F10/F11/F12` for Port mute/down/up, and enables held `Shift+fn+F10/F11/F12` control only when Accessibility permission allows key interception
-- handoff requires the desktop Connect token and Web API token files in `~/Library/Application Support/sonos-handoff`
+- Distinct app identity from the old Sonos Handoff app:
+  - bundle id: `com.fpieringer.Keyway`
+  - app support: `~/Library/Application Support/keyway`
+  - install path: `~/Applications/Keyway.app`
+- One-time import copies existing Sonos Handoff config/token files from `~/Library/Application Support/sonos-handoff` without modifying the source files.
+- Sonos discovery, Spotify-to-Sonos handoff, Sonos volume, mute, token readiness, and existing smoke scripts remain in the codebase.
+- MediaRemote helper runs as `/usr/bin/perl .../MediaRemoteHelper/keyway-mediaremote-helper.pl .../libkeyway_mediaremote.dylib` and speaks newline-delimited JSON.
+- Media keys handled by Keyway are only Play/Pause, Next, and Previous. Hardware volume and mute keys are not intercepted.
+- Browser volume is shown as disabled unless a future no-extension backend exists; no browser extension is required.
 
 ## Prerequisites
 
-- macOS with Xcode 26.2 or newer
-- Swift 6.2 or newer
-- Ruby with the `xcodeproj` gem available if you need to regenerate project files
+- macOS with Xcode and Swift available.
+- Ruby with the `xcodeproj` gem when regenerating the Xcode project.
+- Spotify and at least one browser or browser-wrapper Now Playing session for media-target checks.
+- Local Sonos network access for real-device Sonos smoke checks.
+- Accessibility permission granted to `/Users/f.pieringer/Applications/Keyway.app` before media-key interception can work. macOS requires this for suppressing hardware media-key events.
 
-## Project Layout
+## Build And Install
 
-- `SonosHandoffMenuBar`: native macOS status item app
-- `packages/SonosHandoffCore`: shared types and services
-- `docs`: architecture and runtime flow notes
-
-## Open the Workspace
-
-Open [SonosHandoff.xcworkspace](/Users/f.pieringer/projects/sonos-handoff/SonosHandoff.xcworkspace) in Xcode.
-
-## Bootstrap
-
-Bootstrap the full scaffold from a fresh checkout:
+From this checkout:
 
 ```bash
-/Users/f.pieringer/projects/sonos-handoff/scripts/bootstrap
+/Users/f.pieringer/projects/keyway/scripts/bootstrap
 ```
 
-This script:
-
-- ensures the `xcodeproj` Ruby gem is available
-- regenerates the Xcode workspace and projects
-- builds and tests `SonosHandoffCore`
-- builds the menu bar app target
-
-## Build
-
-Build the shared package:
+Build only:
 
 ```bash
-cd /Users/f.pieringer/projects/sonos-handoff/packages/SonosHandoffCore
-swift build
+xcodebuild -workspace /Users/f.pieringer/projects/keyway/Keyway.xcworkspace -scheme Keyway -configuration Debug -destination 'platform=macOS' -derivedDataPath /Users/f.pieringer/projects/keyway/.build/xcode-derived-data build
 ```
 
-Run package tests:
+Install and launch the local app:
 
 ```bash
-cd /Users/f.pieringer/projects/sonos-handoff/packages/SonosHandoffCore
-swift test
+/Users/f.pieringer/projects/keyway/scripts/install_menubar_app
 ```
 
-Build the menu bar app from Xcode:
+Run the deterministic regression gate:
 
 ```bash
-xcodebuild -workspace /Users/f.pieringer/projects/sonos-handoff/SonosHandoff.xcworkspace -scheme SonosHandoffMenuBar build
+/Users/f.pieringer/projects/keyway/scripts/regression_gate
 ```
 
-Install the menu bar app:
+Run real-device smoke checks when the configured Sonos room is discoverable:
 
 ```bash
-/Users/f.pieringer/projects/sonos-handoff/scripts/install_menubar_app
-```
-
-The installer prefers the first available Apple Development code-signing identity so macOS Accessibility permission can persist across rebuilds. If no identity exists, it falls back to ad-hoc signing and Accessibility may need to be granted again after each rebuild.
-
-Run the deterministic regression gate before larger changes:
-
-```bash
-/Users/f.pieringer/projects/sonos-handoff/scripts/regression_gate
-```
-
-This runs the shared package tests, whitespace checks, and the manual menu bar installer build. Real-device smoke tests stay opt-in because they depend on the current Spotify/Sonos state:
-
-```bash
-SONOS_HANDOFF_REAL_DEVICE_SMOKE=1 SONOS_HANDOFF_ROOM=Port /Users/f.pieringer/projects/sonos-handoff/scripts/regression_gate
-```
-
-## Developer Tools
-
-```text
-sonos-handoff-port handoff Port
-sonos-handoff-port volume-status Port
-sonos-handoff-port volume-down Port
-sonos-handoff-port volume-up Port
-sonos-handoff-port volume-up Port --step 10
-sonos-handoff-safe-grouping-check
-sonos-handoff-safe-grouping-check --prepare-silent
-sonos-handoff-safe-grouping-check --mutate --i-understand-this-mutates-sonos-groups
-/Users/f.pieringer/projects/sonos-handoff/scripts/smoke_port_handoff Port
-/Users/f.pieringer/projects/sonos-handoff/scripts/smoke_menubar_handoff Port
-/Users/f.pieringer/projects/sonos-handoff/scripts/smoke_menubar_hotkey Port
+SONOS_HANDOFF_REAL_DEVICE_SMOKE=1 SONOS_HANDOFF_ROOM=<room-name> /Users/f.pieringer/projects/keyway/scripts/regression_gate
 ```
 
 ## Runtime Setup
 
-1. Ensure these files exist in `~/Library/Application Support/sonos-handoff`:
-   - `spotify-desktop-connect-tokens.json`
-   - `project-webapi-token.json`
-2. Use `Settings...` -> `Spotify` to confirm Desktop Connect and Web API token readiness.
-3. Keep Spotify actively playing before handoff.
+1. Launch `/Users/f.pieringer/Applications/Keyway.app`.
+2. Open Settings from the menu bar app.
+3. Confirm `General` reports config import status.
+4. Confirm `Spotify` reports Desktop Connect and Web API token readiness.
+5. Confirm `Helper Status` reports the MediaRemote helper as running.
+6. Grant Accessibility to Keyway in System Settings when `Permissions` reports it missing.
 
-Physical `Shift+fn+F10/F11/F12` uses the Mac media/function keys, so the installed app must be enabled in Accessibility before held repeat is reliable; otherwise the app leaves the `Shift+fn` path disabled and shows a permission HUD. Plain `Shift+F10/F11/F12` remains the Carbon fallback for mute/down/up.
+After Accessibility is granted, restart Keyway or use Settings to refresh shortcuts. Logs should move from `event_tap_create_failed accessibility=false` to `mediaFallback=enabled events=systemDefined`.
 
-Grant Accessibility to the installed app at:
+## Acceptance
+
+The implementation target is [docs/acceptance-runbook.md](/Users/f.pieringer/projects/keyway/docs/acceptance-runbook.md). Keyway is complete only when that runbook passes on a fresh local install, or when the PRD and runbook explicitly move a failed check out of scope.
+
+Current local verification notes live in [docs/verification-log.md](/Users/f.pieringer/projects/keyway/docs/verification-log.md).
+
+## Developer Tools
 
 ```text
-/Users/f.pieringer/Applications/Sonos Handoff.app
+sonos-handoff-port playback-status
+sonos-handoff-port sonos-status <room>
+sonos-handoff-port handoff <room>
+sonos-handoff-port volume-status <room>
+sonos-handoff-port volume-down <room>
+sonos-handoff-port volume-up <room>
+sonos-handoff-port volume-mute <room>
+/Users/f.pieringer/projects/keyway/scripts/smoke_port_handoff <room>
+/Users/f.pieringer/projects/keyway/scripts/smoke_menubar_handoff <room>
+/Users/f.pieringer/projects/keyway/scripts/smoke_menubar_slider <room>
 ```
-
-After granting permission, click `Settings...` -> `Shortcuts` -> `Refresh`, or restart the app. Logs should change from `event_tap_create_failed accessibility=false` to `mediaFallback=enabled events=systemDefined`.
-
-## Grouping Validation
-
-Run the grouping checker without flags first. Dry-run mode discovers Sonos groups and reports whether the current network is ready for a live grouping test. It does not change volume, mute state, playback, or groups.
-
-```bash
-cd /Users/f.pieringer/projects/sonos-handoff
-swift run --package-path packages/SonosHandoffCore sonos-handoff-safe-grouping-check
-```
-
-For live validation, first prepare silent mode or use mutation mode, which always mutes every discovered speaker and sets every discovered speaker to volume `0` before touching groups. Mutation mode then validates standalone join/remove and coordinator removal with the `<2s` migration timing gate.
 
 ## Notes
 
-- Grouping validation requires at least one visible Spotify-on-Sonos Output and enough visible speakers for the selected grouping scenario.
-- The app does not use Spotify Web API available-device transfer because `/me/player/devices` can omit Sonos speakers.
+- The MediaRemote bridge intentionally uses private macOS symbols behind the Perl-hosted adapter documented in `docs/adr`.
+- The old Sonos Handoff app and `~/Library/Application Support/sonos-handoff` are left alone so the old app can still be used until Keyway fully passes acceptance.
