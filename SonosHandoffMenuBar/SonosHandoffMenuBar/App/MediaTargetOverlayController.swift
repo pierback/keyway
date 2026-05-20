@@ -29,7 +29,8 @@ final class MediaTargetOverlayModel: ObservableObject {
         self.command = command
         self.targets = targets
         self.pinnedIdentity = pinnedIdentity
-        selectedIndex = min(max(selectedIndex, 0), max(targets.count - 1, 0))
+        selectedIndex = 0
+        expanded = false
     }
 
     func moveSelection(by delta: Int) {
@@ -181,6 +182,11 @@ final class MediaTargetOverlayController {
         if let number = Int(characters), (1 ... 9).contains(number) {
             let index = number - 1
             guard model.targets.indices.contains(index) else {
+                return true
+            }
+            if model.expanded {
+                model.select(index: index)
+                refreshAudioSnapshot()
                 return true
             }
             choose(model.targets[index])
