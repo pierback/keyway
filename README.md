@@ -56,7 +56,7 @@ Summarize the current local acceptance readiness:
 /Users/f.pieringer/projects/keyway/scripts/acceptance_preflight
 ```
 
-`acceptance_preflight=blocked` means the installed app is intact but one or more required local conditions, such as a discoverable Sonos room, still prevents the full acceptance runbook from passing.
+`acceptance_preflight=pass` means the installed app, helper, imported config, MediaRemote discovery, Accessibility readiness, Spotify state, Sonos discovery, and legacy-file integrity passed in the current local environment. `acceptance_preflight=blocked` means the installed app is intact but one or more required local conditions, such as active Spotify playback or a discoverable Sonos room, still prevents that readiness check from passing.
 
 Run real-device smoke checks when the configured Sonos room is discoverable:
 

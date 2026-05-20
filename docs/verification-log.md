@@ -18,13 +18,17 @@ Last updated: 2026-05-20
 - `scripts/install_menubar_app`: passed and installed `/Users/f.pieringer/Applications/Keyway.app`.
 - `scripts/regression_gate`: passed in default mode again at 2026-05-20 17:22 local time.
 - `scripts/regression_gate`: passed again after the Focused Target prominent-window routing change.
-- `scripts/acceptance_preflight`: initially reported `acceptance_preflight=blocked` because Accessibility and Sonos room discovery were unavailable locally.
+- `SONOS_HANDOFF_REAL_DEVICE_SMOKE=1 SONOS_HANDOFF_ROOM=Port scripts/regression_gate`: passed at 2026-05-20 18:38 local time, including:
+  - `smoke_port_handoff=ok`
+  - `smoke_menubar_handoff=ok`
+  - `smoke_menubar_slider=ok`
+- `scripts/acceptance_preflight`: now reports `acceptance_preflight=pass` on the local machine after the real-device gate.
 - Startup and shortcut refresh now request the macOS Accessibility prompt when the media-key event tap cannot be created.
 - Keyway now persists shortcut runtime readiness in `~/Library/Application Support/keyway/shortcut-runtime-status.json` so preflight is not dependent on volatile unified-log retention.
 - After reinstalling `/Users/f.pieringer/Applications/Keyway.app`, `scripts/acceptance_preflight` passed the Accessibility/media-key event-tap readiness check from the persisted status file:
   - `pass: Keyway persisted shortcut runtime status is mediaFallback=enabled`
 - `scripts/acceptance_preflight` now waits briefly for the app-owned MediaRemote helper after a fresh launch, avoiding a false helper block during install/relaunch settling.
-- The latest `scripts/acceptance_preflight` run still reports `acceptance_preflight=blocked` with exit code 2 because Spotify has no active playback and Sonos room `Port` is not discoverable.
+- `scripts/acceptance_preflight` accepts validated newer Keyway-owned token state after runtime refreshes, and verifies the legacy Sonos Handoff files remain unchanged during the preflight.
 - `codex-review --parallel-tests "scripts/regression_gate"`: initially reported overlay chooser state findings; fixed in `53e5590`; rerun clean with no accepted/actionable findings.
 - Installed bundle id: `com.fpieringer.Keyway`.
 - Installed app signature uses identifier `com.fpieringer.Keyway` and TeamIdentifier `7Q44SDV7BM`.
@@ -43,12 +47,28 @@ Last updated: 2026-05-20
   - The Settings window contained General, Transport Routing, Overlay, Audio Controls, Sonos, Spotify, Shortcuts, Permissions, Helper Status, and Diagnostics.
   - Helper Status displayed `Running`, `MediaRemote snapshot loaded`, `targets=3`.
 - Config import copied legacy files into `~/Library/Application Support/keyway`.
-- `config.json` and `spotify-desktop-connect-tokens.json` have matching SHA-256 checksums in legacy and Keyway support directories.
-- Legacy support files under `~/Library/Application Support/sonos-handoff` remained byte-for-byte unchanged in the install/import check.
+- `config.json` still matches the legacy checksum.
+- `spotify-desktop-connect-tokens.json` is now newer in Keyway after runtime refresh; `scripts/acceptance_preflight` verifies it has a complete Desktop Connect token schema and that the legacy token file remains unchanged.
+- Legacy support files under `~/Library/Application Support/sonos-handoff` remained byte-for-byte unchanged in the install/import and preflight checks.
 - Current Spotify readiness was verified through `sonos-handoff-port playback-status`:
-  - `spotify_device=Fabian’s MacBook Pro (2) type=Computer restricted=false`
-  - `spotify_device_volume=100`
+  - `spotify_device=Port type=AVR restricted=true`
+  - `spotify_device_volume=71`
   - `spotify_playing=true`
+- Spotify-to-Sonos handoff was verified through the CLI smoke:
+  - `spotify_item=Break Your Heart`
+  - `sonos_transport=playing`
+  - `handoff=ok`
+- Sonos menu-bar handoff was verified through `scripts/smoke_menubar_handoff Port`.
+- Sonos menu-bar volume was verified through `scripts/smoke_menubar_slider Port`:
+  - `initial_volume=72`
+  - `target_volume=82`
+  - `observed_volume=82`
+  - `restored_volume=72`
+- Sonos mute was verified directly and restored:
+  - `initial_muted=false`
+  - `volume-mute-on=ok`
+  - `volume-mute-off=ok`
+  - `restored_muted=false`
 - Media-key constants for Play/Pause, Next, and Previous were checked against local SDK headers:
   - `NX_KEYTYPE_PLAY = 16`
   - `NX_KEYTYPE_NEXT = 17`
@@ -57,23 +77,13 @@ Last updated: 2026-05-20
 
 ## Not Yet Passed Locally
 
-- Real Sonos smoke checks could not be run successfully because the configured rooms were not discoverable from the current network:
-  - `Port`
-  - `Office`
-  - `kitchen`
 - Full transport routing, overlay keyboard operation from hardware media keys, and routing confirmation still need a hardware media-key run now that the event tap is enabled.
-- Spotify Active Device Volume needs a rerun while Spotify has active playback.
-- Sonos volume and mute still need a run on a network where a configured Sonos room is discoverable.
+- Spotify Active Device Volume still needs a run against an unrestricted Spotify active device. The current active device is Sonos `Port`, and Spotify reports it as `restricted=true`, so volume write-back is correctly skipped.
+- Expanded Controls browser volume disabled-state still needs a manual UI pass in the overlay.
 
 ## Next Required Acceptance Checks
 
-1. Start active Spotify playback on a controllable device.
-2. Re-run media-key checks for Play/Pause, Next, Previous, chooser, pinning, focused target, prominent-window target, recent target, and single target.
-3. Connect to a network where at least one configured Sonos room is discoverable, then run:
-
-```bash
-SONOS_HANDOFF_REAL_DEVICE_SMOKE=1 SONOS_HANDOFF_ROOM=<room-name> /Users/f.pieringer/projects/keyway/scripts/regression_gate
-```
-
-4. Re-run Sonos volume and mute checks against the discoverable room.
-5. Re-run full overlay keyboard and routing confirmation checks with live media-key presses.
+1. Re-run media-key checks for Play/Pause, Next, Previous, chooser, pinning, focused target, prominent-window target, recent target, and single target.
+2. Re-run full overlay keyboard and routing confirmation checks with live media-key presses.
+3. Move Spotify playback to an unrestricted active device, then verify Spotify Active Device Volume.
+4. Open Expanded Controls and verify browser volume appears clearly disabled without requiring an extension.

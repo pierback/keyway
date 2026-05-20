@@ -105,14 +105,16 @@ When this PRD is complete, the following will be true:
 
 ## Implementation Status
 
-As of 2026-05-20, the main implementation is present on branch `keyway-planning` and the deterministic regression gate passes. `scripts/acceptance_preflight` summarizes current local acceptance readiness and exits `2` while local environment blockers remain. The remaining blockers are verification blockers, not accepted scope removals:
+As of 2026-05-20, the main implementation is present on branch `keyway-planning`. `scripts/acceptance_preflight` now reports `acceptance_preflight=pass` on the local machine when Spotify playback is active on the discoverable Sonos `Port` room. The deterministic regression gate and the real-device smoke gate pass. The remaining blockers are manual verification blockers, not accepted scope removals:
 
 - Accessibility is granted to the installed `com.fpieringer.Keyway` bundle on the local machine, and Keyway persists `mediaFallback=enabled` in `~/Library/Application Support/keyway/shortcut-runtime-status.json`.
-- The configured Sonos rooms were not discoverable on the current network, so real-device Sonos smoke checks could not be run.
+- `SONOS_HANDOFF_REAL_DEVICE_SMOKE=1 SONOS_HANDOFF_ROOM=Port scripts/regression_gate` passes, including CLI Spotify-to-Sonos handoff, menu-bar handoff, and menu-bar Sonos volume smoke paths.
+- Sonos mute was verified directly through the local CLI and restored to its original state.
 - QuickTime target discovery has been verified with local media playback.
 - Settings normal-window behavior has been verified through the menu bar UI; System Events reports Keyway as visible and not background-only while Settings is open.
 - Focused Target routing now checks the global foreground Media Target first, then a prominently visible, unobscured Media Target window on the display containing the pointer before falling back to Pinned Target, Recent Target, or chooser.
-- Full live hardware Transport Key routing still needs a manual run with Play/Pause, Next, and Previous keypresses.
+- Spotify Active Device Volume still needs a run against an unrestricted Spotify active device; the current active device is Sonos `Port`, which Spotify reports as `restricted=true`.
+- Full live hardware Transport Key routing and overlay keyboard behavior still need a manual run with Play/Pause, Next, and Previous keypresses.
 
 The current verification record is maintained in `docs/verification-log.md`.
 

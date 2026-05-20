@@ -8,6 +8,13 @@ LEGACY_SUPPORT_DIR="$HOME/Library/Application Support/sonos-handoff"
 KEYWAY_SUPPORT_DIR="$HOME/Library/Application Support/keyway"
 ROOM="${SONOS_HANDOFF_ROOM:-Port}"
 STATUS="pass"
+CONFIG_FILES=(config.json spotify-desktop-connect-tokens.json project-webapi-token.json)
+LEGACY_CHECKSUM_DIR="$(mktemp -d -t keyway-legacy-checksums.XXXXXX)"
+
+cleanup() {
+  rm -rf "$LEGACY_CHECKSUM_DIR"
+}
+trap cleanup EXIT
 
 pass() {
   printf 'pass: %s\n' "$*"
@@ -32,6 +39,84 @@ section() {
 file_sha() {
   shasum -a 256 "$1" | awk '{ print $1 }'
 }
+
+runtime_refreshed_file() {
+  case "$1" in
+    spotify-desktop-connect-tokens.json | project-webapi-token.json)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+valid_runtime_refreshed_file() {
+  local filename="$1"
+  local path="$2"
+
+  case "$filename" in
+    spotify-desktop-connect-tokens.json)
+      /usr/bin/swift -e '
+import Darwin
+import Foundation
+
+struct DesktopToken: Decodable {
+    let access_token: String
+    let refresh_token: String
+    let expires_at: Int
+}
+
+let url = URL(fileURLWithPath: CommandLine.arguments[1])
+let data = try Data(contentsOf: url)
+let tokens = try JSONDecoder().decode([String: DesktopToken].self, from: data)
+let hasUsableToken = tokens.contains { key, token in
+    key.contains("/65b708073fc0480ea92a077233ca87bd/")
+        && !token.access_token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        && !token.refresh_token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        && token.expires_at > 0
+}
+if !hasUsableToken {
+    exit(1)
+}
+' "$path" >/dev/null 2>&1
+      ;;
+    project-webapi-token.json)
+      /usr/bin/swift -e '
+import Darwin
+import Foundation
+
+struct ProjectToken: Decodable {
+    let access_token: String
+    let refresh_token: String
+    let client_id: String
+    let expires_at: Int?
+}
+
+let url = URL(fileURLWithPath: CommandLine.arguments[1])
+let data = try Data(contentsOf: url)
+let token = try JSONDecoder().decode(ProjectToken.self, from: data)
+let complete = !token.access_token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    && !token.refresh_token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    && !token.client_id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    && token.expires_at != nil
+if !complete {
+    exit(1)
+}
+' "$path" >/dev/null 2>&1
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+for filename in "${CONFIG_FILES[@]}"; do
+  legacy_file="$LEGACY_SUPPORT_DIR/$filename"
+  if [[ -f "$legacy_file" ]]; then
+    file_sha "$legacy_file" > "$LEGACY_CHECKSUM_DIR/$filename.sha"
+  fi
+done
 
 section "App"
 if [[ -d "$APP_DIR" ]]; then
@@ -72,7 +157,7 @@ else
   fail "Keyway support directory is missing: $KEYWAY_SUPPORT_DIR"
 fi
 
-for filename in config.json spotify-desktop-connect-tokens.json project-webapi-token.json; do
+for filename in "${CONFIG_FILES[@]}"; do
   keyway_file="$KEYWAY_SUPPORT_DIR/$filename"
   legacy_file="$LEGACY_SUPPORT_DIR/$filename"
   if [[ -f "$keyway_file" ]]; then
@@ -84,8 +169,10 @@ for filename in config.json spotify-desktop-connect-tokens.json project-webapi-t
   if [[ -f "$legacy_file" && -f "$keyway_file" ]]; then
     if [[ "$(file_sha "$legacy_file")" == "$(file_sha "$keyway_file")" ]]; then
       pass "$filename matches legacy checksum"
+    elif runtime_refreshed_file "$filename" && [[ "$keyway_file" -nt "$legacy_file" ]] && valid_runtime_refreshed_file "$filename" "$keyway_file"; then
+      pass "$filename has newer independently refreshed Keyway token state; legacy source will be checked unchanged"
     else
-      block "$filename differs from legacy; confirm this is intentional Keyway state"
+      block "$filename differs from legacy without a validated Keyway runtime-refresh reason; inspect import conflict before accepting"
     fi
   fi
 done
@@ -172,6 +259,25 @@ else
   printf '%s\n' "$sonos_output"
   block "Sonos room '$ROOM' is not discoverable"
 fi
+
+section "Legacy File Integrity"
+for filename in "${CONFIG_FILES[@]}"; do
+  legacy_file="$LEGACY_SUPPORT_DIR/$filename"
+  checksum_file="$LEGACY_CHECKSUM_DIR/$filename.sha"
+  if [[ -f "$checksum_file" ]]; then
+    if [[ ! -f "$legacy_file" ]]; then
+      fail "legacy $filename was removed during preflight"
+    elif [[ "$(cat "$checksum_file")" == "$(file_sha "$legacy_file")" ]]; then
+      pass "legacy $filename is unchanged"
+    else
+      fail "legacy $filename changed during preflight"
+    fi
+  elif [[ -f "$legacy_file" ]]; then
+    block "legacy $filename appeared during preflight; rerun from a stable state"
+  else
+    pass "legacy $filename remains absent"
+  fi
+done
 
 section "Result"
 case "$STATUS" in
