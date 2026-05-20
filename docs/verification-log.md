@@ -11,10 +11,13 @@ Last updated: 2026-05-20
   - `2d66be1 Cut over app identity to Keyway`
   - `9ac40cc Add MediaRemote helper bridge`
   - `4b1137e Route media keys through Keyway overlay`
+  - `aa711b9 Document Keyway verification status`
+  - `53e5590 Fix media target overlay chooser state`
 - `swift test --package-path packages/SonosHandoffCore`: passed with 236 tests.
 - `xcodebuild -workspace Keyway.xcworkspace -scheme Keyway -configuration Debug -destination 'platform=macOS' -derivedDataPath .build/xcode-derived-data build`: passed.
 - `scripts/install_menubar_app`: passed and installed `/Users/f.pieringer/Applications/Keyway.app`.
 - `scripts/regression_gate`: passed in default mode.
+- `codex-review --parallel-tests "scripts/regression_gate"`: initially reported overlay chooser state findings; fixed in `53e5590`; rerun clean with no accepted/actionable findings.
 - Installed bundle id: `com.fpieringer.Keyway`.
 - Installed helper process observed:
   - `/usr/bin/perl /Users/f.pieringer/Applications/Keyway.app/Contents/Resources/MediaRemoteHelper/keyway-mediaremote-helper.pl /Users/f.pieringer/Applications/Keyway.app/Contents/Resources/MediaRemoteHelper/libkeyway_mediaremote.dylib`
