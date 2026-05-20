@@ -24,4 +24,8 @@ if [[ "${KEYWAY_OVERLAY_UI_SMOKE:-0}" == "1" ]]; then
   run "$ROOT_DIR/scripts/smoke_overlay_browser_controls"
 fi
 
+if [[ "${KEYWAY_TRANSPORT_UI_SMOKE:-0}" == "1" ]]; then
+  run "$ROOT_DIR/scripts/smoke_transport_routing_confirmation"
+fi
+
 echo "regression_gate=ok"

@@ -1,101 +1,110 @@
-@preconcurrency import AppKit
+import Foundation
+import os
+@preconcurrency import UserNotifications
 
 @MainActor
 final class StatusHUD {
     static let shared = StatusHUD()
 
-    private var hudPanel: StatusHUDPanel?
-    private var hideWorkItem: DispatchWorkItem?
-    private var suppressVolumeOverlay = false
+    private let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "Notifications")
+    private var suppressVolumeNotifications = false
 
     private init() {}
 
     func setVolumeOverlaySuppressed(_ suppressed: Bool) {
-        suppressVolumeOverlay = suppressed
-        guard suppressed else {
-            return
-        }
-
-        hideWorkItem?.cancel()
-        hudPanel?.orderOut()
+        suppressVolumeNotifications = suppressed
     }
 
     func show(title: String, message: String) {
-        hideWorkItem?.cancel()
-        let panel = ensurePanel()
-        panel.showLoadingMessage(title: title, message: message)
-        panel.orderFront()
+        logger.info("KeywayNotification pending title=\(title, privacy: .public) message=\(message, privacy: .public)")
     }
 
     func update(title: String? = nil, message: String) {
-        let panel = ensurePanel()
-        panel.updateMessage(title: title, message: message)
-        panel.position()
+        logger.info("KeywayNotification update title=\(title ?? "", privacy: .public) message=\(message, privacy: .public)")
     }
 
     func finish(title: String, message: String, dismissAfter seconds: TimeInterval = 3.5) {
-        hideWorkItem?.cancel()
-        let panel = ensurePanel()
-        panel.showFinishedMessage(title: title, message: message)
-        panel.orderFront()
-        scheduleDismiss(after: seconds)
+        deliver(title: title, message: message, identifier: "keyway.status")
     }
 
     func showVolume(roomName: String, volume: Int, dismissAfter seconds: TimeInterval = 3.0) {
-        guard !suppressVolumeOverlay else {
+        guard !suppressVolumeNotifications else {
             return
         }
 
-        hideWorkItem?.cancel()
-        let panel = ensurePanel()
-        panel.showVolume(roomName: roomName, volume: volume)
-        panel.orderFront()
-        scheduleDismiss(after: seconds)
+        deliver(
+            title: "\(roomName) Volume",
+            message: "\(volume)%",
+            identifier: "keyway.volume.\(roomName)"
+        )
     }
 
     func showMutePending(roomName: String) {
-        guard !suppressVolumeOverlay else {
-            return
-        }
-
-        hideWorkItem?.cancel()
-        let panel = ensurePanel()
-        panel.showMutePending(roomName: roomName)
-        panel.orderFront()
+        logger.info("KeywayNotification pending_mute room=\(roomName, privacy: .public)")
     }
 
     func showMute(roomName: String, muted: Bool, dismissAfter seconds: TimeInterval = 3.0) {
-        guard !suppressVolumeOverlay else {
+        guard !suppressVolumeNotifications else {
             return
         }
 
-        hideWorkItem?.cancel()
-        let panel = ensurePanel()
-        panel.showMute(roomName: roomName, muted: muted)
-        panel.orderFront()
-        scheduleDismiss(after: seconds)
+        deliver(
+            title: roomName,
+            message: muted ? "Muted" : "Unmuted",
+            identifier: "keyway.mute.\(roomName)"
+        )
     }
 
-    private func ensurePanel() -> StatusHUDPanel {
-        if let hudPanel {
-            return hudPanel
-        }
+    private func deliver(title: String, message: String, identifier: String) {
+        let logger = logger
+        logger.info("KeywayNotification request title=\(title, privacy: .public) message=\(message, privacy: .public) identifier=\(identifier, privacy: .public)")
 
-        let panel = StatusHUDPanel { [weak self] in
-            self?.hideWorkItem?.cancel()
-            self?.hudPanel?.orderOut()
-        }
-        hudPanel = panel
-        return panel
-    }
-
-    private func scheduleDismiss(after seconds: TimeInterval) {
-        let workItem = DispatchWorkItem { [weak self] in
-            Task { @MainActor in
-                self?.hudPanel?.orderOut()
+        let center = UNUserNotificationCenter.current()
+        center.getNotificationSettings { settings in
+            switch settings.authorizationStatus {
+            case .authorized, .provisional, .ephemeral:
+                Self.addNotification(center: center, title: title, message: message, identifier: identifier, logger: logger)
+            case .notDetermined:
+                center.requestAuthorization(options: [.alert, .sound]) { granted, error in
+                    if let error {
+                        logger.error("KeywayNotification authorization_failed title=\(title, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+                        return
+                    }
+                    guard granted else {
+                        logger.info("KeywayNotification authorization_denied title=\(title, privacy: .public)")
+                        return
+                    }
+                    Self.addNotification(center: center, title: title, message: message, identifier: identifier, logger: logger)
+                }
+            case .denied:
+                logger.info("KeywayNotification skipped title=\(title, privacy: .public) reason=authorization_denied")
+            @unknown default:
+                logger.info("KeywayNotification skipped title=\(title, privacy: .public) reason=unknown_authorization")
             }
         }
-        hideWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: workItem)
+    }
+
+    private nonisolated static func addNotification(
+        center: UNUserNotificationCenter,
+        title: String,
+        message: String,
+        identifier: String,
+        logger: Logger
+    ) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = message
+        content.sound = nil
+
+        let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
+        center.removePendingNotificationRequests(withIdentifiers: [identifier])
+        center.removeDeliveredNotifications(withIdentifiers: [identifier])
+        center.add(request) { error in
+            if let error {
+                logger.error("KeywayNotification delivery_failed title=\(title, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+            } else {
+                logger.info("KeywayNotification delivered title=\(title, privacy: .public) identifier=\(identifier, privacy: .public)")
+            }
+        }
     }
 }

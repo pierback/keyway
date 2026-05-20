@@ -18,11 +18,13 @@ Last updated: 2026-05-20
 - `scripts/install_menubar_app`: passed and installed `/Users/f.pieringer/Applications/Keyway.app`.
 - `scripts/regression_gate`: passed in default mode again at 2026-05-20 17:22 local time.
 - `scripts/regression_gate`: passed again after the Focused Target prominent-window routing change.
+- `KEYWAY_TRANSPORT_UI_SMOKE=1 scripts/regression_gate`: passed after the native notification cutover, including Swift package tests, `git diff --check`, reinstall, and `scripts/smoke_transport_routing_confirmation`.
 - `SONOS_HANDOFF_REAL_DEVICE_SMOKE=1 SONOS_HANDOFF_ROOM=Port scripts/regression_gate`: passed at 2026-05-20 18:38 local time, including:
   - `smoke_port_handoff=ok`
   - `smoke_menubar_handoff=ok`
   - `smoke_menubar_slider=ok`
 - `scripts/acceptance_preflight`: now reports `acceptance_preflight=pass` on the local machine after the real-device gate.
+- `scripts/acceptance_preflight`: passed again after the native notification cutover; it reported the installed app running, helper responding, three media targets, persisted `mediaFallback=enabled`, discoverable Sonos `Port`, and unchanged legacy files.
 - Startup and shortcut refresh now request the macOS Accessibility prompt when the media-key event tap cannot be created.
 - Keyway now persists shortcut runtime readiness in `~/Library/Application Support/keyway/shortcut-runtime-status.json` so preflight is not dependent on volatile unified-log retention.
 - After reinstalling `/Users/f.pieringer/Applications/Keyway.app`, `scripts/acceptance_preflight` passed the Accessibility/media-key event-tap readiness check from the persisted status file:
@@ -74,6 +76,14 @@ Last updated: 2026-05-20
   - `Browser`
   - `Disabled`
   - `Volume disabled without browser extension`
+- User rejected the custom top-of-screen status popups. Keyway now routes status feedback through native macOS notifications with `UNUserNotificationCenter`; the legacy custom HUD panel source files have been removed.
+- Gemini UI pass flagged notification-card stacking as the concrete risk in the notification approach. Keyway status notifications now reuse `identifier=keyway.status` and clear matching pending/delivered notifications before delivery, so repeated confirmations replace instead of stacking unique cards.
+- `scripts/smoke_transport_routing_confirmation`: passed against the installed app with QuickTime Player as the safe pinned target. The smoke posts synthetic Previous, Play/Pause, and Next media-key events through the HID event tap and verifies:
+  - Keyway intercepts the media-key down event.
+  - Keyway routes each command by `pinned target`.
+  - Keyway logs a native notification request with stable `identifier=keyway.status`.
+  - No chooser or legacy custom Keyway popup window appears for automatic routing.
+  - No `MediaRemoteHelper parse_error` is emitted.
 - Media-key constants for Play/Pause, Next, and Previous were checked against local SDK headers:
   - `NX_KEYTYPE_PLAY = 16`
   - `NX_KEYTYPE_NEXT = 17`
@@ -82,11 +92,11 @@ Last updated: 2026-05-20
 
 ## Not Yet Passed Locally
 
-- Full transport routing, overlay keyboard operation from hardware media keys, and routing confirmation still need a hardware media-key run now that the event tap is enabled.
+- Live physical-key verification is still needed for full hardware Play/Pause, Next, Previous behavior and overlay keyboard operation. Synthetic HID media-key routing now passes for pinned automatic routing and native notification confirmation.
 - Spotify Active Device Volume still needs a run against an unrestricted Spotify active device. The current active device is Sonos `Port`, and Spotify reports it as `restricted=true`, so volume write-back is correctly skipped.
 
 ## Next Required Acceptance Checks
 
-1. Re-run media-key checks for Play/Pause, Next, Previous, chooser, pinning, focused target, prominent-window target, recent target, and single target.
-2. Re-run full overlay keyboard and routing confirmation checks with live media-key presses.
+1. Re-run media-key checks with physical Play/Pause, Next, Previous keys for chooser, pinning, focused target, prominent-window target, recent target, and single target.
+2. Re-run full overlay keyboard checks with live media-key presses.
 3. Move Spotify playback to an unrestricted active device, then verify Spotify Active Device Volume.

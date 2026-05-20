@@ -100,9 +100,9 @@ Menu Bar App  ---->  SonosHandoffCore
 
 `MediaTransportActionController` owns the Target Selection Policy for Transport Keys. It refreshes MediaRemote state, sorts the available Media Targets, and chooses a target in this order: single target, Focused Target, Pinned Target, Recent Target, then Media Overlay chooser. Focused Target first matches the global foreground application against Media Targets, then checks for a prominently visible, unobscured layer-0 Media Target window on the display containing the mouse pointer. This makes a visible browser-wrapper or QuickTime window win over a stale pin or recent target when another non-media app is technically frontmost, without routing to a covered media window. `MediaTargetPreferenceStore` owns Pinned Target and Recent Target persistence, while `MediaTargetOverlayController` owns the centered Command Palette Overlay, keyboard routing, pin toggling, and Expanded Controls.
 
-### Status HUD
+### Status Feedback
 
-`StatusHUD` is the presentation Module for transient shortcut and external-volume feedback. It exposes the small feedback Interface used by playback and shortcut Modules: show progress, finish with a message, show volume, and show mute state. `StatusHUDPanel` owns the floating `NSPanel`, AppKit view wiring, and compact volume layout. `StatusHUDAnchor` owns Accessibility-based menu-bar positioning, and `StatusHUDViews` owns the custom click-through view scaffolding.
+`StatusHUD` is the presentation Module for transient shortcut and external-volume feedback. It exposes the small feedback Interface used by playback and shortcut Modules: show progress, finish with a message, show volume, and show mute state. The implementation uses native macOS notifications through `UNUserNotificationCenter`; Keyway does not own or show a custom top-of-screen status panel. Status notifications reuse stable identifiers so repeated routing and volume confirmations replace instead of stacking unique notification cards.
 
 ## Why Spotify Available-Device Transfer Is Excluded
 

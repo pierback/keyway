@@ -186,6 +186,6 @@ The menu app Module that owns shortcut runtime status transitions. It translates
 
 The menu app Module that executes shortcut-triggered Sonos volume and mute changes. It owns live Output lookup, in-flight shortcut write coalescing, Status HUD feedback, and Volume Monitor echo suppression while sending all Sonos reads/writes through the Volume Command Queue. It receives the same live App Environment volume Adapter and Playback Output Selection as Playback Sync, so shortcut writes target the same selected Output as the menu and share one runtime graph with menu writes, monitor polls, and Spotify volume mirroring.
 
-### Status HUD
+### Status Feedback
 
-The menu app Module that owns the temporary macOS-style floating feedback surface used for shortcut and external volume changes. `StatusHUD` exposes a small feedback Interface to playback and shortcut Modules, while `StatusHUDPanel` owns the AppKit panel construction and layout. It is presentation-only; playback state belongs to Playback Sync.
+The menu app Module that owns transient feedback for shortcut and external volume changes. `StatusHUD` exposes a small feedback Interface to playback and shortcut Modules and delivers feedback with native macOS notifications through `UNUserNotificationCenter`. Keyway does not show a custom top-of-screen feedback panel. It is presentation-only; playback state belongs to Playback Sync.

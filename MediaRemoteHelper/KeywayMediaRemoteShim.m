@@ -286,7 +286,7 @@ void keyway_mediaremote_send_command(void) {
                 @"requestID": KeywayRequestID(),
                 @"targetID": targetID,
                 @"command": commandName,
-                @"ok": @NO,
+                @"ok": (__bridge id)kCFBooleanFalse,
                 @"message": @"targetID and supported command are required"
             });
             return;
@@ -326,7 +326,7 @@ void keyway_mediaremote_send_command(void) {
             @"requestID": KeywayRequestID(),
             @"targetID": matchedTargetID,
             @"command": commandName,
-            @"ok": @(sent && !timedOut),
+            @"ok": (sent && !timedOut) ? (__bridge id)kCFBooleanTrue : (__bridge id)kCFBooleanFalse,
             @"message": sent ? @"" : (timedOut ? @"timed out" : @"target not found or command rejected")
         });
         KeywayReleaseSymbols(&symbols);

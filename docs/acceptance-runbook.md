@@ -102,9 +102,18 @@ This smoke requires at least two active Now Playing targets, including one brows
 ## 9. Routing Confirmation
 
 - [ ] Trigger automatic routing without the overlay.
-- [ ] Confirm Keyway shows a brief Routing Confirmation.
-- [ ] Confirm the confirmation names the target and command.
-- [ ] Confirm the confirmation dismisses automatically.
+- [ ] Confirm Keyway posts a native macOS notification, not a custom top-of-screen popup.
+- [ ] Confirm the notification names the target and command.
+- [ ] Confirm repeated automatic routes replace the existing Keyway status notification instead of stacking unique cards.
+- [ ] Confirm no Keyway chooser or legacy HUD window appears for automatic routing.
+
+Repeatable transport routing and native-notification smoke:
+
+```bash
+KEYWAY_APP="$HOME/Applications/Keyway.app" /Users/f.pieringer/projects/keyway/scripts/smoke_transport_routing_confirmation
+```
+
+This smoke pins a safe Now Playing target, posts synthetic Play/Pause, Next, and Previous media-key events through the HID event tap, verifies Keyway suppresses and routes each command by Pinned Target, checks native-notification request logs, rejects legacy custom Keyway popup windows, and fails on MediaRemote helper parse errors. When QuickTime Player is the target and no QuickTime Now Playing session exists, it creates and cleans up a temporary silent local media file.
 
 ## 10. Settings
 

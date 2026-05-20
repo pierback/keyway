@@ -2,6 +2,8 @@
 
 Keyway is a local macOS menu bar app for choosing which Now Playing app receives Play/Pause, Next, and Previous. It keeps the existing Sonos handoff and volume workflows, adds MediaRemote target discovery through a bundled `/usr/bin/perl` helper, and shows a centered Raycast-like chooser when routing is ambiguous.
 
+Automatic routes use native macOS notifications for brief confirmation feedback. Keyway does not show custom top-of-screen status popups.
+
 Keyway is intentionally local-only for now. It does not include App Store, notarization, or commercial publishing scripts.
 
 ## Current Scope
@@ -68,6 +70,12 @@ Run the overlay browser-volume disabled-state smoke while at least two Now Playi
 
 ```bash
 /Users/f.pieringer/projects/keyway/scripts/smoke_overlay_browser_controls
+```
+
+Run the transport routing confirmation smoke while at least two Now Playing targets are active. The script can create a temporary silent QuickTime Player target when QuickTime is selected as the safe routing target:
+
+```bash
+/Users/f.pieringer/projects/keyway/scripts/smoke_transport_routing_confirmation
 ```
 
 ## Runtime Setup

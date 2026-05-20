@@ -35,7 +35,7 @@ Keyway is a polished local macOS menu bar utility that routes play/pause, next, 
 2. Keyway suppresses the original transport-key event.
 3. Keyway resolves the Primary Target using the Target Selection Policy.
 4. Keyway dispatches the command to the target.
-5. If no chooser was needed, Keyway shows a brief Routing Confirmation.
+5. If no chooser was needed, Keyway posts a native macOS notification naming the target and command.
 
 #### User Flow: Ambiguous Target Chooser
 
@@ -79,7 +79,7 @@ When this PRD is complete, the following will be true:
 - [ ] Keyway lists MediaRemote Media Targets through a long-running helper.
 - [ ] Keyway routes Transport Keys using the resolved Target Selection Policy.
 - [ ] The Media Overlay supports compact routing, expansion, pinning, number selection, cancellation, and command dispatch.
-- [ ] Routing Confirmation appears after successful automatic routing.
+- [ ] Native macOS notification confirmation appears after successful automatic routing.
 - [ ] Sonos and Spotify volume controls work where supported by existing or feasible backends.
 - [ ] Browser transport routing works where exposed through Now Playing; browser volume is clearly unsupported when no no-extension backend exists.
 - [ ] Keyway Settings exposes the full configuration and diagnostics surface needed to run the app daily.
@@ -101,7 +101,7 @@ When this PRD is complete, the following will be true:
 
 - The app can replace the current Sonos Handoff menu bar app on the user's Mac.
 - The Media Overlay feels polished enough for daily use.
-- Routing decisions are understandable through Primary Target, pinning, recency, and confirmation feedback.
+- Routing decisions are understandable through Primary Target, pinning, recency, and native notification feedback.
 
 ## Implementation Status
 
@@ -114,6 +114,8 @@ As of 2026-05-20, the main implementation is present on branch `keyway-planning`
 - QuickTime target discovery has been verified with local media playback.
 - Settings normal-window behavior has been verified through the menu bar UI; System Events reports Keyway as visible and not background-only while Settings is open.
 - Focused Target routing now checks the global foreground Media Target first, then a prominently visible, unobscured Media Target window on the display containing the pointer before falling back to Pinned Target, Recent Target, or chooser.
+- Status feedback now uses native macOS notifications through `UNUserNotificationCenter`; the legacy top-of-screen custom HUD panel implementation has been removed from the app, and status notifications reuse a stable identifier so repeated route confirmations replace instead of stacking.
+- `scripts/smoke_transport_routing_confirmation` verifies pinned automatic routing for Play/Pause, Next, and Previous, native-notification request logging, absence of legacy custom popup windows, and clean MediaRemote helper command parsing.
 - Spotify Active Device Volume still needs a run against an unrestricted Spotify active device; the current active device is Sonos `Port`, which Spotify reports as `restricted=true`.
 - Full live hardware Transport Key routing and overlay keyboard behavior still need a manual run with Play/Pause, Next, and Previous keypresses.
 
@@ -195,8 +197,7 @@ The current verification record is maintained in `docs/verification-log.md`.
 
 - `/Users/f.pieringer/projects/keyway/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutEventTap.swift` — existing Accessibility-gated CGEvent tap lifecycle.
 - `/Users/f.pieringer/projects/keyway/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutEventParser.swift` — existing media/function-key decoding pattern.
-- `/Users/f.pieringer/projects/keyway/SonosHandoffMenuBar/SonosHandoffMenuBar/App/StatusHUD.swift` — existing transient feedback facade.
-- `/Users/f.pieringer/projects/keyway/SonosHandoffMenuBar/SonosHandoffMenuBar/App/StatusHUDPanel.swift` — existing borderless AppKit panel implementation.
+- `/Users/f.pieringer/projects/keyway/SonosHandoffMenuBar/SonosHandoffMenuBar/App/StatusHUD.swift` — native macOS notification feedback facade.
 - `/Users/f.pieringer/projects/keyway/packages/SonosHandoffCore/Sources/SonosHandoffCore` — existing Sonos, Spotify, config, and volume behavior.
 
 ### System Dependencies

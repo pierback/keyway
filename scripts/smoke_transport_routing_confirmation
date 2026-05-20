@@ -1,0 +1,606 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_DIR="${KEYWAY_APP:-$HOME/Applications/Keyway.app}"
+DEFAULTS_DOMAIN="com.fpieringer.Keyway"
+PINNED_KEY="keyway.mediaTarget.pinnedIdentity"
+RECENT_KEY="keyway.mediaTarget.recentIdentity"
+HELPER_SCRIPT="$APP_DIR/Contents/Resources/MediaRemoteHelper/keyway-mediaremote-helper.pl"
+HELPER_DYLIB="$APP_DIR/Contents/Resources/MediaRemoteHelper/libkeyway_mediaremote.dylib"
+TARGET_BUNDLE="${KEYWAY_ROUTING_TARGET_BUNDLE:-com.apple.QuickTimePlayerX}"
+TARGET_INFO_FILE="$(mktemp -t keyway-routing-target.XXXXXX)"
+VISIBLE_STATE_FILE="$(mktemp -t keyway-routing-visible-apps.XXXXXX)"
+CREATED_TARGET_FILE=""
+SMOKE_START="$(date '+%Y-%m-%d %H:%M:%S')"
+PINNED_VALUE=""
+RECENT_VALUE=""
+PINNED_PRESENT=0
+RECENT_PRESENT=0
+INITIAL_TARGET_RATE=""
+
+if [[ ! -d "$APP_DIR" ]]; then
+  echo "smoke_transport_routing_confirmation: missing app bundle: $APP_DIR" >&2
+  echo "Run scripts/install_menubar_app first." >&2
+  exit 1
+fi
+
+if [[ ! -x "$HELPER_SCRIPT" || ! -f "$HELPER_DYLIB" ]]; then
+  echo "smoke_transport_routing_confirmation: bundled MediaRemote helper files are missing" >&2
+  exit 1
+fi
+
+close_created_quicktime_target() {
+  [[ -n "$CREATED_TARGET_FILE" ]] || return 0
+
+  local target_name
+  target_name="$(basename "$CREATED_TARGET_FILE")"
+  osascript - "$target_name" >/dev/null 2>&1 <<'APPLESCRIPT' || true
+on run argv
+  set targetName to item 1 of argv
+  tell application "QuickTime Player"
+    repeat with mediaDocument in documents
+      try
+        if name of mediaDocument is targetName then close mediaDocument saving no
+      end try
+    end repeat
+  end tell
+end run
+APPLESCRIPT
+  rm -f "$CREATED_TARGET_FILE"
+  CREATED_TARGET_FILE=""
+}
+
+early_cleanup() {
+  close_created_quicktime_target
+  rm -f "$TARGET_INFO_FILE"
+  rm -f "$VISIBLE_STATE_FILE"
+}
+trap early_cleanup EXIT
+
+helper_request() {
+  /usr/bin/perl "$HELPER_SCRIPT" "$HELPER_DYLIB"
+}
+
+helper_snapshot() {
+  printf '%s\n' '{"type":"refresh","requestID":"routing-smoke-snapshot"}' | helper_request
+}
+
+load_target_info() {
+  snapshot_output="$(helper_snapshot)"
+  printf '%s\n' "$snapshot_output" | write_target_info
+
+  target_count="$(awk -F= '/^target_count=/{ print $2; exit }' "$TARGET_INFO_FILE")"
+  target_id="$(awk -F= '/^target_id=/{ print $2; exit }' "$TARGET_INFO_FILE")"
+  target_identity="$(awk -F= '/^target_identity=/{ print $2; exit }' "$TARGET_INFO_FILE")"
+  target_app="$(awk -F= '/^target_app=/{ print $2; exit }' "$TARGET_INFO_FILE")"
+  INITIAL_TARGET_RATE="$(awk -F= '/^target_playback_rate=/{ print $2; exit }' "$TARGET_INFO_FILE")"
+
+  [[ -n "$target_id" && -n "$target_identity" && -n "$target_app" ]]
+}
+
+prepare_quicktime_target() {
+  [[ "$TARGET_BUNDLE" == "com.apple.QuickTimePlayerX" ]] || return 1
+
+  local target_stub
+  close_created_quicktime_target
+  target_stub="$(mktemp -t keyway-routing-smoke)"
+  CREATED_TARGET_FILE="${target_stub}.wav"
+  mv "$target_stub" "$CREATED_TARGET_FILE"
+  rm -f "$CREATED_TARGET_FILE"
+  /usr/bin/swift -e '
+import Foundation
+
+let outputPath = CommandLine.arguments[1]
+let sampleRate: UInt32 = 44_100
+let channelCount: UInt16 = 1
+let bitsPerSample: UInt16 = 16
+let durationSeconds: UInt32 = 120
+let byteRate = sampleRate * UInt32(channelCount) * UInt32(bitsPerSample / 8)
+let blockAlign = channelCount * (bitsPerSample / 8)
+let dataSize = sampleRate * durationSeconds * UInt32(blockAlign)
+let riffSize = UInt32(36) + dataSize
+
+var data = Data()
+func appendString(_ value: String) {
+    data.append(contentsOf: value.data(using: .ascii)!)
+}
+func appendUInt16LE(_ value: UInt16) {
+    data.append(UInt8(value & 0x00ff))
+    data.append(UInt8((value & 0xff00) >> 8))
+}
+func appendUInt32LE(_ value: UInt32) {
+    data.append(UInt8(value & 0x000000ff))
+    data.append(UInt8((value & 0x0000ff00) >> 8))
+    data.append(UInt8((value & 0x00ff0000) >> 16))
+    data.append(UInt8((value & 0xff000000) >> 24))
+}
+
+appendString("RIFF")
+appendUInt32LE(riffSize)
+appendString("WAVE")
+appendString("fmt ")
+appendUInt32LE(16)
+appendUInt16LE(1)
+appendUInt16LE(channelCount)
+appendUInt32LE(sampleRate)
+appendUInt32LE(byteRate)
+appendUInt16LE(blockAlign)
+appendUInt16LE(bitsPerSample)
+appendString("data")
+appendUInt32LE(dataSize)
+data.append(Data(repeating: 0, count: Int(dataSize)))
+try data.write(to: URL(fileURLWithPath: outputPath), options: .atomic)
+' "$CREATED_TARGET_FILE"
+  open -a "QuickTime Player" "$CREATED_TARGET_FILE"
+  osascript - "$(basename "$CREATED_TARGET_FILE")" >/dev/null 2>&1 <<'APPLESCRIPT' || true
+on run argv
+  set targetName to item 1 of argv
+  tell application "QuickTime Player"
+    repeat with mediaDocument in documents
+      try
+        if name of mediaDocument is targetName then play mediaDocument
+      end try
+    end repeat
+  end tell
+end run
+APPLESCRIPT
+
+  for _ in {1..30}; do
+    sleep 0.5
+    if load_target_info; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+write_target_info() {
+  KEYWAY_ROUTING_TARGET_BUNDLE="$TARGET_BUNDLE" /usr/bin/swift -e '
+import Darwin
+import Foundation
+
+struct Envelope: Decodable {
+    let type: String
+}
+
+struct Snapshot: Decodable {
+    let type: String
+    let targets: [Target]
+}
+
+struct Target: Decodable {
+    let id: String
+    let bundleIdentifier: String
+    let parentBundleIdentifier: String
+    let displayName: String
+    let playbackRate: String
+
+    var appName: String {
+        let trimmedDisplayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedDisplayName.isEmpty {
+            return trimmedDisplayName
+        }
+        if !parentBundleIdentifier.isEmpty {
+            return parentBundleIdentifier
+        }
+        if !bundleIdentifier.isEmpty {
+            return bundleIdentifier
+        }
+        return "Unknown"
+    }
+
+    var routingIdentity: String {
+        if !parentBundleIdentifier.isEmpty {
+            return parentBundleIdentifier
+        }
+        if !bundleIdentifier.isEmpty {
+            return bundleIdentifier
+        }
+        return id
+    }
+
+    var bundleIdentities: [String] {
+        [bundleIdentifier, parentBundleIdentifier]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+}
+
+let targetBundle = ProcessInfo.processInfo.environment["KEYWAY_ROUTING_TARGET_BUNDLE"] ?? "com.apple.QuickTimePlayerX"
+let input = String(data: FileHandle.standardInput.readDataToEndOfFile(), encoding: .utf8) ?? ""
+let decoder = JSONDecoder()
+let snapshot = input
+    .split(separator: "\n")
+    .compactMap { line -> Snapshot? in
+        guard let data = line.data(using: .utf8),
+              (try? decoder.decode(Envelope.self, from: data).type) == "snapshot"
+        else {
+            return nil
+        }
+        return try? decoder.decode(Snapshot.self, from: data)
+    }
+    .last
+
+guard let snapshot else {
+    fputs("helper snapshot was missing\n", stderr)
+    exit(2)
+}
+
+let selected = snapshot.targets.first { target in
+    target.bundleIdentifier == targetBundle || target.parentBundleIdentifier == targetBundle
+}
+
+print("target_count=\(snapshot.targets.count)")
+if let selected {
+    print("target_id=\(selected.id)")
+    print("target_identity=\(selected.routingIdentity)")
+    print("target_app=\(selected.appName)")
+    print("target_playback_rate=\(selected.playbackRate)")
+}
+
+var seenBundles = Set<String>()
+for target in snapshot.targets {
+    for bundleID in target.bundleIdentities where seenBundles.insert(bundleID).inserted {
+        print("target_bundle\t\(bundleID)")
+    }
+}
+' >"$TARGET_INFO_FILE"
+}
+
+snapshot_output=""
+target_count=""
+target_id=""
+target_identity=""
+target_app=""
+
+if ! load_target_info; then
+  prepare_quicktime_target || true
+fi
+
+if [[ -z "$target_count" || "$target_count" -lt 2 ]]; then
+  echo "$snapshot_output"
+  echo "smoke_transport_routing_confirmation: pinned routing requires at least two Now Playing targets; found ${target_count:-0}" >&2
+  echo "Start QuickTime plus at least one other media target before running this check." >&2
+  exit 1
+fi
+
+if [[ -z "$target_id" || -z "$target_identity" || -z "$target_app" ]]; then
+  echo "$snapshot_output"
+  echo "smoke_transport_routing_confirmation: target bundle $TARGET_BUNDLE is not a Now Playing target" >&2
+  echo "Open local media in QuickTime Player or set KEYWAY_ROUTING_TARGET_BUNDLE to another safe target." >&2
+  exit 1
+fi
+
+remember_default() {
+  local key="$1"
+  if value="$(defaults read "$DEFAULTS_DOMAIN" "$key" 2>/dev/null)"; then
+    printf '%s' "$value"
+    return 0
+  fi
+  return 1
+}
+
+if PINNED_VALUE="$(remember_default "$PINNED_KEY")"; then
+  PINNED_PRESENT=1
+fi
+if RECENT_VALUE="$(remember_default "$RECENT_KEY")"; then
+  RECENT_PRESENT=1
+fi
+
+restore_defaults() {
+  if [[ "$PINNED_PRESENT" == "1" ]]; then
+    defaults write "$DEFAULTS_DOMAIN" "$PINNED_KEY" "$PINNED_VALUE" >/dev/null
+  else
+    defaults delete "$DEFAULTS_DOMAIN" "$PINNED_KEY" >/dev/null 2>&1 || true
+  fi
+
+  if [[ "$RECENT_PRESENT" == "1" ]]; then
+    defaults write "$DEFAULTS_DOMAIN" "$RECENT_KEY" "$RECENT_VALUE" >/dev/null
+  else
+    defaults delete "$DEFAULTS_DOMAIN" "$RECENT_KEY" >/dev/null 2>&1 || true
+  fi
+}
+
+restore_visible_apps() {
+  while IFS=$'\t' read -r bundle_id was_visible; do
+    [[ -n "$bundle_id" ]] || continue
+    osascript - "$bundle_id" "$was_visible" >/dev/null 2>&1 <<'APPLESCRIPT' || true
+on run argv
+  set bundleID to item 1 of argv
+  set wasVisible to item 2 of argv
+  tell application "System Events"
+    repeat with appProcess in application processes
+      try
+        if bundle identifier of appProcess is bundleID then set visible of appProcess to (wasVisible is "true")
+      end try
+    end repeat
+  end tell
+end run
+APPLESCRIPT
+  done <"$VISIBLE_STATE_FILE"
+}
+
+send_helper_command() {
+  local command="$1"
+  printf '{"type":"sendCommand","requestID":"routing-smoke-restore","targetID":"%s","command":"%s"}\n' "$target_id" "$command" \
+    | helper_request >/dev/null 2>&1 || true
+}
+
+restore_target_playback() {
+  [[ "$INITIAL_TARGET_RATE" == "0" || "$INITIAL_TARGET_RATE" == "1" ]] || return 0
+
+  local final_snapshot final_rate
+  final_snapshot="$(helper_snapshot || true)"
+  printf '%s\n' "$final_snapshot" | write_target_info || return 0
+  final_rate="$(awk -F= '/^target_playback_rate=/{ print $2; exit }' "$TARGET_INFO_FILE")"
+  if [[ "$final_rate" != "$INITIAL_TARGET_RATE" ]]; then
+    send_helper_command playPause
+  fi
+}
+
+close_keyway_windows() {
+  osascript >/dev/null 2>&1 <<'APPLESCRIPT' || true
+tell application "System Events"
+  if exists process "Keyway" then
+    tell process "Keyway" to set frontmost to true
+    key code 53
+  end if
+end tell
+APPLESCRIPT
+}
+
+cleanup() {
+  close_keyway_windows
+  restore_target_playback
+  restore_defaults
+  restore_visible_apps
+  close_created_quicktime_target
+  rm -f "$TARGET_INFO_FILE"
+  rm -f "$VISIBLE_STATE_FILE"
+}
+trap cleanup EXIT
+
+record_visible_state_once() {
+  local bundle_id="$1"
+  grep -Fq "${bundle_id}"$'\t' "$VISIBLE_STATE_FILE" 2>/dev/null && return 0
+
+  osascript - "$bundle_id" >>"$VISIBLE_STATE_FILE" <<'APPLESCRIPT'
+on run argv
+  set bundleID to item 1 of argv
+  tell application "System Events"
+    repeat with appProcess in application processes
+      try
+        if bundle identifier of appProcess is bundleID then
+          return bundleID & tab & ((visible of appProcess) as text)
+        end if
+      end try
+    end repeat
+  end tell
+  return ""
+end run
+APPLESCRIPT
+}
+
+hide_bundle() {
+  local bundle_id="$1"
+  osascript - "$bundle_id" >/dev/null 2>&1 <<'APPLESCRIPT' || true
+on run argv
+  set bundleID to item 1 of argv
+  tell application "System Events"
+    repeat with appProcess in application processes
+      try
+        if bundle identifier of appProcess is bundleID then set visible of appProcess to false
+      end try
+    end repeat
+  end tell
+end run
+APPLESCRIPT
+}
+
+hide_media_windows_for_pinned_routing() {
+  : >"$VISIBLE_STATE_FILE"
+  while IFS=$'\t' read -r kind bundle_id; do
+    [[ "$kind" == "target_bundle" && -n "$bundle_id" ]] || continue
+    record_visible_state_once "$bundle_id"
+    hide_bundle "$bundle_id"
+  done <"$TARGET_INFO_FILE"
+}
+
+ensure_target_ready_for_command() {
+  if ! load_target_info; then
+    prepare_quicktime_target || true
+  fi
+
+  if ! load_target_info; then
+    echo "$snapshot_output"
+    echo "smoke_transport_routing_confirmation: target bundle $TARGET_BUNDLE is not ready before command" >&2
+    exit 1
+  fi
+
+  if [[ -z "$target_count" || "$target_count" -lt 2 ]]; then
+    echo "$snapshot_output"
+    echo "smoke_transport_routing_confirmation: pinned routing requires at least two Now Playing targets before command; found ${target_count:-0}" >&2
+    exit 1
+  fi
+
+  defaults write "$DEFAULTS_DOMAIN" "$PINNED_KEY" "$target_identity" >/dev/null
+  record_visible_state_once "$TARGET_BUNDLE"
+  hide_bundle "$TARGET_BUNDLE"
+  open -a Finder
+  sleep 0.6
+}
+
+post_media_key() {
+  local command="$1"
+  local key_code
+  case "$command" in
+    playPause) key_code=16 ;;
+    next) key_code=17 ;;
+    previous) key_code=18 ;;
+    *) echo "smoke_transport_routing_confirmation: invalid command: $command" >&2; exit 1 ;;
+  esac
+
+  /usr/bin/swift -e "
+import AppKit
+import Foundation
+
+let keyCode = ${key_code}
+let keyDownState = 0x0A
+let keyUpState = 0x0B
+
+func post(_ state: Int) {
+    let data1 = (keyCode << 16) | (state << 8)
+    guard let event = NSEvent.otherEvent(
+        with: .systemDefined,
+        location: .zero,
+        modifierFlags: [],
+        timestamp: ProcessInfo.processInfo.systemUptime,
+        windowNumber: 0,
+        context: nil,
+        subtype: 8,
+        data1: data1,
+        data2: -1
+    )?.cgEvent else {
+        exit(2)
+    }
+    event.post(tap: .cghidEventTap)
+}
+
+post(keyDownState)
+usleep(120_000)
+post(keyUpState)
+"
+}
+
+keyway_window_text() {
+  osascript <<'APPLESCRIPT'
+on collectTexts(e, depth)
+  if depth > 8 then return ""
+  tell application "System Events"
+    set output to ""
+    try
+      if role of e is "AXStaticText" then set output to output & (value of e as text) & linefeed
+    end try
+    try
+      repeat with c in UI elements of e
+        set output to output & my collectTexts(c, depth + 1)
+      end repeat
+    end try
+    return output
+  end tell
+end collectTexts
+
+tell application "System Events"
+  tell process "Keyway"
+    if (count of windows) is 0 then return ""
+    set output to ""
+    repeat with appWindow in windows
+      set output to output & my collectTexts(appWindow, 0)
+    end repeat
+    return output
+  end tell
+end tell
+APPLESCRIPT
+}
+
+command_display_name() {
+  case "$1" in
+    playPause) printf 'Play/Pause' ;;
+    next) printf 'Next' ;;
+    previous) printf 'Previous' ;;
+    *) return 1 ;;
+  esac
+}
+
+recent_keyway_logs() {
+  /usr/bin/log show \
+    --start "$SMOKE_START" \
+    --info \
+    --debug \
+    --style compact \
+    --predicate 'subsystem == "com.fpieringer.Keyway" && (category == "Hotkeys" || category == "MediaTransport" || category == "MediaRemote" || category == "Notifications")' \
+    2>/dev/null || true
+}
+
+assert_no_custom_keyway_popup() {
+  local command="$1"
+  local expected_title="$2"
+  local window_text
+  window_text="$(keyway_window_text || true)"
+
+  if grep -Fqx "Media Targets" <<<"$window_text"; then
+    printf '%s\n' "$window_text"
+    echo "smoke_transport_routing_confirmation: chooser opened instead of automatic pinned routing for $command" >&2
+    exit 1
+  fi
+  if grep -Fqx "$expected_title" <<<"$window_text"; then
+    printf '%s\n' "$window_text"
+    echo "smoke_transport_routing_confirmation: old custom Keyway popup is still visible for $command" >&2
+    exit 1
+  fi
+}
+
+assert_routing_confirmation() {
+  local command="$1"
+  local display_name expected_title logs
+  ensure_target_ready_for_command
+  display_name="$(command_display_name "$command")"
+  expected_title="$display_name → $target_app"
+
+  sleep 5.5
+  post_media_key "$command"
+
+  logs=""
+  for _ in {1..20}; do
+    sleep 0.35
+    logs="$(recent_keyway_logs)"
+    if grep -Fq "action=transport_${command} source=media_key" <<<"$logs" \
+      && grep -Fq "MediaTransport route command=${command} target=${target_app} reason=pinned target" <<<"$logs" \
+      && grep -Fq "KeywayNotification request title=${expected_title} message=Routed by pinned target identifier=keyway.status" <<<"$logs"; then
+      break
+    fi
+  done
+
+  assert_no_custom_keyway_popup "$command" "$expected_title"
+
+  if ! grep -Fq "action=transport_${command} source=media_key" <<<"$logs"; then
+    printf '%s\n' "$logs"
+    echo "smoke_transport_routing_confirmation: missing media-key hotkey log for $command" >&2
+    exit 1
+  fi
+  if ! grep -Fq "MediaTransport route command=${command} target=${target_app} reason=pinned target" <<<"$logs"; then
+    printf '%s\n' "$logs"
+    echo "smoke_transport_routing_confirmation: missing pinned transport route log for $command" >&2
+    exit 1
+  fi
+  if ! grep -Fq "KeywayNotification request title=${expected_title} message=Routed by pinned target identifier=keyway.status" <<<"$logs"; then
+    printf '%s\n' "$logs"
+    echo "smoke_transport_routing_confirmation: missing stable native notification request log for $command" >&2
+    exit 1
+  fi
+  if grep -Fq "MediaRemoteHelper parse_error" <<<"$logs"; then
+    printf '%s\n' "$logs"
+    echo "smoke_transport_routing_confirmation: MediaRemote command result was not parsed cleanly" >&2
+    exit 1
+  fi
+
+  echo "routed_${command}=ok"
+}
+
+open "$APP_DIR"
+sleep 1.0
+defaults write "$DEFAULTS_DOMAIN" "$PINNED_KEY" "$target_identity" >/dev/null
+defaults delete "$DEFAULTS_DOMAIN" "$RECENT_KEY" >/dev/null 2>&1 || true
+hide_media_windows_for_pinned_routing
+open -a Finder
+sleep 0.6
+
+echo "target=$target_app"
+echo "target_identity=$target_identity"
+
+assert_routing_confirmation previous
+assert_routing_confirmation playPause
+assert_routing_confirmation next
+
+echo "smoke_transport_routing_confirmation=ok"
