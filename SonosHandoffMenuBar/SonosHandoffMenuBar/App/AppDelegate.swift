@@ -25,7 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.volumeHotkeys?.refreshMediaFallback(promptIfMissing: false)
+                self?.volumeHotkeys?.refreshMediaFallback(promptIfMissing: true)
             }
         }
         guard let volumeHotkeys else {

@@ -43,7 +43,7 @@ final class VolumeHotkeyController {
             let registered = carbonRegistrar.registerPlainFunctionHotKeys(step: step)
             runtimeReporter.plainHotkeysRegistered(registered)
         }
-        refreshMediaFallback(promptIfMissing: false)
+        refreshMediaFallback(promptIfMissing: true)
     }
 
     @discardableResult

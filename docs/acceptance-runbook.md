@@ -9,7 +9,7 @@ Keyway is complete only when this runbook passes on a fresh local install withou
 - Existing Sonos Handoff config/token files may exist at `~/Library/Application Support/sonos-handoff`.
 - Spotify, at least one browser or browser-wrapper media session, and QuickTime are available for manual media-target checks.
 - Real Sonos smoke checks require the user's local Sonos network and Spotify account state.
-- Grant Accessibility permission to the installed Keyway app before media-key interception checks; macOS requires this for any app-level event tap that suppresses hardware media keys.
+- Keyway should request Accessibility permission itself when it cannot create the media-key event tap. Approve the installed Keyway app if macOS shows the prompt; macOS requires this for any app-level event tap that suppresses hardware media keys.
 
 ## 1. Fresh Install
 

@@ -17,7 +17,11 @@ Last updated: 2026-05-20
 - `xcodebuild -workspace Keyway.xcworkspace -scheme Keyway -configuration Debug -destination 'platform=macOS' -derivedDataPath .build/xcode-derived-data build`: passed.
 - `scripts/install_menubar_app`: passed and installed `/Users/f.pieringer/Applications/Keyway.app`.
 - `scripts/regression_gate`: passed in default mode again at 2026-05-20 17:22 local time.
-- `scripts/acceptance_preflight`: ran successfully and reported `acceptance_preflight=blocked` with exit code 2 because Accessibility and Sonos room discovery are still unavailable locally.
+- `scripts/acceptance_preflight`: initially reported `acceptance_preflight=blocked` because Accessibility and Sonos room discovery were unavailable locally.
+- Startup and shortcut refresh now request the macOS Accessibility prompt when the media-key event tap cannot be created.
+- After reinstalling `/Users/f.pieringer/Applications/Keyway.app`, `scripts/acceptance_preflight` passed the Accessibility/media-key event-tap readiness check:
+  - `pass: Keyway event tap has reached mediaFallback=enabled`
+- The latest `scripts/acceptance_preflight` run still reports `acceptance_preflight=blocked` with exit code 2 because Spotify has no active playback and Sonos room `Port` is not discoverable.
 - `codex-review --parallel-tests "scripts/regression_gate"`: initially reported overlay chooser state findings; fixed in `53e5590`; rerun clean with no accepted/actionable findings.
 - Installed bundle id: `com.fpieringer.Keyway`.
 - Installed app signature uses identifier `com.fpieringer.Keyway` and TeamIdentifier `7Q44SDV7BM`.
@@ -49,25 +53,23 @@ Last updated: 2026-05-20
 
 ## Not Yet Passed Locally
 
-- Media-key interception could not be validated on this machine during this run because Accessibility is not yet granted to the new `com.fpieringer.Keyway` app. The observed log was:
-  - `mediaFallback=disabled ... event_tap_create_failed accessibility=false`
 - Real Sonos smoke checks could not be run successfully because the configured rooms were not discoverable from the current network:
   - `Port`
   - `Office`
   - `kitchen`
-- Full transport routing, overlay keyboard operation from hardware media keys, and routing confirmation still need a run after Accessibility is granted.
+- Spotify playback status currently reports no active playback, so Spotify volume and active-device acceptance checks need a rerun with Spotify playing.
+- Full transport routing, overlay keyboard operation from hardware media keys, and routing confirmation still need a hardware media-key run now that the event tap is enabled.
 - Sonos volume and mute still need a run on a network where a configured Sonos room is discoverable.
 
 ## Next Required Acceptance Checks
 
-1. Grant Accessibility to `/Users/f.pieringer/Applications/Keyway.app`.
-2. Restart Keyway or refresh shortcuts from Settings.
-3. Re-run media-key checks for Play/Pause, Next, Previous, chooser, pinning, focused target, recent target, and single target.
-4. Connect to a network where at least one configured Sonos room is discoverable, then run:
+1. Start active Spotify playback on a controllable device.
+2. Re-run media-key checks for Play/Pause, Next, Previous, chooser, pinning, focused target, recent target, and single target.
+3. Connect to a network where at least one configured Sonos room is discoverable, then run:
 
 ```bash
 SONOS_HANDOFF_REAL_DEVICE_SMOKE=1 SONOS_HANDOFF_ROOM=<room-name> /Users/f.pieringer/projects/keyway/scripts/regression_gate
 ```
 
-5. Re-run Sonos volume and mute checks against the discoverable room.
-6. Re-run full overlay keyboard and routing confirmation checks after media-key interception is enabled.
+4. Re-run Sonos volume and mute checks against the discoverable room.
+5. Re-run full overlay keyboard and routing confirmation checks with live media-key presses.
