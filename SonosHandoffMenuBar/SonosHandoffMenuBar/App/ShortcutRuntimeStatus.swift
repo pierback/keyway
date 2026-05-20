@@ -50,6 +50,8 @@ struct ShortcutRuntimeSnapshot {
 @MainActor
 final class ShortcutRuntimeStatus {
     static let shared = ShortcutRuntimeStatus()
+    static let persistenceURL = ConfigPaths.applicationSupportDirectory
+        .appendingPathComponent("shortcut-runtime-status.json", isDirectory: false)
 
     private var accessibilityGranted = AXIsProcessTrusted()
     private var mediaFallback: ShortcutMediaFallbackState = .unknown
@@ -84,6 +86,7 @@ final class ShortcutRuntimeStatus {
         } else if clearFailureReason {
             self.lastFailureReason = nil
         }
+        persistSnapshot()
     }
 
     func snapshot() -> ShortcutRuntimeSnapshot {
@@ -96,6 +99,31 @@ final class ShortcutRuntimeStatus {
             appPath: Bundle.main.bundlePath,
             step: SpeakerVolumeControlDefaults.step
         )
+    }
+
+    private func persistSnapshot() {
+        let snapshot = snapshot()
+        var payload: [String: Any] = [
+            "accessibilityGranted": snapshot.accessibilityGranted,
+            "mediaFallback": snapshot.mediaFallback.rawValue,
+            "plainHotkeysRegistered": snapshot.plainHotkeysRegistered,
+            "fnHotkeysRegistered": snapshot.fnHotkeysRegistered,
+            "appPath": snapshot.appPath,
+            "step": snapshot.step,
+            "updatedAt": ISO8601DateFormatter().string(from: Date()),
+        ]
+        if let lastFailureReason = snapshot.lastFailureReason {
+            payload["lastFailureReason"] = lastFailureReason
+        }
+
+        do {
+            try FileManager.default.createDirectory(
+                at: ConfigPaths.applicationSupportDirectory,
+                withIntermediateDirectories: true
+            )
+            let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+            try data.write(to: Self.persistenceURL, options: .atomic)
+        } catch {}
     }
 }
 

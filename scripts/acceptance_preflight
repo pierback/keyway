@@ -124,13 +124,27 @@ else
 fi
 
 section "Accessibility And Media Keys"
+shortcut_status_file="$KEYWAY_SUPPORT_DIR/shortcut-runtime-status.json"
+shortcut_media_fallback=""
+shortcut_accessibility=""
+shortcut_app_path=""
+if [[ -f "$shortcut_status_file" ]]; then
+  shortcut_media_fallback="$(plutil -extract mediaFallback raw "$shortcut_status_file" 2>/dev/null || true)"
+  shortcut_accessibility="$(plutil -extract accessibilityGranted raw "$shortcut_status_file" 2>/dev/null || true)"
+  shortcut_app_path="$(plutil -extract appPath raw "$shortcut_status_file" 2>/dev/null || true)"
+fi
+
 hotkey_logs="$(/usr/bin/log show --last 30m --info --debug --style compact --predicate 'subsystem == "com.fpieringer.Keyway" && category == "Hotkeys"' 2>/dev/null || true)"
-if grep -q 'mediaFallback=enabled' <<<"$hotkey_logs"; then
+if [[ "$shortcut_media_fallback" == "enabled" && "$shortcut_app_path" == "$APP_DIR" ]]; then
+  pass "Keyway persisted shortcut runtime status is mediaFallback=enabled"
+elif grep -q 'mediaFallback=enabled' <<<"$hotkey_logs"; then
   pass "Keyway event tap has reached mediaFallback=enabled"
+elif [[ "$shortcut_media_fallback" == "event_tap_create_failed" && "$shortcut_accessibility" != "true" ]]; then
+  block "Accessibility is not granted for Keyway; media-key interception cannot pass yet"
 elif grep -q 'accessibility=false' <<<"$hotkey_logs"; then
   block "Accessibility is not granted for Keyway; media-key interception cannot pass yet"
 else
-  block "No enabled media-key event-tap log found; refresh shortcuts from Settings after granting Accessibility"
+  block "No enabled media-key event-tap status found; restart Keyway or refresh shortcuts from Settings"
 fi
 
 section "Spotify And Sonos"

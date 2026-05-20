@@ -22,7 +22,7 @@ Keyway is intentionally local-only for now. It does not include App Store, notar
 - Ruby with the `xcodeproj` gem when regenerating the Xcode project.
 - Spotify and at least one browser or browser-wrapper Now Playing session for media-target checks.
 - Local Sonos network access for real-device Sonos smoke checks.
-- Accessibility permission granted to `/Users/f.pieringer/Applications/Keyway.app` before media-key interception can work. macOS requires this for suppressing hardware media-key events.
+- Accessibility permission for `/Users/f.pieringer/Applications/Keyway.app`; Keyway requests it when the media-key event tap cannot be created. macOS requires this for suppressing hardware media-key events.
 
 ## Build And Install
 
@@ -56,7 +56,7 @@ Summarize the current local acceptance readiness:
 /Users/f.pieringer/projects/keyway/scripts/acceptance_preflight
 ```
 
-`acceptance_preflight=blocked` means the installed app is intact but one or more required local conditions, such as Accessibility permission or a discoverable Sonos room, still prevents the full acceptance runbook from passing.
+`acceptance_preflight=blocked` means the installed app is intact but one or more required local conditions, such as a discoverable Sonos room, still prevents the full acceptance runbook from passing.
 
 Run real-device smoke checks when the configured Sonos room is discoverable:
 
@@ -71,9 +71,9 @@ SONOS_HANDOFF_REAL_DEVICE_SMOKE=1 SONOS_HANDOFF_ROOM=<room-name> /Users/f.pierin
 3. Confirm `General` reports config import status.
 4. Confirm `Spotify` reports Desktop Connect and Web API token readiness.
 5. Confirm `Helper Status` reports the MediaRemote helper as running.
-6. Grant Accessibility to Keyway in System Settings when `Permissions` reports it missing.
+6. Approve Accessibility for Keyway in System Settings if macOS shows the prompt or `Permissions` reports it missing.
 
-After Accessibility is granted, restart Keyway or use Settings to refresh shortcuts. Logs should move from `event_tap_create_failed accessibility=false` to `mediaFallback=enabled events=systemDefined`.
+After Accessibility is granted, restart Keyway or use Settings to refresh shortcuts. Keyway writes shortcut readiness to `~/Library/Application Support/keyway/shortcut-runtime-status.json`; `mediaFallback=enabled` means the media-key event tap is ready.
 
 ## Acceptance
 
