@@ -21,6 +21,7 @@ struct AppEnvironment: @unchecked Sendable {
     let transferSuggestionStore: PlaybackTransferSuggestionStore
     let transferSuggestionNotifier: PlaybackTransferSuggestionNotifier
     let transferSuggestionPresenter: PlaybackTransferSuggestionPresenter
+    let mediaRemoteController: MediaRemoteController
 
     @MainActor
     static func live() -> AppEnvironment {
@@ -45,6 +46,7 @@ struct AppEnvironment: @unchecked Sendable {
             store: transferSuggestionStore,
             notifier: transferSuggestionNotifier
         )
+        let mediaRemoteController = MediaRemoteController()
         let outputDirectory = PlaybackOutputDirectory(
             groupingStateReader: spotifyConnectService
         )
@@ -69,7 +71,8 @@ struct AppEnvironment: @unchecked Sendable {
             groupSuggestionPresenter: groupSuggestionPresenter,
             transferSuggestionStore: transferSuggestionStore,
             transferSuggestionNotifier: transferSuggestionNotifier,
-            transferSuggestionPresenter: transferSuggestionPresenter
+            transferSuggestionPresenter: transferSuggestionPresenter,
+            mediaRemoteController: mediaRemoteController
         )
     }
 }

@@ -19,6 +19,7 @@ struct SettingsFeature: View {
     private let authCoordinator: SpotifyAuthCoordinating
     private let accessibilityAutomator: AccessibilityAutomating
     private let configImportService: ConfigImportService
+    @ObservedObject private var mediaRemoteController: MediaRemoteController
 
     @State private var spotifyClientID = ""
     @State private var isSpotifyAuthenticated = false
@@ -47,7 +48,8 @@ struct SettingsFeature: View {
         authCoordinator: SpotifyAuthCoordinating? = nil,
         accessibilityAutomator: AccessibilityAutomating = SpotifyUIAutomator(),
         configImportService: ConfigImportService = ConfigImportService(),
-        initialConfigImportReport: ConfigImportReport? = nil
+        initialConfigImportReport: ConfigImportReport? = nil,
+        mediaRemoteController: MediaRemoteController = MediaRemoteController()
     ) {
         self.configStore = configStore
         self.tokenStore = tokenStore
@@ -59,6 +61,7 @@ struct SettingsFeature: View {
             configStore: configStore
         )
         _configImportReport = State(initialValue: initialConfigImportReport)
+        _mediaRemoteController = ObservedObject(wrappedValue: mediaRemoteController)
     }
 
     var body: some View {
@@ -396,12 +399,31 @@ struct SettingsFeature: View {
 
     private var helperStatusSection: some View {
         settingsPanel(title: "Helper Status") {
-            serviceStatusRow(
-                title: "MediaRemote helper",
-                available: false,
-                availableText: "Running",
-                missingText: "Not connected yet"
-            )
+            HStack(alignment: .top, spacing: 10) {
+                StatusBadge(
+                    title: mediaRemoteController.health.badgeTitle,
+                    available: mediaRemoteController.health.isHealthy
+                )
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("MediaRemote helper")
+                        .font(.system(size: 13, weight: .medium))
+                    Text(mediaRemoteController.health.message)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                    Text(helperStatusDetail)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                }
+                .layoutPriority(1)
+
+                Spacer()
+
+                Button("Restart") {
+                    mediaRemoteController.restart()
+                }
+                .controlSize(.small)
+            }
         }
     }
 
@@ -413,6 +435,7 @@ struct SettingsFeature: View {
                         settingsDiagnosticRow(title: result.file.fileName, detail: fileStatusText(result.status))
                     }
                     settingsDiagnosticRow(title: "spotify keychain", detail: keychainStatusText(configImportReport.keychainStatus))
+                    settingsDiagnosticRow(title: "media targets", detail: "\(mediaRemoteController.targets.count)")
                 } else {
                     Text("No diagnostics recorded yet.")
                         .font(.system(size: 12))
@@ -563,6 +586,15 @@ struct SettingsFeature: View {
         }
 
         return "No legacy items needed copying, or the Keyway copies already match."
+    }
+
+    private var helperStatusDetail: String {
+        let pid = mediaRemoteController.health.pid.map(String.init) ?? "none"
+        let targetCount = mediaRemoteController.health.targetCount
+        if let lastSnapshotAt = mediaRemoteController.health.lastSnapshotAt {
+            return "pid=\(pid) targets=\(targetCount) snapshot=\(lastSnapshotAt.formatted(date: .omitted, time: .standard))"
+        }
+        return "pid=\(pid) targets=\(targetCount) snapshot=none"
     }
 
     private var notificationsEnabled: Bool {

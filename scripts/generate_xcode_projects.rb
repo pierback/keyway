@@ -39,6 +39,36 @@ def add_resources(target, group, relative_paths)
   target.add_resources(files)
 end
 
+def add_mediaremote_helper_build_phase(target)
+  phase = target.new_shell_script_build_phase('Build MediaRemote Helper')
+  phase.shell_script = <<~SH
+    set -euo pipefail
+
+    HELPER_SRC="$SRCROOT/../MediaRemoteHelper"
+    HELPER_DEST="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/MediaRemoteHelper"
+
+    mkdir -p "$HELPER_DEST"
+    /usr/bin/clang \\
+      -dynamiclib \\
+      -fobjc-arc \\
+      -fblocks \\
+      "$HELPER_SRC/KeywayMediaRemoteShim.m" \\
+      -framework Foundation \\
+      -o "$HELPER_DEST/libkeyway_mediaremote.dylib"
+
+    cp "$HELPER_SRC/keyway-mediaremote-helper.pl" "$HELPER_DEST/keyway-mediaremote-helper.pl"
+    chmod +x "$HELPER_DEST/keyway-mediaremote-helper.pl"
+  SH
+  phase.input_paths = [
+    '$(SRCROOT)/../MediaRemoteHelper/KeywayMediaRemoteShim.m',
+    '$(SRCROOT)/../MediaRemoteHelper/keyway-mediaremote-helper.pl',
+  ]
+  phase.output_paths = [
+    '$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/MediaRemoteHelper/libkeyway_mediaremote.dylib',
+    '$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/MediaRemoteHelper/keyway-mediaremote-helper.pl',
+  ]
+end
+
 def normalize_system_framework_refs(project, framework_name)
   project.files.each do |file|
     next unless file.display_name == framework_name
@@ -103,6 +133,7 @@ def build_menu_bar_project
     'Assets.xcassets',
   ])
   resources_group.new_file('Info.plist')
+  add_mediaremote_helper_build_phase(target)
 
   add_local_package_dependency(project, target, '../packages/SonosHandoffCore', 'SonosHandoffCore')
 

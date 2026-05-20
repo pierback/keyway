@@ -32,6 +32,9 @@ struct KeywayApp: App {
         Task { @MainActor in
             playbackBackgroundSync.start()
         }
+        Task { @MainActor in
+            environment.mediaRemoteController.start()
+        }
     }
 
     @MainActor
@@ -114,7 +117,8 @@ struct KeywayApp: App {
                 authCoordinator: environment.authCoordinator,
                 accessibilityAutomator: environment.accessibilityAutomator,
                 configImportService: environment.configImportService,
-                initialConfigImportReport: environment.configImportReport
+                initialConfigImportReport: environment.configImportReport,
+                mediaRemoteController: environment.mediaRemoteController
             )
                 .frame(width: SettingsFeature.preferredWindowSize.width)
                 .frame(minHeight: SettingsFeature.preferredWindowSize.height)
