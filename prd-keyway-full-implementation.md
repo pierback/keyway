@@ -107,10 +107,12 @@ When this PRD is complete, the following will be true:
 
 As of 2026-05-20, the main implementation is present on branch `keyway-planning` and the deterministic regression gate passes. `scripts/acceptance_preflight` summarizes current local acceptance readiness and exits `2` while local environment blockers remain. The remaining blockers are verification blockers, not accepted scope removals:
 
-- Accessibility has not yet been granted to the new `com.fpieringer.Keyway` bundle on the local machine, so media-key interception cannot be manually confirmed until that permission is granted.
+- Accessibility is granted to the installed `com.fpieringer.Keyway` bundle on the local machine, and Keyway persists `mediaFallback=enabled` in `~/Library/Application Support/keyway/shortcut-runtime-status.json`.
 - The configured Sonos rooms were not discoverable on the current network, so real-device Sonos smoke checks could not be run.
 - QuickTime target discovery has been verified with local media playback.
 - Settings normal-window behavior has been verified through the menu bar UI; System Events reports Keyway as visible and not background-only while Settings is open.
+- Focused Target routing now checks the global foreground Media Target first, then a prominently visible, unobscured Media Target window on the display containing the pointer before falling back to Pinned Target, Recent Target, or chooser.
+- Full live hardware Transport Key routing still needs a manual run with Play/Pause, Next, and Previous keypresses.
 
 The current verification record is maintained in `docs/verification-log.md`.
 
@@ -302,8 +304,7 @@ Escape       Cancel Pending Command
 Tab          Toggle Expanded Controls
 1-9          Compact mode: dispatch to visible target number
 P            Pin/unpin selected target
-Left/Right   Expanded mode: adjust supported target volume
-M            Expanded mode: toggle supported mute
+Cmd+Up/Down  Expanded mode: adjust supported selected-target volume
 ```
 
 ---

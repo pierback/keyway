@@ -17,12 +17,14 @@ Last updated: 2026-05-20
 - `xcodebuild -workspace Keyway.xcworkspace -scheme Keyway -configuration Debug -destination 'platform=macOS' -derivedDataPath .build/xcode-derived-data build`: passed.
 - `scripts/install_menubar_app`: passed and installed `/Users/f.pieringer/Applications/Keyway.app`.
 - `scripts/regression_gate`: passed in default mode again at 2026-05-20 17:22 local time.
+- `scripts/regression_gate`: passed again after the Focused Target prominent-window routing change.
 - `scripts/acceptance_preflight`: initially reported `acceptance_preflight=blocked` because Accessibility and Sonos room discovery were unavailable locally.
 - Startup and shortcut refresh now request the macOS Accessibility prompt when the media-key event tap cannot be created.
 - Keyway now persists shortcut runtime readiness in `~/Library/Application Support/keyway/shortcut-runtime-status.json` so preflight is not dependent on volatile unified-log retention.
 - After reinstalling `/Users/f.pieringer/Applications/Keyway.app`, `scripts/acceptance_preflight` passed the Accessibility/media-key event-tap readiness check from the persisted status file:
   - `pass: Keyway persisted shortcut runtime status is mediaFallback=enabled`
-- The latest `scripts/acceptance_preflight` run still reports `acceptance_preflight=blocked` with exit code 2 because Sonos room `Port` is not discoverable.
+- `scripts/acceptance_preflight` now waits briefly for the app-owned MediaRemote helper after a fresh launch, avoiding a false helper block during install/relaunch settling.
+- The latest `scripts/acceptance_preflight` run still reports `acceptance_preflight=blocked` with exit code 2 because Spotify has no active playback and Sonos room `Port` is not discoverable.
 - `codex-review --parallel-tests "scripts/regression_gate"`: initially reported overlay chooser state findings; fixed in `53e5590`; rerun clean with no accepted/actionable findings.
 - Installed bundle id: `com.fpieringer.Keyway`.
 - Installed app signature uses identifier `com.fpieringer.Keyway` and TeamIdentifier `7Q44SDV7BM`.
@@ -51,6 +53,7 @@ Last updated: 2026-05-20
   - `NX_KEYTYPE_PLAY = 16`
   - `NX_KEYTYPE_NEXT = 17`
   - `NX_KEYTYPE_PREVIOUS = 18`
+- Focused Target routing now includes a Prominent Window Target fallback: when the global foreground app is not a Media Target, Keyway checks prominently visible, unobscured layer-0 windows on the display containing the mouse pointer before falling back to Pinned Target, Recent Target, or chooser.
 
 ## Not Yet Passed Locally
 
@@ -59,16 +62,18 @@ Last updated: 2026-05-20
   - `Office`
   - `kitchen`
 - Full transport routing, overlay keyboard operation from hardware media keys, and routing confirmation still need a hardware media-key run now that the event tap is enabled.
+- Spotify Active Device Volume needs a rerun while Spotify has active playback.
 - Sonos volume and mute still need a run on a network where a configured Sonos room is discoverable.
 
 ## Next Required Acceptance Checks
 
-1. Re-run media-key checks for Play/Pause, Next, Previous, chooser, pinning, focused target, recent target, and single target.
-2. Connect to a network where at least one configured Sonos room is discoverable, then run:
+1. Start active Spotify playback on a controllable device.
+2. Re-run media-key checks for Play/Pause, Next, Previous, chooser, pinning, focused target, prominent-window target, recent target, and single target.
+3. Connect to a network where at least one configured Sonos room is discoverable, then run:
 
 ```bash
 SONOS_HANDOFF_REAL_DEVICE_SMOKE=1 SONOS_HANDOFF_ROOM=<room-name> /Users/f.pieringer/projects/keyway/scripts/regression_gate
 ```
 
-3. Re-run Sonos volume and mute checks against the discoverable room.
-4. Re-run full overlay keyboard and routing confirmation checks with live media-key presses.
+4. Re-run Sonos volume and mute checks against the discoverable room.
+5. Re-run full overlay keyboard and routing confirmation checks with live media-key presses.

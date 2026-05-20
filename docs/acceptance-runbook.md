@@ -65,7 +65,7 @@ Keyway is complete only when this runbook passes on a fresh local install withou
 - [ ] Confirm next is intercepted and suppressed, then re-dispatched by Keyway.
 - [ ] Confirm previous is intercepted and suppressed, then re-dispatched by Keyway.
 - [ ] Confirm routing policy: single target.
-- [ ] Confirm routing policy: Focused Target.
+- [ ] Confirm routing policy: Focused Target, including foreground Media Target and prominent Media Target window on the pointer display.
 - [ ] Confirm routing policy: Pinned Target.
 - [ ] Confirm routing policy: Recent Target.
 - [ ] Confirm routing policy: chooser when ambiguous.

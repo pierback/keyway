@@ -142,7 +142,7 @@ _Avoid_: Active screen
 - **Expanded Controls** are reached from the **Media Overlay** by an explicit shortcut, not by hardware volume keys.
 - In compact command-routing form, the **Media Overlay** uses up/down to change target, enter to dispatch the **Pending Command**, escape to cancel, and tab to toggle **Expanded Controls**.
 - In compact command-routing form, plain number keys `1` through `9` immediately dispatch the **Pending Command** to the corresponding visible target.
-- In **Expanded Controls**, left/right adjust the selected target's volume when supported, and mute is a target-specific control.
+- In **Expanded Controls**, `Command+Up` and `Command+Down` adjust the selected target's volume when supported, and mute is exposed through target-specific controls where available.
 - In **Expanded Controls**, number keys change selection without immediately dispatching a **Pending Command**.
 - **Audio Target Control** is required for Sonos and Spotify where controllable without companion browser software.
 - Spotify **Audio Target Control** means **Spotify Active Device Volume**, not a Mac app-local volume.

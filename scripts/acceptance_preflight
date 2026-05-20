@@ -94,7 +94,16 @@ section "MediaRemote Helper"
 helper_script="$APP_DIR/Contents/Resources/MediaRemoteHelper/keyway-mediaremote-helper.pl"
 helper_dylib="$APP_DIR/Contents/Resources/MediaRemoteHelper/libkeyway_mediaremote.dylib"
 
-if pgrep -f "$helper_script $helper_dylib" >/dev/null; then
+helper_running=false
+for _ in {1..10}; do
+  if pgrep -f "$helper_script $helper_dylib" >/dev/null; then
+    helper_running=true
+    break
+  fi
+  sleep 0.5
+done
+
+if [[ "$helper_running" == "true" ]]; then
   pass "app-owned /usr/bin/perl MediaRemote helper is running"
 else
   block "app-owned MediaRemote helper is not running"
