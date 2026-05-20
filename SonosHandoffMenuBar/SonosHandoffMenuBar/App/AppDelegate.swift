@@ -12,7 +12,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func configure(environment: AppEnvironment) {
         volumeHotkeys = VolumeHotkeyController(
             volumeService: environment.volumeService,
-            outputSelection: environment.outputSelection
+            outputSelection: environment.outputSelection,
+            mediaTransportActions: environment.mediaTransportActionController
         )
     }
 

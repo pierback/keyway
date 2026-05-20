@@ -13,6 +13,10 @@ enum SpotifyVolumeMirrorSkipReason: Equatable, Sendable {
     case error(String)
 }
 
+private enum SpotifyVolumeWriteError: Error, Sendable {
+    case spotifyHTTPStatus(Int, String)
+}
+
 struct SpotifyConnectBridge: Sendable {
     private static let volumeMirrorLogger = os.Logger(
         subsystem: "com.fpieringer.SonosHandoffCore",
@@ -76,6 +80,30 @@ struct SpotifyConnectBridge: Sendable {
         )
     }
 
+    func setActivePlaybackDeviceVolume(_ requestedVolume: Int) async throws -> Int {
+        let volume = max(0, min(100, requestedVolume))
+        let accessToken = try await projectAccessTokenProvider.accessToken()
+        guard let state = try await currentPlayerStateWithAuthRetry(accessToken: accessToken) else {
+            throw ConnectHandoffError(.transferVerificationFailed, "Spotify has no active playback device.")
+        }
+        guard !state.device.isRestricted else {
+            throw ConnectHandoffError(.transferVerificationFailed, "Spotify active device is restricted: \(state.device.name).")
+        }
+
+        do {
+            try await setActiveDeviceVolume(volume, accessToken: accessToken)
+        } catch let error as SpotifyVolumeWriteError {
+            switch error {
+            case .spotifyHTTPStatus(let statusCode, let body):
+                throw ConnectHandoffError(
+                    .transferVerificationFailed,
+                    body.isEmpty ? "Spotify volume HTTP \(statusCode)" : body
+                )
+            }
+        }
+        return volume
+    }
+
     @discardableResult
     func setActiveDeviceVolumeIfNeeded(roomName: String, volume: Int) async -> SpotifyVolumeMirrorResult {
         do {
@@ -96,31 +124,16 @@ struct SpotifyConnectBridge: Sendable {
                 return .skipped(.restrictedDevice(deviceName: state.device.name))
             }
 
-            var components = URLComponents(string: "https://api.spotify.com/v1/me/player/volume")!
-            components.queryItems = [URLQueryItem(name: "volume_percent", value: String(volume))]
-            var request = URLRequest(url: components.url!)
-            request.httpMethod = "PUT"
-            let volumeAccessToken = try await projectAccessTokenProvider.accessToken()
-            request.setValue("Bearer \(volumeAccessToken)", forHTTPHeaderField: "Authorization")
-
-            var (data, response) = try await urlSession.data(for: request)
-            if let http = response as? HTTPURLResponse,
-               http.statusCode == 401 || http.statusCode == 403 {
-                let refreshedAccessToken = try await projectAccessTokenProvider.refreshAccessTokenAfterAuthFailure()
-                request.setValue("Bearer \(refreshedAccessToken)", forHTTPHeaderField: "Authorization")
-                (data, response) = try await urlSession.data(for: request)
-            }
-            guard let http = response as? HTTPURLResponse,
-                  http.statusCode == 204 || (200 ..< 300).contains(http.statusCode)
-            else {
-                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
-                let body = String(data: data, encoding: .utf8) ?? ""
-                Self.volumeMirrorLogger.info("SpotifyVolumeMirror result=skipped reason=spotify_http_status room=\(roomName, privacy: .public) volume=\(volume, privacy: .public) status=\(statusCode, privacy: .public) body=\(body, privacy: .public)")
-                return .skipped(.spotifyHTTPStatus(statusCode))
-            }
+            try await setActiveDeviceVolume(volume, accessToken: accessToken)
 
             Self.volumeMirrorLogger.info("SpotifyVolumeMirror result=applied room=\(roomName, privacy: .public) volume=\(volume, privacy: .public)")
             return .applied
+        } catch let error as SpotifyVolumeWriteError {
+            switch error {
+            case .spotifyHTTPStatus(let statusCode, let body):
+                Self.volumeMirrorLogger.info("SpotifyVolumeMirror result=skipped reason=spotify_http_status room=\(roomName, privacy: .public) volume=\(volume, privacy: .public) status=\(statusCode, privacy: .public) body=\(body, privacy: .public)")
+                return .skipped(.spotifyHTTPStatus(statusCode))
+            }
         } catch {
             Self.volumeMirrorLogger.info("SpotifyVolumeMirror result=skipped reason=error room=\(roomName, privacy: .public) volume=\(volume, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
             return .skipped(.error(error.localizedDescription))
@@ -169,6 +182,29 @@ struct SpotifyConnectBridge: Sendable {
         } catch let error as ConnectHandoffError where error.code == .authRequired {
             let refreshedAccessToken = try await projectAccessTokenProvider.refreshAccessTokenAfterAuthFailure()
             return try await currentPlayerState(accessToken: refreshedAccessToken)
+        }
+    }
+
+    private func setActiveDeviceVolume(_ volume: Int, accessToken: String) async throws {
+        var components = URLComponents(string: "https://api.spotify.com/v1/me/player/volume")!
+        components.queryItems = [URLQueryItem(name: "volume_percent", value: String(volume))]
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "PUT"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+
+        var (data, response) = try await urlSession.data(for: request)
+        if let http = response as? HTTPURLResponse,
+           http.statusCode == 401 || http.statusCode == 403 {
+            let refreshedAccessToken = try await projectAccessTokenProvider.refreshAccessTokenAfterAuthFailure()
+            request.setValue("Bearer \(refreshedAccessToken)", forHTTPHeaderField: "Authorization")
+            (data, response) = try await urlSession.data(for: request)
+        }
+        guard let http = response as? HTTPURLResponse,
+              http.statusCode == 204 || (200 ..< 300).contains(http.statusCode)
+        else {
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+            let body = String(data: data, encoding: .utf8) ?? ""
+            throw SpotifyVolumeWriteError.spotifyHTTPStatus(statusCode, body)
         }
     }
 

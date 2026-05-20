@@ -22,6 +22,10 @@ struct AppEnvironment: @unchecked Sendable {
     let transferSuggestionNotifier: PlaybackTransferSuggestionNotifier
     let transferSuggestionPresenter: PlaybackTransferSuggestionPresenter
     let mediaRemoteController: MediaRemoteController
+    let mediaTargetPreferenceStore: MediaTargetPreferenceStore
+    let mediaAudioControlController: MediaAudioControlController
+    let mediaTargetOverlayController: MediaTargetOverlayController
+    let mediaTransportActionController: MediaTransportActionController
 
     @MainActor
     static func live() -> AppEnvironment {
@@ -47,6 +51,20 @@ struct AppEnvironment: @unchecked Sendable {
             notifier: transferSuggestionNotifier
         )
         let mediaRemoteController = MediaRemoteController()
+        let mediaTargetPreferenceStore = MediaTargetPreferenceStore()
+        let mediaAudioControlController = MediaAudioControlController(
+            volumeService: spotifyConnectService,
+            outputSelection: outputSelection,
+            activePlaybackObserver: spotifyConnectService
+        )
+        let mediaTargetOverlayController = MediaTargetOverlayController(
+            audioController: mediaAudioControlController
+        )
+        let mediaTransportActionController = MediaTransportActionController(
+            mediaRemoteController: mediaRemoteController,
+            preferenceStore: mediaTargetPreferenceStore,
+            overlayController: mediaTargetOverlayController
+        )
         let outputDirectory = PlaybackOutputDirectory(
             groupingStateReader: spotifyConnectService
         )
@@ -72,7 +90,11 @@ struct AppEnvironment: @unchecked Sendable {
             transferSuggestionStore: transferSuggestionStore,
             transferSuggestionNotifier: transferSuggestionNotifier,
             transferSuggestionPresenter: transferSuggestionPresenter,
-            mediaRemoteController: mediaRemoteController
+            mediaRemoteController: mediaRemoteController,
+            mediaTargetPreferenceStore: mediaTargetPreferenceStore,
+            mediaAudioControlController: mediaAudioControlController,
+            mediaTargetOverlayController: mediaTargetOverlayController,
+            mediaTransportActionController: mediaTransportActionController
         )
     }
 }

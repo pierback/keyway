@@ -129,6 +129,10 @@ final class SonosRuntime: @unchecked Sendable {
         try await spotifyPlayback.activePlaybackDeviceStatus()
     }
 
+    func setActivePlaybackDeviceVolume(_ volume: Int) async throws -> Int {
+        try await spotifyPlayback.setActivePlaybackDeviceVolume(volume)
+    }
+
     func volumeDown(roomName: String, step: Int = 5) async throws -> Int {
         try await volumeService.volumeDown(roomName: roomName, step: step)
     }

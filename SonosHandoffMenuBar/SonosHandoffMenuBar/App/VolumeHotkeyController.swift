@@ -7,6 +7,7 @@ import SonosHandoffCore
 final class VolumeHotkeyController {
     private let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "Hotkeys")
     private let volumeActions: ShortcutVolumeActionController
+    private let mediaTransportActions: MediaTransportActionController
     private let runtimeReporter: ShortcutRuntimeReporter
     private var lastCarbonAction: (direction: VolumeDirection, timestamp: CFAbsoluteTime)?
     private var repeatTimer: DispatchSourceTimer?
@@ -24,6 +25,7 @@ final class VolumeHotkeyController {
     init(
         volumeService: any SpeakerVolumeAdjusting,
         outputSelection: PlaybackOutputSelection,
+        mediaTransportActions: MediaTransportActionController,
         volumeCommands: SpeakerVolumeCommandQueue = .shared,
         runtimeReporter: ShortcutRuntimeReporter = ShortcutRuntimeReporter()
     ) {
@@ -32,6 +34,7 @@ final class VolumeHotkeyController {
             outputSelection: outputSelection,
             volumeCommands: volumeCommands
         )
+        self.mediaTransportActions = mediaTransportActions
         self.runtimeReporter = runtimeReporter
     }
 
@@ -73,6 +76,13 @@ final class VolumeHotkeyController {
         switch eventParser.outcome(type: type, event: event, isRepeating: repeatingDirection != nil) {
         case .passThrough:
             return Unmanaged.passUnretained(event)
+        case .transportKeyDown(let command, let source):
+            logger.info("SonosHandoffHotkeys action=transport_\(command.rawValue, privacy: .public) source=\(source, privacy: .public)")
+            mediaTransportActions.route(command: command)
+            return nil
+        case .transportKeyUp(let command, let source):
+            logger.info("SonosHandoffHotkeys action=transport_\(command.rawValue, privacy: .public)_up source=\(source, privacy: .public)")
+            return nil
         case .volumeHoldStart(let direction, let source):
             logger.info("SonosHandoffHotkeys action=volume_\(direction.logName, privacy: .public) source=\(source, privacy: .public)_hold_start")
             startVolumeRepeat(direction: direction, source: source)

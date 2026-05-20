@@ -1,4 +1,6 @@
+import AppKit
 import Foundation
+import UniformTypeIdentifiers
 
 enum MediaRemoteTransportCommand: String, Codable, Sendable {
     case play
@@ -19,6 +21,21 @@ enum MediaRemoteTransportCommand: String, Codable, Sendable {
             return "Next"
         case .previous:
             return "Previous"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .play:
+            return "play.fill"
+        case .pause:
+            return "pause.fill"
+        case .playPause:
+            return "playpause.fill"
+        case .next:
+            return "forward.end.fill"
+        case .previous:
+            return "backward.end.fill"
         }
     }
 }
@@ -59,6 +76,60 @@ struct MediaRemoteTarget: Codable, Equatable, Identifiable, Sendable {
             return artist
         }
         return bundleIdentifier
+    }
+
+    var routingIdentity: String {
+        if !parentBundleIdentifier.isEmpty {
+            return parentBundleIdentifier
+        }
+        if !bundleIdentifier.isEmpty {
+            return bundleIdentifier
+        }
+        return id
+    }
+
+    var isSpotify: Bool {
+        let identities = [bundleIdentifier, parentBundleIdentifier].map { $0.lowercased() }
+        return identities.contains("com.spotify.client")
+            || identities.contains { $0.contains("spotify") }
+    }
+
+    var isBrowserLike: Bool {
+        let identities = [bundleIdentifier, parentBundleIdentifier].map { $0.lowercased() }
+        return identities.contains { identity in
+            identity.contains("safari")
+                || identity.contains("chrome")
+                || identity.contains("firefox")
+                || identity.contains("brave")
+                || identity.contains("arc")
+                || identity.contains("helium")
+                || identity.contains("browser")
+        }
+    }
+
+    func matchesRoutingIdentity(_ identity: String?) -> Bool {
+        guard let identity, !identity.isEmpty else {
+            return false
+        }
+        return id == identity
+            || routingIdentity == identity
+            || bundleIdentifier == identity
+            || parentBundleIdentifier == identity
+    }
+
+    @MainActor
+    var appIcon: NSImage {
+        let bundleIDs = [bundleIdentifier, parentBundleIdentifier].filter { !$0.isEmpty }
+        for bundleID in bundleIDs {
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+                let image = NSWorkspace.shared.icon(forFile: url.path)
+                image.size = NSSize(width: 34, height: 34)
+                return image
+            }
+        }
+
+        return NSImage(systemSymbolName: "play.rectangle.fill", accessibilityDescription: appName)
+            ?? NSWorkspace.shared.icon(for: .applicationBundle)
     }
 }
 

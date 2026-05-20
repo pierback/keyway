@@ -3,6 +3,8 @@ import ApplicationServices
 
 enum ShortcutEventOutcome: Equatable {
     case passThrough
+    case transportKeyDown(command: MediaRemoteTransportCommand, source: String)
+    case transportKeyUp(command: MediaRemoteTransportCommand, source: String)
     case volumeHoldStart(direction: VolumeDirection, source: String)
     case volumeHoldStop(source: String)
     case muteToggle(source: String)
@@ -24,6 +26,9 @@ struct ShortcutEventParser {
     private let soundMuteKeyCode = 7
     private let soundUpKeyCode = 0
     private let soundDownKeyCode = 1
+    private let playPauseKeyCode = 16
+    private let nextKeyCode = 17
+    private let previousKeyCode = 18
     private let f10KeyCode: Int64 = 109
     private let f11KeyCode: Int64 = 103
     private let f12KeyCode: Int64 = 111
@@ -42,6 +47,14 @@ struct ShortcutEventParser {
 
         let keyCode = (nsEvent.data1 & 0xFFFF_0000) >> 16
         let keyState = (nsEvent.data1 & 0x0000_FF00) >> 8
+        if let command = transportCommand(for: keyCode) {
+            if keyState == keyDownState {
+                return .transportKeyDown(command: command, source: "media_key")
+            }
+            if keyState == keyUpState {
+                return .transportKeyUp(command: command, source: "media_key")
+            }
+        }
 
         if keyState == keyUpState,
            keyCode == soundDownKeyCode || keyCode == soundUpKeyCode {
@@ -71,6 +84,19 @@ struct ShortcutEventParser {
         }
 
         return .passThrough
+    }
+
+    private func transportCommand(for keyCode: Int) -> MediaRemoteTransportCommand? {
+        switch keyCode {
+        case playPauseKeyCode:
+            return .playPause
+        case nextKeyCode:
+            return .next
+        case previousKeyCode:
+            return .previous
+        default:
+            return nil
+        }
     }
 
     private func functionKeyOutcome(type: CGEventType, event: CGEvent, isRepeating: Bool) -> ShortcutEventOutcome {
