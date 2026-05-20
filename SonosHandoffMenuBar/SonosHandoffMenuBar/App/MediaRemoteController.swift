@@ -51,7 +51,7 @@ final class MediaRemoteController: ObservableObject {
             process.standardError = errorPipe
             process.terminationHandler = { [weak self] terminatedProcess in
                 Task { @MainActor [weak self] in
-                    self?.handleTermination(status: terminatedProcess.terminationStatus)
+                    self?.handleTermination(terminatedProcess, status: terminatedProcess.terminationStatus)
                 }
             }
 
@@ -216,7 +216,17 @@ final class MediaRemoteController: ObservableObject {
         }
     }
 
-    private func handleTermination(status: Int32) {
+    private func handleTermination(_ terminatedProcess: Process, status: Int32) {
+        if let process, process !== terminatedProcess {
+            logger.info("MediaRemoteHelper ignored_stale_termination status=\(status, privacy: .public)")
+            return
+        }
+
+        if process == nil, !expectedTermination {
+            logger.info("MediaRemoteHelper ignored_unowned_termination status=\(status, privacy: .public)")
+            return
+        }
+
         process = nil
         inputPipe = nil
         refreshTimer?.invalidate()

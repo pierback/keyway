@@ -224,7 +224,11 @@ final class MediaTargetOverlayController {
                 dismissAfter: 2.2
             )
         } else {
-            audioController.adjustSonosVolume(direction: direction)
+            StatusHUD.shared.finish(
+                title: "Volume Unsupported",
+                message: "\(target.appName) does not expose a Keyway volume backend.",
+                dismissAfter: 2.2
+            )
         }
         refreshAudioSnapshot(delay: 0.35)
     }
