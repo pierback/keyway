@@ -5,15 +5,14 @@ Last updated: 2026-05-20
 ## Verified In This Branch
 
 - Branch: `keyway-planning`
-- Commits:
+- Implementation commits:
   - `e2fd154 Document Keyway product direction`
   - `7f8b8ab Add Keyway acceptance runbook`
   - `2d66be1 Cut over app identity to Keyway`
   - `9ac40cc Add MediaRemote helper bridge`
   - `4b1137e Route media keys through Keyway overlay`
-  - `aa711b9 Document Keyway verification status`
   - `53e5590 Fix media target overlay chooser state`
-  - `59e5043 Update Keyway verification log`
+- Verification documentation updates are committed on top of the implementation commits.
 - `swift test --package-path packages/SonosHandoffCore`: passed with 236 tests.
 - `xcodebuild -workspace Keyway.xcworkspace -scheme Keyway -configuration Debug -destination 'platform=macOS' -derivedDataPath .build/xcode-derived-data build`: passed.
 - `scripts/install_menubar_app`: passed and installed `/Users/f.pieringer/Applications/Keyway.app`.
