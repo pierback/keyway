@@ -3,7 +3,7 @@ import SwiftUI
 
 @MainActor
 final class MediaTargetOverlayModel: ObservableObject {
-    @Published var command: MediaRemoteTransportCommand = .playPause
+    @Published var command: MediaRemoteTransportCommand?
     @Published var targets: [MediaRemoteTarget] = []
     @Published var selectedIndex = 0
     @Published var pinnedIdentity: String?
@@ -22,7 +22,7 @@ final class MediaTargetOverlayModel: ObservableObject {
     }
 
     func update(
-        command: MediaRemoteTransportCommand,
+        command: MediaRemoteTransportCommand?,
         targets: [MediaRemoteTarget],
         pinnedIdentity: String?
     ) {
@@ -46,6 +46,7 @@ final class MediaTargetOverlayModel: ObservableObject {
         }
         selectedIndex = index
     }
+
 }
 
 @MainActor
@@ -53,7 +54,7 @@ final class MediaTargetOverlayController {
     private let model = MediaTargetOverlayModel()
     private let audioController: MediaAudioControlController
     private var panel: MediaTargetOverlayPanel?
-    private var onChoose: ((MediaRemoteTarget, MediaRemoteTransportCommand) -> Void)?
+    private var onChoose: ((MediaRemoteTarget, MediaRemoteTransportCommand?) -> Void)?
     private var onPinToggle: ((MediaRemoteTarget) -> Void)?
 
     init(audioController: MediaAudioControlController) {
@@ -65,10 +66,10 @@ final class MediaTargetOverlayController {
     }
 
     func show(
-        command: MediaRemoteTransportCommand,
+        command: MediaRemoteTransportCommand?,
         targets: [MediaRemoteTarget],
         pinnedIdentity: String?,
-        onChoose: @escaping (MediaRemoteTarget, MediaRemoteTransportCommand) -> Void,
+        onChoose: @escaping (MediaRemoteTarget, MediaRemoteTransportCommand?) -> Void,
         onPinToggle: @escaping (MediaRemoteTarget) -> Void
     ) {
         self.onChoose = onChoose
@@ -249,7 +250,7 @@ final class MediaTargetOverlayController {
     private func resizeAndPosition(_ panel: NSPanel) {
         let size = panelSize()
         panel.setContentSize(size)
-        let screen = screenContainingMouse()
+        guard let screen = screenContainingMouse() else { return }
         let visibleFrame = screen.visibleFrame
         let origin = NSPoint(
             x: visibleFrame.midX - size.width / 2,
@@ -260,21 +261,23 @@ final class MediaTargetOverlayController {
 
     private func panelSize() -> NSSize {
         let visibleRows = min(model.targets.count, 6)
-        let listHeight = CGFloat(max(1, visibleRows)) * 56
-        let expandedHeight: CGFloat = model.expanded ? 146 : 0
-        let height = min(600, 78 + listHeight + expandedHeight + 42)
+        let rowHeight: CGFloat = 55
+        let topPad: CGFloat = 14
+        let bottomPad: CGFloat = model.expanded ? 0 : 16
+        let listHeight = topPad + CGFloat(max(1, visibleRows)) * rowHeight + bottomPad
+        let expandedHeight: CGFloat = model.expanded ? 120 : 0
+        let footerHeight: CGFloat = 44
+        let height = min(600, listHeight + expandedHeight + footerHeight)
+
         return NSSize(width: 680, height: height)
     }
 
-    private func screenContainingMouse() -> NSScreen {
+    private func screenContainingMouse() -> NSScreen? {
         let location = NSEvent.mouseLocation
         if let screen = NSScreen.screens.first(where: { $0.frame.contains(location) }) {
             return screen
         }
-        if let screen = NSScreen.main ?? NSScreen.screens.first {
-            return screen
-        }
-        preconditionFailure("Expected macOS to expose at least one screen.")
+        return NSScreen.main ?? NSScreen.screens.first
     }
 }
 
@@ -310,11 +313,9 @@ private struct MediaTargetOverlayView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider().opacity(0.42)
             targetList
             if model.expanded {
-                Divider().opacity(0.42)
+                expandedSectionDivider
                 expandedControls
             }
             Divider().opacity(0.42)
@@ -331,37 +332,19 @@ private struct MediaTargetOverlayView: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .frame(width: 680)
+        .accessibilityIdentifier("mediaTargetOverlay")
     }
 
-    private var header: some View {
-        HStack(spacing: 11) {
-            Image(systemName: model.command.symbolName)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(.primary)
-                .frame(width: 34, height: 34)
-                .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Media Targets")
-                    .font(.system(size: 19, weight: .semibold))
-                Text("\(model.command.displayName) will be routed to the selected target")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            if model.expanded {
-                Text("Expanded Controls")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 9)
-                    .frame(height: 26)
-                    .background(Color.primary.opacity(0.08), in: Capsule())
-            }
+    private var expandedSectionDivider: some View {
+        HStack(spacing: 8) {
+            VStack { Divider().opacity(0.42) }
+            Text("Volume")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.tertiary)
+            VStack { Divider().opacity(0.42) }
         }
         .padding(.horizontal, 20)
-        .frame(height: 76)
+        .frame(height: 10)
     }
 
     private var targetList: some View {
@@ -372,9 +355,11 @@ private struct MediaTargetOverlayView: View {
                 }
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.top, 14)
+            .padding(.bottom, model.expanded ? 0 : 16)
         }
         .scrollIndicators(.hidden)
+        .accessibilityIdentifier("mediaTargetOverlay.targetList")
     }
 
     private func targetRow(index: Int, target: MediaRemoteTarget) -> some View {
@@ -431,6 +416,7 @@ private struct MediaTargetOverlayView: View {
             }
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("mediaTargetOverlay.target.\(target.id)")
         .simultaneousGesture(TapGesture().onEnded {
             onSelect(index)
         })
@@ -444,13 +430,25 @@ private struct MediaTargetOverlayView: View {
                     systemImage: "hifispeaker.fill",
                     trailing: {
                         HStack(spacing: 6) {
-                            iconButton("speaker.wave.1.fill", enabled: model.audioSnapshot.sonos.isEnabled) {
+                            iconButton(
+                                "speaker.wave.1.fill",
+                                identifier: "mediaTargetOverlay.sonosVolumeDown",
+                                enabled: model.audioSnapshot.sonos.isEnabled
+                            ) {
                                 onSonosVolume(.down)
                             }
-                            iconButton("speaker.slash.fill", enabled: model.audioSnapshot.sonos.isEnabled) {
+                            iconButton(
+                                "speaker.slash.fill",
+                                identifier: "mediaTargetOverlay.sonosMute",
+                                enabled: model.audioSnapshot.sonos.isEnabled
+                            ) {
                                 onSonosMute()
                             }
-                            iconButton("speaker.wave.3.fill", enabled: model.audioSnapshot.sonos.isEnabled) {
+                            iconButton(
+                                "speaker.wave.3.fill",
+                                identifier: "mediaTargetOverlay.sonosVolumeUp",
+                                enabled: model.audioSnapshot.sonos.isEnabled
+                            ) {
                                 onSonosVolume(.up)
                             }
                         }
@@ -462,10 +460,18 @@ private struct MediaTargetOverlayView: View {
                     systemImage: "music.note",
                     trailing: {
                         HStack(spacing: 6) {
-                            iconButton("speaker.wave.1.fill", enabled: model.audioSnapshot.spotify.isEnabled) {
+                            iconButton(
+                                "speaker.wave.1.fill",
+                                identifier: "mediaTargetOverlay.spotifyVolumeDown",
+                                enabled: model.audioSnapshot.spotify.isEnabled
+                            ) {
                                 onSpotifyVolume(.down)
                             }
-                            iconButton("speaker.wave.3.fill", enabled: model.audioSnapshot.spotify.isEnabled) {
+                            iconButton(
+                                "speaker.wave.3.fill",
+                                identifier: "mediaTargetOverlay.spotifyVolumeUp",
+                                enabled: model.audioSnapshot.spotify.isEnabled
+                            ) {
                                 onSpotifyVolume(.up)
                             }
                         }
@@ -485,6 +491,7 @@ private struct MediaTargetOverlayView: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 10)
+        .accessibilityIdentifier("mediaTargetOverlay.expandedControls")
     }
 
     private func audioRow<Trailing: View>(
@@ -516,7 +523,12 @@ private struct MediaTargetOverlayView: View {
         .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
-    private func iconButton(_ systemName: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+    private func iconButton(
+        _ systemName: String,
+        identifier: String,
+        enabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: 12, weight: .semibold))
@@ -526,6 +538,7 @@ private struct MediaTargetOverlayView: View {
         .foregroundStyle(enabled ? Color.primary : Color.secondary.opacity(0.55))
         .background(Color.primary.opacity(enabled ? 0.08 : 0.04), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
         .disabled(!enabled)
+        .accessibilityIdentifier(identifier)
     }
 
     private var footer: some View {
