@@ -204,6 +204,7 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
         )
         hostingController.view.wantsLayer = true
         hostingController.view.layer?.backgroundColor = NSColor.clear.cgColor
+        hostingController.view.layer?.isOpaque = false
         popover.contentViewController = hostingController
         return popover
     }
@@ -219,6 +220,15 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
 
 @MainActor
 private struct KeywayControlCenterPopoverView: View {
+    private enum Metrics {
+        static let outerCornerRadius: CGFloat = 22
+        static let cardCornerRadius: CGFloat = 15
+        static let primaryIconSize: CGFloat = 34
+        static let tileEyebrowFont = Font.system(size: 11, weight: .semibold)
+        static let tileTitleFont = Font.system(size: 15, weight: .semibold)
+        static let tileDetailFont = Font.system(size: 12, weight: .regular)
+    }
+
     @ObservedObject private var playback: PlaybackSyncController
     @ObservedObject private var mediaRemoteController: MediaRemoteController
 
@@ -271,14 +281,22 @@ private struct KeywayControlCenterPopoverView: View {
         .frame(width: 360)
         .frame(maxHeight: 460)
         .background {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(.ultraThinMaterial)
+            RoundedRectangle(cornerRadius: Metrics.outerCornerRadius, style: .continuous)
+                .fill(.clear)
+                .background {
+                    KeywayPopoverMaterial()
+                        .clipShape(RoundedRectangle(cornerRadius: Metrics.outerCornerRadius, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: Metrics.outerCornerRadius, style: .continuous)
+                                .fill(Color.black.opacity(0.14))
+                        }
+                }
                 .overlay {
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: Metrics.outerCornerRadius, style: .continuous)
+                        .stroke(Color.white.opacity(0.16), lineWidth: 1)
                 }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: Metrics.outerCornerRadius, style: .continuous))
         .foregroundStyle(.white)
         .environment(\.colorScheme, .dark)
         .onAppear {
@@ -395,26 +413,27 @@ private struct KeywayControlCenterPopoverView: View {
 
     private var nowPlayingCard: some View {
         let status = mediaTransportActions.currentRouteStatus()
-        return card(cornerRadius: 15, padding: 10) {
+        return card(cornerRadius: Metrics.cardCornerRadius, padding: 10) {
             VStack(alignment: .leading, spacing: 9) {
                 HStack(spacing: 9) {
-                    targetIcon(status.target, size: 34)
+                    targetIcon(status.target, size: Metrics.primaryIconSize)
 
                     VStack(alignment: .leading, spacing: 3) {
                         HStack(spacing: 6) {
                             Text(status.kind.title)
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(Metrics.tileEyebrowFont)
                                 .foregroundStyle(.white.opacity(0.72))
                             statusPill(status.subtitle)
                         }
                         Text(status.target?.appName ?? "No media target")
-                            .font(.system(size: 16, weight: .semibold))
+                            .font(Metrics.tileTitleFont)
                             .lineLimit(1)
                         Text(status.target?.detailText ?? "Waiting for Now Playing")
-                            .font(.system(size: 12))
+                            .font(Metrics.tileDetailFont)
                             .foregroundStyle(.white.opacity(0.62))
                             .lineLimit(1)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                     Spacer(minLength: 0)
                 }
@@ -448,27 +467,28 @@ private struct KeywayControlCenterPopoverView: View {
         let roomName = playback.selectedRoomName ?? row?.coordinator.roomName ?? "Fallback room"
         let statusText = sonosStatusText(row: row)
 
-        return card(cornerRadius: 15, padding: 10) {
+        return card(cornerRadius: Metrics.cardCornerRadius, padding: 10) {
             VStack(alignment: .leading, spacing: 9) {
                 HStack(spacing: 9) {
                     Image(systemName: hasOutput ? "hifispeaker.2.fill" : "hifispeaker.slash.fill")
                         .font(.system(size: 18, weight: .semibold))
                         .foregroundStyle(hasOutput ? .white : .white.opacity(0.42))
-                        .frame(width: 30, height: 30)
-                        .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                        .frame(width: Metrics.primaryIconSize, height: Metrics.primaryIconSize)
+                        .background(.white.opacity(0.085), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
 
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: 3) {
                         Text("Sonos")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(Metrics.tileEyebrowFont)
                             .foregroundStyle(.white.opacity(0.62))
                         Text(roomName)
-                            .font(.system(size: 15, weight: .semibold))
+                            .font(Metrics.tileTitleFont)
                             .lineLimit(1)
                         Text(statusText)
-                            .font(.system(size: 11))
+                            .font(Metrics.tileDetailFont)
                             .foregroundStyle(.white.opacity(0.56))
                             .lineLimit(1)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                     Spacer()
 
@@ -587,12 +607,12 @@ private struct KeywayControlCenterPopoverView: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(pinned ? Color.white : Color.white.opacity(0.54))
-            .background(.white.opacity(pinned ? 0.16 : 0.07), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .background(.white.opacity(pinned ? 0.14 : 0.055), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
             .accessibilityLabel(pinned ? "Unpin \(target.appName)" : "Pin \(target.appName)")
         }
         .padding(.horizontal, 6)
         .frame(height: 30)
-        .background(.white.opacity(target.id == mediaRemoteController.activeTargetID ? 0.10 : 0.045), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(.white.opacity(target.id == mediaRemoteController.activeTargetID ? 0.075 : 0.035), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private func transportButton(_ command: MediaRemoteTransportCommand, emphasized: Bool = false) -> some View {
@@ -605,7 +625,7 @@ private struct KeywayControlCenterPopoverView: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.white.opacity(0.92))
-        .background(.white.opacity(emphasized ? 0.18 : 0.10), in: Circle())
+        .background(.white.opacity(emphasized ? 0.145 : 0.075), in: Circle())
         .accessibilityIdentifier("transport-\(command.rawValue)")
         .accessibilityLabel(command.displayName)
     }
@@ -624,7 +644,7 @@ private struct KeywayControlCenterPopoverView: View {
             }
         }
         .frame(width: size, height: size)
-        .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: size * 0.24, style: .continuous))
+        .background(.white.opacity(0.085), in: RoundedRectangle(cornerRadius: size * 0.24, style: .continuous))
         .clipShape(RoundedRectangle(cornerRadius: size * 0.24, style: .continuous))
     }
 
@@ -668,10 +688,28 @@ private struct KeywayControlCenterPopoverView: View {
         content()
             .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.white.opacity(0.075), in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(.white.opacity(0.08), lineWidth: 1)
+                    .stroke(.white.opacity(0.075), lineWidth: 1)
             }
+    }
+}
+
+private struct KeywayPopoverMaterial: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .hudWindow
+        view.blendingMode = .behindWindow
+        view.state = .active
+        view.isEmphasized = true
+        return view
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
+        nsView.material = .hudWindow
+        nsView.blendingMode = .behindWindow
+        nsView.state = .active
+        nsView.isEmphasized = true
     }
 }
