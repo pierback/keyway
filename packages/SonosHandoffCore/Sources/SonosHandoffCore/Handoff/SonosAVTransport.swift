@@ -8,8 +8,9 @@ struct SonosAVTransport {
     }
 
     func join(target: ConnectSonosTarget, coordinator: ConnectSonosTarget) async throws {
+        let coordinatorID = SonosSOAPClient.xmlEscape(coordinator.deviceID ?? coordinator.roomName)
         _ = try await call(host: target.host, action: "SetAVTransportURI", body: """
-        <u:SetAVTransportURI xmlns:u="urn:schemas-upnp-org:service:AVTransport:1"><InstanceID>0</InstanceID><CurrentURI>x-rincon:\(coordinator.deviceID ?? coordinator.roomName)</CurrentURI><CurrentURIMetaData></CurrentURIMetaData></u:SetAVTransportURI>
+        <u:SetAVTransportURI xmlns:u="urn:schemas-upnp-org:service:AVTransport:1"><InstanceID>0</InstanceID><CurrentURI>x-rincon:\(coordinatorID)</CurrentURI><CurrentURIMetaData></CurrentURIMetaData></u:SetAVTransportURI>
         """)
     }
 

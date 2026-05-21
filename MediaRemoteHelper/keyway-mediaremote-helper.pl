@@ -26,6 +26,7 @@ if (!$handle) {
 
 my $snapshot_symbol = DynaLoader::dl_find_symbol($handle, "keyway_mediaremote_snapshot");
 my $command_symbol = DynaLoader::dl_find_symbol($handle, "keyway_mediaremote_send_command");
+my $register_symbol = DynaLoader::dl_find_symbol($handle, "keyway_mediaremote_register_notifications");
 if (!$snapshot_symbol || !$command_symbol) {
     print encode_json({
         type => "fatal",
@@ -36,6 +37,11 @@ if (!$snapshot_symbol || !$command_symbol) {
 
 DynaLoader::dl_install_xsub("Keyway::MediaRemote::snapshot", $snapshot_symbol);
 DynaLoader::dl_install_xsub("Keyway::MediaRemote::send_command", $command_symbol);
+
+if ($register_symbol) {
+    DynaLoader::dl_install_xsub("Keyway::MediaRemote::register_notifications", $register_symbol);
+    Keyway::MediaRemote::register_notifications();
+}
 
 print encode_json({
     type => "ready",

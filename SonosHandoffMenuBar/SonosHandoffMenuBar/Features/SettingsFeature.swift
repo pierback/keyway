@@ -64,30 +64,100 @@ struct SettingsFeature: View {
         _mediaRemoteController = ObservedObject(wrappedValue: mediaRemoteController)
     }
 
+    @State private var selectedSection: String = "General"
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
-                generalSection
-                transportRoutingSection
-                overlaySection
-                audioControlsSection
-                sonosSection
-                spotifySection
-                shortcutsSection
-                permissionsSection
-                helperStatusSection
-                diagnosticsSection
+        HStack(spacing: 0) {
+            sidebarList
+                .frame(width: 180)
+                .background(Color.primary.opacity(0.02))
+
+            Divider()
+
+            ScrollView {
+                sidebarDetailContent
+                    .padding(20)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
             }
-            .padding(18)
-            .frame(width: Self.preferredWindowSize.width, alignment: .topLeading)
         }
-        .frame(width: Self.preferredWindowSize.width, alignment: .topLeading)
-        .frame(minHeight: Self.preferredWindowSize.height, alignment: .topLeading)
+        .frame(width: Self.preferredWindowSize.width)
+        .frame(minHeight: Self.preferredWindowSize.height)
         .task {
             await reloadState()
         }
         .onDisappear {
             _ = NSApp.setActivationPolicy(.accessory)
+        }
+    }
+
+    private var sidebarList: some View {
+        ScrollView {
+            VStack(spacing: 2) {
+                ForEach(sidebarSections, id: \.self) { name in
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            selectedSection = name
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: sidebarIcon(for: name))
+                                .font(.system(size: 12))
+                                .frame(width: 18)
+                            Text(name)
+                                .font(.system(size: 13))
+                            Spacer()
+                        }
+                        .padding(.horizontal, 10)
+                        .frame(height: 30)
+                        .background(
+                            selectedSection == name
+                                ? Color.accentColor.opacity(0.12)
+                                : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        )
+                        .foregroundStyle(selectedSection == name ? .primary : .secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(10)
+        }
+    }
+
+    private var sidebarSections: [String] {
+        ["General", "Transport", "Overlay", "Audio", "Sonos", "Spotify", "Shortcuts", "Permissions", "Helper", "Diagnostics"]
+    }
+
+    private func sidebarIcon(for section: String) -> String {
+        switch section {
+        case "General": return "slider.horizontal.3"
+        case "Transport": return "arrow.triangle.branch"
+        case "Overlay": return "rectangle.center.inset.filled"
+        case "Audio": return "speaker.wave.2"
+        case "Sonos": return "hifispeaker"
+        case "Spotify": return "music.note"
+        case "Shortcuts": return "keyboard"
+        case "Permissions": return "lock.shield"
+        case "Helper": return "terminal"
+        case "Diagnostics": return "stethoscope"
+        default: return "questionmark"
+        }
+    }
+
+    @ViewBuilder
+    private var sidebarDetailContent: some View {
+        switch selectedSection {
+        case "General": generalSection
+        case "Transport": transportRoutingSection
+        case "Overlay": overlaySection
+        case "Audio": audioControlsSection
+        case "Sonos": sonosSection
+        case "Spotify": spotifySection
+        case "Shortcuts": shortcutsSection
+        case "Permissions": permissionsSection
+        case "Helper": helperStatusSection
+        case "Diagnostics": diagnosticsSection
+        default: generalSection
         }
     }
 
@@ -772,8 +842,15 @@ struct SettingsFeature: View {
         NSWorkspace.shared.open(notificationSettingsURL)
     }
 
+    private static let spotifyClientIDPattern = /^[0-9a-f]{32}$/
+
     private func saveSpotifyClientID(showMessage: Bool) {
         let trimmedClientID = spotifyClientID.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if let id = trimmedClientID.nilIfEmpty, id.wholeMatch(of: Self.spotifyClientIDPattern) == nil {
+            authMessage = "Invalid Client ID format. Expected 32 hex characters."
+            return
+        }
 
         do {
             let config = try configStore.load()

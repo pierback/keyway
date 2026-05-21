@@ -41,6 +41,7 @@ public struct KeychainTokenStore: TokenStoring {
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
             kSecAttrAccount: account,
+            kSecAttrAccessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
             kSecValueData: data,
         ]
 

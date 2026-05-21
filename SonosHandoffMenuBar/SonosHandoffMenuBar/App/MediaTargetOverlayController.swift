@@ -6,7 +6,7 @@ final class MediaTargetOverlayModel: ObservableObject {
     @Published var command: MediaRemoteTransportCommand?
     @Published var targets: [MediaRemoteTarget] = []
     @Published var selectedIndex = 0
-    @Published var pinnedIdentity: String?
+    @Published var pinnedTargetID: String?
     @Published var expanded = false
     @Published var audioSnapshot = MediaAudioControlSnapshot(
         sonos: .disabled(title: "Sonos", detail: "Checking output"),
@@ -24,11 +24,11 @@ final class MediaTargetOverlayModel: ObservableObject {
     func update(
         command: MediaRemoteTransportCommand?,
         targets: [MediaRemoteTarget],
-        pinnedIdentity: String?
+        pinnedTargetID: String?
     ) {
         self.command = command
         self.targets = targets
-        self.pinnedIdentity = pinnedIdentity
+        self.pinnedTargetID = pinnedTargetID
         selectedIndex = 0
         expanded = false
     }
@@ -56,6 +56,7 @@ final class MediaTargetOverlayController {
     private var panel: MediaTargetOverlayPanel?
     private var onChoose: ((MediaRemoteTarget, MediaRemoteTransportCommand?) -> Void)?
     private var onPinToggle: ((MediaRemoteTarget) -> Void)?
+    private var audioSnapshotGeneration = 0
 
     init(audioController: MediaAudioControlController) {
         self.audioController = audioController
@@ -68,13 +69,13 @@ final class MediaTargetOverlayController {
     func show(
         command: MediaRemoteTransportCommand?,
         targets: [MediaRemoteTarget],
-        pinnedIdentity: String?,
+        pinnedTargetID: String?,
         onChoose: @escaping (MediaRemoteTarget, MediaRemoteTransportCommand?) -> Void,
         onPinToggle: @escaping (MediaRemoteTarget) -> Void
     ) {
         self.onChoose = onChoose
         self.onPinToggle = onPinToggle
-        model.update(command: command, targets: targets, pinnedIdentity: pinnedIdentity)
+        model.update(command: command, targets: targets, pinnedTargetID: pinnedTargetID)
         refreshAudioSnapshot()
 
         let panel = ensurePanel()
@@ -205,10 +206,10 @@ final class MediaTargetOverlayController {
 
     private func togglePin(_ target: MediaRemoteTarget) {
         onPinToggle?(target)
-        if target.matchesRoutingIdentity(model.pinnedIdentity) {
-            model.pinnedIdentity = nil
+        if target.id == model.pinnedTargetID {
+            model.pinnedTargetID = nil
         } else {
-            model.pinnedIdentity = target.routingIdentity
+            model.pinnedTargetID = target.id
         }
     }
 
@@ -237,12 +238,20 @@ final class MediaTargetOverlayController {
 
     private func refreshAudioSnapshot(delay: TimeInterval = 0) {
         let selectedTarget = model.selectedTarget
+        let selectedTargetID = selectedTarget?.id
+        audioSnapshotGeneration += 1
+        let generation = audioSnapshotGeneration
         Task { [weak self] in
             if delay > 0 {
                 try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             }
             guard let self else { return }
             let snapshot = await audioController.snapshot(for: selectedTarget)
+            guard generation == audioSnapshotGeneration,
+                  model.selectedTarget?.id == selectedTargetID
+            else {
+                return
+            }
             model.audioSnapshot = snapshot
         }
     }
@@ -364,10 +373,14 @@ private struct MediaTargetOverlayView: View {
 
     private func targetRow(index: Int, target: MediaRemoteTarget) -> some View {
         let selected = index == model.selectedIndex
-        let pinned = target.matchesRoutingIdentity(model.pinnedIdentity)
+        let pinned = target.id == model.pinnedTargetID
 
         return Button {
-            onChoose(target)
+            if model.expanded {
+                onSelect(index)
+            } else {
+                onChoose(target)
+            }
         } label: {
             HStack(spacing: 12) {
                 Text("\(index + 1)")
@@ -417,9 +430,6 @@ private struct MediaTargetOverlayView: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("mediaTargetOverlay.target.\(target.id)")
-        .simultaneousGesture(TapGesture().onEnded {
-            onSelect(index)
-        })
     }
 
     private var expandedControls: some View {

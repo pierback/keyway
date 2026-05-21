@@ -37,6 +37,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
 
         volumeHotkeys.start()
+
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: nil,
+            queue: .main
+        ) { notification in
+            let closingWindow = notification.object as? NSWindow
+            DispatchQueue.main.async {
+                let hasVisibleSettings = NSApp.windows.contains { window in
+                    window !== closingWindow && window.isVisible && window.title.contains("Settings")
+                }
+                if !hasVisibleSettings {
+                    _ = NSApp.setActivationPolicy(.accessory)
+                }
+            }
+        }
     }
 
     nonisolated func userNotificationCenter(

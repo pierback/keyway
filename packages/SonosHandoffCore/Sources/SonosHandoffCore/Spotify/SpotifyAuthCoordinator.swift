@@ -69,14 +69,13 @@ public final class SpotifyAuthCoordinator: SpotifyAuthCoordinating, @unchecked S
         }
 
         let authorizationRequest = try SpotifyAuthorizationRequest(clientID: clientID)
-        let redirectURI = authorizationRequest.redirectURI.absoluteString
 
         let browserOpener = browserOpener
-        try await SpotifyAuthCallbackServer.completeAuthorization(expectedState: authorizationRequest.state, completion: { authorizationCode in
+        try await SpotifyAuthCallbackServer.completeAuthorization(expectedState: authorizationRequest.state, completion: { authorizationCode, redirectURI in
             let tokenResponse = try await self.exchangeCode(
                 authorizationCode,
                 clientID: clientID,
-                redirectURI: redirectURI,
+                redirectURI: redirectURI.absoluteString,
                 codeVerifier: authorizationRequest.codeVerifier
             )
 
@@ -89,10 +88,19 @@ public final class SpotifyAuthCoordinator: SpotifyAuthCoordinating, @unchecked S
             do {
                 try self.tokenStore.saveRefreshToken(tokenResponse.refreshToken)
             } catch {
-                self.logger.log(.warning, "Spotify Web API token file saved, but Keychain refresh token save failed.")
+                self.logger.log(.error, "Keychain refresh token save failed. Token stored in file only.")
             }
-        }, openAuthorizationURL: {
-            browserOpener(authorizationRequest.url)
+        }, openAuthorizationURL: { redirectURI in
+            guard let authorizationURL = try? SpotifyAuthorizationRequest.authorizationURL(
+                clientID: clientID,
+                redirectURI: redirectURI.absoluteString,
+                state: authorizationRequest.state,
+                codeVerifier: authorizationRequest.codeVerifier
+            ) else {
+                return false
+            }
+
+            return browserOpener(authorizationURL)
         })
         logger.log(.info, "Spotify authentication completed.")
     }
@@ -120,8 +128,7 @@ public final class SpotifyAuthCoordinator: SpotifyAuthCoordinating, @unchecked S
         }
 
         guard 200 ..< 300 ~= httpResponse.statusCode else {
-            let details = String(data: data, encoding: .utf8) ?? "HTTP \(httpResponse.statusCode)"
-            throw SpotifyAuthError.tokenExchangeFailed(details)
+            throw SpotifyAuthError.tokenExchangeFailed("HTTP \(httpResponse.statusCode)")
         }
 
         let decoder = JSONDecoder()

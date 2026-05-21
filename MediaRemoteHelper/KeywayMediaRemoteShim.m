@@ -1,3 +1,4 @@
+#import <AppKit/AppKit.h>
 #import <Foundation/Foundation.h>
 #import <dispatch/dispatch.h>
 
@@ -7,6 +8,7 @@ typedef void (*MRMediaRemoteGetNowPlayingInfoFn)(dispatch_queue_t queue, void (^
 typedef void (*MRMediaRemoteGetNowPlayingClientFn)(dispatch_queue_t queue, void (^completion)(id client));
 typedef void (*MRMediaRemoteGetNowPlayingInfoForClientFn)(id client, id origin, dispatch_queue_t queue, void (^completion)(NSDictionary *info));
 typedef bool (*MRMediaRemoteSendCommandToClientFn)(unsigned int command, NSDictionary *options, id origin, id client, unsigned int sendOptionsNumber, unsigned int flags, id completion);
+typedef void (*MRMediaRemoteRegisterForNowPlayingNotificationsFn)(dispatch_queue_t queue);
 typedef NSString *(*MRNowPlayingClientGetBundleIdentifierFn)(id client);
 typedef NSString *(*MRNowPlayingClientGetParentAppBundleIdentifierFn)(id client);
 typedef NSString *(*MRNowPlayingClientGetDisplayNameFn)(id client);
@@ -64,9 +66,11 @@ static void KeywayPrintJSON(id object) {
         data = [NSJSONSerialization dataWithJSONObject:fallback options:0 error:nil];
     }
     if (data != nil) {
+        flockfile(stdout);
         fwrite(data.bytes, 1, data.length, stdout);
         fputc('\n', stdout);
         fflush(stdout);
+        funlockfile(stdout);
     }
 }
 
@@ -140,6 +144,10 @@ static NSMutableDictionary *KeywayRowForClient(id client, const KeywayMediaRemot
     row[@"artist"] = @"";
     row[@"album"] = @"";
     row[@"playbackRate"] = @"";
+    row[@"artworkBase64"] = @"";
+    row[@"duration"] = @(0);
+    row[@"elapsedTime"] = @(0);
+    row[@"elapsedTimestamp"] = @(0);
     return row;
 }
 
@@ -149,6 +157,28 @@ static void KeywayApplyNowPlayingInfo(NSMutableDictionary *row, NSDictionary *in
     row[@"album"] = KeywaySafeString(info[@"kMRMediaRemoteNowPlayingInfoAlbum"]);
     row[@"playbackRate"] = KeywaySafeString(info[@"kMRMediaRemoteNowPlayingInfoPlaybackRate"]);
     row[@"mediaType"] = KeywaySafeString(info[@"kMRMediaRemoteNowPlayingInfoMediaType"]);
+
+    id artworkData = info[@"kMRMediaRemoteNowPlayingInfoArtworkData"];
+    if ([artworkData isKindOfClass:[NSData class]] && [(NSData *)artworkData length] > 0) {
+        row[@"artworkBase64"] = [(NSData *)artworkData base64EncodedStringWithOptions:0];
+    }
+
+    id duration = info[@"kMRMediaRemoteNowPlayingInfoDuration"];
+    if ([duration isKindOfClass:[NSNumber class]]) {
+        row[@"duration"] = duration;
+    }
+
+    id elapsed = info[@"kMRMediaRemoteNowPlayingInfoElapsedTime"];
+    if ([elapsed isKindOfClass:[NSNumber class]]) {
+        row[@"elapsedTime"] = elapsed;
+    }
+
+    id timestamp = info[@"kMRMediaRemoteNowPlayingInfoTimestamp"];
+    if ([timestamp isKindOfClass:[NSNumber class]]) {
+        row[@"elapsedTimestamp"] = timestamp;
+    } else if ([timestamp isKindOfClass:[NSDate class]]) {
+        row[@"elapsedTimestamp"] = @([(NSDate *)timestamp timeIntervalSince1970]);
+    }
 }
 
 static BOOL KeywayRowHasMediaState(NSDictionary *row) {
@@ -160,15 +190,13 @@ static BOOL KeywayRowHasMediaState(NSDictionary *row) {
 }
 
 static BOOL KeywayClientMatchesTarget(id client, NSString *targetID, const KeywayMediaRemoteSymbols *symbols) {
+    pid_t pid = symbols->getPID(client);
     NSString *bundleID = KeywaySafeString(symbols->getBundleID(client));
     NSString *parentBundleID = KeywaySafeString(symbols->getParentBundleID(client));
-    pid_t pid = symbols->getPID(client);
     NSString *identityBundleID = bundleID.length > 0 ? bundleID : parentBundleID;
     NSString *clientID = KeywayTargetIdentifier(identityBundleID, pid);
 
-    return [clientID isEqualToString:targetID]
-        || (bundleID.length > 0 && [bundleID isEqualToString:targetID])
-        || (parentBundleID.length > 0 && [parentBundleID isEqualToString:targetID]);
+    return [clientID isEqualToString:targetID];
 }
 
 static NSNumber *KeywayCommandNumber(NSString *commandName) {
@@ -188,6 +216,18 @@ static NSNumber *KeywayCommandNumber(NSString *commandName) {
         return @(5);
     }
     return nil;
+}
+
+static NSString *KeywayBundleIdentifierFromTargetID(NSString *targetID) {
+    NSRange separator = [targetID rangeOfString:@":" options:NSBackwardsSearch];
+    if (separator.location == NSNotFound) {
+        return targetID;
+    }
+    return [targetID substringToIndex:separator.location];
+}
+
+static NSString *KeywayFrontmostBundleIdentifier(void) {
+    return KeywaySafeString([NSWorkspace sharedWorkspace].frontmostApplication.bundleIdentifier);
 }
 
 void keyway_mediaremote_snapshot(void) {
@@ -331,4 +371,53 @@ void keyway_mediaremote_send_command(void) {
         });
         KeywayReleaseSymbols(&symbols);
     }
+}
+
+static void KeywayNotificationThreadMain(void) {
+    @autoreleasepool {
+        CFURLRef url = (__bridge CFURLRef)[NSURL fileURLWithPath:@"/System/Library/PrivateFrameworks/MediaRemote.framework"];
+        CFBundleRef bundle = CFBundleCreate(kCFAllocatorDefault, url);
+        if (bundle == NULL) {
+            return;
+        }
+
+        dispatch_queue_t notifQueue = dispatch_queue_create("keyway.mediaremote.notifications", DISPATCH_QUEUE_SERIAL);
+
+        MRMediaRemoteRegisterForNowPlayingNotificationsFn registerFn =
+            (MRMediaRemoteRegisterForNowPlayingNotificationsFn)CFBundleGetFunctionPointerForName(bundle, CFSTR("MRMediaRemoteRegisterForNowPlayingNotifications"));
+        if (!registerFn) {
+            CFRelease(bundle);
+
+            return;
+        }
+
+        registerFn(notifQueue);
+
+        NSArray *notificationNames = @[
+            @"kMRMediaRemoteNowPlayingInfoDidChangeNotification",
+            @"kMRMediaRemoteNowPlayingApplicationDidChangeNotification",
+            @"kMRMediaRemoteNowPlayingApplicationIsPlayingDidChangeNotification"
+        ];
+
+        NSOperationQueue *opQueue = [[NSOperationQueue alloc] init];
+        opQueue.maxConcurrentOperationCount = 1;
+
+        for (NSString *name in notificationNames) {
+            [[NSNotificationCenter defaultCenter] addObserverForName:name object:nil queue:opQueue usingBlock:^(NSNotification *note) {
+                KeywayPrintJSON(@{
+                    @"type": @"now_playing_changed",
+                    @"reason": note.name ?: @"unknown"
+                });
+            }];
+        }
+
+        [[NSRunLoop currentRunLoop] addPort:[NSMachPort port] forMode:NSDefaultRunLoopMode];
+        [[NSRunLoop currentRunLoop] run];
+    }
+}
+
+void keyway_mediaremote_register_notifications(void) {
+    [NSThread detachNewThreadWithBlock:^{
+        KeywayNotificationThreadMain();
+    }];
 }

@@ -36,6 +36,8 @@
 		A2486645305D58CC2C660370 /* VolumeHotkeyController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 786281017B20B65308E81320 /* VolumeHotkeyController.swift */; };
 		B02FC7DA85BFBD2179172924 /* ShortcutRuntimeReporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44E79D2F88F164AB8AB58D9C /* ShortcutRuntimeReporter.swift */; };
 		B71206973FEA484D8D730693 /* PlaybackSyncController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B11F0893BD39DBA4E390CE8 /* PlaybackSyncController.swift */; };
+		A1B2C3D4E5F60001AABBCC01 /* PlaybackMemberVolumeController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60002AABBCC01 /* PlaybackMemberVolumeController.swift */; };
+		A1B2C3D4E5F60003AABBCC01 /* PlaybackGroupEditController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60004AABBCC01 /* PlaybackGroupEditController.swift */; };
 		BC80DFE63BD91E0C84466D54 /* ShortcutEventTap.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48AB35FD11C0BEE518C0033A /* ShortcutEventTap.swift */; };
 		C4E6672A069F1D9C1833A7FD /* MediaTargetOverlayController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 026F4D7324DA90383801C2E9 /* MediaTargetOverlayController.swift */; };
 		D1A44DD9D35F5D3E9E2F9BD6 /* MediaRemoteModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CA95898D96465B1BB167371 /* MediaRemoteModels.swift */; };
@@ -61,6 +63,8 @@
 		44E79D2F88F164AB8AB58D9C /* ShortcutRuntimeReporter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ShortcutRuntimeReporter.swift; sourceTree = "<group>"; };
 		48AB35FD11C0BEE518C0033A /* ShortcutEventTap.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ShortcutEventTap.swift; sourceTree = "<group>"; };
 		4B11F0893BD39DBA4E390CE8 /* PlaybackSyncController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlaybackSyncController.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60002AABBCC01 /* PlaybackMemberVolumeController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlaybackMemberVolumeController.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60004AABBCC01 /* PlaybackGroupEditController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlaybackGroupEditController.swift; sourceTree = "<group>"; };
 		4CA95898D96465B1BB167371 /* MediaRemoteModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaRemoteModels.swift; sourceTree = "<group>"; };
 		5055E2D82D01B8518A623421 /* PlaybackVolumeTypes.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlaybackVolumeTypes.swift; sourceTree = "<group>"; };
 		53E8361763EDFEFFF6120B52 /* PlaybackSliderCommitter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlaybackSliderCommitter.swift; sourceTree = "<group>"; };
@@ -162,6 +166,8 @@
 				6793D5F6EBA16ED67D0E6AA8 /* PlaybackOutputDirectory.swift */,
 				21493B91873FC332D61E70C9 /* PlaybackOutputSelection.swift */,
 				53E8361763EDFEFFF6120B52 /* PlaybackSliderCommitter.swift */,
+				A1B2C3D4E5F60002AABBCC01 /* PlaybackMemberVolumeController.swift */,
+				A1B2C3D4E5F60004AABBCC01 /* PlaybackGroupEditController.swift */,
 				4B11F0893BD39DBA4E390CE8 /* PlaybackSyncController.swift */,
 				0D0567199021AE6B2176CD54 /* PlaybackTransferActionController.swift */,
 				D59B0F1BF9280780C03B7619 /* PlaybackVolumeActionController.swift */,
@@ -298,7 +304,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -euo pipefail\n\nHELPER_SRC=\"$SRCROOT/../MediaRemoteHelper\"\nHELPER_DEST=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/MediaRemoteHelper\"\n\nmkdir -p \"$HELPER_DEST\"\n/usr/bin/clang \\\n  -dynamiclib \\\n  -fobjc-arc \\\n  -fblocks \\\n  \"$HELPER_SRC/KeywayMediaRemoteShim.m\" \\\n  -framework Foundation \\\n  -o \"$HELPER_DEST/libkeyway_mediaremote.dylib\"\n\ncp \"$HELPER_SRC/keyway-mediaremote-helper.pl\" \"$HELPER_DEST/keyway-mediaremote-helper.pl\"\nchmod +x \"$HELPER_DEST/keyway-mediaremote-helper.pl\"\n";
+			shellScript = "set -euo pipefail\n\nHELPER_SRC=\"$SRCROOT/../MediaRemoteHelper\"\nHELPER_DEST=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/MediaRemoteHelper\"\n\nmkdir -p \"$HELPER_DEST\"\n/usr/bin/clang \\\n  -dynamiclib \\\n  -fobjc-arc \\\n  -fblocks \\\n  \"$HELPER_SRC/KeywayMediaRemoteShim.m\" \\\n  -framework Foundation \\\n  -framework AppKit \\\n  -o \"$HELPER_DEST/libkeyway_mediaremote.dylib\"\n\ncp \"$HELPER_SRC/keyway-mediaremote-helper.pl\" \"$HELPER_DEST/keyway-mediaremote-helper.pl\"\nchmod +x \"$HELPER_DEST/keyway-mediaremote-helper.pl\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -324,6 +330,8 @@
 				5D146831E0856B507BE6A62A /* PlaybackOutputDirectory.swift in Sources */,
 				8C648701008F515320DDBDB4 /* PlaybackOutputSelection.swift in Sources */,
 				12E330417B54146E85D44B0E /* PlaybackSliderCommitter.swift in Sources */,
+				A1B2C3D4E5F60001AABBCC01 /* PlaybackMemberVolumeController.swift in Sources */,
+				A1B2C3D4E5F60003AABBCC01 /* PlaybackGroupEditController.swift in Sources */,
 				B71206973FEA484D8D730693 /* PlaybackSyncController.swift in Sources */,
 				87305D295343BCC09FCED887 /* PlaybackTransferActionController.swift in Sources */,
 				19F708FF01E5F923D60F065A /* PlaybackVolumeActionController.swift in Sources */,

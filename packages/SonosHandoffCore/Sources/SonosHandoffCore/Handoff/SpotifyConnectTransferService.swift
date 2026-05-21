@@ -47,7 +47,8 @@ final class SpotifyConnectTransferService: @unchecked Sendable {
         ])
 
         guard (response["status"] as? Int) == 101 else {
-            throw ConnectHandoffError(.transferVerificationFailed, "Sonos Spotify Connect activation failed: \(response)")
+            let status = response["status"] as? Int
+            throw ConnectHandoffError(.transferVerificationFailed, "Sonos Spotify Connect activation failed (status \(status.map(String.init) ?? "unknown")).")
         }
 
         try await verifyTransfer(to: target, roomName: roomName, verification: verification)

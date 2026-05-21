@@ -27,11 +27,15 @@ struct SonosRenderingControl {
         )
     }
 
+    /// Callers must serialize through SpeakerVolumeCommandQueue to prevent
+    /// concurrent read-then-write races on the same target.
     func volumeDown(on target: ConnectSonosTarget, step: Int) async throws -> Int {
         let current = try await volume(on: target)
         return try await setVolume(on: target, to: current - clampedStep(step))
     }
 
+    /// Callers must serialize through SpeakerVolumeCommandQueue to prevent
+    /// concurrent read-then-write races on the same target.
     func volumeUp(on target: ConnectSonosTarget, step: Int) async throws -> Int {
         let current = try await volume(on: target)
         return try await setVolume(on: target, to: current + clampedStep(step))
@@ -47,21 +51,25 @@ struct SonosRenderingControl {
         return try await setGroupVolume(on: target, to: current + clampedStep(step))
     }
 
-    func setVolume(on target: ConnectSonosTarget, to requestedVolume: Int) async throws -> Int {
+    func setVolume(on target: ConnectSonosTarget, to requestedVolume: Int, unmute: Bool = true) async throws -> Int {
         let volume = Self.clampVolume(requestedVolume)
         _ = try await call(action: "SetVolume", host: target.host, body: """
         <u:SetVolume xmlns:u="urn:schemas-upnp-org:service:RenderingControl:1"><InstanceID>0</InstanceID><Channel>Master</Channel><DesiredVolume>\(volume)</DesiredVolume></u:SetVolume>
         """)
-        _ = try await setMute(on: target, to: false)
+        if unmute {
+            _ = try await setMute(on: target, to: false)
+        }
         return try await self.volume(on: target)
     }
 
-    func setGroupVolume(on target: ConnectSonosTarget, to requestedVolume: Int) async throws -> Int {
+    func setGroupVolume(on target: ConnectSonosTarget, to requestedVolume: Int, unmute: Bool = true) async throws -> Int {
         let volume = Self.clampVolume(requestedVolume)
         _ = try await groupCall(action: "SetGroupVolume", host: target.host, body: """
         <u:SetGroupVolume xmlns:u="urn:schemas-upnp-org:service:GroupRenderingControl:1"><InstanceID>0</InstanceID><DesiredVolume>\(volume)</DesiredVolume></u:SetGroupVolume>
         """)
-        _ = try await setGroupMute(on: target, to: false)
+        if unmute {
+            _ = try await setGroupMute(on: target, to: false)
+        }
         return try await groupVolume(on: target)
     }
 

@@ -11,12 +11,15 @@ struct MenuBarOutputSection: View {
 
     @ObservedObject var playback: PlaybackSyncController
     let groupEditing: Bool
-    let openSpotifySettings: @MainActor () -> Void
 
     @State private var forceGroupEditing = false
 
+    private var canToggleGroupEditing: Bool {
+        !playback.outputRows.isEmpty || !playback.groupEditRows.isEmpty
+    }
+
     private var groupEditingActive: Bool {
-        groupEditing || forceGroupEditing
+        canToggleGroupEditing && (groupEditing || forceGroupEditing)
     }
 
     var body: some View {
@@ -28,21 +31,23 @@ struct MenuBarOutputSection: View {
 
                 Spacer()
 
-                Button {
-                    withAnimation(MenuBarMotion.modeSwitch) {
-                        forceGroupEditing.toggle()
+                if canToggleGroupEditing {
+                    Button {
+                        withAnimation(MenuBarMotion.modeSwitch) {
+                            forceGroupEditing.toggle()
+                        }
+                    } label: {
+                        Image(systemName: groupEditingActive ? "checklist.checked" : "checklist")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(groupEditingActive ? Self.accentColor : .secondary.opacity(0.85))
+                            .frame(width: 22, height: 22)
+                            .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 4))
                     }
-                } label: {
-                    Image(systemName: groupEditingActive ? "checklist.checked" : "checklist")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(groupEditingActive ? Self.accentColor : .secondary.opacity(0.85))
-                        .frame(width: 22, height: 22)
-                        .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 4))
+                    .buttonStyle(.plain)
+                    .help(groupEditingActive ? "Exit Grouping Mode" : "Enter Grouping Mode")
+                    .accessibilityIdentifier("toggle-group-editing")
+                    .accessibilityLabel(groupEditingActive ? "Hide Grouping" : "Show Grouping")
                 }
-                .buttonStyle(.plain)
-                .help(groupEditingActive ? "Exit Grouping Mode" : "Enter Grouping Mode")
-                .accessibilityIdentifier("toggle-group-editing")
-                .accessibilityLabel(groupEditingActive ? "Hide Grouping" : "Show Grouping")
             }
             .padding(.horizontal, 8)
             .padding(.top, 6)
@@ -65,34 +70,9 @@ struct MenuBarOutputSection: View {
                     .padding(.top, 5)
                     .transition(MenuBarMotion.statusTransition)
             }
-
-            if playback.spotifyAuthRequired {
-                Button(action: openSpotifySettings) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "person.crop.circle.badge.exclamationmark")
-                            .font(.system(size: 12, weight: .regular))
-                            .foregroundStyle(Color.primary.opacity(0.78))
-                            .frame(width: 16, height: 16)
-
-                        Text("Sign In to Spotify...")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(Color.primary.opacity(0.9))
-
-                        Spacer(minLength: 0)
-                    }
-                    .frame(height: 29)
-                    .padding(.horizontal, 12)
-                    .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .background {
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(Color.white.opacity(0.045))
-                    }
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 8)
-                .padding(.top, 6)
-                .transition(MenuBarMotion.statusTransition)
-            }
+        }
+        .onDisappear {
+            forceGroupEditing = false
         }
         .animation(MenuBarMotion.rowUpdate, value: playback.menuMessage)
         .animation(MenuBarMotion.rowUpdate, value: playback.spotifyAuthRequired)
@@ -241,25 +221,32 @@ struct MenuBarOutputSection: View {
             .accessibilityValue(selected ? "Selected" : "")
             .accessibilityHint("Hands off Spotify playback to \(row.displayName)")
 
-            if let groupJoinRow {
-                groupJoinButton(for: groupJoinRow, loading: grouping)
-            }
-
-            if selected && row.isGroup {
-                Button {
-                    playback.toggleMixer(for: row)
-                } label: {
-                    Image(systemName: mixerExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(Color.secondary.opacity(0.85))
-                        .frame(width: Self.trailingControlSize, height: Self.rowHeight)
-                        .contentShape(Rectangle())
+            HStack(spacing: 0) {
+                if let groupJoinRow {
+                    groupJoinButton(for: groupJoinRow, loading: grouping)
+                } else {
+                    trailingControlPlaceholder()
                 }
-                .buttonStyle(.plain)
-                .disabled(playback.loadingRoomName != nil || playback.groupLoadingRoomName != nil)
-                .accessibilityIdentifier("mixer-toggle-\(row.coordinator.roomName)")
-                .accessibilityLabel(mixerExpanded ? "Collapse \(row.displayName) mixer" : "Expand \(row.displayName) mixer")
+
+                if selected && row.isGroup {
+                    Button {
+                        playback.toggleMixer(for: row)
+                    } label: {
+                        Image(systemName: mixerExpanded ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Color.secondary.opacity(0.85))
+                            .frame(width: Self.trailingControlSize, height: Self.rowHeight)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(playback.loadingRoomName != nil || playback.groupLoadingRoomName != nil)
+                    .accessibilityIdentifier("mixer-toggle-\(row.coordinator.roomName)")
+                    .accessibilityLabel(mixerExpanded ? "Collapse \(row.displayName) mixer" : "Expand \(row.displayName) mixer")
+                } else {
+                    trailingControlPlaceholder()
+                }
             }
+            .frame(width: Self.trailingControlSize * 2, height: Self.rowHeight)
         }
         .padding(.trailing, 4)
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -271,6 +258,11 @@ struct MenuBarOutputSection: View {
         .animation(MenuBarMotion.selection, value: loading)
         .animation(MenuBarMotion.selection, value: grouping)
         .padding(.horizontal, 8)
+    }
+
+    private func trailingControlPlaceholder() -> some View {
+        Color.clear
+            .frame(width: Self.trailingControlSize, height: Self.rowHeight)
     }
 
     private func groupJoinButton(for row: PlaybackGroupEditRow, loading: Bool) -> some View {

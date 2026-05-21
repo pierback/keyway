@@ -127,6 +127,7 @@ enum CLIError: Error, CustomStringConvertible {
     case sonosResponse(String)
     case spotifyResponse(String)
     case verificationFailed(String)
+    case invalidHost(String)
 
     var description: String {
         switch self {
@@ -138,6 +139,8 @@ enum CLIError: Error, CustomStringConvertible {
             return message
         case .sonosTargetNotFound(let room):
             return "Sonos target not found: \(room)"
+        case .invalidHost(let host):
+            return "Invalid host format: \(host)"
         }
     }
 }
@@ -305,7 +308,15 @@ func resolveTarget(
 ) async throws -> SonosTarget {
     let host: String
     if let explicitHost {
-        host = explicitHost
+        let trimmed = explicitHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              !trimmed.contains("/"),
+              !trimmed.contains(" "),
+              URLComponents(string: "http://\(trimmed):1400")?.host == trimmed
+        else {
+            throw CLIError.invalidHost(trimmed)
+        }
+        host = trimmed
     } else {
         let roomName = roomName.trimmingCharacters(in: .whitespacesAndNewlines)
         let browse = try runCommand(

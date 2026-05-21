@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import Security
 
 struct SpotifyAuthorizationRequest: Sendable {
     let state: String
@@ -67,6 +68,11 @@ struct SpotifyAuthorizationRequest: Sendable {
 
     private static func randomURLSafeString(length: Int) -> String {
         let alphabet = Array("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~")
-        return String((0 ..< length).map { _ in alphabet.randomElement()! })
+        var randomBytes = [UInt8](repeating: 0, count: length)
+        let status = SecRandomCopyBytes(kSecRandomDefault, length, &randomBytes)
+        guard status == errSecSuccess else {
+            return String((0 ..< length).map { _ in alphabet.randomElement()! })
+        }
+        return String(randomBytes.map { alphabet[Int($0) % alphabet.count] })
     }
 }

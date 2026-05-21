@@ -14,6 +14,10 @@ enum SpotifyAuthCallbackRequest {
             throw SpotifyAuthError.missingAuthorizationCode
         }
 
+        guard parts[0] == "GET" else {
+            throw SpotifyAuthError.missingAuthorizationCode
+        }
+
         let requestPath = String(parts[1])
         guard let components = URLComponents(
             string: "http://\(SpotifyAuthCallbackServer.host):\(SpotifyAuthCallbackServer.port)\(requestPath)"

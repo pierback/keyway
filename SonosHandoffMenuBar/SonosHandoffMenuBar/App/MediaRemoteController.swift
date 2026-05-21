@@ -4,9 +4,17 @@ import os
 
 @MainActor
 final class MediaRemoteController: ObservableObject {
+    private static let maxImmediateRestartAttempts = 2
+    private static let immediateRestartDelayNanoseconds: UInt64 = 1_000_000_000
+    private static let periodicRecoveryInterval: TimeInterval = 60
+    private static let maxOutputBufferBytes = 1_048_576
+    private static let snapshotWaitTimeoutNanoseconds: UInt64 = 1_500_000_000
+    private static let commandWaitTimeoutNanoseconds: UInt64 = 5_500_000_000
+
     @Published private(set) var health: MediaRemoteHelperHealth = .stopped
     @Published private(set) var targets: [MediaRemoteTarget] = []
     @Published private(set) var activeTargetID: String?
+    @Published private(set) var isRefreshingSnapshot = false
 
     private let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "MediaRemote")
     private let decoder = JSONDecoder()
@@ -14,6 +22,10 @@ final class MediaRemoteController: ObservableObject {
     private var inputPipe: Pipe?
     private var outputBuffer = Data()
     private var refreshTimer: Timer?
+    private var recoveryTimer: Timer?
+    private var notificationDebounce: Task<Void, Never>?
+    private var snapshotWaiters: [String: CheckedContinuation<Bool, Never>] = [:]
+    private var commandWaiters: [String: CheckedContinuation<Bool, Never>] = [:]
     private var restartAttempts = 0
     private var expectedTermination = false
 
@@ -22,6 +34,17 @@ final class MediaRemoteController: ObservableObject {
             return nil
         }
         return targets.first { $0.id == activeTargetID }
+    }
+
+    var canRouteCommands: Bool {
+        health.state == .running && inputPipe != nil && process != nil
+    }
+
+    func hasFreshSnapshot(maxAge: TimeInterval) -> Bool {
+        guard let lastSnapshotAt = health.lastSnapshotAt else {
+            return false
+        }
+        return Date().timeIntervalSince(lastSnapshotAt) <= maxAge
     }
 
     func start() {
@@ -75,22 +98,29 @@ final class MediaRemoteController: ObservableObject {
             }
 
             expectedTermination = false
+            cancelRecoveryTimer()
             try process.run()
             self.process = process
             self.inputPipe = inputPipe
             startRefreshTimer()
         } catch {
             markFailed("Could not start MediaRemote helper: \(error.localizedDescription)")
+            schedulePeriodicRecovery()
         }
     }
 
     func stop() {
         expectedTermination = true
+        cancelRecoveryTimer()
         refreshTimer?.invalidate()
         refreshTimer = nil
         inputPipe = nil
         process?.terminate()
         process = nil
+        clearTargets()
+        completeSnapshotWaiters(result: false)
+        completeCommandWaiters(result: false)
+        outputBuffer.removeAll()
         health = .stopped
     }
 
@@ -100,20 +130,86 @@ final class MediaRemoteController: ObservableObject {
         start()
     }
 
-    func refreshSnapshot() {
-        sendRequest([
+    @discardableResult
+    func refreshSnapshot() -> Bool {
+        isRefreshingSnapshot = true
+        let sent = sendRequest([
             "type": "refresh",
             "requestID": UUID().uuidString,
         ])
+        if !sent {
+            isRefreshingSnapshot = false
+        }
+        return sent
     }
 
-    func send(command: MediaRemoteTransportCommand, targetID: String) {
-        sendRequest([
+    func refreshSnapshotAndWait(
+        timeoutNanoseconds: UInt64 = MediaRemoteController.snapshotWaitTimeoutNanoseconds
+    ) async -> Bool {
+        let requestID = UUID().uuidString
+        isRefreshingSnapshot = true
+        let sent = sendRequest([
+            "type": "refresh",
+            "requestID": requestID,
+        ])
+        guard sent else {
+            isRefreshingSnapshot = false
+            return false
+        }
+
+        return await withCheckedContinuation { continuation in
+            snapshotWaiters[requestID] = continuation
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
+                guard let self,
+                      let waiter = self.snapshotWaiters.removeValue(forKey: requestID)
+                else {
+                    return
+                }
+                self.isRefreshingSnapshot = false
+                waiter.resume(returning: false)
+            }
+        }
+    }
+
+    private func debouncedRefresh() {
+        notificationDebounce?.cancel()
+        notificationDebounce = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            guard !Task.isCancelled else { return }
+            refreshSnapshot()
+        }
+    }
+
+    func send(command: MediaRemoteTransportCommand, targetID: String) async -> Bool {
+        guard canRouteCommands else {
+            markFailed("MediaRemote helper is not ready.")
+            return false
+        }
+
+        let requestID = UUID().uuidString
+        let sent = sendRequest([
             "type": "sendCommand",
-            "requestID": UUID().uuidString,
+            "requestID": requestID,
             "targetID": targetID,
             "command": command.rawValue,
         ])
+        guard sent else {
+            return false
+        }
+
+        return await withCheckedContinuation { continuation in
+            commandWaiters[requestID] = continuation
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: Self.commandWaitTimeoutNanoseconds)
+                guard let self,
+                      let waiter = self.commandWaiters.removeValue(forKey: requestID)
+                else {
+                    return
+                }
+                waiter.resume(returning: false)
+            }
+        }
     }
 
     private func helperResources() throws -> (script: URL, dylib: URL) {
@@ -142,28 +238,43 @@ final class MediaRemoteController: ObservableObject {
         }
     }
 
-    private func sendRequest(_ request: [String: String]) {
+    @discardableResult
+    private func sendRequest(_ request: [String: String]) -> Bool {
         guard let inputPipe else {
             markFailed("MediaRemote helper is not connected.")
-            return
+            return false
         }
 
         do {
             let data = try JSONSerialization.data(withJSONObject: request, options: [])
             inputPipe.fileHandleForWriting.write(data + Data([0x0A]))
+            return true
         } catch {
             markFailed("Could not write to MediaRemote helper: \(error.localizedDescription)")
+            return false
         }
     }
 
     private func handleOutput(_ data: Data) {
         outputBuffer.append(data)
+        guard outputBuffer.count <= Self.maxOutputBufferBytes else {
+            outputBuffer.removeAll()
+            markFailed("MediaRemote helper produced an oversized response.")
+            process?.terminate()
+            return
+        }
+
         let newline = Data([0x0A])
         while let range = outputBuffer.range(of: newline) {
             let line = outputBuffer.subdata(in: outputBuffer.startIndex ..< range.lowerBound)
             outputBuffer.removeSubrange(outputBuffer.startIndex ..< range.upperBound)
             guard !line.isEmpty else {
                 continue
+            }
+            guard line.count <= Self.maxOutputBufferBytes else {
+                markFailed("MediaRemote helper produced an oversized response.")
+                process?.terminate()
+                return
             }
             handleLine(line)
         }
@@ -176,6 +287,7 @@ final class MediaRemoteController: ObservableObject {
             case "ready":
                 let ready = try decoder.decode(MediaRemoteReadyEvent.self, from: line)
                 restartAttempts = 0
+                cancelRecoveryTimer()
                 health = MediaRemoteHelperHealth(
                     state: .running,
                     message: "Connected through \(ready.host ?? "/usr/bin/perl")",
@@ -190,6 +302,7 @@ final class MediaRemoteController: ObservableObject {
                 let snapshot = try decoder.decode(MediaRemoteSnapshotEvent.self, from: line)
                 targets = snapshot.targets
                 activeTargetID = snapshot.activeTargetID?.nilIfEmpty
+                isRefreshingSnapshot = false
                 health = MediaRemoteHelperHealth(
                     state: .running,
                     message: "MediaRemote snapshot loaded",
@@ -197,16 +310,24 @@ final class MediaRemoteController: ObservableObject {
                     lastSnapshotAt: Date(),
                     targetCount: snapshot.targets.count
                 )
+                completeSnapshotWaiter(requestID: snapshot.requestID, result: true)
             case "commandResult":
                 let result = try decoder.decode(MediaRemoteCommandResultEvent.self, from: line)
                 if result.ok {
                     logger.info("MediaRemoteHelper command=\(result.command, privacy: .public) target=\(result.targetID, privacy: .public) ok=true")
                     refreshSnapshot()
                 } else {
-                    markFailed(result.message.nilIfEmpty ?? "MediaRemote command failed.")
+                    logger.error("MediaRemoteHelper command=\(result.command, privacy: .public) target=\(result.targetID, privacy: .public) ok=false message=\(result.message, privacy: .public)")
+                    refreshSnapshot()
                 }
+                completeCommandWaiter(requestID: result.requestID, result: result.ok)
+            case "now_playing_changed":
+                debouncedRefresh()
             case "fatal", "error":
                 let error = try decoder.decode(MediaRemoteErrorEvent.self, from: line)
+                isRefreshingSnapshot = false
+                completeSnapshotWaiter(requestID: error.requestID, result: false)
+                completeCommandWaiter(requestID: error.requestID, result: false)
                 markFailed(error.message)
             default:
                 logger.info("MediaRemoteHelper ignored event=\(envelope.type, privacy: .public)")
@@ -231,6 +352,10 @@ final class MediaRemoteController: ObservableObject {
         inputPipe = nil
         refreshTimer?.invalidate()
         refreshTimer = nil
+        outputBuffer.removeAll()
+        clearTargets()
+        completeSnapshotWaiters(result: false)
+        completeCommandWaiters(result: false)
 
         guard !expectedTermination else {
             expectedTermination = false
@@ -238,26 +363,103 @@ final class MediaRemoteController: ObservableObject {
         }
 
         markFailed("MediaRemote helper exited with status \(status).")
-        guard restartAttempts < 2 else {
+        guard restartAttempts < Self.maxImmediateRestartAttempts else {
+            schedulePeriodicRecovery()
             return
         }
 
         restartAttempts += 1
         Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            try? await Task.sleep(nanoseconds: Self.immediateRestartDelayNanoseconds)
             self?.start()
         }
     }
 
     private func markFailed(_ message: String) {
         logger.error("MediaRemoteHelper failed=\(message, privacy: .public)")
+        clearTargets()
+        isRefreshingSnapshot = false
+        completeSnapshotWaiters(result: false)
+        completeCommandWaiters(result: false)
         health = MediaRemoteHelperHealth(
             state: .failed,
             message: message,
             pid: health.pid,
             lastSnapshotAt: health.lastSnapshotAt,
+            targetCount: 0
+        )
+    }
+
+    private func schedulePeriodicRecovery() {
+        guard recoveryTimer == nil else {
+            return
+        }
+
+        health = MediaRemoteHelperHealth(
+            state: .failed,
+            message: "\(health.message) Keyway will retry the helper every \(Int(Self.periodicRecoveryInterval)) seconds.",
+            pid: health.pid,
+            lastSnapshotAt: health.lastSnapshotAt,
             targetCount: targets.count
         )
+        recoveryTimer = Timer.scheduledTimer(withTimeInterval: Self.periodicRecoveryInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.process == nil else {
+                    return
+                }
+                self.restartAttempts = 0
+                self.start()
+            }
+        }
+    }
+
+    private func cancelRecoveryTimer() {
+        recoveryTimer?.invalidate()
+        recoveryTimer = nil
+    }
+
+    private func clearTargets() {
+        targets = []
+        activeTargetID = nil
+    }
+
+    private func completeSnapshotWaiter(requestID: String?, result: Bool) {
+        guard let requestID, !requestID.isEmpty else {
+            completeSnapshotWaiters(result: result)
+            return
+        }
+        guard let waiter = snapshotWaiters.removeValue(forKey: requestID) else {
+            return
+        }
+        waiter.resume(returning: result)
+    }
+
+    private func completeCommandWaiter(requestID: String?, result: Bool) {
+        guard let requestID, !requestID.isEmpty else {
+            completeCommandWaiters(result: result)
+            return
+        }
+        guard let waiter = commandWaiters.removeValue(forKey: requestID) else {
+            return
+        }
+        waiter.resume(returning: result)
+    }
+
+    private func completeSnapshotWaiters(result: Bool) {
+        let waiters = Array(snapshotWaiters.values)
+        snapshotWaiters.removeAll()
+        isRefreshingSnapshot = false
+        for waiter in waiters {
+            waiter.resume(returning: result)
+        }
+    }
+
+    private func completeCommandWaiters(result: Bool) {
+        let waiters = Array(commandWaiters.values)
+        commandWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume(returning: result)
+        }
     }
 }
 
@@ -290,12 +492,14 @@ private struct MediaRemoteReadyEvent: Decodable {
 
 private struct MediaRemoteSnapshotEvent: Decodable {
     let type: String
+    let requestID: String?
     let activeTargetID: String?
     let targets: [MediaRemoteTarget]
 }
 
 private struct MediaRemoteCommandResultEvent: Decodable {
     let type: String
+    let requestID: String?
     let targetID: String
     let command: String
     let ok: Bool
@@ -304,6 +508,7 @@ private struct MediaRemoteCommandResultEvent: Decodable {
 
 private struct MediaRemoteErrorEvent: Decodable {
     let type: String
+    let requestID: String?
     let message: String
 }
 

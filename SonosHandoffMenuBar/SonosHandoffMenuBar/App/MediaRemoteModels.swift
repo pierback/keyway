@@ -51,6 +51,10 @@ struct MediaRemoteTarget: Codable, Equatable, Identifiable, Sendable {
     let album: String
     let playbackRate: String
     let mediaType: String?
+    let artworkBase64: String?
+    let duration: Double?
+    let elapsedTime: Double?
+    let elapsedTimestamp: Double?
 
     var appName: String {
         if !displayName.isEmpty {
@@ -76,6 +80,84 @@ struct MediaRemoteTarget: Codable, Equatable, Identifiable, Sendable {
             return artist
         }
         return bundleIdentifier
+    }
+
+    @MainActor
+    var artworkImage: NSImage? {
+        guard let artworkBase64, !artworkBase64.isEmpty,
+              let data = Data(base64Encoded: artworkBase64),
+              let image = NSImage(data: data) else {
+            return nil
+        }
+        image.size = NSSize(width: 96, height: 96)
+
+        return image
+    }
+
+    var playbackFraction: CGFloat {
+        guard let duration, duration > 0, let elapsedTime else {
+            return 0
+        }
+        var elapsed = elapsedTime
+        if let elapsedTimestamp, elapsedTimestamp > 0 {
+            let now = Date().timeIntervalSince1970
+            let delta = now - elapsedTimestamp
+            if delta > 0, delta < 600, playbackRate == "1" {
+                elapsed += delta
+            }
+        }
+
+        return min(1, max(0, CGFloat(elapsed / duration)))
+    }
+
+    var isCurrentlyPlaying: Bool {
+        playbackRate == "1"
+    }
+
+    var playbackFreshness: Double {
+        elapsedTimestamp ?? 0
+    }
+
+    var elapsedFormatted: String? {
+        guard let duration, duration > 0, let elapsedTime else {
+            return nil
+        }
+        var elapsed = elapsedTime
+        if let elapsedTimestamp, elapsedTimestamp > 0 {
+            let now = Date().timeIntervalSince1970
+            let delta = now - elapsedTimestamp
+            if delta > 0, delta < 600, playbackRate == "1" {
+                elapsed += delta
+            }
+        }
+        elapsed = min(elapsed, duration)
+
+        return Self.formatTime(elapsed)
+    }
+
+    var remainingFormatted: String? {
+        guard let duration, duration > 0, let elapsedTime else {
+            return nil
+        }
+        var elapsed = elapsedTime
+        if let elapsedTimestamp, elapsedTimestamp > 0 {
+            let now = Date().timeIntervalSince1970
+            let delta = now - elapsedTimestamp
+            if delta > 0, delta < 600, playbackRate == "1" {
+                elapsed += delta
+            }
+        }
+        let remaining = max(0, duration - elapsed)
+
+        return "-\(Self.formatTime(remaining))"
+    }
+
+    private static func formatTime(_ seconds: Double) -> String {
+        let total = Int(seconds)
+        let m = total / 60
+        let s = total % 60
+
+        return String(format: "%d:%02d", m, s)
     }
 
     var routingIdentity: String {

@@ -5,6 +5,8 @@ import os
 @MainActor
 final class StatusHUD {
     static let shared = StatusHUD()
+    private static let statusIdentifier = "keyway.status"
+    private static let pendingStatusIdentifier = "keyway.status.pending"
 
     private let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "Notifications")
     private var suppressVolumeNotifications = false
@@ -16,15 +18,16 @@ final class StatusHUD {
     }
 
     func show(title: String, message: String) {
-        logger.info("KeywayNotification pending title=\(title, privacy: .public) message=\(message, privacy: .public)")
+        deliver(title: title, message: message, identifier: Self.pendingStatusIdentifier)
     }
 
     func update(title: String? = nil, message: String) {
-        logger.info("KeywayNotification update title=\(title ?? "", privacy: .public) message=\(message, privacy: .public)")
+        deliver(title: title ?? "", message: message, identifier: Self.pendingStatusIdentifier)
     }
 
     func finish(title: String, message: String, dismissAfter seconds: TimeInterval = 3.5) {
-        deliver(title: title, message: message, identifier: "keyway.status")
+        clearPendingStatusNotification()
+        deliver(title: title, message: message, identifier: Self.statusIdentifier)
     }
 
     func showVolume(roomName: String, volume: Int, dismissAfter seconds: TimeInterval = 3.0) {
@@ -40,7 +43,7 @@ final class StatusHUD {
     }
 
     func showMutePending(roomName: String) {
-        logger.info("KeywayNotification pending_mute room=\(roomName, privacy: .public)")
+        deliver(title: roomName, message: "Toggling mute...", identifier: Self.pendingStatusIdentifier)
     }
 
     func showMute(roomName: String, muted: Bool, dismissAfter seconds: TimeInterval = 3.0) {
@@ -48,6 +51,7 @@ final class StatusHUD {
             return
         }
 
+        clearPendingStatusNotification()
         deliver(
             title: roomName,
             message: muted ? "Muted" : "Unmuted",
@@ -82,6 +86,12 @@ final class StatusHUD {
                 logger.info("KeywayNotification skipped title=\(title, privacy: .public) reason=unknown_authorization")
             }
         }
+    }
+
+    private func clearPendingStatusNotification() {
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: [Self.pendingStatusIdentifier])
+        center.removeDeliveredNotifications(withIdentifiers: [Self.pendingStatusIdentifier])
     }
 
     private nonisolated static func addNotification(

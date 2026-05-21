@@ -6,6 +6,7 @@ import SonosHandoffCore
 enum MediaRouteStatusKind: String, Equatable {
     case auto
     case focused
+    case selected
     case pinned
     case recent
     case chooser
@@ -17,6 +18,8 @@ enum MediaRouteStatusKind: String, Equatable {
             return "Auto"
         case .focused:
             return "Focused"
+        case .selected:
+            return "Selected"
         case .pinned:
             return "Pinned"
         case .recent:
@@ -40,6 +43,8 @@ struct MediaRouteStatus: Equatable {
             return targetCount == 1 ? "Single media target" : "Automatic routing"
         case .focused:
             return "Foreground or visible window"
+        case .selected:
+            return "Chosen target"
         case .pinned:
             return "Pinned target"
         case .recent:
@@ -54,11 +59,16 @@ struct MediaRouteStatus: Equatable {
 
 @MainActor
 final class MediaTransportActionController {
+    private static let routeSnapshotMaxAge: TimeInterval = 0.75
+    private static let chooserSnapshotMaxAge: TimeInterval = 1.5
+
     private enum RoutingReason: String {
         case single = "single target"
         case focused = "focused target"
+        case selected = "selected target"
         case pinned = "pinned target"
         case recent = "recent target"
+        case current = "current media target"
         case chooser = "chooser"
     }
 
@@ -66,6 +76,8 @@ final class MediaTransportActionController {
     private let mediaRemoteController: MediaRemoteController
     private let preferenceStore: MediaTargetPreferenceStore
     private let overlayController: MediaTargetOverlayController
+    private var selectedTargetID: String?
+    private var selectedTargetIdentity: String?
 
     init(
         mediaRemoteController: MediaRemoteController,
@@ -78,38 +90,33 @@ final class MediaTransportActionController {
     }
 
     func route(command: MediaRemoteTransportCommand) {
-        mediaRemoteController.refreshSnapshot()
-        let targets = sortedTargets(mediaRemoteController.targets)
-        guard !targets.isEmpty else {
-            StatusHUD.shared.show(title: "Media Targets", message: "Looking for Now Playing sessions...")
-            Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 180_000_000)
-                self?.routeUsingCurrentSnapshot(command: command)
-            }
-            return
+        Task { [weak self] in
+            await self?.routeAfterRefreshingSnapshot(command: command)
         }
-
-        route(command: command, targets: targets)
     }
 
     func showChooser(command: MediaRemoteTransportCommand = .playPause) {
-        mediaRemoteController.refreshSnapshot()
-        let targets = sortedTargets(mediaRemoteController.targets)
-        guard !targets.isEmpty else {
-            StatusHUD.shared.show(title: "Media Targets", message: "Looking for Now Playing sessions...")
-            Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 180_000_000)
-                self?.showChooserUsingCurrentSnapshot(command: command)
-            }
-            return
+        Task { [weak self] in
+            await self?.showChooserAfterRefreshingSnapshot(command: command)
         }
+    }
 
-        showChooser(command: command, targets: targets)
+    func showTargetChooser() {
+        Task { [weak self] in
+            await self?.showChooserAfterRefreshingSnapshot(command: nil)
+        }
+    }
+
+    func route(command: MediaRemoteTransportCommand, to target: MediaRemoteTarget) {
+        selectTarget(target)
+        Task { [weak self] in
+            await self?.send(command: command, to: target, reason: .current)
+        }
     }
 
     func currentRouteStatus() -> MediaRouteStatus {
         let targets = sortedTargets(mediaRemoteController.targets)
-        guard !targets.isEmpty else {
+        guard !targets.isEmpty, mediaRemoteController.canRouteCommands else {
             return MediaRouteStatus(kind: .unavailable, target: nil, targetCount: 0)
         }
 
@@ -128,9 +135,28 @@ final class MediaTransportActionController {
         )
     }
 
-    private func routeUsingCurrentSnapshot(command: MediaRemoteTransportCommand) {
+    private func routeAfterRefreshingSnapshot(command: MediaRemoteTransportCommand) async {
+        let needsFreshSnapshot = !mediaRemoteController.canRouteCommands
+            || mediaRemoteController.targets.isEmpty
+            || !mediaRemoteController.hasFreshSnapshot(maxAge: Self.routeSnapshotMaxAge)
+
+        if needsFreshSnapshot {
+            StatusHUD.shared.show(title: "Media Targets", message: "Looking for Now Playing sessions...")
+            let refreshed = await mediaRemoteController.refreshSnapshotAndWait()
+            guard refreshed || mediaRemoteController.hasFreshSnapshot(maxAge: Self.routeSnapshotMaxAge) else {
+                StatusHUD.shared.finish(
+                    title: "Media Targets Unavailable",
+                    message: "Keyway could not refresh Now Playing sessions.",
+                    dismissAfter: 2.4
+                )
+                return
+            }
+        } else {
+            mediaRemoteController.refreshSnapshot()
+        }
+
         let targets = sortedTargets(mediaRemoteController.targets)
-        guard !targets.isEmpty else {
+        guard !targets.isEmpty, mediaRemoteController.canRouteCommands else {
             StatusHUD.shared.finish(
                 title: "No Media Target",
                 message: "Start Spotify, a browser video, or QuickTime playback.",
@@ -142,9 +168,28 @@ final class MediaTransportActionController {
         route(command: command, targets: targets)
     }
 
-    private func showChooserUsingCurrentSnapshot(command: MediaRemoteTransportCommand) {
+    private func showChooserAfterRefreshingSnapshot(command: MediaRemoteTransportCommand?) async {
+        let needsFreshSnapshot = !mediaRemoteController.canRouteCommands
+            || mediaRemoteController.targets.isEmpty
+            || !mediaRemoteController.hasFreshSnapshot(maxAge: Self.chooserSnapshotMaxAge)
+
+        if needsFreshSnapshot {
+            StatusHUD.shared.show(title: "Media Targets", message: "Looking for Now Playing sessions...")
+            let refreshed = await mediaRemoteController.refreshSnapshotAndWait()
+            guard refreshed || mediaRemoteController.hasFreshSnapshot(maxAge: Self.chooserSnapshotMaxAge) else {
+                StatusHUD.shared.finish(
+                    title: "Media Targets Unavailable",
+                    message: "Keyway could not refresh Now Playing sessions.",
+                    dismissAfter: 2.4
+                )
+                return
+            }
+        } else {
+            mediaRemoteController.refreshSnapshot()
+        }
+
         let targets = sortedTargets(mediaRemoteController.targets)
-        guard !targets.isEmpty else {
+        guard !targets.isEmpty, mediaRemoteController.canRouteCommands else {
             StatusHUD.shared.finish(
                 title: "No Media Target",
                 message: "Start Spotify, a browser video, or QuickTime playback.",
@@ -153,29 +198,44 @@ final class MediaTransportActionController {
             return
         }
 
-        showChooser(command: command, targets: targets)
+        showChooserOverlay(command: command, targets: targets)
     }
 
     private func route(command: MediaRemoteTransportCommand, targets: [MediaRemoteTarget]) {
         if let decision = automaticTarget(from: targets) {
-            send(command: command, to: decision.target, reason: decision.reason)
+            Task { [weak self] in
+                await self?.send(command: command, to: decision.target, reason: decision.reason)
+            }
             return
         }
 
-        showChooser(command: command, targets: targets)
+        showChooserOverlay(command: command, targets: targets)
     }
 
-    private func showChooser(command: MediaRemoteTransportCommand, targets: [MediaRemoteTarget]) {
+    private func showChooserOverlay(command: MediaRemoteTransportCommand?, targets: [MediaRemoteTarget]) {
         overlayController.show(
             command: command,
             targets: targets,
-            pinnedIdentity: preferenceStore.pinnedTargetIdentity,
+            pinnedTargetID: preferenceStore.pinnedTargetID,
             onChoose: { [weak self] target, command in
-                self?.send(command: command, to: target, reason: .chooser)
+                guard let self else { return }
+                self.selectTarget(target)
+                guard let command else {
+                    self.mediaRemoteController.refreshSnapshot()
+                    StatusHUD.shared.finish(
+                        title: "Selected \(target.appName)",
+                        message: "Media keys will route to this target.",
+                        dismissAfter: 1.35
+                    )
+                    return
+                }
+                Task { [weak self] in
+                    await self?.send(command: command, to: target, reason: .chooser)
+                }
             },
             onPinToggle: { [weak self] target in
                 self?.preferenceStore.togglePinnedTarget(target)
-                let pinned = target.matchesRoutingIdentity(self?.preferenceStore.pinnedTargetIdentity)
+                let pinned = self?.preferenceStore.pinnedTargetReference?.id == target.id
                 self?.logger.info("MediaTransport pin target=\(target.appName, privacy: .public) pinned=\(pinned, privacy: .public)")
             }
         )
@@ -187,10 +247,14 @@ final class MediaTransportActionController {
             return .auto
         case .focused:
             return .focused
+        case .selected:
+            return .selected
         case .pinned:
             return .pinned
         case .recent:
             return .recent
+        case .current:
+            return .auto
         case .chooser:
             return .chooser
         }
@@ -201,30 +265,72 @@ final class MediaTransportActionController {
             return (target, .single)
         }
 
+        let playingTargets = targets.filter(\.isCurrentlyPlaying)
+
+        if let selectedTarget = selectedTarget(in: targets) {
+            return (selectedTarget, .selected)
+        }
+
         if let focusedTarget = focusedTarget(in: targets) {
             return (focusedTarget, .focused)
         }
 
-        if let pinnedTarget = target(matching: preferenceStore.pinnedTargetIdentity, in: targets) {
+        if let pinnedTarget = target(matching: preferenceStore.pinnedTargetReference, in: targets) {
             return (pinnedTarget, .pinned)
         }
 
-        if let recentTarget = target(matching: preferenceStore.recentTargetIdentity, in: targets) {
+        if let recentTarget = target(matching: preferenceStore.recentTargetReference, in: targets) {
             return (recentTarget, .recent)
+        }
+
+        if let playingTarget = playingTargets.first {
+            return (playingTarget, .current)
         }
 
         return nil
     }
 
-    private func send(command: MediaRemoteTransportCommand, to target: MediaRemoteTarget, reason: RoutingReason) {
+    private func send(command: MediaRemoteTransportCommand, to target: MediaRemoteTarget, reason: RoutingReason) async {
+        let sent = await mediaRemoteController.send(command: command, targetID: target.id)
+        guard sent else {
+            logger.error("MediaTransport route_failed command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) reason=\(reason.rawValue, privacy: .public)")
+            StatusHUD.shared.finish(
+                title: "Media Command Failed",
+                message: "Keyway could not reach \(target.appName).",
+                dismissAfter: 2.2
+            )
+            return
+        }
+
         preferenceStore.markRecentTarget(target)
-        mediaRemoteController.send(command: command, targetID: target.id)
         logger.info("MediaTransport route command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) reason=\(reason.rawValue, privacy: .public)")
         StatusHUD.shared.finish(
             title: "\(command.displayName) → \(target.appName)",
             message: "Routed by \(reason.rawValue)",
             dismissAfter: 1.35
         )
+    }
+
+    private func selectTarget(_ target: MediaRemoteTarget) {
+        selectedTargetID = target.id
+        selectedTargetIdentity = target.routingIdentity
+        preferenceStore.markRecentTarget(target)
+        logger.info("MediaTransport selected target=\(target.appName, privacy: .public)")
+    }
+
+    private func selectedTarget(in targets: [MediaRemoteTarget]) -> MediaRemoteTarget? {
+        if let selectedTargetID,
+           let exactTarget = targets.first(where: { $0.id == selectedTargetID }) {
+            return exactTarget
+        }
+
+        selectedTargetID = nil
+        if let fallbackTarget = target(matching: selectedTargetIdentity, in: targets) {
+            return fallbackTarget
+        }
+
+        selectedTargetIdentity = nil
+        return nil
     }
 
     private func focusedTarget(in targets: [MediaRemoteTarget]) -> MediaRemoteTarget? {
@@ -245,18 +351,59 @@ final class MediaTransportActionController {
         return prominentWindowTarget(in: targets)
     }
 
+    private func target(matching reference: MediaTargetRoutingReference?, in targets: [MediaRemoteTarget]) -> MediaRemoteTarget? {
+        guard let reference else {
+            return nil
+        }
+        if let exactTarget = targets.first(where: { $0.id == reference.id }) {
+            return exactTarget
+        }
+        return conservativeFallbackTarget(matching: reference.fallbackIdentity, in: targets)
+    }
+
     private func target(matching identity: String?, in targets: [MediaRemoteTarget]) -> MediaRemoteTarget? {
-        targets.first { $0.matchesRoutingIdentity(identity) }
+        conservativeFallbackTarget(matching: identity, in: targets)
+    }
+
+    private func conservativeFallbackTarget(matching identity: String?, in targets: [MediaRemoteTarget]) -> MediaRemoteTarget? {
+        guard let identity, !identity.isEmpty else {
+            return nil
+        }
+        let matches = targets.filter { $0.matchesRoutingIdentity(identity) }
+        guard matches.count == 1, let target = matches.first, !target.isBrowserLike else {
+            return nil
+        }
+        return target
     }
 
     private func sortedTargets(_ targets: [MediaRemoteTarget]) -> [MediaRemoteTarget] {
         let activeTargetID = mediaRemoteController.activeTargetID
+        let selectedTargetID = selectedTargetID
+        let selectedTargetIdentity = selectedTargetIdentity
+        let hasExactSelectedTarget = selectedTargetID.map { id in
+            targets.contains { $0.id == id }
+        } ?? false
         return targets.sorted { lhs, rhs in
-            if lhs.id == activeTargetID {
+            if lhs.isCurrentlyPlaying != rhs.isCurrentlyPlaying {
+                return lhs.isCurrentlyPlaying
+            }
+            if lhs.isCurrentlyPlaying,
+               rhs.isCurrentlyPlaying,
+               lhs.playbackFreshness != rhs.playbackFreshness {
+                return lhs.playbackFreshness > rhs.playbackFreshness
+            }
+            if lhs.id == activeTargetID, rhs.id != activeTargetID {
                 return true
             }
-            if rhs.id == activeTargetID {
+            if rhs.id == activeTargetID, lhs.id != activeTargetID {
                 return false
+            }
+            let lhsSelected = lhs.id == selectedTargetID
+                || (!hasExactSelectedTarget && lhs.matchesRoutingIdentity(selectedTargetIdentity))
+            let rhsSelected = rhs.id == selectedTargetID
+                || (!hasExactSelectedTarget && rhs.matchesRoutingIdentity(selectedTargetIdentity))
+            if lhsSelected != rhsSelected {
+                return lhsSelected
             }
             return lhs.appName.localizedCaseInsensitiveCompare(rhs.appName) == .orderedAscending
         }

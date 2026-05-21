@@ -59,8 +59,15 @@ public struct ProjectWebAPITokenStore: Sendable {
         self.tokenURL = applicationSupportDirectory.appendingPathComponent("project-webapi-token.json")
     }
 
+    static let maxTokenFileSize = 1_048_576
+
     public func load() throws -> ProjectWebAPIToken? {
         guard FileManager.default.fileExists(atPath: tokenURL.path) else {
+            return nil
+        }
+
+        let attributes = try FileManager.default.attributesOfItem(atPath: tokenURL.path)
+        if let fileSize = attributes[.size] as? Int, fileSize > Self.maxTokenFileSize {
             return nil
         }
 
@@ -72,7 +79,12 @@ public struct ProjectWebAPITokenStore: Sendable {
             at: tokenURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        try JSONEncoder.projectWebAPITokenFile.encode(token).write(to: tokenURL, options: .atomic)
+        let data = try JSONEncoder.projectWebAPITokenFile.encode(token)
+        try data.write(to: tokenURL, options: .atomic)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: tokenURL.path
+        )
     }
 
     public func delete() throws {

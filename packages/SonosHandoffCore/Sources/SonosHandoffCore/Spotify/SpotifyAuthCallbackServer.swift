@@ -13,28 +13,30 @@ enum SpotifyAuthCallbackServer {
 
     static func completeAuthorization(
         expectedState: String,
-        completion: @escaping @Sendable (String) async throws -> Void,
-        openAuthorizationURL: @escaping @Sendable () -> Bool
+        completion: @escaping @Sendable (String, URL) async throws -> Void,
+        openAuthorizationURL: @escaping @Sendable (URL) -> Bool
     ) async throws {
-        guard let listenerPort = NWEndpoint.Port(rawValue: port) else {
-            throw SpotifyAuthError.callbackListenerFailed
-        }
+        let params = NWParameters.tcp
+        params.requiredInterfaceType = .loopback
 
-        let listener: NWListener
-        do {
-            listener = try NWListener(using: .tcp, on: listenerPort)
-        } catch {
+        guard let nwPort = NWEndpoint.Port(rawValue: port),
+              let listener = try? NWListener(using: params, on: nwPort)
+        else {
             throw SpotifyAuthError.callbackListenerFailed
         }
+        let listenerRedirectURI = redirectURI
 
         return try await withCheckedThrowingContinuation { continuation in
             let queue = DispatchQueue(label: "keyway.spotify-auth")
             let resolver = SpotifyAuthCallbackResolver(
                 expectedState: expectedState,
+                redirectURI: listenerRedirectURI,
                 continuation: continuation,
                 completion: completion
             )
-            let browser = OneShotBrowserOpener(openAuthorizationURL)
+            let browser = OneShotBrowserOpener {
+                openAuthorizationURL(listenerRedirectURI)
+            }
 
             listener.stateUpdateHandler = { state in
                 switch state {
@@ -94,16 +96,19 @@ private final class OneShotBrowserOpener: @unchecked Sendable {
 
 private final class SpotifyAuthCallbackResolver: @unchecked Sendable {
     private let expectedState: String
-    private let completion: @Sendable (String) async throws -> Void
+    private let redirectURI: URL
+    private let completion: @Sendable (String, URL) async throws -> Void
     private var continuation: CheckedContinuation<Void, Error>?
     private let lock = NSLock()
 
     init(
         expectedState: String,
+        redirectURI: URL,
         continuation: CheckedContinuation<Void, Error>,
-        completion: @escaping @Sendable (String) async throws -> Void
+        completion: @escaping @Sendable (String, URL) async throws -> Void
     ) {
         self.expectedState = expectedState
+        self.redirectURI = redirectURI
         self.continuation = continuation
         self.completion = completion
     }
@@ -161,7 +166,7 @@ private final class SpotifyAuthCallbackResolver: @unchecked Sendable {
 
             Task {
                 do {
-                    try await self.completion(code)
+                    try await self.completion(code, self.redirectURI)
                     self.sendResponse(
                         connection: connection,
                         listener: listener,

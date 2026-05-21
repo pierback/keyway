@@ -32,7 +32,7 @@ struct SpotifyConnectTokenClient: Sendable {
 
         let payload = try await spotifyJSON(request)
         guard let accessToken = payload["access_token"] as? String else {
-            throw ConnectHandoffError(.authRequired, "\(failureMessage): \(payload)")
+            throw ConnectHandoffError(.authRequired, failureMessage)
         }
 
         return SpotifyRefreshedAccessToken(
@@ -61,7 +61,7 @@ struct SpotifyConnectTokenClient: Sendable {
 
         let payload = try await spotifyJSON(request)
         guard let accessToken = payload["access_token"] as? String else {
-            throw ConnectHandoffError(.authRequired, "Spotify Connect token exchange failed: \(payload)")
+            throw ConnectHandoffError(.authRequired, "Spotify Connect token exchange failed.")
         }
         return accessToken
     }
@@ -83,18 +83,17 @@ struct SpotifyConnectTokenClient: Sendable {
         }
 
         guard let payload = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            let body = String(data: data, encoding: .utf8) ?? "Invalid Spotify response"
             if SonosRuntimeSupport.isSpotifyAuthFailure(statusCode: http.statusCode, payload: nil) {
-                throw ConnectHandoffError(.authRequired, "Spotify authentication failed: \(body)")
+                throw ConnectHandoffError(.authRequired, "Spotify authentication failed (HTTP \(http.statusCode)).")
             }
-            throw ConnectHandoffError(.unsupported, body)
+            throw ConnectHandoffError(.unsupported, "Spotify returned an invalid response (HTTP \(http.statusCode)).")
         }
 
         guard (200 ..< 300).contains(http.statusCode) else {
             if SonosRuntimeSupport.isSpotifyAuthFailure(statusCode: http.statusCode, payload: payload) {
-                throw ConnectHandoffError(.authRequired, "Spotify authentication failed: \(payload)")
+                throw ConnectHandoffError(.authRequired, "Spotify authentication failed (HTTP \(http.statusCode)).")
             }
-            throw ConnectHandoffError(.unsupported, "Spotify HTTP \(http.statusCode): \(payload)")
+            throw ConnectHandoffError(.unsupported, "Spotify request failed (HTTP \(http.statusCode)).")
         }
         return payload
     }

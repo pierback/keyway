@@ -155,25 +155,36 @@ struct SpotifyConnectBridge: Sendable {
         return state
     }
 
+    private static let maxRateLimitRetries = 2
+
     private func currentPlayerState(accessToken: String) async throws -> ConnectPlayerState? {
         var request = URLRequest(url: URL(string: "https://api.spotify.com/v1/me/player")!)
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
 
-        let (data, response) = try await urlSession.data(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw ConnectHandoffError(.transferVerificationFailed, "Spotify returned a non-HTTP player response.")
-        }
-        if http.statusCode == 204 {
-            return nil
-        }
-        if http.statusCode == 401 || http.statusCode == 403 {
-            throw ConnectHandoffError(.authRequired, String(data: data, encoding: .utf8) ?? "Spotify player HTTP \(http.statusCode)")
-        }
-        guard (200 ..< 300).contains(http.statusCode) else {
-            throw ConnectHandoffError(.transferVerificationFailed, String(data: data, encoding: .utf8) ?? "Spotify player HTTP \(http.statusCode)")
+        for attempt in 0 ... Self.maxRateLimitRetries {
+            let (data, response) = try await urlSession.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw ConnectHandoffError(.transferVerificationFailed, "Spotify returned a non-HTTP player response.")
+            }
+            if http.statusCode == 429, attempt < Self.maxRateLimitRetries {
+                let retryAfter = http.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init) ?? 1
+                try await Task.sleep(nanoseconds: UInt64(min(retryAfter, 5) * 1_000_000_000))
+                continue
+            }
+            if http.statusCode == 204 {
+                return nil
+            }
+            if http.statusCode == 401 || http.statusCode == 403 {
+                throw ConnectHandoffError(.authRequired, "Spotify player authentication failed (HTTP \(http.statusCode)).")
+            }
+            guard (200 ..< 300).contains(http.statusCode) else {
+                throw ConnectHandoffError(.transferVerificationFailed, "Spotify player request failed (HTTP \(http.statusCode)).")
+            }
+
+            return try JSONDecoder().decode(ConnectPlayerState.self, from: data)
         }
 
-        return try JSONDecoder().decode(ConnectPlayerState.self, from: data)
+        throw ConnectHandoffError(.transferVerificationFailed, "Spotify player rate limited.")
     }
 
     private func currentPlayerStateWithAuthRetry(accessToken: String) async throws -> ConnectPlayerState? {
@@ -192,19 +203,18 @@ struct SpotifyConnectBridge: Sendable {
         request.httpMethod = "PUT"
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
 
-        var (data, response) = try await urlSession.data(for: request)
+        var (_, response) = try await urlSession.data(for: request)
         if let http = response as? HTTPURLResponse,
            http.statusCode == 401 || http.statusCode == 403 {
             let refreshedAccessToken = try await projectAccessTokenProvider.refreshAccessTokenAfterAuthFailure()
             request.setValue("Bearer \(refreshedAccessToken)", forHTTPHeaderField: "Authorization")
-            (data, response) = try await urlSession.data(for: request)
+            (_, response) = try await urlSession.data(for: request)
         }
         guard let http = response as? HTTPURLResponse,
               http.statusCode == 204 || (200 ..< 300).contains(http.statusCode)
         else {
             let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
-            let body = String(data: data, encoding: .utf8) ?? ""
-            throw SpotifyVolumeWriteError.spotifyHTTPStatus(statusCode, body)
+            throw SpotifyVolumeWriteError.spotifyHTTPStatus(statusCode, "Spotify volume request failed.")
         }
     }
 

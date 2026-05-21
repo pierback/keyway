@@ -10,7 +10,11 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
     private lazy var popover: NSPopover = makePopover()
     private var localStatusItemMonitor: Any?
     private var globalStatusItemMonitor: Any?
+    private var popoverLocalDismissMonitor: Any?
+    private var popoverGlobalDismissMonitor: Any?
+    private var appDeactivationObserver: NSObjectProtocol?
     private var lastModifierChooserClickTime: TimeInterval = 0
+    private var settingsOpenInProgress = false
 
     init(environment: AppEnvironment) {
         self.environment = environment
@@ -33,6 +37,7 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         button.toolTip = "Keyway"
         startStatusItemModifierMonitor()
+        startAppDeactivationObserver()
     }
 
     @objc private func handleStatusItemClick(_ sender: NSStatusBarButton) {
@@ -109,14 +114,19 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
         environment.mediaRemoteController.refreshSnapshot()
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
+        startPopoverDismissMonitors()
     }
 
     private func closePopover() {
-        popover.performClose(nil)
+        guard popover.isShown else {
+            return
+        }
+        stopPopoverDismissMonitors()
+        popover.close()
     }
 
     private func showCenteredChooser() {
-        environment.mediaTransportActionController.showChooser(command: .playPause)
+        environment.mediaTransportActionController.showTargetChooser()
     }
 
     private func showCenteredChooserFromModifierClick() {
@@ -129,14 +139,19 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
     }
 
     private func openSettings() {
+        guard !settingsOpenInProgress else {
+            return
+        }
+        settingsOpenInProgress = true
         closePopover()
-        _ = NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
-        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-    }
-
-    private func openDiagnostics() {
-        openSettings()
+        DispatchQueue.main.async {
+            NSApp.setActivationPolicy(.regular)
+            _ = NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+            NSApp.activate()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.settingsOpenInProgress = false
+            }
+        }
     }
 
     private func openChooserFromPopover() {
@@ -146,10 +161,6 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
 
     @objc private func openSettingsFromMenu(_ sender: Any?) {
         openSettings()
-    }
-
-    @objc private func openDiagnosticsFromMenu(_ sender: Any?) {
-        openDiagnostics()
     }
 
     @objc private func restartMediaRemoteHelper(_ sender: Any?) {
@@ -164,7 +175,6 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
         let menu = NSMenu()
         menu.addItem(menuItem("Settings...", action: #selector(openSettingsFromMenu(_:)), keyEquivalent: ","))
         menu.addItem(menuItem("Restart MediaRemote Helper", action: #selector(restartMediaRemoteHelper(_:))))
-        menu.addItem(menuItem("Diagnostics", action: #selector(openDiagnosticsFromMenu(_:))))
         menu.addItem(.separator())
         menu.addItem(menuItem("Quit Keyway", action: #selector(quit(_:)), keyEquivalent: "q"))
 
@@ -187,7 +197,7 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
         let popover = NSPopover()
         popover.behavior = .transient
         popover.animates = true
-        popover.contentSize = NSSize(width: 360, height: 460)
+        popover.contentSize = NSSize(width: 340, height: 460)
         popover.delegate = self
         let hostingController = NSHostingController(
             rootView: KeywayControlCenterPopoverView(
@@ -197,7 +207,6 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
                 mediaTransportActions: environment.mediaTransportActionController,
                 openChooser: { [weak self] in self?.openChooserFromPopover() },
                 openSettings: { [weak self] in self?.openSettings() },
-                openDiagnostics: { [weak self] in self?.openDiagnostics() },
                 restartMediaRemoteHelper: { [weak self] in self?.restartMediaRemoteHelper(nil) },
                 quit: { NSApp.terminate(nil) }
             )
@@ -209,12 +218,93 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
         return popover
     }
 
+    private func startAppDeactivationObserver() {
+        guard appDeactivationObserver == nil else {
+            return
+        }
+        appDeactivationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: NSApp,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.closePopover()
+            }
+        }
+    }
+
+    private func startPopoverDismissMonitors() {
+        guard popoverLocalDismissMonitor == nil, popoverGlobalDismissMonitor == nil else {
+            return
+        }
+        let eventMask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+
+        popoverLocalDismissMonitor = NSEvent.addLocalMonitorForEvents(matching: eventMask) { [weak self] event in
+            if self?.closePopoverIfNeeded(for: event) == true {
+                return nil
+            }
+            return event
+        }
+
+        popoverGlobalDismissMonitor = NSEvent.addGlobalMonitorForEvents(matching: eventMask) { [weak self] event in
+            _ = self?.closePopoverIfNeeded(for: event)
+        }
+    }
+
+    private func stopPopoverDismissMonitors() {
+        if let popoverLocalDismissMonitor {
+            NSEvent.removeMonitor(popoverLocalDismissMonitor)
+        }
+        if let popoverGlobalDismissMonitor {
+            NSEvent.removeMonitor(popoverGlobalDismissMonitor)
+        }
+        popoverLocalDismissMonitor = nil
+        popoverGlobalDismissMonitor = nil
+    }
+
+    private func closePopoverIfNeeded(for event: NSEvent) -> Bool {
+        guard popover.isShown else {
+            return false
+        }
+        let screenPoint = screenPoint(for: event)
+        if statusItemButtonFrameContains(screenPoint) || popoverWindowFrameContains(screenPoint) {
+            return false
+        }
+        closePopover()
+        return true
+    }
+
+    private func screenPoint(for event: NSEvent) -> NSPoint {
+        guard let window = event.window else {
+            return event.locationInWindow
+        }
+        return window.convertPoint(toScreen: event.locationInWindow)
+    }
+
+    private func statusItemButtonFrameContains(_ screenPoint: NSPoint) -> Bool {
+        guard let frame = statusItem.button?.window?.frame else {
+            return false
+        }
+        return frame.insetBy(dx: -4, dy: -4).contains(screenPoint)
+    }
+
+    private func popoverWindowFrameContains(_ screenPoint: NSPoint) -> Bool {
+        guard let frame = popover.contentViewController?.view.window?.frame else {
+            return false
+        }
+        return frame.contains(screenPoint)
+    }
+
     func popoverDidShow(_ notification: Notification) {
         guard let window = popover.contentViewController?.view.window else {
             return
         }
         window.isOpaque = false
         window.backgroundColor = .clear
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        stopPopoverDismissMonitors()
     }
 }
 
@@ -236,14 +326,13 @@ private struct KeywayControlCenterPopoverView: View {
     private let mediaTransportActions: MediaTransportActionController
     private let openChooser: @MainActor () -> Void
     private let openSettings: @MainActor () -> Void
-    private let openDiagnostics: @MainActor () -> Void
     private let restartMediaRemoteHelper: @MainActor () -> Void
     private let quit: @MainActor () -> Void
-    @State private var pinnedIdentity: String?
     @State private var showSpeakersList = true
     @State private var optionKeyPressed = false
     @State private var localModifierMonitor: Any?
     @State private var globalModifierMonitor: Any?
+    @State private var progressTick: UInt64 = 0
     @State private var modifierPollTask: Task<Void, Never>?
 
     init(
@@ -253,7 +342,6 @@ private struct KeywayControlCenterPopoverView: View {
         mediaTransportActions: MediaTransportActionController,
         openChooser: @escaping @MainActor () -> Void,
         openSettings: @escaping @MainActor () -> Void,
-        openDiagnostics: @escaping @MainActor () -> Void,
         restartMediaRemoteHelper: @escaping @MainActor () -> Void,
         quit: @escaping @MainActor () -> Void
     ) {
@@ -263,7 +351,6 @@ private struct KeywayControlCenterPopoverView: View {
         self.mediaTransportActions = mediaTransportActions
         self.openChooser = openChooser
         self.openSettings = openSettings
-        self.openDiagnostics = openDiagnostics
         self.restartMediaRemoteHelper = restartMediaRemoteHelper
         self.quit = quit
     }
@@ -274,11 +361,10 @@ private struct KeywayControlCenterPopoverView: View {
                 header
                 nowPlayingCard
                 sonosTile
-                alternateTargetsSection
             }
             .padding(12)
         }
-        .frame(width: 360)
+        .frame(width: 340)
         .frame(maxHeight: 460)
         .background {
             RoundedRectangle(cornerRadius: Metrics.outerCornerRadius, style: .continuous)
@@ -288,26 +374,30 @@ private struct KeywayControlCenterPopoverView: View {
                         .clipShape(RoundedRectangle(cornerRadius: Metrics.outerCornerRadius, style: .continuous))
                         .overlay {
                             RoundedRectangle(cornerRadius: Metrics.outerCornerRadius, style: .continuous)
-                                .fill(Color.black.opacity(0.14))
+                                .fill(Color.black.opacity(0.10))
                         }
                 }
                 .overlay {
                     RoundedRectangle(cornerRadius: Metrics.outerCornerRadius, style: .continuous)
-                        .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                        .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
                 }
         }
         .clipShape(RoundedRectangle(cornerRadius: Metrics.outerCornerRadius, style: .continuous))
         .foregroundStyle(.white)
         .environment(\.colorScheme, .dark)
+        .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
+            progressTick &+= 1
+        }
         .onAppear {
             StatusHUD.shared.setVolumeOverlaySuppressed(true)
-            pinnedIdentity = mediaTargetPreferenceStore.pinnedTargetIdentity
             playback.appear()
             mediaRemoteController.refreshSnapshot()
             startModifierMonitor()
         }
         .onDisappear {
             StatusHUD.shared.setVolumeOverlaySuppressed(false)
+            playback.disappear()
+            showSpeakersList = true
             stopModifierMonitor()
         }
     }
@@ -383,15 +473,14 @@ private struct KeywayControlCenterPopoverView: View {
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
-            .foregroundStyle(.white.opacity(0.72))
-            .background(.white.opacity(0.08), in: Circle())
+            .foregroundStyle(.white.opacity(0.65))
+            .background(.white.opacity(0.06), in: Circle())
             .accessibilityIdentifier("open-media-target-chooser")
             .accessibilityLabel("Open Media Target Chooser")
 
             Menu {
                 Button("Settings...", action: openSettings)
                 Button("Restart MediaRemote Helper", action: restartMediaRemoteHelper)
-                Button("Diagnostics", action: openDiagnostics)
                 Divider()
                 Button("Quit Keyway", action: quit)
             } label: {
@@ -402,8 +491,8 @@ private struct KeywayControlCenterPopoverView: View {
             }
             .menuStyle(.button)
             .buttonStyle(.plain)
-            .foregroundStyle(.white.opacity(0.72))
-            .background(.white.opacity(0.08), in: Circle())
+            .foregroundStyle(.white.opacity(0.65))
+            .background(.white.opacity(0.06), in: Circle())
             .accessibilityIdentifier("keyway-utility-menu")
             .accessibilityLabel("Keyway Utilities")
         }
@@ -412,51 +501,149 @@ private struct KeywayControlCenterPopoverView: View {
     }
 
     private var nowPlayingCard: some View {
-        let status = mediaTransportActions.currentRouteStatus()
-        return card(cornerRadius: Metrics.cardCornerRadius, padding: 10) {
-            VStack(alignment: .leading, spacing: 9) {
-                HStack(spacing: 9) {
-                    targetIcon(status.target, size: Metrics.primaryIconSize)
+        let target = currentPlaybackTarget
+        let isRefreshingStaleSnapshot = mediaRemoteController.isRefreshingSnapshot
+            && !mediaRemoteController.hasFreshSnapshot(maxAge: 1.5)
+        let displayTarget = isRefreshingStaleSnapshot ? nil : target
+        let isPlaying = displayTarget?.isCurrentlyPlaying == true
 
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 6) {
-                            Text(status.kind.title)
-                                .font(Metrics.tileEyebrowFont)
-                                .foregroundStyle(.white.opacity(0.72))
-                            statusPill(status.subtitle)
-                        }
-                        Text(status.target?.appName ?? "No media target")
-                            .font(Metrics.tileTitleFont)
+        return card(cornerRadius: Metrics.cardCornerRadius, padding: 10) {
+            VStack(spacing: 0) {
+                HStack(spacing: 10) {
+                    artworkView(displayTarget, size: 40)
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(nowPlayingTitle(target: displayTarget, refreshing: isRefreshingStaleSnapshot))
+                            .font(.system(size: 12, weight: .medium))
                             .lineLimit(1)
-                        Text(status.target?.detailText ?? "Waiting for Now Playing")
-                            .font(Metrics.tileDetailFont)
-                            .foregroundStyle(.white.opacity(0.62))
+                        Text(nowPlayingSubtitle(target: displayTarget, refreshing: isRefreshingStaleSnapshot))
+                            .font(.system(size: 11))
+                            .foregroundStyle(.white.opacity(0.50))
                             .lineLimit(1)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
+                }
 
+                progressBar(displayTarget, tick: progressTick)
+                    .padding(.top, 8)
+
+                HStack(spacing: 18) {
+                    Spacer(minLength: 0)
+                    transportButton(.previous, target: displayTarget)
+                    transportButton(isPlaying ? .pause : .play, target: displayTarget, emphasized: true)
+                    transportButton(.next, target: displayTarget)
                     Spacer(minLength: 0)
                 }
+                .padding(.top, 4)
+            }
+        }
+    }
 
-                HStack(spacing: 8) {
-                    transportButton(.previous)
-                    transportButton(.playPause, emphasized: true)
-                    transportButton(.next)
-                    Spacer()
-                    Button {
-                        openChooser()
-                    } label: {
-                        Text("Change")
-                            .font(.system(size: 11, weight: .semibold))
-                            .padding(.horizontal, 8)
-                            .frame(height: 24)
-                            .background(.white.opacity(0.10), in: Capsule())
+    private func nowPlayingTitle(target: MediaRemoteTarget?, refreshing: Bool) -> String {
+        if refreshing {
+            return "Refreshing..."
+        }
+        if let target, !target.title.isEmpty {
+            return target.title
+        }
+        return "Not Playing"
+    }
+
+    private func nowPlayingSubtitle(target: MediaRemoteTarget?, refreshing: Bool) -> String {
+        if refreshing {
+            return "Updating media target"
+        }
+        if let target, !target.artist.isEmpty {
+            return target.artist
+        }
+        return target?.appName ?? "No media target"
+    }
+
+    private var currentPlaybackTarget: MediaRemoteTarget? {
+        let targets = mediaRemoteController.targets
+        let routeStatus = mediaTransportActions.currentRouteStatus()
+        if routeStatus.kind == .selected, let selectedTarget = routeStatus.target {
+            return selectedTarget
+        }
+
+        if let activeTarget = mediaRemoteController.activeTarget, activeTarget.isCurrentlyPlaying {
+            return activeTarget
+        }
+
+        if let playingTarget = targets.filter(\.isCurrentlyPlaying).max(by: { lhs, rhs in
+            lhs.playbackFreshness < rhs.playbackFreshness
+        }) {
+            return playingTarget
+        }
+
+        return mediaRemoteController.activeTarget ?? targets.first
+    }
+
+    private func artworkView(_ target: MediaRemoteTarget?, size: CGFloat) -> some View {
+        let radius = size * 0.175
+
+        return Group {
+            if let target, let artworkImage = target.artworkImage {
+                Image(nsImage: artworkImage)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFill()
+            } else if let target {
+                Image(nsImage: target.appIcon)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFill()
+            } else {
+                Rectangle()
+                    .fill(
+                        LinearGradient(
+                            colors: [.white.opacity(0.08), .white.opacity(0.03)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .overlay {
+                        Image(systemName: "music.note")
+                            .font(.system(size: size * 0.25, weight: .light))
+                            .foregroundStyle(.white.opacity(0.25))
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.white.opacity(0.70))
-                    .accessibilityIdentifier("change-media-target")
-                    .accessibilityLabel("Change Media Target")
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                .stroke(.white.opacity(0.10), lineWidth: 0.5)
+        }
+    }
+
+    private func progressBar(_ target: MediaRemoteTarget?, tick: UInt64) -> some View {
+        let _ = tick
+        let fraction = target?.playbackFraction ?? 0
+        let elapsedText = target?.elapsedFormatted ?? "-:--"
+        let remainingText = target?.remainingFormatted ?? "-:--"
+
+        return VStack(spacing: 3) {
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(.white.opacity(0.10))
+                        .frame(height: 3)
+                    Capsule()
+                        .fill(.white.opacity(0.55))
+                        .frame(width: max(0, geo.size.width * fraction), height: 3)
                 }
+            }
+            .frame(height: 3)
+
+            HStack {
+                Text(elapsedText)
+                    .font(.system(size: 9, weight: .medium).monospacedDigit())
+                    .foregroundStyle(.white.opacity(0.35))
+                Spacer()
+                Text(remainingText)
+                    .font(.system(size: 9, weight: .medium).monospacedDigit())
+                    .foregroundStyle(.white.opacity(0.35))
             }
         }
     }
@@ -500,10 +687,10 @@ private struct KeywayControlCenterPopoverView: View {
                         } label: {
                             Image(systemName: "chevron.down")
                                 .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(.white.opacity(0.7))
+                                .foregroundStyle(.white.opacity(0.60))
                                 .rotationEffect(.degrees(showSpeakersList ? 180 : 0))
                                 .frame(width: 28, height: 28)
-                                .background(.white.opacity(0.08), in: Circle())
+                                .background(.white.opacity(0.06), in: Circle())
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("toggle-sonos-controls")
@@ -522,26 +709,11 @@ private struct KeywayControlCenterPopoverView: View {
                     ScrollView(.vertical, showsIndicators: false) {
                         MenuBarOutputSection(
                             playback: playback,
-                            groupEditing: optionKeyPressed,
-                            openSpotifySettings: openSettings
+                            groupEditing: optionKeyPressed
                         )
                     }
                     .frame(maxHeight: 118)
                     .transition(.opacity.combined(with: .move(edge: .top)))
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var alternateTargetsSection: some View {
-        let targets = alternateTargets
-        if !targets.isEmpty {
-            card(cornerRadius: 14, padding: 8) {
-                VStack(spacing: 4) {
-                    ForEach(targets.prefix(2)) { target in
-                        mediaTargetRow(target)
-                    }
                 }
             }
         }
@@ -556,96 +728,27 @@ private struct KeywayControlCenterPopoverView: View {
         return playback.outputRows.first
     }
 
-    private var sortedTargets: [MediaRemoteTarget] {
-        let activeTargetID = mediaRemoteController.activeTargetID
-        return mediaRemoteController.targets.sorted { lhs, rhs in
-            if lhs.id == activeTargetID {
-                return true
-            }
-            if rhs.id == activeTargetID {
-                return false
-            }
-            return lhs.appName.localizedCaseInsensitiveCompare(rhs.appName) == .orderedAscending
-        }
-    }
-
-    private var alternateTargets: [MediaRemoteTarget] {
-        let primaryTargetID = mediaTransportActions.currentRouteStatus().target?.id
-        return sortedTargets.filter { target in
-            guard let primaryTargetID else {
-                return true
-            }
-            return target.id != primaryTargetID
-        }
-    }
-
-    private func mediaTargetRow(_ target: MediaRemoteTarget) -> some View {
-        let pinned = target.matchesRoutingIdentity(pinnedIdentity)
-
-        return HStack(spacing: 9) {
-            targetIcon(target, size: 24)
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(target.appName)
-                    .font(.system(size: 12, weight: .semibold))
-                    .lineLimit(1)
-                Text(target.detailText)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.white.opacity(0.54))
-                    .lineLimit(1)
-            }
-
-            Spacer()
-
-            Button {
-                mediaTargetPreferenceStore.togglePinnedTarget(target)
-                pinnedIdentity = mediaTargetPreferenceStore.pinnedTargetIdentity
-            } label: {
-                Image(systemName: pinned ? "pin.fill" : "pin")
-                    .font(.system(size: 11, weight: .semibold))
-                    .frame(width: 26, height: 24)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(pinned ? Color.white : Color.white.opacity(0.54))
-            .background(.white.opacity(pinned ? 0.14 : 0.055), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .accessibilityLabel(pinned ? "Unpin \(target.appName)" : "Pin \(target.appName)")
-        }
-        .padding(.horizontal, 6)
-        .frame(height: 30)
-        .background(.white.opacity(target.id == mediaRemoteController.activeTargetID ? 0.075 : 0.035), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-    }
-
-    private func transportButton(_ command: MediaRemoteTransportCommand, emphasized: Bool = false) -> some View {
+    private func transportButton(
+        _ command: MediaRemoteTransportCommand,
+        target: MediaRemoteTarget?,
+        emphasized: Bool = false
+    ) -> some View {
         Button {
-            mediaTransportActions.route(command: command)
+            guard let target else {
+                mediaTransportActions.route(command: command)
+                return
+            }
+            mediaTransportActions.route(command: command, to: target)
         } label: {
             Image(systemName: command.symbolName)
-                .font(.system(size: emphasized ? 13 : 11, weight: .semibold))
-                .frame(width: emphasized ? 32 : 28, height: 28)
+                .font(.system(size: emphasized ? 14 : 11, weight: .medium))
+                .frame(width: 26, height: 26)
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.white.opacity(0.92))
-        .background(.white.opacity(emphasized ? 0.145 : 0.075), in: Circle())
+        .foregroundStyle(.white.opacity(emphasized ? 0.90 : 0.68))
         .accessibilityIdentifier("transport-\(command.rawValue)")
         .accessibilityLabel(command.displayName)
-    }
-
-    private func targetIcon(_ target: MediaRemoteTarget?, size: CGFloat) -> some View {
-        Group {
-            if let target {
-                Image(nsImage: target.appIcon)
-                    .resizable()
-            } else {
-                Image(systemName: "play.rectangle.fill")
-                    .resizable()
-                    .scaledToFit()
-                    .padding(size * 0.23)
-                    .foregroundStyle(.white.opacity(0.72))
-            }
-        }
-        .frame(width: size, height: size)
-        .background(.white.opacity(0.085), in: RoundedRectangle(cornerRadius: size * 0.24, style: .continuous))
-        .clipShape(RoundedRectangle(cornerRadius: size * 0.24, style: .continuous))
     }
 
     private func sonosStatusText(row: PlaybackOutputRow?) -> String {
@@ -688,10 +791,19 @@ private struct KeywayControlCenterPopoverView: View {
         content()
             .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .background {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [.white.opacity(0.06), .white.opacity(0.035)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+            }
             .overlay {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(.white.opacity(0.075), lineWidth: 1)
+                    .stroke(.white.opacity(0.09), lineWidth: 0.5)
             }
     }
 }
