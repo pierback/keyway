@@ -28,7 +28,10 @@ struct SpotifyDesktopCredentialProvider: Sendable {
 
         var tokens: [String: ConnectDesktopToken]
         do {
-            tokens = try JSONDecoder().decode([String: ConnectDesktopToken].self, from: Data(contentsOf: desktopTokenURL))
+            tokens = try JSONDecoder().decode(
+                [String: ConnectDesktopToken].self,
+                from: ProjectWebAPITokenStore.sensitiveFileData(at: desktopTokenURL)
+            )
         } catch {
             throw ConnectHandoffError(.authRequired, Self.malformedDesktopTokenMessage)
         }
@@ -65,7 +68,7 @@ struct SpotifyDesktopCredentialProvider: Sendable {
         }
         token.expiresAt = Int(Date().timeIntervalSince1970) + refreshed.expiresIn
         tokens[key] = token
-        try JSONEncoder.pretty.encode(tokens).write(to: desktopTokenURL)
+        try ProjectWebAPITokenStore.writeSensitiveFileData(JSONEncoder.pretty.encode(tokens), to: desktopTokenURL)
         return ConnectDesktopCredential(loginID: loginID, token: token)
     }
 }

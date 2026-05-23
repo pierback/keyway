@@ -13,6 +13,7 @@ public enum SpotifyAuthError: LocalizedError, Equatable {
     case missingAuthorizationCode
     case invalidCallbackState
     case tokenExchangeFailed(String)
+    case refreshTokenKeychainSaveFailed
 
     public var errorDescription: String? {
         switch self {
@@ -30,13 +31,15 @@ public enum SpotifyAuthError: LocalizedError, Equatable {
             return "Spotify sign-in returned an invalid state token."
         case .tokenExchangeFailed(let details):
             return "Spotify token exchange failed: \(details)"
+        case .refreshTokenKeychainSaveFailed:
+            return "Could not save Spotify credentials securely. Check Keychain access and try again."
         }
     }
 }
 
 public final class SpotifyAuthCoordinator: SpotifyAuthCoordinating, @unchecked Sendable {
     public static let callbackHost = SpotifyAuthCallbackServer.host
-    public static let callbackPort = SpotifyAuthCallbackServer.port
+    public static let callbackPorts = SpotifyAuthCallbackServer.ports
     public static let callbackPath = SpotifyAuthCallbackServer.path
 
     private let tokenStore: TokenStoring
@@ -79,17 +82,18 @@ public final class SpotifyAuthCoordinator: SpotifyAuthCoordinating, @unchecked S
                 codeVerifier: authorizationRequest.codeVerifier
             )
 
+            do {
+                try self.tokenStore.saveRefreshToken(tokenResponse.refreshToken)
+            } catch {
+                self.logger.log(.error, "Keychain refresh token save failed. Spotify sign-in aborted before writing token file.")
+                throw SpotifyAuthError.refreshTokenKeychainSaveFailed
+            }
             try self.projectTokenStore.save(ProjectWebAPIToken(
                 accessToken: tokenResponse.accessToken,
                 refreshToken: tokenResponse.refreshToken,
                 clientID: clientID,
                 expiresAt: tokenResponse.expiresAt
             ))
-            do {
-                try self.tokenStore.saveRefreshToken(tokenResponse.refreshToken)
-            } catch {
-                self.logger.log(.error, "Keychain refresh token save failed. Token stored in file only.")
-            }
         }, openAuthorizationURL: { redirectURI in
             guard let authorizationURL = try? SpotifyAuthorizationRequest.authorizationURL(
                 clientID: clientID,

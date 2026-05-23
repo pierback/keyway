@@ -202,20 +202,35 @@ struct SpotifyConnectBridge: Sendable {
         var request = URLRequest(url: components.url!)
         request.httpMethod = "PUT"
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        var didRefreshAccessToken = false
 
-        var (_, response) = try await urlSession.data(for: request)
-        if let http = response as? HTTPURLResponse,
-           http.statusCode == 401 || http.statusCode == 403 {
-            let refreshedAccessToken = try await projectAccessTokenProvider.refreshAccessTokenAfterAuthFailure()
-            request.setValue("Bearer \(refreshedAccessToken)", forHTTPHeaderField: "Authorization")
-            (_, response) = try await urlSession.data(for: request)
+        for attempt in 0 ... Self.maxRateLimitRetries {
+            let (_, response) = try await urlSession.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw SpotifyVolumeWriteError.spotifyHTTPStatus(-1, "Spotify volume request returned a non-HTTP response.")
+            }
+
+            if http.statusCode == 429, attempt < Self.maxRateLimitRetries {
+                let retryAfter = http.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init) ?? 1
+                try await Task.sleep(nanoseconds: UInt64(min(retryAfter, 5) * 1_000_000_000))
+                continue
+            }
+
+            if (http.statusCode == 401 || http.statusCode == 403), !didRefreshAccessToken {
+                let refreshedAccessToken = try await projectAccessTokenProvider.refreshAccessTokenAfterAuthFailure()
+                request.setValue("Bearer \(refreshedAccessToken)", forHTTPHeaderField: "Authorization")
+                didRefreshAccessToken = true
+                continue
+            }
+
+            guard http.statusCode == 204 || (200 ..< 300).contains(http.statusCode) else {
+                throw SpotifyVolumeWriteError.spotifyHTTPStatus(http.statusCode, "Spotify volume request failed.")
+            }
+
+            return
         }
-        guard let http = response as? HTTPURLResponse,
-              http.statusCode == 204 || (200 ..< 300).contains(http.statusCode)
-        else {
-            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
-            throw SpotifyVolumeWriteError.spotifyHTTPStatus(statusCode, "Spotify volume request failed.")
-        }
+
+        throw SpotifyVolumeWriteError.spotifyHTTPStatus(429, "Spotify volume request rate limited.")
     }
 
     private func activeDeviceWaiter() -> SpotifyActiveDeviceWaiter {

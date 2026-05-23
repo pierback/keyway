@@ -5,7 +5,47 @@ import Testing
 @Suite(.serialized)
 struct SpotifyAuthCoordinatorTests {
     @Test
-    func loginWritesProjectTokenEvenWhenKeychainSaveFails() async throws {
+    func loginWritesProjectTokenWhenKeychainSaveSucceeds() async throws {
+        let applicationSupportDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sonos-handoff-auth-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: applicationSupportDirectory)
+        }
+
+        let callbackCapture = CallbackCapture()
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [SuccessfulSpotifyTokenURLProtocol.self]
+        let urlSession = URLSession(configuration: sessionConfiguration)
+
+        let coordinator = SpotifyAuthCoordinator(
+            tokenStore: MockTokenStore(token: nil),
+            configStore: MockConfigStore(config: AppConfig(spotifyClientID: "client-id")),
+            urlSession: urlSession,
+            applicationSupportDirectory: applicationSupportDirectory,
+            browserOpener: { authorizationURL in
+                Task {
+                    await openSpotifyCallback(from: authorizationURL, callbackCapture: callbackCapture)
+                }
+                return true
+            }
+        )
+
+        try await coordinator.login()
+
+        let tokenURL = applicationSupportDirectory.appendingPathComponent("project-webapi-token.json")
+        let tokenData = try Data(contentsOf: tokenURL)
+        let token = try #require(JSONSerialization.jsonObject(with: tokenData) as? [String: Any])
+        #expect(token["access_token"] as? String == "access-token")
+        #expect(token["refresh_token"] as? String == "refresh-token")
+        #expect(token["client_id"] as? String == "client-id")
+        #expect(token["expires_at"] as? Int != nil)
+
+        let callbackBody = await callbackCapture.waitForBody()
+        #expect(callbackBody?.contains("Spotify sign-in completed.") == true)
+    }
+
+    @Test
+    func loginAbortsBeforeProjectTokenWhenKeychainSaveFails() async throws {
         let applicationSupportDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("sonos-handoff-auth-\(UUID().uuidString)", isDirectory: true)
         defer {
@@ -30,18 +70,15 @@ struct SpotifyAuthCoordinatorTests {
             }
         )
 
-        try await coordinator.login()
+        await #expect(throws: SpotifyAuthError.refreshTokenKeychainSaveFailed) {
+            try await coordinator.login()
+        }
 
         let tokenURL = applicationSupportDirectory.appendingPathComponent("project-webapi-token.json")
-        let tokenData = try Data(contentsOf: tokenURL)
-        let token = try #require(JSONSerialization.jsonObject(with: tokenData) as? [String: Any])
-        #expect(token["access_token"] as? String == "access-token")
-        #expect(token["refresh_token"] as? String == "refresh-token")
-        #expect(token["client_id"] as? String == "client-id")
-        #expect(token["expires_at"] as? Int != nil)
+        #expect(!FileManager.default.fileExists(atPath: tokenURL.path))
 
         let callbackBody = await callbackCapture.waitForBody()
-        #expect(callbackBody?.contains("Spotify sign-in completed.") == true)
+        #expect(callbackBody?.contains("Spotify sign-in failed while saving the token.") == true)
     }
 }
 

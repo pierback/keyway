@@ -62,6 +62,7 @@ struct SpotifyDesktopCredentialProviderTests {
         #expect(credential.token.accessToken == "new-access-token")
         #expect(savedToken.accessToken == "new-access-token")
         #expect(savedToken.refreshToken == "new-refresh-token")
+        #expect(try Self.desktopTokenFilePermissions(in: directory) == 0o600)
         #expect(DesktopCredentialURLProtocol.recordedRequests().count == 1)
     }
 
@@ -117,6 +118,13 @@ struct SpotifyDesktopCredentialProviderTests {
             [String: ConnectDesktopToken].self,
             from: Data(contentsOf: directory.appendingPathComponent("spotify-desktop-connect-tokens.json"))
         )
+    }
+
+    private static func desktopTokenFilePermissions(in directory: URL) throws -> Int? {
+        let attributes = try FileManager.default.attributesOfItem(
+            atPath: directory.appendingPathComponent("spotify-desktop-connect-tokens.json").path
+        )
+        return attributes[.posixPermissions] as? Int
     }
 }
 

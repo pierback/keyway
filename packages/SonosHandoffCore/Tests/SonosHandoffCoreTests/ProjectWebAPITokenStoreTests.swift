@@ -24,6 +24,8 @@ struct ProjectWebAPITokenStoreTests {
             clientID: "client-id",
             expiresAt: 123
         ))
+        let attributes = try FileManager.default.attributesOfItem(atPath: store.tokenURL.path)
+        #expect(attributes[.posixPermissions] as? Int == 0o600)
         #expect(store.hasCompleteToken())
 
         try store.delete()

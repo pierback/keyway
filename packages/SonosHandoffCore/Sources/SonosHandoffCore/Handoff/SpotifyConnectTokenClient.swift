@@ -9,6 +9,7 @@ struct SpotifyRefreshedAccessToken: Sendable {
 struct SpotifyConnectTokenClient: Sendable {
     static let desktopClientID = "65b708073fc0480ea92a077233ca87bd"
     static let sonosClientID = "9b377073ea334637b1406f329ce005de"
+    private static let maxRateLimitRetries = 2
 
     private let urlSession: URLSession
 
@@ -77,24 +78,39 @@ struct SpotifyConnectTokenClient: Sendable {
     }
 
     private func spotifyJSON(_ request: URLRequest) async throws -> [String: Any] {
-        let (data, response) = try await urlSession.data(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw ConnectHandoffError(.unsupported, "Spotify returned a non-HTTP response.")
+        for attempt in 0 ... Self.maxRateLimitRetries {
+            let (data, response) = try await urlSession.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw ConnectHandoffError(.unsupported, "Spotify returned a non-HTTP response.")
+            }
+
+            if http.statusCode == 429, attempt < Self.maxRateLimitRetries {
+                try await Self.sleepForRateLimitRetry(http)
+                continue
+            }
+
+            guard let payload = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                if SonosRuntimeSupport.isSpotifyAuthFailure(statusCode: http.statusCode, payload: nil) {
+                    throw ConnectHandoffError(.authRequired, "Spotify authentication failed (HTTP \(http.statusCode)).")
+                }
+                throw ConnectHandoffError(.unsupported, "Spotify returned an invalid response (HTTP \(http.statusCode)).")
+            }
+
+            guard (200 ..< 300).contains(http.statusCode) else {
+                if SonosRuntimeSupport.isSpotifyAuthFailure(statusCode: http.statusCode, payload: payload) {
+                    throw ConnectHandoffError(.authRequired, "Spotify authentication failed (HTTP \(http.statusCode)).")
+                }
+                throw ConnectHandoffError(.unsupported, "Spotify request failed (HTTP \(http.statusCode)).")
+            }
+
+            return payload
         }
 
-        guard let payload = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            if SonosRuntimeSupport.isSpotifyAuthFailure(statusCode: http.statusCode, payload: nil) {
-                throw ConnectHandoffError(.authRequired, "Spotify authentication failed (HTTP \(http.statusCode)).")
-            }
-            throw ConnectHandoffError(.unsupported, "Spotify returned an invalid response (HTTP \(http.statusCode)).")
-        }
+        throw ConnectHandoffError(.unsupported, "Spotify request rate limited.")
+    }
 
-        guard (200 ..< 300).contains(http.statusCode) else {
-            if SonosRuntimeSupport.isSpotifyAuthFailure(statusCode: http.statusCode, payload: payload) {
-                throw ConnectHandoffError(.authRequired, "Spotify authentication failed (HTTP \(http.statusCode)).")
-            }
-            throw ConnectHandoffError(.unsupported, "Spotify request failed (HTTP \(http.statusCode)).")
-        }
-        return payload
+    private static func sleepForRateLimitRetry(_ response: HTTPURLResponse) async throws {
+        let retryAfter = response.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init) ?? 1
+        try await Task.sleep(nanoseconds: UInt64(min(retryAfter, 5) * 1_000_000_000))
     }
 }

@@ -8,7 +8,9 @@ import SwiftUI
 struct SettingsFeature: View {
     static let menuTitle = "Settings"
     static let preferredWindowSize = CGSize(width: 720, height: 680)
-    private static let callbackURLText = "http://127.0.0.1:43821/callback"
+    private static let callbackURLText = SpotifyAuthCoordinator.callbackPorts
+        .map { "http://\(SpotifyAuthCoordinator.callbackHost):\($0)\(SpotifyAuthCoordinator.callbackPath)" }
+        .joined(separator: "\n")
     private static let panelCornerRadius: CGFloat = 12
     private let accessibilitySettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
     private let notificationSettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.notifications")!
@@ -293,6 +295,7 @@ struct SettingsFeature: View {
                                 .textFieldStyle(.plain)
                                 .padding(.horizontal, 10)
                                 .frame(height: 30)
+                                .accessibilityIdentifier("settings.spotify.clientID")
                                 .background {
                                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                                         .fill(Color.primary.opacity(0.06))
@@ -307,6 +310,7 @@ struct SettingsFeature: View {
                             }
                             .controlSize(.small)
                             .disabled(isSigningIn)
+                            .accessibilityIdentifier("settings.spotify.saveClientID")
                         }
 
                         HStack(spacing: 5) {
@@ -314,8 +318,8 @@ struct SettingsFeature: View {
                                 .font(.system(size: 10, weight: .medium))
                             Text(Self.callbackURLText)
                                 .font(.system(size: 11, design: .monospaced))
-                                .lineLimit(1)
-                                .truncationMode(.middle)
+                                .lineLimit(5)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)

@@ -52,6 +52,10 @@ public struct ProjectWebAPIToken: Codable, Equatable, Sendable {
     }
 }
 
+public enum SensitiveFileError: Error, Equatable, Sendable {
+    case fileTooLarge
+}
+
 public struct ProjectWebAPITokenStore: Sendable {
     public let tokenURL: URL
 
@@ -59,32 +63,49 @@ public struct ProjectWebAPITokenStore: Sendable {
         self.tokenURL = applicationSupportDirectory.appendingPathComponent("project-webapi-token.json")
     }
 
-    static let maxTokenFileSize = 1_048_576
+    public static let maxTokenFileSize = 1_048_576
+
+    public static func sensitiveFileData(at url: URL, maxSize: Int = maxTokenFileSize) throws -> Data {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        if let fileSize = attributes[.size] as? Int, fileSize > maxSize {
+            throw SensitiveFileError.fileTooLarge
+        }
+
+        return try Data(contentsOf: url)
+    }
+
+    public static func writeSensitiveFileData(_ data: Data, to url: URL) throws {
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try data.write(to: url, options: .atomic)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: url.path
+        )
+    }
 
     public func load() throws -> ProjectWebAPIToken? {
         guard FileManager.default.fileExists(atPath: tokenURL.path) else {
             return nil
         }
 
-        let attributes = try FileManager.default.attributesOfItem(atPath: tokenURL.path)
-        if let fileSize = attributes[.size] as? Int, fileSize > Self.maxTokenFileSize {
+        let data: Data
+        do {
+            data = try Self.sensitiveFileData(at: tokenURL)
+        } catch SensitiveFileError.fileTooLarge {
             return nil
+        } catch {
+            throw error
         }
 
-        return try JSONDecoder().decode(ProjectWebAPIToken.self, from: Data(contentsOf: tokenURL))
+        return try JSONDecoder().decode(ProjectWebAPIToken.self, from: data)
     }
 
     public func save(_ token: ProjectWebAPIToken) throws {
-        try FileManager.default.createDirectory(
-            at: tokenURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
         let data = try JSONEncoder.projectWebAPITokenFile.encode(token)
-        try data.write(to: tokenURL, options: .atomic)
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o600],
-            ofItemAtPath: tokenURL.path
-        )
+        try Self.writeSensitiveFileData(data, to: tokenURL)
     }
 
     public func delete() throws {

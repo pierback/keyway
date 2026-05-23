@@ -98,6 +98,39 @@ struct SpotifyConnectBridgeTests {
     }
 
     @Test
+    func volumeMirrorRetriesRateLimitedVolumeWrite() async throws {
+        let applicationSupportDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sonos-handoff-bridge-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: applicationSupportDirectory)
+            SpotifyBridgeURLProtocol.reset()
+        }
+
+        try FileManager.default.createDirectory(at: applicationSupportDirectory, withIntermediateDirectories: true)
+        let tokenStore = ProjectWebAPITokenStore(applicationSupportDirectory: applicationSupportDirectory)
+        try tokenStore.save(ProjectWebAPIToken(
+            accessToken: "cached-access-token",
+            refreshToken: "refresh-token",
+            clientID: "client-id",
+            expiresAt: Int(Date().timeIntervalSince1970) + 3600
+        ))
+        SpotifyBridgeURLProtocol.setVolumeResponses([.rateLimited, .emptySuccess])
+
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [SpotifyBridgeURLProtocol.self]
+        let bridge = SpotifyConnectBridge(
+            loginID: nil,
+            appSupport: applicationSupportDirectory,
+            urlSession: URLSession(configuration: sessionConfiguration)
+        )
+
+        await bridge.setActiveDeviceVolumeIfNeeded(roomName: "Port", volume: 42)
+
+        let urls = SpotifyBridgeURLProtocol.recordedURLs()
+        #expect(urls.filter { $0.path == "/v1/me/player/volume" }.count == 2)
+    }
+
+    @Test
     func volumeMirrorWaitsForTransferredRoomToBecomeActiveDevice() async throws {
         let applicationSupportDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("sonos-handoff-bridge-\(UUID().uuidString)", isDirectory: true)
@@ -328,6 +361,8 @@ private final class SpotifyBridgeURLProtocol: URLProtocol, @unchecked Sendable {
 
         static let noActivePlayback = PlayerResponse(statusCode: 204, body: "")
         static let unauthorized = PlayerResponse(statusCode: 401, body: #"{"error":"invalid_token"}"#)
+        static let rateLimited = PlayerResponse(statusCode: 429, body: #"{"error":"rate_limited"}"#)
+        static let emptySuccess = PlayerResponse(statusCode: 204, body: "")
     }
 
     private static let recorder = SpotifyBridgeURLRecorder()
@@ -338,6 +373,10 @@ private final class SpotifyBridgeURLProtocol: URLProtocol, @unchecked Sendable {
 
     static func setPlayerResponses(_ responses: [PlayerResponse]) {
         recorder.setPlayerResponses(responses)
+    }
+
+    static func setVolumeResponses(_ responses: [PlayerResponse]) {
+        recorder.setVolumeResponses(responses)
     }
 
     static func recordedURLs() -> [URL] {
@@ -365,7 +404,8 @@ private final class SpotifyBridgeURLProtocol: URLProtocol, @unchecked Sendable {
             let response = Self.recorder.nextPlayerResponse()
             respond(statusCode: response.statusCode, body: response.body)
         case ("api.spotify.com", "/v1/me/player/volume"):
-            respond(statusCode: 204, body: "")
+            let response = Self.recorder.nextVolumeResponse()
+            respond(statusCode: response.statusCode, body: response.body)
         case ("accounts.spotify.com", "/api/token"):
             respond(
                 statusCode: 200,
@@ -383,7 +423,9 @@ private final class SpotifyBridgeURLProtocol: URLProtocol, @unchecked Sendable {
             url: request.url!,
             statusCode: statusCode,
             httpVersion: nil,
-            headerFields: ["Content-Type": "application/json"]
+            headerFields: statusCode == 429
+                ? ["Content-Type": "application/json", "Retry-After": "0"]
+                : ["Content-Type": "application/json"]
         )!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: Data(body.utf8))
@@ -395,17 +437,25 @@ private final class SpotifyBridgeURLRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var urls: [URL] = []
     private var playerResponses: [SpotifyBridgeURLProtocol.PlayerResponse] = []
+    private var volumeResponses: [SpotifyBridgeURLProtocol.PlayerResponse] = []
 
     func reset() {
         lock.lock()
         urls = []
         playerResponses = []
+        volumeResponses = []
         lock.unlock()
     }
 
     func setPlayerResponses(_ responses: [SpotifyBridgeURLProtocol.PlayerResponse]) {
         lock.lock()
         playerResponses = responses
+        lock.unlock()
+    }
+
+    func setVolumeResponses(_ responses: [SpotifyBridgeURLProtocol.PlayerResponse]) {
+        lock.lock()
+        volumeResponses = responses
         lock.unlock()
     }
 
@@ -430,5 +480,16 @@ private final class SpotifyBridgeURLRecorder: @unchecked Sendable {
         }
 
         return playerResponses.removeFirst()
+    }
+
+    func nextVolumeResponse() -> SpotifyBridgeURLProtocol.PlayerResponse {
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard !volumeResponses.isEmpty else {
+            return .emptySuccess
+        }
+
+        return volumeResponses.removeFirst()
     }
 }

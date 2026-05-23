@@ -4,6 +4,7 @@ import Network
 enum SpotifyAuthCallbackServer {
     static let host = "127.0.0.1"
     static let port: UInt16 = 43821
+    static let ports: [UInt16] = Array(43821 ... 43825)
     static let path = "/callback"
     static let timeoutSeconds = 120
 
@@ -19,12 +20,10 @@ enum SpotifyAuthCallbackServer {
         let params = NWParameters.tcp
         params.requiredInterfaceType = .loopback
 
-        guard let nwPort = NWEndpoint.Port(rawValue: port),
-              let listener = try? NWListener(using: params, on: nwPort)
+        guard let (listener, listenerRedirectURI) = listener(using: params)
         else {
             throw SpotifyAuthError.callbackListenerFailed
         }
-        let listenerRedirectURI = redirectURI
 
         return try await withCheckedThrowingContinuation { continuation in
             let queue = DispatchQueue(label: "keyway.spotify-auth")
@@ -67,6 +66,20 @@ enum SpotifyAuthCallbackServer {
                 listener.cancel()
             }
         }
+    }
+
+    private static func listener(using params: NWParameters) -> (NWListener, URL)? {
+        for candidatePort in ports {
+            guard let nwPort = NWEndpoint.Port(rawValue: candidatePort),
+                  let listener = try? NWListener(using: params, on: nwPort),
+                  let redirectURI = URL(string: "http://\(host):\(candidatePort)\(path)")
+            else {
+                continue
+            }
+            return (listener, redirectURI)
+        }
+
+        return nil
     }
 }
 

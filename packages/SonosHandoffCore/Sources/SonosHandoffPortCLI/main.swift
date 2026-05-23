@@ -16,7 +16,6 @@ do {
 
 private let targetName = targetArgument() ?? "Port"
 private let command = commandArgument()
-private let explicitHost = optionValue("--host")
 private let explicitLoginID = optionValue("--login-id")
 private let desktopClientID = "65b708073fc0480ea92a077233ca87bd"
 private let sonosClientID = "9b377073ea334637b1406f329ce005de"
@@ -127,7 +126,6 @@ enum CLIError: Error, CustomStringConvertible {
     case sonosResponse(String)
     case spotifyResponse(String)
     case verificationFailed(String)
-    case invalidHost(String)
 
     var description: String {
         switch self {
@@ -139,8 +137,6 @@ enum CLIError: Error, CustomStringConvertible {
             return message
         case .sonosTargetNotFound(let room):
             return "Sonos target not found: \(room)"
-        case .invalidHost(let host):
-            return "Invalid host format: \(host)"
         }
     }
 }
@@ -224,7 +220,6 @@ do {
 func resolvedCommandTarget(needsSpotifyMetadata: Bool) async throws -> SonosTarget {
     let target = try await resolveTarget(
         named: targetName,
-        explicitHost: explicitHost,
         needsSpotifyMetadata: needsSpotifyMetadata
     )
     if let deviceID = target.deviceID {
@@ -303,53 +298,40 @@ func printSpotifyState(_ state: PlayerState) {
 
 func resolveTarget(
     named roomName: String,
-    explicitHost: String?,
     needsSpotifyMetadata: Bool = true
 ) async throws -> SonosTarget {
     let host: String
-    if let explicitHost {
-        let trimmed = explicitHost.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty,
-              !trimmed.contains("/"),
-              !trimmed.contains(" "),
-              URLComponents(string: "http://\(trimmed):1400")?.host == trimmed
-        else {
-            throw CLIError.invalidHost(trimmed)
+    let roomName = roomName.trimmingCharacters(in: .whitespacesAndNewlines)
+    let browse = try runCommand(
+        "/usr/bin/dns-sd",
+        ["-B", "_sonos._tcp", "local."],
+        timeoutSeconds: 5,
+        stopWhen: { output in
+            output
+                .split(separator: "\n")
+                .contains { sonosInstance(fromBrowseLine: String($0), matchingRoomName: roomName) != nil }
         }
-        host = trimmed
-    } else {
-        let roomName = roomName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let browse = try runCommand(
-            "/usr/bin/dns-sd",
-            ["-B", "_sonos._tcp", "local."],
-            timeoutSeconds: 5,
-            stopWhen: { output in
-                output
-                    .split(separator: "\n")
-                    .contains { sonosInstance(fromBrowseLine: String($0), matchingRoomName: roomName) != nil }
-            }
-        )
-        guard let instance = browse.output
-            .split(separator: "\n")
-            .compactMap({ line -> String? in
-                sonosInstance(fromBrowseLine: String(line), matchingRoomName: roomName)
-            })
-            .first
-        else {
-            throw CLIError.sonosTargetNotFound(roomName)
-        }
-
-        let resolve = try runCommand(
-            "/usr/bin/dns-sd",
-            ["-L", instance, "_sonos._tcp", "local."],
-            timeoutSeconds: 5,
-            stopWhen: { firstMatch(#"location=http://([^:/\s]+):1400/"#, in: $0) != nil }
-        )
-        guard let resolvedHost = firstMatch(#"location=http://([^:/\s]+):1400/"#, in: resolve.output) else {
-            throw CLIError.sonosResponse("Could not resolve host for \(instance)")
-        }
-        host = resolvedHost
+    )
+    guard let instance = browse.output
+        .split(separator: "\n")
+        .compactMap({ line -> String? in
+            sonosInstance(fromBrowseLine: String(line), matchingRoomName: roomName)
+        })
+        .first
+    else {
+        throw CLIError.sonosTargetNotFound(roomName)
     }
+
+    let resolve = try runCommand(
+        "/usr/bin/dns-sd",
+        ["-L", instance, "_sonos._tcp", "local."],
+        timeoutSeconds: 5,
+        stopWhen: { firstMatch(#"location=http://([^:/\s]+):1400/"#, in: $0) != nil }
+    )
+    guard let resolvedHost = firstMatch(#"location=http://([^:/\s]+):1400/"#, in: resolve.output) else {
+        throw CLIError.sonosResponse("Could not resolve host for \(instance)")
+    }
+    host = resolvedHost
 
     guard needsSpotifyMetadata else {
         return SonosTarget(roomName: roomName, host: host, version: nil, deviceID: nil, publicKey: nil)
@@ -542,7 +524,10 @@ func refreshedDesktopCredential() async throws -> DesktopCredential {
         throw CLIError.missingToken("Missing Spotify desktop-connect token at \(desktopTokenURL.path). Run the one-time Spotify Desktop streaming auth first.")
     }
 
-    var tokens = try JSONDecoder().decode([String: DesktopToken].self, from: Data(contentsOf: desktopTokenURL))
+    var tokens = try JSONDecoder().decode(
+        [String: DesktopToken].self,
+        from: ProjectWebAPITokenStore.sensitiveFileData(at: desktopTokenURL)
+    )
     let selectedKey: String?
     if let explicitLoginID {
         selectedKey = tokens.keys.first { $0.contains("/\(desktopClientID)/\(explicitLoginID)") }
@@ -584,7 +569,7 @@ func refreshedDesktopCredential() async throws -> DesktopCredential {
     }
     token.expiresAt = Int(Date().timeIntervalSince1970) + (payload["expires_in"] as? Int ?? 3600)
     tokens[key] = token
-    try JSONEncoder.pretty.encode(tokens).write(to: desktopTokenURL)
+    try ProjectWebAPITokenStore.writeSensitiveFileData(JSONEncoder.pretty.encode(tokens), to: desktopTokenURL)
     return DesktopCredential(loginID: loginID, token: token)
 }
 
@@ -899,7 +884,7 @@ func positionalArgumentsAfterCommand() -> [String] {
 }
 
 func commandLineValuesExcludingOptions() -> [String] {
-    let optionsWithValues = Set(["--host", "--login-id", "--step", "--volume"])
+    let optionsWithValues = Set(["--login-id", "--step", "--volume"])
     var values: [String] = []
     var shouldSkipNext = false
 
@@ -933,23 +918,23 @@ func printUsage() {
     print(
         """
         Usage:
-          sonos-handoff-port [handoff] [room] [--host HOST] [--login-id LOGIN_ID]
+          sonos-handoff-port [handoff] [room] [--login-id LOGIN_ID]
           sonos-handoff-port playback-status
-          sonos-handoff-port sonos-status [room] [--host HOST]
-          sonos-handoff-port volume-status [room] [--host HOST]
-          sonos-handoff-port volume-up [room] [--step 5...25] [--host HOST]
-          sonos-handoff-port volume-down [room] [--step 5...25] [--host HOST]
-          sonos-handoff-port volume-set [room] --volume 0...100 [--host HOST]
-          sonos-handoff-port volume-mute [room] [--host HOST]
-          sonos-handoff-port volume-mute-on [room] [--host HOST]
-          sonos-handoff-port volume-mute-off [room] [--host HOST]
-          sonos-handoff-port volume-zero-muted [room] [--host HOST]
+          sonos-handoff-port sonos-status [room]
+          sonos-handoff-port volume-status [room]
+          sonos-handoff-port volume-up [room] [--step 5...25]
+          sonos-handoff-port volume-down [room] [--step 5...25]
+          sonos-handoff-port volume-set [room] --volume 0...100
+          sonos-handoff-port volume-mute [room]
+          sonos-handoff-port volume-mute-on [room]
+          sonos-handoff-port volume-mute-off [room]
+          sonos-handoff-port volume-zero-muted [room]
         """
     )
 }
 
 func validateOptions() throws {
-    let optionsWithValues = Set(["--host", "--login-id", "--step", "--volume"])
+    let optionsWithValues = Set(["--login-id", "--step", "--volume"])
     let flags = Set(["--help", "-h"])
     let arguments = Array(CommandLine.arguments.dropFirst())
     var shouldSkipNext = false
