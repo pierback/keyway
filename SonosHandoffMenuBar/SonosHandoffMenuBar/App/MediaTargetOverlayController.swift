@@ -105,6 +105,9 @@ final class MediaTargetOverlayController {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
+        panel.onFocusLost = { [weak self] in
+            self?.close()
+        }
         panel.onKeyDown = { [weak self] event in
             self?.handleKeyDown(event) ?? false
         }
@@ -270,12 +273,16 @@ final class MediaTargetOverlayController {
 
     private func panelSize() -> NSSize {
         let visibleRows = min(model.targets.count, 6)
-        let rowHeight: CGFloat = 55
+        let rowHeight: CGFloat = 52
+        let rowSpacing: CGFloat = 3
         let topPad: CGFloat = 14
-        let bottomPad: CGFloat = model.expanded ? 0 : 16
-        let listHeight = topPad + CGFloat(max(1, visibleRows)) * rowHeight + bottomPad
+        let bottomPad: CGFloat = model.expanded ? 0 : 8
+        let listHeight = topPad
+            + CGFloat(max(1, visibleRows)) * rowHeight
+            + CGFloat(max(0, visibleRows - 1)) * rowSpacing
+            + bottomPad
         let expandedHeight: CGFloat = model.expanded ? 120 : 0
-        let footerHeight: CGFloat = 44
+        let footerHeight: CGFloat = 36
         let height = min(600, listHeight + expandedHeight + footerHeight)
 
         return NSSize(width: 680, height: height)
@@ -293,6 +300,7 @@ final class MediaTargetOverlayController {
 @MainActor
 private final class MediaTargetOverlayPanel: NSPanel {
     var onKeyDown: ((NSEvent) -> Bool)?
+    var onFocusLost: (() -> Void)?
 
     override var canBecomeKey: Bool {
         true
@@ -307,6 +315,11 @@ private final class MediaTargetOverlayPanel: NSPanel {
             return
         }
         super.keyDown(with: event)
+    }
+
+    override func resignKey() {
+        super.resignKey()
+        onFocusLost?()
     }
 
 }
@@ -357,18 +370,39 @@ private struct MediaTargetOverlayView: View {
     }
 
     private var targetList: some View {
-        ScrollView {
-            LazyVStack(spacing: 3) {
-                ForEach(Array(model.targets.enumerated()), id: \.element.id) { index, target in
-                    targetRow(index: index, target: target)
+        Group {
+            if model.targets.count > 6 {
+                ScrollView {
+                    targetRows
                 }
+                .scrollIndicators(.hidden)
+                .frame(height: targetListHeight)
+            } else {
+                targetRows
             }
-            .padding(.horizontal, 12)
-            .padding(.top, 14)
-            .padding(.bottom, model.expanded ? 0 : 16)
         }
-        .scrollIndicators(.hidden)
         .accessibilityIdentifier("mediaTargetOverlay.targetList")
+    }
+
+    private var targetRows: some View {
+        LazyVStack(spacing: 3) {
+            ForEach(Array(model.targets.enumerated()), id: \.element.id) { index, target in
+                targetRow(index: index, target: target)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 14)
+        .padding(.bottom, model.expanded ? 0 : 8)
+    }
+
+    private var targetListHeight: CGFloat {
+        let visibleRows = min(model.targets.count, 6)
+        let topPad: CGFloat = 14
+        let bottomPad: CGFloat = model.expanded ? 0 : 8
+        return topPad
+            + CGFloat(max(1, visibleRows)) * 52
+            + CGFloat(max(0, visibleRows - 1)) * 3
+            + bottomPad
     }
 
     private func targetRow(index: Int, target: MediaRemoteTarget) -> some View {
@@ -552,7 +586,7 @@ private struct MediaTargetOverlayView: View {
     }
 
     private var footer: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 8) {
             footerHint("↑↓", "Select")
             footerHint("Enter", "Route")
             footerHint("Esc", "Close")
@@ -564,20 +598,20 @@ private struct MediaTargetOverlayView: View {
             }
             Spacer()
         }
-        .padding(.horizontal, 20)
-        .frame(height: 42)
+        .padding(.horizontal, 16)
+        .frame(height: 36)
     }
 
     private func footerHint(_ key: String, _ label: String) -> some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 4) {
             Text(key)
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
                 .foregroundStyle(.primary)
-                .padding(.horizontal, 6)
-                .frame(height: 22)
+                .padding(.horizontal, 5)
+                .frame(height: 20)
                 .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
             Text(label)
-                .font(.system(size: 11))
+                .font(.system(size: 10))
                 .foregroundStyle(.secondary)
         }
     }

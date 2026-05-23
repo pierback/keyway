@@ -90,6 +90,12 @@ final class MediaTransportActionController {
     }
 
     func route(command: MediaRemoteTransportCommand) {
+        if command == .playPause || command == .pause {
+            if !showChooserImmediately(command: command) {
+                showChooser(command: command)
+            }
+            return
+        }
         Task { [weak self] in
             await self?.routeAfterRefreshingSnapshot(command: command)
         }
@@ -121,8 +127,12 @@ final class MediaTransportActionController {
         }
 
         if let decision = automaticTarget(from: targets) {
+            let kind: MediaRouteStatusKind = targets.count > 1
+                ? .chooser
+                : statusKind(for: decision.reason)
+
             return MediaRouteStatus(
-                kind: statusKind(for: decision.reason),
+                kind: kind,
                 target: decision.target,
                 targetCount: targets.count
             )
@@ -133,6 +143,26 @@ final class MediaTransportActionController {
             target: mediaRemoteController.activeTarget ?? targets.first,
             targetCount: targets.count
         )
+    }
+
+    private func showChooserImmediately(command: MediaRemoteTransportCommand) -> Bool {
+        guard mediaRemoteController.canRouteCommands,
+              !mediaRemoteController.targets.isEmpty,
+              mediaRemoteController.hasFreshSnapshot(maxAge: Self.chooserSnapshotMaxAge)
+        else {
+            return false
+        }
+
+        mediaRemoteController.refreshSnapshot()
+
+        let targets = sortedTargets(mediaRemoteController.targets)
+        guard !targets.isEmpty else {
+            return false
+        }
+
+        showChooserOverlay(command: command, targets: targets)
+
+        return true
     }
 
     private func routeAfterRefreshingSnapshot(command: MediaRemoteTransportCommand) async {
@@ -219,8 +249,9 @@ final class MediaTransportActionController {
             pinnedTargetID: preferenceStore.pinnedTargetID,
             onChoose: { [weak self] target, command in
                 guard let self else { return }
-                self.selectTarget(target)
+
                 guard let command else {
+                    self.selectTarget(target)
                     self.mediaRemoteController.refreshSnapshot()
                     StatusHUD.shared.finish(
                         title: "Selected \(target.appName)",
@@ -229,8 +260,16 @@ final class MediaTransportActionController {
                     )
                     return
                 }
-                Task { [weak self] in
-                    await self?.send(command: command, to: target, reason: .chooser)
+
+                if command == .playPause || command == .pause {
+                    Task { [weak self] in
+                        await self?.sendFromChooser(command: command, to: target)
+                    }
+                } else {
+                    self.selectTarget(target)
+                    Task { [weak self] in
+                        await self?.send(command: command, to: target, reason: .chooser)
+                    }
                 }
             },
             onPinToggle: { [weak self] target in
@@ -311,6 +350,26 @@ final class MediaTransportActionController {
         )
     }
 
+    private func sendFromChooser(command: MediaRemoteTransportCommand, to target: MediaRemoteTarget) async {
+        let sent = await mediaRemoteController.send(command: command, targetID: target.id)
+        guard sent else {
+            logger.error("MediaTransport chooser_failed command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public)")
+            StatusHUD.shared.finish(
+                title: "Media Command Failed",
+                message: "Keyway could not reach \(target.appName).",
+                dismissAfter: 2.2
+            )
+            return
+        }
+
+        logger.info("MediaTransport chooser command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public)")
+        StatusHUD.shared.finish(
+            title: "\(command.displayName) → \(target.appName)",
+            message: "Routed by chooser",
+            dismissAfter: 1.35
+        )
+    }
+
     private func selectTarget(_ target: MediaRemoteTarget) {
         selectedTargetID = target.id
         selectedTargetIdentity = target.routingIdentity
@@ -378,33 +437,22 @@ final class MediaTransportActionController {
 
     private func sortedTargets(_ targets: [MediaRemoteTarget]) -> [MediaRemoteTarget] {
         let activeTargetID = mediaRemoteController.activeTargetID
-        let selectedTargetID = selectedTargetID
-        let selectedTargetIdentity = selectedTargetIdentity
-        let hasExactSelectedTarget = selectedTargetID.map { id in
-            targets.contains { $0.id == id }
-        } ?? false
+
         return targets.sorted { lhs, rhs in
             if lhs.isCurrentlyPlaying != rhs.isCurrentlyPlaying {
                 return lhs.isCurrentlyPlaying
             }
-            if lhs.isCurrentlyPlaying,
-               rhs.isCurrentlyPlaying,
-               lhs.playbackFreshness != rhs.playbackFreshness {
-                return lhs.playbackFreshness > rhs.playbackFreshness
+            if lhs.isCurrentlyPlaying, rhs.isCurrentlyPlaying {
+                let lhsActive = lhs.id == activeTargetID
+                let rhsActive = rhs.id == activeTargetID
+                if lhsActive != rhsActive {
+                    return lhsActive
+                }
+                if lhs.playbackFreshness != rhs.playbackFreshness {
+                    return lhs.playbackFreshness > rhs.playbackFreshness
+                }
             }
-            if lhs.id == activeTargetID, rhs.id != activeTargetID {
-                return true
-            }
-            if rhs.id == activeTargetID, lhs.id != activeTargetID {
-                return false
-            }
-            let lhsSelected = lhs.id == selectedTargetID
-                || (!hasExactSelectedTarget && lhs.matchesRoutingIdentity(selectedTargetIdentity))
-            let rhsSelected = rhs.id == selectedTargetID
-                || (!hasExactSelectedTarget && rhs.matchesRoutingIdentity(selectedTargetIdentity))
-            if lhsSelected != rhsSelected {
-                return lhsSelected
-            }
+
             return lhs.appName.localizedCaseInsensitiveCompare(rhs.appName) == .orderedAscending
         }
     }
