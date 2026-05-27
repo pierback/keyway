@@ -203,7 +203,6 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
             rootView: KeywayControlCenterPopoverView(
                 playback: playback,
                 mediaRemoteController: environment.mediaRemoteController,
-                mediaTargetPreferenceStore: environment.mediaTargetPreferenceStore,
                 mediaTransportActions: environment.mediaTransportActionController,
                 openChooser: { [weak self] in self?.openChooserFromPopover() },
                 openSettings: { [weak self] in self?.openSettings() },
@@ -322,7 +321,6 @@ private struct KeywayControlCenterPopoverView: View {
     @ObservedObject private var playback: PlaybackSyncController
     @ObservedObject private var mediaRemoteController: MediaRemoteController
 
-    private let mediaTargetPreferenceStore: MediaTargetPreferenceStore
     private let mediaTransportActions: MediaTransportActionController
     private let openChooser: @MainActor () -> Void
     private let openSettings: @MainActor () -> Void
@@ -338,7 +336,6 @@ private struct KeywayControlCenterPopoverView: View {
     init(
         playback: PlaybackSyncController,
         mediaRemoteController: MediaRemoteController,
-        mediaTargetPreferenceStore: MediaTargetPreferenceStore,
         mediaTransportActions: MediaTransportActionController,
         openChooser: @escaping @MainActor () -> Void,
         openSettings: @escaping @MainActor () -> Void,
@@ -347,7 +344,6 @@ private struct KeywayControlCenterPopoverView: View {
     ) {
         self.playback = playback
         self.mediaRemoteController = mediaRemoteController
-        self.mediaTargetPreferenceStore = mediaTargetPreferenceStore
         self.mediaTransportActions = mediaTransportActions
         self.openChooser = openChooser
         self.openSettings = openSettings
@@ -561,11 +557,6 @@ private struct KeywayControlCenterPopoverView: View {
 
     private var currentPlaybackTarget: MediaRemoteTarget? {
         let targets = mediaRemoteController.targets
-        let routeStatus = mediaTransportActions.currentRouteStatus()
-        if routeStatus.kind == .selected, let selectedTarget = routeStatus.target {
-            return selectedTarget
-        }
-
         if let activeTarget = mediaRemoteController.activeTarget, activeTarget.isCurrentlyPlaying {
             return activeTarget
         }

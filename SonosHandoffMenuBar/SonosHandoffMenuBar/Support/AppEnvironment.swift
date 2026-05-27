@@ -22,7 +22,6 @@ struct AppEnvironment: @unchecked Sendable {
     let transferSuggestionNotifier: PlaybackTransferSuggestionNotifier
     let transferSuggestionPresenter: PlaybackTransferSuggestionPresenter
     let mediaRemoteController: MediaRemoteController
-    let mediaTargetPreferenceStore: MediaTargetPreferenceStore
     let mediaAudioControlController: MediaAudioControlController
     let mediaTargetOverlayController: MediaTargetOverlayController
     let mediaTransportActionController: MediaTransportActionController
@@ -51,7 +50,6 @@ struct AppEnvironment: @unchecked Sendable {
             notifier: transferSuggestionNotifier
         )
         let mediaRemoteController = MediaRemoteController()
-        let mediaTargetPreferenceStore = MediaTargetPreferenceStore()
         let mediaAudioControlController = MediaAudioControlController(
             volumeService: spotifyConnectService,
             outputSelection: outputSelection,
@@ -62,7 +60,6 @@ struct AppEnvironment: @unchecked Sendable {
         )
         let mediaTransportActionController = MediaTransportActionController(
             mediaRemoteController: mediaRemoteController,
-            preferenceStore: mediaTargetPreferenceStore,
             overlayController: mediaTargetOverlayController
         )
         let outputDirectory = PlaybackOutputDirectory(
@@ -91,7 +88,6 @@ struct AppEnvironment: @unchecked Sendable {
             transferSuggestionNotifier: transferSuggestionNotifier,
             transferSuggestionPresenter: transferSuggestionPresenter,
             mediaRemoteController: mediaRemoteController,
-            mediaTargetPreferenceStore: mediaTargetPreferenceStore,
             mediaAudioControlController: mediaAudioControlController,
             mediaTargetOverlayController: mediaTargetOverlayController,
             mediaTransportActionController: mediaTransportActionController

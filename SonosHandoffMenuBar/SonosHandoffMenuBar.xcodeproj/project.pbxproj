@@ -16,7 +16,6 @@
 		23405530239425FD3613DD03 /* MenuBarMotion.swift in Sources */ = {isa = PBXBuildFile; fileRef = A25A8D8F7B95D6C1BEF59851 /* MenuBarMotion.swift */; };
 		2BFE612A3AA945FE23C8E557 /* ShortcutRuntimeStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 410DF5AC26C68BD3B493DCAD /* ShortcutRuntimeStatus.swift */; };
 		30EE55F7D6CECDBC07724715 /* SettingsFeature.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B6AB1AA08CF21B9B58682CB /* SettingsFeature.swift */; };
-		32A7DFC49AFEB22966A2A90D /* MediaTargetPreferenceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 384DD0A7BDE696C45B73DD0B /* MediaTargetPreferenceStore.swift */; };
 		3A8FE7FA9337FD2CB6D12F0D /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65E1236D422BC76E6B7CFE1C /* AppEnvironment.swift */; };
 		3DA34228823FB3F5AEC64745 /* PlaybackVolumeTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5055E2D82D01B8518A623421 /* PlaybackVolumeTypes.swift */; };
 		3DAF2F323BC5A302FA1E5B41 /* ShortcutVolumeActionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1251832B2C6609B97934AC79 /* ShortcutVolumeActionController.swift */; };
@@ -56,7 +55,6 @@
 		21493B91873FC332D61E70C9 /* PlaybackOutputSelection.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlaybackOutputSelection.swift; sourceTree = "<group>"; };
 		232E7975FB9D47697C66C4AE /* MenuBarOutputSection.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MenuBarOutputSection.swift; sourceTree = "<group>"; };
 		2FB9323E60979A503FC8FADC /* MediaRemoteController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaRemoteController.swift; sourceTree = "<group>"; };
-		384DD0A7BDE696C45B73DD0B /* MediaTargetPreferenceStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaTargetPreferenceStore.swift; sourceTree = "<group>"; };
 		3D1A5E8BBD9DBAC713AD3EA1 /* PlaybackOperationGate.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlaybackOperationGate.swift; sourceTree = "<group>"; };
 		410DF5AC26C68BD3B493DCAD /* ShortcutRuntimeStatus.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ShortcutRuntimeStatus.swift; sourceTree = "<group>"; };
 		43B544FFE0F207E841E1CD3C /* MediaTransportActionController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaTransportActionController.swift; sourceTree = "<group>"; };
@@ -155,7 +153,6 @@
 				2FB9323E60979A503FC8FADC /* MediaRemoteController.swift */,
 				4CA95898D96465B1BB167371 /* MediaRemoteModels.swift */,
 				026F4D7324DA90383801C2E9 /* MediaTargetOverlayController.swift */,
-				384DD0A7BDE696C45B73DD0B /* MediaTargetPreferenceStore.swift */,
 				43B544FFE0F207E841E1CD3C /* MediaTransportActionController.swift */,
 				A25A8D8F7B95D6C1BEF59851 /* MenuBarMotion.swift */,
 				232E7975FB9D47697C66C4AE /* MenuBarOutputSection.swift */,
@@ -319,7 +316,6 @@
 				53403B738B4DF3C4591D3FDB /* MediaRemoteController.swift in Sources */,
 				D1A44DD9D35F5D3E9E2F9BD6 /* MediaRemoteModels.swift in Sources */,
 				C4E6672A069F1D9C1833A7FD /* MediaTargetOverlayController.swift in Sources */,
-				32A7DFC49AFEB22966A2A90D /* MediaTargetPreferenceStore.swift in Sources */,
 				E439D317ED98375ABFF960C8 /* MediaTransportActionController.swift in Sources */,
 				23405530239425FD3613DD03 /* MenuBarMotion.swift in Sources */,
 				8B7FECE74442F752CACB30E0 /* MenuBarOutputSection.swift in Sources */,

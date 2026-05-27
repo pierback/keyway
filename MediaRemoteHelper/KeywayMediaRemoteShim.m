@@ -7,7 +7,6 @@ typedef id (*MRMediaRemoteGetLocalOriginFn)(void);
 typedef void (*MRMediaRemoteGetNowPlayingInfoFn)(dispatch_queue_t queue, void (^completion)(NSDictionary *info));
 typedef void (*MRMediaRemoteGetNowPlayingClientFn)(dispatch_queue_t queue, void (^completion)(id client));
 typedef void (*MRMediaRemoteGetNowPlayingInfoForClientFn)(id client, id origin, dispatch_queue_t queue, void (^completion)(NSDictionary *info));
-typedef bool (*MRMediaRemoteSendCommandToClientFn)(unsigned int command, NSDictionary *options, id origin, id client, unsigned int sendOptionsNumber, unsigned int flags, id completion);
 typedef void (*MRMediaRemoteRegisterForNowPlayingNotificationsFn)(dispatch_queue_t queue);
 typedef NSString *(*MRNowPlayingClientGetBundleIdentifierFn)(id client);
 typedef NSString *(*MRNowPlayingClientGetParentAppBundleIdentifierFn)(id client);
@@ -21,6 +20,8 @@ typedef pid_t (*MRNowPlayingClientGetProcessIdentifierFn)(id client);
 @interface MRNowPlayingRequest : NSObject
 - (instancetype)initWithPlayerPath:(id)playerPath;
 - (void)requestNowPlayingInfoOnQueue:(dispatch_queue_t)queue completion:(void (^)(NSDictionary *info))completion;
+- (void)sendCommand:(unsigned int)command options:(NSDictionary *)options appOptions:(NSDictionary *)appOptions queue:(dispatch_queue_t)queue completion:(void (^)(NSError *error))completion;
+- (void)sendCommand:(unsigned int)command options:(NSDictionary *)options queue:(dispatch_queue_t)queue completion:(void (^)(NSError *error))completion;
 @end
 
 typedef struct {
@@ -29,7 +30,6 @@ typedef struct {
     MRMediaRemoteGetLocalOriginFn getLocalOrigin;
     MRMediaRemoteGetNowPlayingInfoFn getActiveInfo;
     MRMediaRemoteGetNowPlayingClientFn getActiveClient;
-    MRMediaRemoteSendCommandToClientFn sendCommandToClient;
     MRNowPlayingClientGetBundleIdentifierFn getBundleID;
     MRNowPlayingClientGetParentAppBundleIdentifierFn getParentBundleID;
     MRNowPlayingClientGetDisplayNameFn getDisplayName;
@@ -99,13 +99,12 @@ static BOOL KeywayLoadSymbols(KeywayMediaRemoteSymbols *symbols) {
     symbols->getLocalOrigin = (MRMediaRemoteGetLocalOriginFn)KeywayLoadFunction(symbols->bundle, CFSTR("MRMediaRemoteGetLocalOrigin"));
     symbols->getActiveInfo = (MRMediaRemoteGetNowPlayingInfoFn)KeywayLoadFunction(symbols->bundle, CFSTR("MRMediaRemoteGetNowPlayingInfo"));
     symbols->getActiveClient = (MRMediaRemoteGetNowPlayingClientFn)KeywayLoadFunction(symbols->bundle, CFSTR("MRMediaRemoteGetNowPlayingClient"));
-    symbols->sendCommandToClient = (MRMediaRemoteSendCommandToClientFn)KeywayLoadFunction(symbols->bundle, CFSTR("MRMediaRemoteSendCommandToClient"));
     symbols->getBundleID = (MRNowPlayingClientGetBundleIdentifierFn)KeywayLoadFunction(symbols->bundle, CFSTR("MRNowPlayingClientGetBundleIdentifier"));
     symbols->getParentBundleID = (MRNowPlayingClientGetParentAppBundleIdentifierFn)KeywayLoadFunction(symbols->bundle, CFSTR("MRNowPlayingClientGetParentAppBundleIdentifier"));
     symbols->getDisplayName = (MRNowPlayingClientGetDisplayNameFn)KeywayLoadFunction(symbols->bundle, CFSTR("MRNowPlayingClientGetDisplayName"));
     symbols->getPID = (MRNowPlayingClientGetProcessIdentifierFn)KeywayLoadFunction(symbols->bundle, CFSTR("MRNowPlayingClientGetProcessIdentifier"));
 
-    if (!symbols->getClients || !symbols->getLocalOrigin || !symbols->getActiveInfo || !symbols->getActiveClient || !symbols->sendCommandToClient || !symbols->getBundleID || !symbols->getParentBundleID || !symbols->getDisplayName || !symbols->getPID) {
+    if (!symbols->getClients || !symbols->getLocalOrigin || !symbols->getActiveInfo || !symbols->getActiveClient || !symbols->getBundleID || !symbols->getParentBundleID || !symbols->getDisplayName || !symbols->getPID) {
         KeywayPrintError(@"missing MediaRemote symbol");
         CFRelease(symbols->bundle);
         memset(symbols, 0, sizeof(KeywayMediaRemoteSymbols));
@@ -230,6 +229,47 @@ static NSString *KeywayFrontmostBundleIdentifier(void) {
     return KeywaySafeString([NSWorkspace sharedWorkspace].frontmostApplication.bundleIdentifier);
 }
 
+static void KeywaySendCommandToPlayerPath(
+    id localOrigin,
+    id client,
+    unsigned int command,
+    dispatch_queue_t queue,
+    void (^completion)(BOOL sent, NSString *message)
+) {
+    Class playerPathClass = NSClassFromString(@"MRPlayerPath");
+    Class requestClass = NSClassFromString(@"MRNowPlayingRequest");
+    if (playerPathClass == Nil || requestClass == Nil || localOrigin == nil) {
+        completion(NO, @"missing MediaRemote player-path command API");
+        return;
+    }
+
+    id playerPath = [[playerPathClass alloc] initWithOrigin:localOrigin client:client player:nil];
+    id request = [[requestClass alloc] initWithPlayerPath:playerPath];
+    if (request == nil) {
+        completion(NO, @"failed to create MediaRemote player-path request");
+        return;
+    }
+
+    void (^finish)(NSError *) = ^(NSError *error) {
+        if (error != nil) {
+            completion(NO, error.localizedDescription ?: @"MediaRemote command failed");
+            return;
+        }
+        completion(YES, @"");
+    };
+
+    if ([request respondsToSelector:@selector(sendCommand:options:appOptions:queue:completion:)]) {
+        [request sendCommand:command options:@{} appOptions:@{} queue:queue completion:finish];
+        return;
+    }
+    if ([request respondsToSelector:@selector(sendCommand:options:queue:completion:)]) {
+        [request sendCommand:command options:@{} queue:queue completion:finish];
+        return;
+    }
+
+    completion(NO, @"missing MediaRemote player-path sendCommand selector");
+}
+
 void keyway_mediaremote_snapshot(void) {
     @autoreleasepool {
         KeywayMediaRemoteSymbols symbols;
@@ -342,6 +382,7 @@ void keyway_mediaremote_send_command(void) {
         id localOrigin = symbols.getLocalOrigin();
         __block BOOL sent = NO;
         __block NSString *matchedTargetID = targetID;
+        __block NSString *message = @"target not found";
 
         symbols.getClients(queue, ^(NSArray *clients) {
             for (id client in clients ?: @[]) {
@@ -351,8 +392,17 @@ void keyway_mediaremote_send_command(void) {
 
                 NSMutableDictionary *row = KeywayRowForClient(client, &symbols);
                 matchedTargetID = KeywaySafeString(row[@"id"]);
-                sent = symbols.sendCommandToClient(commandNumber.unsignedIntValue, @{}, localOrigin, client, 1, 0, nil);
-                dispatch_semaphore_signal(done);
+                KeywaySendCommandToPlayerPath(
+                    localOrigin,
+                    client,
+                    commandNumber.unsignedIntValue,
+                    queue,
+                    ^(BOOL commandSent, NSString *commandMessage) {
+                        sent = commandSent;
+                        message = KeywaySafeString(commandMessage);
+                        dispatch_semaphore_signal(done);
+                    }
+                );
                 return;
             }
 
@@ -367,7 +417,7 @@ void keyway_mediaremote_send_command(void) {
             @"targetID": matchedTargetID,
             @"command": commandName,
             @"ok": (sent && !timedOut) ? (__bridge id)kCFBooleanTrue : (__bridge id)kCFBooleanFalse,
-            @"message": sent ? @"" : (timedOut ? @"timed out" : @"target not found or command rejected")
+            @"message": sent ? @"" : (timedOut ? @"timed out" : message)
         });
         KeywayReleaseSymbols(&symbols);
     }

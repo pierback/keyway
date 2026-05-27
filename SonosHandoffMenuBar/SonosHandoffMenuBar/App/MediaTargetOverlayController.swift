@@ -6,7 +6,6 @@ final class MediaTargetOverlayModel: ObservableObject {
     @Published var command: MediaRemoteTransportCommand?
     @Published var targets: [MediaRemoteTarget] = []
     @Published var selectedIndex = 0
-    @Published var pinnedTargetID: String?
     @Published var expanded = false
     @Published var audioSnapshot = MediaAudioControlSnapshot(
         sonos: .disabled(title: "Sonos", detail: "Checking output"),
@@ -23,12 +22,10 @@ final class MediaTargetOverlayModel: ObservableObject {
 
     func update(
         command: MediaRemoteTransportCommand?,
-        targets: [MediaRemoteTarget],
-        pinnedTargetID: String?
+        targets: [MediaRemoteTarget]
     ) {
         self.command = command
         self.targets = targets
-        self.pinnedTargetID = pinnedTargetID
         selectedIndex = 0
         expanded = false
     }
@@ -55,7 +52,6 @@ final class MediaTargetOverlayController {
     private let audioController: MediaAudioControlController
     private var panel: MediaTargetOverlayPanel?
     private var onChoose: ((MediaRemoteTarget, MediaRemoteTransportCommand?) -> Void)?
-    private var onPinToggle: ((MediaRemoteTarget) -> Void)?
     private var audioSnapshotGeneration = 0
 
     init(audioController: MediaAudioControlController) {
@@ -69,13 +65,10 @@ final class MediaTargetOverlayController {
     func show(
         command: MediaRemoteTransportCommand?,
         targets: [MediaRemoteTarget],
-        pinnedTargetID: String?,
-        onChoose: @escaping (MediaRemoteTarget, MediaRemoteTransportCommand?) -> Void,
-        onPinToggle: @escaping (MediaRemoteTarget) -> Void
+        onChoose: @escaping (MediaRemoteTarget, MediaRemoteTransportCommand?) -> Void
     ) {
         self.onChoose = onChoose
-        self.onPinToggle = onPinToggle
-        model.update(command: command, targets: targets, pinnedTargetID: pinnedTargetID)
+        model.update(command: command, targets: targets)
         refreshAudioSnapshot()
 
         let panel = ensurePanel()
@@ -119,9 +112,6 @@ final class MediaTargetOverlayController {
             onSelect: { [weak self] index in
                 self?.model.select(index: index)
                 self?.refreshAudioSnapshot()
-            },
-            onPinToggle: { [weak self] target in
-                self?.togglePin(target)
             },
             onSonosVolume: { [weak self] direction in
                 self?.audioController.adjustSonosVolume(direction: direction)
@@ -180,11 +170,6 @@ final class MediaTargetOverlayController {
             break
         }
 
-        if characters == "p", let target = model.selectedTarget {
-            togglePin(target)
-            return true
-        }
-
         if let number = Int(characters), (1 ... 9).contains(number) {
             let index = number - 1
             guard model.targets.indices.contains(index) else {
@@ -205,15 +190,6 @@ final class MediaTargetOverlayController {
     private func choose(_ target: MediaRemoteTarget) {
         close()
         onChoose?(target, model.command)
-    }
-
-    private func togglePin(_ target: MediaRemoteTarget) {
-        onPinToggle?(target)
-        if target.id == model.pinnedTargetID {
-            model.pinnedTargetID = nil
-        } else {
-            model.pinnedTargetID = target.id
-        }
     }
 
     private func adjustSelectedExpandedVolume(direction: MediaAudioVolumeDirection) {
@@ -241,7 +217,7 @@ final class MediaTargetOverlayController {
 
     private func refreshAudioSnapshot(delay: TimeInterval = 0) {
         let selectedTarget = model.selectedTarget
-        let selectedTargetID = selectedTarget?.id
+        let snapshotTargetID = selectedTarget?.id
         audioSnapshotGeneration += 1
         let generation = audioSnapshotGeneration
         Task { [weak self] in
@@ -251,7 +227,7 @@ final class MediaTargetOverlayController {
             guard let self else { return }
             let snapshot = await audioController.snapshot(for: selectedTarget)
             guard generation == audioSnapshotGeneration,
-                  model.selectedTarget?.id == selectedTargetID
+                  model.selectedTarget?.id == snapshotTargetID
             else {
                 return
             }
@@ -328,7 +304,6 @@ private struct MediaTargetOverlayView: View {
     @ObservedObject var model: MediaTargetOverlayModel
     let onChoose: (MediaRemoteTarget) -> Void
     let onSelect: (Int) -> Void
-    let onPinToggle: (MediaRemoteTarget) -> Void
     let onSonosVolume: (MediaAudioVolumeDirection) -> Void
     let onSonosMute: () -> Void
     let onSpotifyVolume: (MediaAudioVolumeDirection) -> Void
@@ -407,7 +382,6 @@ private struct MediaTargetOverlayView: View {
 
     private func targetRow(index: Int, target: MediaRemoteTarget) -> some View {
         let selected = index == model.selectedIndex
-        let pinned = target.id == model.pinnedTargetID
 
         return Button {
             if model.expanded {
@@ -429,17 +403,10 @@ private struct MediaTargetOverlayView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
 
                 VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(target.appName)
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(.primary)
-                            .lineLimit(1)
-                        if pinned {
-                            Image(systemName: "pin.fill")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
+                    Text(target.appName)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
                     Text(target.detailText)
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
@@ -592,7 +559,6 @@ private struct MediaTargetOverlayView: View {
             footerHint("Esc", "Close")
             footerHint("Tab", "Controls")
             footerHint("1-9", "Quick select")
-            footerHint("P", "Pin")
             if model.expanded {
                 footerHint("⌘↑/⌘↓", "Volume")
             }

@@ -6,9 +6,6 @@ import SonosHandoffCore
 enum MediaRouteStatusKind: String, Equatable {
     case auto
     case focused
-    case selected
-    case pinned
-    case recent
     case chooser
     case unavailable
 
@@ -18,12 +15,6 @@ enum MediaRouteStatusKind: String, Equatable {
             return "Auto"
         case .focused:
             return "Focused"
-        case .selected:
-            return "Selected"
-        case .pinned:
-            return "Pinned"
-        case .recent:
-            return "Recent"
         case .chooser:
             return "Chooser"
         case .unavailable:
@@ -43,12 +34,6 @@ struct MediaRouteStatus: Equatable {
             return targetCount == 1 ? "Single media target" : "Automatic routing"
         case .focused:
             return "Foreground or visible window"
-        case .selected:
-            return "Chosen target"
-        case .pinned:
-            return "Pinned target"
-        case .recent:
-            return "Last chosen target"
         case .chooser:
             return "Choose target"
         case .unavailable:
@@ -65,27 +50,19 @@ final class MediaTransportActionController {
     private enum RoutingReason: String {
         case single = "single target"
         case focused = "focused target"
-        case selected = "selected target"
-        case pinned = "pinned target"
-        case recent = "recent target"
         case current = "current media target"
         case chooser = "chooser"
     }
 
     private let logger = Logger(subsystem: AppIdentity.loggerSubsystem, category: "MediaTransport")
     private let mediaRemoteController: MediaRemoteController
-    private let preferenceStore: MediaTargetPreferenceStore
     private let overlayController: MediaTargetOverlayController
-    private var selectedTargetID: String?
-    private var selectedTargetIdentity: String?
 
     init(
         mediaRemoteController: MediaRemoteController,
-        preferenceStore: MediaTargetPreferenceStore,
         overlayController: MediaTargetOverlayController
     ) {
         self.mediaRemoteController = mediaRemoteController
-        self.preferenceStore = preferenceStore
         self.overlayController = overlayController
     }
 
@@ -109,12 +86,11 @@ final class MediaTransportActionController {
 
     func showTargetChooser() {
         Task { [weak self] in
-            await self?.showChooserAfterRefreshingSnapshot(command: nil)
+            await self?.showChooserAfterRefreshingSnapshot(command: .playPause)
         }
     }
 
     func route(command: MediaRemoteTransportCommand, to target: MediaRemoteTarget) {
-        selectTarget(target)
         Task { [weak self] in
             await self?.send(command: command, to: target, reason: .current)
         }
@@ -243,19 +219,19 @@ final class MediaTransportActionController {
     }
 
     private func showChooserOverlay(command: MediaRemoteTransportCommand?, targets: [MediaRemoteTarget]) {
+        let displayedTargets = targets
         overlayController.show(
             command: command,
             targets: targets,
-            pinnedTargetID: preferenceStore.pinnedTargetID,
             onChoose: { [weak self] target, command in
                 guard let self else { return }
+                let displayedTarget = displayedTargets.first { $0.id == target.id } ?? target
 
                 guard let command else {
-                    self.selectTarget(target)
                     self.mediaRemoteController.refreshSnapshot()
                     StatusHUD.shared.finish(
-                        title: "Selected \(target.appName)",
-                        message: "Media keys will route to this target.",
+                        title: "\(displayedTarget.appName)",
+                        message: "No transport command was pending.",
                         dismissAfter: 1.35
                     )
                     return
@@ -263,19 +239,13 @@ final class MediaTransportActionController {
 
                 if command == .playPause || command == .pause {
                     Task { [weak self] in
-                        await self?.sendFromChooser(command: command, to: target)
+                        await self?.sendFromChooser(command: command, to: displayedTarget)
                     }
                 } else {
-                    self.selectTarget(target)
                     Task { [weak self] in
-                        await self?.send(command: command, to: target, reason: .chooser)
+                        await self?.send(command: command, to: displayedTarget, reason: .chooser)
                     }
                 }
-            },
-            onPinToggle: { [weak self] target in
-                self?.preferenceStore.togglePinnedTarget(target)
-                let pinned = self?.preferenceStore.pinnedTargetReference?.id == target.id
-                self?.logger.info("MediaTransport pin target=\(target.appName, privacy: .public) pinned=\(pinned, privacy: .public)")
             }
         )
     }
@@ -286,12 +256,6 @@ final class MediaTransportActionController {
             return .auto
         case .focused:
             return .focused
-        case .selected:
-            return .selected
-        case .pinned:
-            return .pinned
-        case .recent:
-            return .recent
         case .current:
             return .auto
         case .chooser:
@@ -306,23 +270,11 @@ final class MediaTransportActionController {
 
         let playingTargets = targets.filter(\.isCurrentlyPlaying)
 
-        if let selectedTarget = selectedTarget(in: targets) {
-            return (selectedTarget, .selected)
-        }
-
         if let focusedTarget = focusedTarget(in: targets) {
             return (focusedTarget, .focused)
         }
 
-        if let pinnedTarget = target(matching: preferenceStore.pinnedTargetReference, in: targets) {
-            return (pinnedTarget, .pinned)
-        }
-
-        if let recentTarget = target(matching: preferenceStore.recentTargetReference, in: targets) {
-            return (recentTarget, .recent)
-        }
-
-        if let playingTarget = playingTargets.first {
+        if playingTargets.count == 1, let playingTarget = playingTargets.first {
             return (playingTarget, .current)
         }
 
@@ -341,7 +293,6 @@ final class MediaTransportActionController {
             return
         }
 
-        preferenceStore.markRecentTarget(target)
         logger.info("MediaTransport route command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) reason=\(reason.rawValue, privacy: .public)")
         StatusHUD.shared.finish(
             title: "\(command.displayName) → \(target.appName)",
@@ -351,9 +302,12 @@ final class MediaTransportActionController {
     }
 
     private func sendFromChooser(command: MediaRemoteTransportCommand, to target: MediaRemoteTarget) async {
-        let sent = await mediaRemoteController.send(command: command, targetID: target.id)
+        let routedCommand = command == .playPause
+            ? (target.isCurrentlyPlaying ? MediaRemoteTransportCommand.pause : .play)
+            : command
+        let sent = await mediaRemoteController.send(command: routedCommand, targetID: target.id)
         guard sent else {
-            logger.error("MediaTransport chooser_failed command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public)")
+            logger.error("MediaTransport chooser_failed command=\(routedCommand.rawValue, privacy: .public) target=\(target.appName, privacy: .public)")
             StatusHUD.shared.finish(
                 title: "Media Command Failed",
                 message: "Keyway could not reach \(target.appName).",
@@ -362,34 +316,12 @@ final class MediaTransportActionController {
             return
         }
 
-        logger.info("MediaTransport chooser command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public)")
+        logger.info("MediaTransport chooser command=\(routedCommand.rawValue, privacy: .public) target=\(target.appName, privacy: .public)")
         StatusHUD.shared.finish(
-            title: "\(command.displayName) → \(target.appName)",
+            title: "\(routedCommand.displayName) → \(target.appName)",
             message: "Routed by chooser",
             dismissAfter: 1.35
         )
-    }
-
-    private func selectTarget(_ target: MediaRemoteTarget) {
-        selectedTargetID = target.id
-        selectedTargetIdentity = target.routingIdentity
-        preferenceStore.markRecentTarget(target)
-        logger.info("MediaTransport selected target=\(target.appName, privacy: .public)")
-    }
-
-    private func selectedTarget(in targets: [MediaRemoteTarget]) -> MediaRemoteTarget? {
-        if let selectedTargetID,
-           let exactTarget = targets.first(where: { $0.id == selectedTargetID }) {
-            return exactTarget
-        }
-
-        selectedTargetID = nil
-        if let fallbackTarget = target(matching: selectedTargetIdentity, in: targets) {
-            return fallbackTarget
-        }
-
-        selectedTargetIdentity = nil
-        return nil
     }
 
     private func focusedTarget(in targets: [MediaRemoteTarget]) -> MediaRemoteTarget? {
@@ -408,31 +340,6 @@ final class MediaTransportActionController {
         }
 
         return prominentWindowTarget(in: targets)
-    }
-
-    private func target(matching reference: MediaTargetRoutingReference?, in targets: [MediaRemoteTarget]) -> MediaRemoteTarget? {
-        guard let reference else {
-            return nil
-        }
-        if let exactTarget = targets.first(where: { $0.id == reference.id }) {
-            return exactTarget
-        }
-        return conservativeFallbackTarget(matching: reference.fallbackIdentity, in: targets)
-    }
-
-    private func target(matching identity: String?, in targets: [MediaRemoteTarget]) -> MediaRemoteTarget? {
-        conservativeFallbackTarget(matching: identity, in: targets)
-    }
-
-    private func conservativeFallbackTarget(matching identity: String?, in targets: [MediaRemoteTarget]) -> MediaRemoteTarget? {
-        guard let identity, !identity.isEmpty else {
-            return nil
-        }
-        let matches = targets.filter { $0.matchesRoutingIdentity(identity) }
-        guard matches.count == 1, let target = matches.first, !target.isBrowserLike else {
-            return nil
-        }
-        return target
     }
 
     private func sortedTargets(_ targets: [MediaRemoteTarget]) -> [MediaRemoteTarget] {

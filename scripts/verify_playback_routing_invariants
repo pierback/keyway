@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+transport="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportActionController.swift"
+overlay="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTargetOverlayController.swift"
+helper="$repo_root/MediaRemoteHelper/KeywayMediaRemoteShim.m"
+
+fail() {
+  printf 'verify_playback_routing_invariants: %s\n' "$1" >&2
+  exit 1
+}
+
+grep -q 'showChooserImmediately(command: command)' "$transport" \
+  || fail "Play/Pause routing must enter the chooser first"
+
+grep -q 'displayedTargets.first { $0.id == target.id }' "$transport" \
+  || fail "chooser click must route the displayed row by id"
+
+grep -q 'target.isCurrentlyPlaying ? MediaRemoteTransportCommand.pause : .play' "$transport" \
+  || fail "chooser Play/Pause must resolve from the clicked row state"
+
+if grep -Eq 'selectedTargetID|selectedTargetIdentity|pinnedTarget|recentTarget|markRecentTarget|togglePinnedTarget' "$transport" "$overlay"; then
+  fail "transport routing must not use selected, pinned, or recent hidden state"
+fi
+
+grep -q 'initWithPlayerPath:playerPath' "$helper" \
+  || fail "MediaRemote commands must use a matched MRPlayerPath"
+
+grep -q 'KeywaySendCommandToPlayerPath' "$helper" \
+  || fail "MediaRemote helper must dispatch through player-path requests"
+
+if grep -Eq 'MRMediaRemoteSendCommandToClient|sendCommandToClient|enqueueCommand|sendQueuedCommands' "$helper"; then
+  fail "MediaRemote helper must not use global/client queued command fallbacks"
+fi
+
+printf 'verify_playback_routing_invariants=ok\n'
