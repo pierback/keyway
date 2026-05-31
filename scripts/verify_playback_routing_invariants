@@ -4,31 +4,1250 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 transport="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportActionController.swift"
 overlay="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTargetOverlayController.swift"
+overlay_model="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTargetOverlayModel.swift"
 helper="$repo_root/MediaRemoteHelper/KeywayMediaRemoteShim.m"
+command_center="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaCommandCenterInterceptor.swift"
+hotkeys="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/VolumeHotkeyController.swift"
+parser="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutEventParser.swift"
+event_tap="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutEventTap.swift"
+command_filter="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportCommandCenterFilter.swift"
+chooser_guard="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaChooserSessionGuard.swift"
+command_rules="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportCommandRules.swift"
+refresh_gate="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaRemoteSnapshotRefreshGate.swift"
+remote_controller="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaRemoteController.swift"
+remote_helper_process="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaRemoteHelperProcess.swift"
+status_item="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/KeywayStatusItemController.swift"
+app_environment="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/Support/AppEnvironment.swift"
+runtime_status="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutRuntimeStatus.swift"
+runtime_reporter="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutRuntimeReporter.swift"
 
 fail() {
   printf 'verify_playback_routing_invariants: %s\n' "$1" >&2
   exit 1
 }
 
-grep -q 'showChooserImmediately(command: command)' "$transport" \
-  || fail "Play/Pause routing must enter the chooser first"
+grep -q 'commandCenterMetadata: commandCenterMetadata' "$transport" \
+  || fail "Play/Pause routing must show the cached chooser immediately with input metadata"
 
-grep -q 'displayedTargets.first { $0.id == target.id }' "$transport" \
-  || fail "chooser click must route the displayed row by id"
+if grep -q 'cgSessionEventTap\|case session' "$event_tap"; then
+  fail "Play/Pause interception must fail closed instead of falling back to a non-cghid event tap"
+fi
 
-grep -q 'target.isCurrentlyPlaying ? MediaRemoteTransportCommand.pause : .play' "$transport" \
-  || fail "chooser Play/Pause must resolve from the clicked row state"
+grep -q 'struct MediaRemoteSnapshotRefreshGate' "$refresh_gate" \
+  || fail "MediaRemote snapshot refresh coalescing must be isolated in a testable value type"
 
-if grep -Eq 'selectedTargetID|selectedTargetIdentity|pinnedTarget|recentTarget|markRecentTarget|togglePinnedTarget' "$transport" "$overlay"; then
+grep -q 'private var refreshGate = MediaRemoteSnapshotRefreshGate()' "$remote_controller" \
+  || fail "MediaRemoteController must use the snapshot refresh gate"
+
+grep -q 'MediaRemoteHelperProcess(role: .snapshot' "$remote_controller" \
+  || fail "MediaRemoteController must run snapshot work in its own helper process"
+
+grep -q 'MediaRemoteHelperProcess(role: .command' "$remote_controller" \
+  || fail "MediaRemoteController must run command dispatch in a separate helper process"
+
+grep -q 'commandHelper.send' "$remote_controller" \
+  || fail "MediaRemoteController must submit selected-row commands through the command helper"
+
+grep -q 'snapshotHelper.send' "$remote_controller" \
+  || fail "MediaRemoteController must submit refreshes through the snapshot helper"
+
+grep -q 'KEYWAY_MEDIAREMOTE_DISABLE_NOTIFICATIONS' "$remote_helper_process" \
+  || fail "command helper must disable notification registration to avoid duplicate refresh streams"
+
+grep -q 'KEYWAY_MEDIAREMOTE_ROLE' "$repo_root/MediaRemoteHelper/keyway-mediaremote-helper.pl" \
+  || fail "Perl helper must expose its role for split helper diagnostics"
+
+grep -q 'KEYWAY_MEDIAREMOTE_DISABLE_NOTIFICATIONS' "$repo_root/MediaRemoteHelper/keyway-mediaremote-helper.pl" \
+  || fail "Perl helper must support command helpers without notification registration"
+
+grep -q 'KeywayStableHash' "$helper" \
+  || fail "MediaRemote target IDs must use a deterministic content hash, not process-local NSString hash"
+
+grep -q 'KeywayRefreshRowIdentifier(row);' "$helper" \
+  || fail "MediaRemote target IDs must be refreshed from stable client identity before rows are exposed"
+
+grep -q 'targetEntries\[index\]' "$helper" \
+  || fail "MediaRemote duplicate target suffixes must be assigned in client enumeration order, not async callback order"
+
+grep -q 'KeywayReserveTargetRow(targets, clientsByTargetID, row, client, visible)' "$helper" \
+  || fail "MediaRemote snapshots must reserve hidden duplicate client ids before exposing visible rows"
+
+grep -q '@"visible": @(KeywayRowHasMediaState(row))' "$helper" \
+  || fail "MediaRemote snapshots must keep media-state visibility separate from duplicate id reservation"
+
+grep -q 'row\[@"artworkBase64"\]' "$helper" \
+  || fail "MediaRemote snapshots must keep artwork-only sessions visible as routable media targets"
+
+grep -q 'if (visible && activeTargetID.length == 0' "$helper" \
+  || fail "MediaRemote snapshots must not mark hidden duplicate clients as the active visible target"
+
+grep -q 'keyway_mediaremote_refresh_client_cache' "$helper" \
+  || fail "command helper must expose a fast client-cache refresh entry point"
+
+grep -q 'refreshClientCache' "$repo_root/MediaRemoteHelper/keyway-mediaremote-helper.pl" \
+  || fail "Perl helper must support fast command-cache refresh requests"
+
+grep -q 'KeywayRefreshFastClientCache' "$helper" \
+  || fail "command helper must resolve selected target IDs through the fast client cache"
+
+grep -q 'guard let requestID = refreshGate.begin()' "$remote_controller" \
+  || fail "MediaRemote snapshot refreshes must be single-flight so refresh bursts cannot queue ahead of row dispatch"
+
+grep -q 'refresh_coalesced reason=in_flight' "$remote_controller" \
+  || fail "coalesced snapshot refreshes must be visible in logs"
+
+grep -q 'pendingRefreshRequested = true' "$remote_controller" \
+  || fail "coalesced snapshot refreshes must request one follow-up snapshot"
+
+grep -q 'drainPendingRefreshIfNeeded()' "$remote_controller" \
+  || fail "completed snapshot refreshes must drain one coalesced follow-up refresh"
+
+grep -q 'refresh_followup reason=coalesced' "$remote_controller" \
+  || fail "coalesced follow-up refreshes must be visible in logs"
+
+grep -q 'refreshGate.finish(requestID: snapshot.requestID)' "$remote_controller" \
+  || fail "MediaRemote snapshots must close the exact in-flight refresh request"
+
+grep -q 'snapshotRefreshTimeoutNanoseconds' "$remote_controller" \
+  || fail "MediaRemote snapshot refreshes must have a bounded timeout"
+
+python3 - "$remote_controller" <<'PY'
+import pathlib
+import re
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+command_timeout = re.search(r'commandResultTimeoutNanoseconds: UInt64 = ([0-9_]+)', text)
+if not command_timeout:
+    raise SystemExit("verify_playback_routing_invariants: MediaRemote command result timeout must be explicit")
+if int(command_timeout.group(1).replace("_", "")) > 350_000_000:
+    raise SystemExit("verify_playback_routing_invariants: MediaRemote command result timeout must fail fast and stay below hidden-delay territory")
+poll_interval = re.search(r'snapshotPollInterval: TimeInterval = ([0-9.]+)', text)
+if not poll_interval:
+    raise SystemExit("verify_playback_routing_invariants: MediaRemote snapshot poll interval must be explicit")
+if float(poll_interval.group(1)) > 1:
+    raise SystemExit("verify_playback_routing_invariants: MediaRemote snapshot polling must keep chooser cache staleness below one second")
+restart_delay = re.search(r'immediateRestartDelayNanoseconds: UInt64 = ([0-9_]+)', text)
+if not restart_delay:
+    raise SystemExit("verify_playback_routing_invariants: MediaRemote helper immediate restart delay must be explicit")
+if int(restart_delay.group(1).replace("_", "")) > 250_000_000:
+    raise SystemExit("verify_playback_routing_invariants: MediaRemote helper immediate restart delay must stay below hidden-delay territory")
+PY
+
+grep -q 'armSnapshotRefreshTimeout(requestID: requestID)' "$remote_controller" \
+  || fail "accepted MediaRemote snapshot refreshes must arm the bounded timeout"
+
+grep -q 'refresh_timeout requestID=' "$remote_controller" \
+  || fail "timed-out MediaRemote snapshot refreshes must be visible in logs"
+
+grep -q 'self.refreshGate.finish(requestID: requestID)' "$remote_controller" \
+  || fail "MediaRemote snapshot refresh timeout must release only the matching in-flight request"
+
+grep -q 'stale_snapshot_ignored' "$remote_controller" \
+  || fail "stale MediaRemote snapshots must not overwrite the current target cache"
+
+grep -q 'refreshGate.reset()' "$remote_controller" \
+  || fail "MediaRemote helper failures and stops must clear refresh gate state"
+
+grep -q 'resolved MediaRemote player path from fresh command cache' "$helper" \
+  || fail "command helper fresh target resolution must be visible in command results"
+
+grep -q 'warmCommandClientCacheIfNeeded(targets: visibleTargets, reason: "snapshot_targets")' "$remote_controller" \
+  || fail "snapshot updates must keep the command helper client cache warm for instant row dispatch"
+
+grep -q 'ShortcutRuntimeStatus.shared.updateMediaTargets' "$remote_controller" \
+  || fail "MediaRemote snapshots must persist the filtered target cache for physical routing diagnosis"
+
+grep -q 'mediaTargets' "$runtime_status" \
+  || fail "runtime status must expose the app-visible MediaRemote target cache"
+
+grep -q 'warmCommandClientCache(reason: "command_ready")' "$remote_controller" \
+  || fail "command helper must warm its client cache as soon as it is ready"
+
+grep -q 'commandCacheRefreshRequestIDs' "$remote_controller" \
+  || fail "command helper client-cache refreshes must be bounded and tracked"
+
+python3 - "$helper" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+start = text.index("static NSUInteger KeywayRefreshFastClientCache(")
+end = text.index("\nstatic NSNumber *KeywayCommandNumber", start)
+resolver = text[start:end]
+if "requestNowPlayingInfoOnQueue" in resolver:
+    raise SystemExit("verify_playback_routing_invariants: command helper fast cache must not wait for now-playing metadata")
+if "5 * NSEC_PER_SEC" in resolver or "1500 * NSEC_PER_MSEC" in resolver or "1_500_000_000" in resolver:
+    raise SystemExit("verify_playback_routing_invariants: command helper fast cache must not contain a visible dispatch delay")
+if "150 * NSEC_PER_MSEC" not in resolver:
+    raise SystemExit("verify_playback_routing_invariants: command helper fast cache must use a short client-list timeout")
+if "KeywayReplaceClientCache(clientsByTargetID)" not in resolver:
+    raise SystemExit("verify_playback_routing_invariants: command helper fast cache must populate its process-local cache")
+send_start = text.index("void keyway_mediaremote_send_command(void)")
+send_end = text.index("\nstatic void KeywayNotificationThreadMain", send_start)
+send_command = text[send_start:send_end]
+if "KeywayResolveClientForTargetID" in send_command:
+    raise SystemExit("verify_playback_routing_invariants: selected-row command dispatch must not use slow now-playing target reconstruction")
+if "requestNowPlayingInfoOnQueue" in send_command:
+    raise SystemExit("verify_playback_routing_invariants: selected-row command dispatch must not request now-playing metadata before sending")
+submit_start = text.index("static BOOL KeywaySubmitCommandToPlayerPath(")
+submit_end = text.index("\nvoid keyway_mediaremote_snapshot", submit_start)
+submit_command = text[submit_start:submit_end]
+if "dispatch_semaphore_wait" in submit_command:
+    raise SystemExit("verify_playback_routing_invariants: selected-row command dispatch must not wait for MediaRemote completion before returning")
+if "commandCompletionTimeoutNanoseconds" in submit_command:
+    raise SystemExit("verify_playback_routing_invariants: selected-row command dispatch must not keep a hidden completion timeout")
+PY
+
+grep -q 'isPlayFamily(command)' "$transport" "$command_rules" \
+  || fail "play, pause, and play/pause commands must share chooser-first routing"
+
+grep -q 'MediaTransportCommandRules.rowScopedCommand(command, for: target)' "$transport" \
+  || fail "chooser Play/Pause must resolve normal targets from the selected row state, not a post-key refreshed target state"
+
+grep -q 'usesSpotifyDesktopTransport(target: target) || usesHeliumDesktopTransport(target: target)' "$transport" \
+  || fail "desktop chooser Play/Pause must use app-owned transports because MediaRemote playbackRate can be stale"
+
+grep -q 'net.imput.helium' "$transport" \
+  || fail "Helium must have a selected-row desktop transport when MediaRemote player-path commands do not affect it"
+
+grep -q 'targetsIncludingHeliumDesktop' "$remote_controller" \
+  || fail "Helium must remain visible as a chooser target when MediaRemote omits its browser media row"
+
+grep -q 'selected_row_dispatch_route_shield_kept' "$transport" \
+  || fail "desktop selected-row dispatch must keep the route shield armed"
+
+grep -q 'return target.isCurrentlyPlaying ? .pause : .play' "$command_rules" \
+  || fail "normal chooser Play/Pause must not send a global toggle when the selected row already tells us play state"
+
+if grep -q 'func currentTarget(matching selectedTarget: MediaRemoteTarget)' "$transport"; then
+  fail "chooser dispatch must not rewrite the selected row id before dispatch"
+fi
+
+grep -q 'MediaChooserSessionGuard' "$transport" \
+  || fail "active chooser state must be owned by the testable session guard"
+
+grep -q 'guard !self.chooserSession.isActive else { return }' "$transport" \
+  || fail "pending chooser rows must not be mutated by snapshot refreshes before the user chooses"
+
+grep -q 'let id = UUID()' "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaChooserSessionGuard.swift" \
+  || fail "each chooser presentation must create a unique session id"
+
+grep -q 'active == nil ? "inactive" : "visible"' "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaChooserSessionGuard.swift" \
+  || fail "chooser session guard must model only visible chooser state"
+
+python3 - "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaChooserSessionGuard.swift" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+for forbidden in (
+    "selectedEcho",
+    "selectedEchoInterval",
+    "ignoreReasonForChooserRequest",
+    "post_selection_echo",
+    "matchesSameGeneratedMediaKey",
+):
+    if forbidden in text:
+        raise SystemExit(f"verify_playback_routing_invariants: chooser session guard must not keep post-selection routing memory: {forbidden}")
+if "let command: MediaRemoteTransportCommand" not in text or "let id: UUID" not in text:
+    raise SystemExit("verify_playback_routing_invariants: chooser session guard must model only visible chooser id plus pending command")
+PY
+
+if grep -Eq 'finishScheduledRelease|releaseDecision|isDispatching|dispatchingID|markDispatching|selectedEcho|post_selection_echo|ignoreReasonForChooserRequest' "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaChooserSessionGuard.swift"; then
+  fail "chooser session guard must not keep delayed post-selection routing state"
+fi
+
+python3 - "$transport" <<'PY'
+import pathlib
+import re
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+chooser_from_cache = text[
+    text.index("private func showChooserImmediately("):
+    text.index("    private func routeFromCache", text.index("private func showChooserImmediately("))
+]
+if "refreshSnapshotAndWait(" in chooser_from_cache or "chooserSnapshotWaitNanoseconds" in text:
+    raise SystemExit("verify_playback_routing_invariants: chooser path must not wait for MediaRemote snapshots before presenting")
+if "let refreshQueued = mediaRemoteController.refreshSnapshot()" not in chooser_from_cache:
+    raise SystemExit("verify_playback_routing_invariants: chooser path must refresh MediaRemote snapshots in the background after taking the cached target list")
+if "showChooserOverlay(" not in chooser_from_cache or "commandCenterMetadata: commandCenterMetadata" not in chooser_from_cache:
+    raise SystemExit("verify_playback_routing_invariants: chooser path must present cached targets immediately with input metadata")
+after_overlay = chooser_from_cache[chooser_from_cache.index("showChooserOverlay("):]
+if "refreshSnapshot()" in after_overlay:
+    raise SystemExit("verify_playback_routing_invariants: chooser open must not queue a MediaRemote refresh that can block selected-row dispatch")
+on_choose = text.index("onChoose: {")
+on_dismiss = text.index("onDismiss:", on_choose)
+choose_body = text[on_choose:on_dismiss]
+if "self.currentTarget(matching: target)" in choose_body:
+    raise SystemExit("verify_playback_routing_invariants: chooser clicks must not rewrite the selected row id before dispatch")
+if "to: target" not in choose_body:
+    raise SystemExit("verify_playback_routing_invariants: chooser clicks must dispatch exactly the selected row target")
+finish_marker = "self.finishChooser("
+if finish_marker not in choose_body or "selected: true" not in choose_body:
+    raise SystemExit("verify_playback_routing_invariants: chooser row selection must clear visible chooser state immediately")
+if "selectedTargetExpectation" in choose_body or "selectedTargetReachedExpectedState" in text:
+    raise SystemExit("verify_playback_routing_invariants: chooser row selection must not depend on stale selected-target expectation state")
+if '"chooser_closed_for_dispatch"' not in choose_body:
+    raise SystemExit("verify_playback_routing_invariants: chooser row selection must trace the overlay close before selected-row dispatch")
+if "dispatchFromChooser(" not in choose_body:
+    raise SystemExit("verify_playback_routing_invariants: chooser row selection must dispatch after releasing the route shield")
+if "relaxRouteShield?(\"selected_row_dispatch\")" not in choose_body:
+    raise SystemExit("verify_playback_routing_invariants: chooser row selection must stop the Command Center route shield before selected-target dispatch")
+if "selectedRowDispatchRouteShieldReleaseDelayNanoseconds" not in choose_body:
+    raise SystemExit("verify_playback_routing_invariants: selected-target dispatch must wait only for the explicit route-shield release delay")
+if choose_body.index(finish_marker) > choose_body.index("dispatchFromChooser("):
+    raise SystemExit("verify_playback_routing_invariants: chooser visible guard must clear before selected-row dispatch")
+if choose_body.index('"chooser_closed_for_dispatch"') > choose_body.index("dispatchFromChooser("):
+    raise SystemExit("verify_playback_routing_invariants: chooser close trace must happen before selected-row dispatch")
+route_shield_delay = re.search(r'selectedRowDispatchRouteShieldReleaseDelayNanoseconds: UInt64 = ([0-9_]+)', text)
+if not route_shield_delay:
+    raise SystemExit("verify_playback_routing_invariants: selected-row dispatch route-shield release delay must be explicit")
+route_shield_delay_value = int(route_shield_delay.group(1).replace("_", ""))
+if route_shield_delay_value <= 0 or route_shield_delay_value > 250_000_000:
+    raise SystemExit("verify_playback_routing_invariants: selected-row dispatch route-shield release delay must stay below visible cooldown territory")
+dispatch_from_chooser = text[text.index("private func dispatchFromChooser"):text.index("private func finishChooser")]
+if "sendFromChooser(command: command, to: target, dispatchID: dispatchID)" not in dispatch_from_chooser:
+    raise SystemExit("verify_playback_routing_invariants: chooser dispatch must send the selected command without waiting for guard release")
+if "targetUnixProcessID: Int64(target.pid)" not in dispatch_from_chooser:
+    raise SystemExit("verify_playback_routing_invariants: chooser dispatch must bind targeted HID echo suppression to the selected row process")
+if "applicationUnixProcessID: Int64(ProcessInfo.processInfo.processIdentifier)" not in dispatch_from_chooser:
+    raise SystemExit("verify_playback_routing_invariants: chooser dispatch must also bind targeted HID echo suppression to Keyway for macOS-retargeted row echoes")
+if "chooserID" in dispatch_from_chooser:
+    raise SystemExit("verify_playback_routing_invariants: chooser dispatch must not carry delayed session state after row selection")
+send_from_chooser = text[text.index("private func sendFromChooser"):text.index("private func beginBoundedProgrammaticDispatch")]
+if "releaseChooserAfterDispatchEchoWindow" in send_from_chooser:
+    raise SystemExit("verify_playback_routing_invariants: chooser dispatch must not wait on a post-send release window")
+if "commandCenterFilter.finishProgrammaticDispatch(command: command)" in send_from_chooser:
+    raise SystemExit("verify_playback_routing_invariants: chooser dispatch must not tie echo cleanup to helper completion")
+if "defer" in send_from_chooser:
+    raise SystemExit("verify_playback_routing_invariants: chooser dispatch must not defer routing-state cleanup around helper latency")
+release_delay = re.search(r'chooserDispatchReleaseDelayNanoseconds: UInt64 = ([0-9_]+)', text)
+if release_delay:
+    raise SystemExit("verify_playback_routing_invariants: chooser dispatch must not keep a post-selection release delay")
+quiet_delay = re.search(r'chooserDispatchEchoQuietDelayNanoseconds: UInt64 = ([0-9_]+)', text)
+if quiet_delay:
+    raise SystemExit("verify_playback_routing_invariants: chooser dispatch must not extend a hidden quiet-window delay")
+if "chooserCommandCenterEchoSuppressionInterval" in text or "chooserMediaKeyEchoSuppressionInterval" in text:
+    raise SystemExit("verify_playback_routing_invariants: chooser dispatch must not keep 1.5s echo suppression windows")
+stuck_delay = re.search(r'chooserDispatchStuckReleaseDelayNanoseconds: UInt64 = ([0-9_]+)', text)
+if stuck_delay:
+    raise SystemExit("verify_playback_routing_invariants: chooser dispatch must not use a stuck-helper release delay to recover routing state")
+hard_release = re.search(r'chooserDispatchHardReleaseInterval: TimeInterval = ([0-9.]+)', text)
+if hard_release:
+    raise SystemExit("verify_playback_routing_invariants: chooser dispatch must not use a hard-release delay")
+if "scheduleChooserDispatchRelease" in text:
+    raise SystemExit("verify_playback_routing_invariants: chooser dispatch must not schedule delayed routing-state release")
+if "chooserDispatchReentryBlockInterval" in text or "blockChooserReentryAfterDispatch" in text or "chooser_dispatch_reentry_block" in text:
+    raise SystemExit("verify_playback_routing_invariants: chooser row dispatch must not install a route-boundary cooldown that can swallow a fresh physical key press")
+if "private func beginBoundedChooserDispatch" not in text or "private func scheduleProgrammaticDispatchFallback" not in text:
+    raise SystemExit("verify_playback_routing_invariants: chooser dispatch must have a bounded local fallback if helper completion is missing")
+if "commandCenterMetadata: commandCenterMetadata" not in text:
+    raise SystemExit("verify_playback_routing_invariants: chooser dispatch must use bounded chooser echo handling")
+if "commandCenterFilter.finishChooserDispatch(" in text or "commandCenterFilter.finishProgrammaticDispatch(" in text:
+    raise SystemExit("verify_playback_routing_invariants: helper completion must not close time-bounded echo suppression before late rebound callbacks arrive")
+if "enum MediaTransportDispatchEchoKind" not in pathlib.Path(sys.argv[1]).with_name("MediaRouteStatus.swift").read_text() or "struct MediaTransportPendingDispatchEcho" not in pathlib.Path(sys.argv[1]).with_name("MediaRouteStatus.swift").read_text():
+    raise SystemExit("verify_playback_routing_invariants: pending dispatch fallback must remember whether the command came from chooser or automatic routing")
+if "programmaticDispatches[id] = MediaTransportPendingDispatchEcho(command: command, kind: .chooser)" not in text:
+    raise SystemExit("verify_playback_routing_invariants: chooser dispatch fallback must be tagged as chooser-specific")
+fallback_body = text[
+    text.index("private func scheduleProgrammaticDispatchFallback"):
+    text.index("    private func trace(", text.index("private func scheduleProgrammaticDispatchFallback"))
+]
+if "pending.kind.rawValue" not in fallback_body:
+    raise SystemExit("verify_playback_routing_invariants: dispatch fallback must preserve the dispatch echo kind in logs")
+if "commandCenterFilter.finish" in fallback_body:
+    raise SystemExit("verify_playback_routing_invariants: dispatch fallback must not close the time-bounded echo guard")
+if "await mediaRemoteController.send" in text:
+    raise SystemExit("verify_playback_routing_invariants: UI routing must not await helper command acknowledgement")
+if "mediaRemoteController.submit(command: command, targetID: target.id)" not in text:
+    raise SystemExit("verify_playback_routing_invariants: automatic routing must submit commands without request/response latency")
+if "mediaRemoteController.submit(command: command, targetID: target.id)" not in send_from_chooser:
+    raise SystemExit("verify_playback_routing_invariants: chooser routing must submit commands without request/response latency")
+if "Routed by chooser" in send_from_chooser:
+    raise SystemExit("verify_playback_routing_invariants: chooser success must not leave a 1.35s HUD after row selection")
+send_body = text[text.index("private func send(command:"):text.index("private func dispatchFromChooser")]
+if "Routed by " in send_body:
+    raise SystemExit("verify_playback_routing_invariants: automatic playback success must not leave a 1.35s HUD")
+if "defer" in send_body or "commandCenterFilter.finishProgrammaticDispatch(command: command)" in send_body:
+    raise SystemExit("verify_playback_routing_invariants: automatic dispatch must not tie echo cleanup to helper completion")
+if "beginBoundedProgrammaticDispatch(command: command)" not in send_body:
+    raise SystemExit("verify_playback_routing_invariants: automatic dispatch must use bounded programmatic echo handling")
+route_body = text[text.index("private func route("):text.index("    func showChooser(command:")]
+if "chooserSession.isDispatching" in route_body or "chooser_dispatch_input_ignored" in route_body:
+    raise SystemExit("verify_playback_routing_invariants: route boundary must not block a real next key press during chooser dispatch")
+programmatic_command_center = re.search(r'programmaticCommandCenterEchoWindow: TimeInterval = ([0-9.]+)', text)
+if not programmatic_command_center:
+    raise SystemExit("verify_playback_routing_invariants: programmatic Command Center echoes must have an explicit bounded window")
+if float(programmatic_command_center.group(1)) > 0.25:
+    raise SystemExit("verify_playback_routing_invariants: programmatic Command Center echo window must stay below visible cooldown territory")
+selected_row_command_center = re.search(r'selectedRowCommandCenterEchoWindow: TimeInterval = ([0-9.]+)', text)
+if selected_row_command_center:
+    raise SystemExit("verify_playback_routing_invariants: selected-row Command Center echoes must not use a separate hidden window")
+programmatic_media_key = re.search(r'programmaticGeneratedMediaKeyCallbackWindow: TimeInterval = ([0-9.]+)', text)
+if not programmatic_media_key:
+    raise SystemExit("verify_playback_routing_invariants: generated media-key callbacks must have an explicit bounded window")
+if float(programmatic_media_key.group(1)) <= 0 or float(programmatic_media_key.group(1)) > 0.25:
+    raise SystemExit("verify_playback_routing_invariants: generated media-key callback window must stay inside the instant selected-row echo boundary")
+physical_rebound = re.search(r'physicalMediaKeyReboundWindow: TimeInterval = ([0-9.]+)', text)
+if not physical_rebound:
+    raise SystemExit("verify_playback_routing_invariants: exact physical media-key rebounds must have an explicit bounded window")
+if float(physical_rebound.group(1)) > 0.25:
+    raise SystemExit("verify_playback_routing_invariants: physical media-key rebound window must stay below visible cooldown territory")
+targeted_rebound = re.search(r'chooserTargetedMediaKeyEchoWindow: TimeInterval = ([0-9.]+)', text)
+if not targeted_rebound:
+    raise SystemExit("verify_playback_routing_invariants: targeted chooser media-key echoes must have an explicit bounded window")
+if float(targeted_rebound.group(1)) > 1.25:
+    raise SystemExit("verify_playback_routing_invariants: targeted chooser media-key echo window must stay below hidden-delay territory")
+if "private func currentTarget" in text or "chooser_target_id_refreshed" in text:
+    raise SystemExit("verify_playback_routing_invariants: selected row dispatch must not be retargeted from refreshed cache state")
+PY
+
+grep -q 'overlayController.isVisible' "$transport" \
+  || fail "routing must not re-open the chooser while it is already visible"
+
+if grep -q 'activeChooser' "$transport"; then
+  fail "transport controller must not own raw chooser session state"
+fi
+
+grep -q 'chooserSession.isActive' "$transport" \
+  || fail "transport must check explicit chooser session state"
+
+grep -q 'command_center_route_shield_only_ignored' "$transport" \
+  || fail "command-center callbacks must remain a route shield, not a chooser-opening hardware interception path"
+
+grep -q 'noteGeneratedMediaKeyIgnored(command: command, metadata: metadata)' "$hotkeys" \
+  || fail "generated media-key rejection must arm Command Center shadow state through the central transport router"
+
+grep -q 'func noteGeneratedMediaKeyIgnored(command: MediaRemoteTransportCommand, metadata: MediaTransportInputMetadata)' "$transport" \
+  || fail "transport router must own generated media-key shadow state"
+
+grep -q 'generated_media_key_shadow_armed' "$transport" \
+  || fail "central generated media-key shadow arming must be visible in playback traces"
+
+if grep -q 'MediaGeneratedTransportShadow' "$hotkeys" "$transport" "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar.xcodeproj/project.pbxproj"; then
+  fail "generated media-key shadow state must not be split between hotkey and transport controllers"
+fi
+
+grep -q 'command_center_input_shadow_ignored' "$command_filter" \
+  || fail "duplicate command-center callbacks must not re-open the chooser"
+
+grep -q 'struct MediaTransportInputMetadata' "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportRouteSource.swift" \
+  || fail "event-tap media-key routing must carry event-source metadata"
+
+if grep -q 'isFreshPhysicalMediaKey' "$command_filter"; then
+  fail "chooser media-key echo suppression must not allow HID-shaped callbacks to reopen the modal during row dispatch"
+fi
+
+grep -q 'sourceStateID == 1' "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportRouteSource.swift" \
+  || fail "HID-system media-key detection must be explicit"
+
+if grep -q 'sourceUnixProcessID == 0' "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportRouteSource.swift"; then
+  fail "physical HID media-key detection must not depend on source pid; macOS can rewrite it before the event tap sees the key"
+fi
+
+grep -q 'sourceUserData == 0' "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportRouteSource.swift" \
+  || fail "physical HID media-key detection must reject user-data-tagged synthetic callbacks"
+
+grep -q 'targetUnixProcessID == 0' "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportRouteSource.swift" \
+  || fail "untargeted physical HID media-key detection must reject process-targeted callbacks"
+
+grep -q 'eventSourceUnixProcessID' "$hotkeys" \
+  || fail "physical media-key traces must include CGEvent source process metadata"
+
+grep -q 'rawActiveMediaTargetID' "$runtime_status" \
+  || fail "runtime status must expose raw active MediaRemote target so the route shield can be proven active"
+
+grep -q 'eventSourceStateID' "$hotkeys" \
+  || fail "physical media-key traces must include CGEvent source state metadata"
+
+grep -q 'eventTargetUnixProcessID' "$hotkeys" \
+  || fail "physical media-key traces must include CGEvent target process metadata"
+
+grep -q 'eventTimestamp' "$hotkeys" \
+  || fail "physical media-key traces must include CGEvent timestamps"
+
+grep -q 'routeFromMediaKey(command: command, metadata: metadata)' "$hotkeys" \
+  || fail "event-tap media-key routing must pass source metadata to the transport filter"
+
+grep -q 'acceptTransportInput(command: command, source: source, metadata: metadata, phase: "down")' "$hotkeys" \
+  || fail "event-tap media-key routing must accept tapped transport events through an explicit input boundary"
+
+if grep -q 'guard metadata.isUntargetedPhysicalHIDSystemSource else' "$hotkeys"; then
+  fail "event-tap media-key routing must not reject macOS-targeted media-key callbacks before the chooser"
+fi
+
+if grep -q 'private struct GeneratedTransportShadow' "$hotkeys"; then
+  fail "hotkey controller must not keep an inline generated transport shadow type"
+fi
+
+grep -q 'noteMediaKey(command: command, metadata: metadata)' "$transport" \
+  || fail "accepted event-tap media-key routing must remember the source event timestamp"
+
+grep -q 'private static let programmaticCommandCenterEchoWindow: TimeInterval = 0.25' "$transport" \
+  || fail "programmatic Command Center echo suppression must not become a hidden input delay"
+
+if grep -q 'selectedRowCommandCenterEchoWindow' "$transport"; then
+  fail "selected-row Command Center rebound suppression must use the bounded programmatic echo path, not a separate cooldown"
+fi
+
+grep -q 'private static let programmaticGeneratedMediaKeyCallbackWindow: TimeInterval = 0.25' "$transport" \
+  || fail "programmatic generated media-key suppression must stay inside the instant selected-row echo boundary"
+
+grep -q 'private static let physicalMediaKeyReboundWindow: TimeInterval = 0.25' "$transport" \
+  || fail "physical media-key rebound suppression must stay short and exact"
+
+python3 - "$command_filter" <<'PY'
+import pathlib
+import re
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+if "chooserGeneratedEchoInterval" in text or "chooserMediaKeyReboundInterval" in text:
+    raise SystemExit("verify_playback_routing_invariants: chooser dispatch must not keep separate long echo intervals")
+if "chooserTargetedHIDReboundTimestampTolerance" in text:
+    raise SystemExit("verify_playback_routing_invariants: chooser media-key rebound suppression must not keep an extended targeted-HID delay")
+begin_programmatic = text[text.index("    func beginProgrammaticDispatch"):text.index("    func beginChooserDispatch")]
+if "remainingMatches: Self.programmaticCommandCenterEchoMatchBudget" not in begin_programmatic:
+    raise SystemExit("verify_playback_routing_invariants: programmatic command-center echo suppression must be callback-count bounded")
+if "remainingMatches: nil" in begin_programmatic:
+    raise SystemExit("verify_playback_routing_invariants: programmatic command-center echo suppression must not consume unlimited callbacks")
+if "inFlightProgrammaticCommandCenterEchoes = [" not in begin_programmatic:
+    raise SystemExit("verify_playback_routing_invariants: metadata-backed dispatches must replace stale command-center echo guards")
+if "commandCenterMetadata: nil" not in begin_programmatic:
+    raise SystemExit("verify_playback_routing_invariants: programmatic command-center echo suppression must cover fresh-timestamp OS rebounds")
+if "inFlightProgrammaticMediaKeyEchoes = [" not in begin_programmatic:
+    raise SystemExit("verify_playback_routing_invariants: new dispatches must suppress generated non-HID media-key echoes")
+if "inFlightChooserMediaKeyRebounds = []" not in begin_programmatic:
+    raise SystemExit("verify_playback_routing_invariants: automatic dispatches must clear stale chooser media-key rebounds")
+if "extendChooserEchoSuppression" in text:
+    raise SystemExit("verify_playback_routing_invariants: chooser dispatch must not extend a hidden echo suppression window")
+if "chooserCommandCenterEcho" in text or "chooserMediaKeyEchoSuppression" in text:
+    raise SystemExit("verify_playback_routing_invariants: chooser dispatch must not keep broad hidden echo suppression windows")
+if "func finishProgrammaticDispatch" in text or "func finishChooserDispatch" in text:
+    raise SystemExit("verify_playback_routing_invariants: helper completion must not close time-bounded echo suppression before late rebound callbacks arrive")
+if "pruneExpiredProgrammaticEchoes()" not in begin_programmatic:
+    raise SystemExit("verify_playback_routing_invariants: beginning programmatic dispatch must prune expired echo guards before appending")
+if "private func pruneExpiredProgrammaticEchoes" not in text:
+    raise SystemExit("verify_playback_routing_invariants: in-flight echo guards must have explicit expiry pruning")
+if "removeInFlightProgrammaticDispatch" in text:
+    raise SystemExit("verify_playback_routing_invariants: in-flight echo guards must expire by time, not helper completion")
+if "extendProgrammatic" in text:
+    raise SystemExit("verify_playback_routing_invariants: programmatic dispatch must not create a second post-completion echo window")
+if "private var programmaticCommandCenterEcho" in text or "private var programmaticMediaKeyEcho" in text:
+    raise SystemExit("verify_playback_routing_invariants: programmatic dispatch must not keep a separate post-completion echo state")
+begin_chooser = text[text.index("    func beginChooserDispatch"):text.index("    func ignoreReasonForMediaKey")]
+if "beginProgrammaticDispatch(command: command)" not in begin_chooser:
+    raise SystemExit("verify_playback_routing_invariants: chooser dispatch must suppress immediate command-center echoes before helper completion")
+if "mediaKeyReboundExpiresAt" not in begin_chooser:
+    raise SystemExit("verify_playback_routing_invariants: chooser dispatch must keep physical media-key rebound expiry separate from generated echoes")
+if "physicalMediaKeyReboundWindow" not in begin_chooser:
+    raise SystemExit("verify_playback_routing_invariants: chooser rebound expiry must use the short physical media-key rebound window")
+if "metadata: MediaTransportInputMetadata? = nil" not in begin_chooser:
+    raise SystemExit("verify_playback_routing_invariants: chooser dispatch must keep input metadata seams explicit")
+if "guard let metadata else" not in begin_chooser or "inFlightChooserMediaKeyRebounds = [" not in begin_chooser:
+    raise SystemExit("verify_playback_routing_invariants: chooser dispatch must bind media-key rebound handling to the original input metadata")
+if "targetedMediaKeyEchoExpiresAt" not in begin_chooser or "inFlightChooserTargetedMediaKeyEchoes = [" not in begin_chooser:
+    raise SystemExit("verify_playback_routing_invariants: chooser dispatch must suppress only target-matched HID-shaped callbacks separately from exact physical rebounds")
+if "remainingMatches: 1" not in begin_chooser:
+    raise SystemExit("verify_playback_routing_invariants: targeted HID-shaped selected-row echo suppression must consume one callback instead of creating a cooldown")
+if "targetUnixProcessID: Int64? = nil" not in begin_chooser or "expectedTargetUnixProcessID: targetUnixProcessID" not in begin_chooser:
+    raise SystemExit("verify_playback_routing_invariants: targeted HID-shaped selected-row echo suppression must bind to the selected row process")
+if "applicationUnixProcessID: Int64? = nil" not in begin_chooser or "expectedApplicationUnixProcessID: applicationUnixProcessID" not in begin_chooser:
+    raise SystemExit("verify_playback_routing_invariants: targeted HID-shaped selected-row echo suppression must bind to Keyway for macOS-retargeted row echoes")
+if "selectedRowCommandCenterEchoWindow" in begin_chooser or "selectedRowCommandCenterEchoExpiresAt" in begin_chooser:
+    raise SystemExit("verify_playback_routing_invariants: chooser dispatch must not create a separate selected-row Command Center cooldown")
+if "remainingMatches: nil" in begin_chooser:
+    raise SystemExit("verify_playback_routing_invariants: chooser dispatch must not arm unbounded selected-row Command Center rebounds")
+if "inFlightProgrammaticCommandCenterEchoes = [" in begin_chooser:
+    raise SystemExit("verify_playback_routing_invariants: chooser dispatch must keep Command Center echo handling on the normal bounded programmatic path")
+if begin_chooser.index("inFlightChooserTargetedMediaKeyEchoes = [") < begin_chooser.index("guard let metadata else"):
+    raise SystemExit("verify_playback_routing_invariants: chooser dispatch without event-tap metadata must not arm broad targeted HID-shaped echo suppression")
+media_key_start = text.index("    func ignoreReasonForMediaKey")
+media_key_end = text.index("    func ignoreReasonForCommandCenter", media_key_start)
+media_key_body = text[media_key_start:media_key_end]
+if "consumeChooserMediaKeyRebound(command: command, metadata: metadata)" not in media_key_body:
+    raise SystemExit("verify_playback_routing_invariants: media-key routing must suppress only exact chooser-bound physical rebounds before reopening the chooser")
+if "consumeProgrammaticMediaKeyEcho(command: command, metadata: metadata)" not in media_key_body:
+    raise SystemExit("verify_playback_routing_invariants: media-key routing must suppress generated post-dispatch callbacks before reopening the chooser")
+if "consumeChooserTargetedMediaKeyEcho(command: command, metadata: metadata)" not in media_key_body:
+    raise SystemExit("verify_playback_routing_invariants: media-key routing must suppress targeted HID-shaped callbacks from selected-row dispatch")
+if "ignoreProgrammaticEcho" in media_key_body:
+    raise SystemExit("verify_playback_routing_invariants: media-key routing must not reuse command-center metadata matching for generated media-key echoes")
+if media_key_body.index("consumeChooserMediaKeyRebound") > media_key_body.index("ignoreCommandCenterShadowForMediaKey"):
+    raise SystemExit("verify_playback_routing_invariants: media-key rebound suppression must run before command-center shadow checks")
+if "ignoreChooserMediaKeyEcho" in media_key_body:
+    raise SystemExit("verify_playback_routing_invariants: media-key routing must not use broad chooser echo suppression")
+if "isFreshPhysicalMediaKey" in text or "lastAcceptedMediaKey" in text:
+    raise SystemExit("verify_playback_routing_invariants: chooser media-key echo suppression must not keep stale accepted-key memory")
+if "case mediaKeyRebound" not in text or "media_key_rebound_ignored" not in text:
+    raise SystemExit("verify_playback_routing_invariants: exact chooser media-key rebound suppression must be observable in traces")
+if "chooserMediaKeyReboundMatchBudget" in text:
+    raise SystemExit("verify_playback_routing_invariants: chooser media-key rebound suppression must be time-bounded, not callback-count bounded")
+if "chooserMediaKeyReboundTimestampTolerance" in text:
+    raise SystemExit("verify_playback_routing_invariants: chooser media-key rebound suppression must not use a broad timestamp tolerance")
+if "matchesSameGeneratedMediaKey" not in text:
+    raise SystemExit("verify_playback_routing_invariants: chooser media-key rebound suppression must match exact generated callbacks")
+if "case chooserTargetedMediaKeyEcho" not in text or "chooser_targeted_media_key_echo_ignored" not in text:
+    raise SystemExit("verify_playback_routing_invariants: targeted HID-shaped selected-row echoes must be observable in traces")
+targeted_match = text[text.index("private func targetedMediaKeyEchoMatches"):text.index("private func reboundTargetUnixProcessIDMatches")]
+if "expectedMetadata.matchesSameGeneratedMediaKey(as: actual)" not in targeted_match:
+    raise SystemExit("verify_playback_routing_invariants: targeted HID-shaped selected-row echoes must be same-event metadata matches, not a cooldown")
+if "reboundTargetUnixProcessIDMatches(expected, actual.targetUnixProcessID, now: now)" not in text:
+    raise SystemExit("verify_playback_routing_invariants: targeted HID-shaped selected-row echoes must match selected-target or Keyway-retargeted process ids")
+if "targetUnixProcessIDMatches(expected.expectedApplicationUnixProcessID, actual)" not in text:
+    raise SystemExit("verify_playback_routing_invariants: targeted HID-shaped selected-row echoes must suppress one Keyway-retargeted row rebound")
+if "applicationRetargetedMediaKeyEchoMinimumAge" not in text or "now.timeIntervalSince(expected.createdAt)" not in text:
+    raise SystemExit("verify_playback_routing_invariants: Keyway-retargeted row rebound suppression must not swallow an immediate fresh key press")
+if "targetedMediaKeyEchoMatches" not in text:
+    raise SystemExit("verify_playback_routing_invariants: targeted HID-shaped selected-row echoes must use source metadata matching")
+if "!metadata.isUntargetedPhysicalHIDSystemSource" not in text:
+    raise SystemExit("verify_playback_routing_invariants: targeted HID-shaped echo suppression must leave untargeted physical keys routeable")
+targeted_start = text.index("    private func consumeChooserTargetedMediaKeyEcho")
+targeted_end = text.index("    private func consumeProgrammaticMediaKeyEcho", targeted_start)
+targeted_body = text[targeted_start:targeted_end]
+if "commandCenterInputShadow = TimedCommand" not in targeted_body:
+    raise SystemExit("verify_playback_routing_invariants: consuming a targeted HID-shaped echo must shadow the paired Command Center callback")
+PY
+
+python3 - "$chooser_guard" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+for forbidden in (
+    "selectedEchoInterval",
+    "expiresAt: Date",
+    "remainingMatches",
+    "selectedEchoMatchBudget",
+    "targetedHIDReboundTimestampTolerance",
+    "matchesSameGeneratedMediaKey",
+    "isPhysicalHIDSystemSource",
+    "case .commandCenter:",
+    "case .eventTap:",
+):
+    if forbidden in text:
+        raise SystemExit(f"verify_playback_routing_invariants: chooser session guard must not own selected-row echo suppression: {forbidden}")
+if "func finish(" not in text or "active = nil" not in text:
+    raise SystemExit("verify_playback_routing_invariants: chooser session guard must clear only visible chooser state")
+PY
+
+if grep -Eq 'chooserInputCooldown|chooser_input_cooldown_ignored|finishChooserInteraction' "$transport" "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportRouteSource.swift"; then
+  fail "chooser selection must not leave behind a route-boundary cooldown that can swallow an immediate next press"
+fi
+
+python3 - "$overlay" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+start = text.index("    private func choose(_ target: MediaRemoteTarget)")
+end = text.index("    private func adjustSelectedExpandedVolume", start)
+body = text[start:end]
+if body.index("close(notifyDismiss: false)") > body.index("choose?(target, command)"):
+    raise SystemExit("verify_playback_routing_invariants: chooser row clicks must close the modal before MediaRemote dispatch")
+PY
+
+grep -q 'acceptCommandCallback(command)' "$command_center" \
+  || fail "command-center duplicate callbacks must be coalesced before scheduling async routing"
+
+grep -q 'duplicate_ignored command=' "$command_center" \
+  || fail "command-center duplicate callback suppression must be logged"
+
+grep -q 'register(commandCenter.playCommand, command: .play)' "$command_center" \
+  || fail "command-center play events must preserve the exact play command"
+
+grep -q 'register(commandCenter.pauseCommand, command: .pause)' "$command_center" \
+  || fail "command-center pause events must preserve the exact pause command"
+
+grep -q 'lastTransportKeyDown' "$hotkeys" \
+  || fail "event-tap transport duplicate suppression must keep only one bounded event marker"
+
+grep -q 'transport_duplicate_ignored' "$hotkeys" \
+  || fail "event-tap transport duplicate suppression must be logged"
+
+python3 - "$hotkeys" "$command_center" <<'PY'
+import pathlib
+import re
+import sys
+
+hotkeys = pathlib.Path(sys.argv[1]).read_text()
+command_center = pathlib.Path(sys.argv[2]).read_text()
+for stale_name in (
+    "transportKeyPressAutoClearInterval",
+    "transportKeyPressAutoClearNanoseconds",
+    "scheduleTransportKeyPressAutoClear",
+    "transport_press_auto_cleared",
+    "activeTransportKeyPress",
+):
+    if stale_name in hotkeys:
+        raise SystemExit(f"verify_playback_routing_invariants: transport key routing must not keep timed latch state: {stale_name}")
+if "acceptTransportKeyDown(command: command, metadata: metadata)" not in hotkeys:
+    raise SystemExit("verify_playback_routing_invariants: transport key duplicate detection must use CGEvent metadata")
+input_start = hotkeys.index("private func acceptTransportInput")
+input_end = hotkeys.index("    private func acceptTransportKeyDown", input_start)
+input_body = hotkeys[input_start:input_end]
+if "metadata.isPhysicalHIDSystemSource || source == \"function_key\"" not in input_body:
+    raise SystemExit("verify_playback_routing_invariants: event-tap transport routing must reject generated media-key callbacks while accepting raw F8 function-key media events")
+if "transport_generated_input_ignored" not in input_body:
+    raise SystemExit("verify_playback_routing_invariants: generated event-tap media-key callbacks must be traceable before routing")
+if "mediaTransportActions.noteGeneratedMediaKeyIgnored(command: command, metadata: metadata)" not in input_body:
+    raise SystemExit("verify_playback_routing_invariants: generated event-tap media-key callbacks must arm central transport shadow state before returning")
+if "return false" not in input_body:
+    raise SystemExit("verify_playback_routing_invariants: generated event-tap media-key callbacks must not reach routeFromMediaKey")
+handle_start = hotkeys.index("case .transportKeyDown")
+handle_end = hotkeys.index("case .transportKeyUp", handle_start)
+handle_body = hotkeys[handle_start:handle_end]
+if handle_body.index('acceptTransportInput(command: command, source: source, metadata: metadata, phase: "down")') > handle_body.index("mediaTransportActions.routeFromMediaKey(command: command, metadata: metadata)"):
+    raise SystemExit("verify_playback_routing_invariants: event-tap input boundary must run before routeFromMediaKey")
+accept_start = hotkeys.index("private func acceptTransportKeyDown")
+accept_end = hotkeys.index("    private func commandsMatch", accept_start)
+accept_body = hotkeys[accept_start:accept_end]
+if "matchesSameGeneratedMediaKey(as: metadata)" not in accept_body:
+    raise SystemExit("verify_playback_routing_invariants: transport key duplicate detection must key off the current CGEvent metadata")
+if "Task.sleep" in accept_body or "CFAbsoluteTimeGetCurrent" in accept_body:
+    raise SystemExit("verify_playback_routing_invariants: transport key duplicate detection must not add wall-clock delay")
+if "lastTransportKeyDown = (command, metadata)" not in accept_body:
+    raise SystemExit("verify_playback_routing_invariants: transport key duplicate detection must store exactly the accepted event marker")
+if "activeTransportKeyDown = command" not in accept_body:
+    raise SystemExit("verify_playback_routing_invariants: transport key duplicate detection must latch a held media key until key-up")
+if "armTransportKeyDownReset(command: command)" not in accept_body:
+    raise SystemExit("verify_playback_routing_invariants: transport key duplicate detection must arm a bounded reset in case key-up is missed")
+transport_reset = re.search(r'transportKeyDownResetInterval: TimeInterval = ([0-9.]+)', hotkeys)
+if not transport_reset:
+    raise SystemExit("verify_playback_routing_invariants: transport key-down reset interval must be explicit")
+transport_reset_value = float(transport_reset.group(1))
+if transport_reset_value < 0.35 or transport_reset_value > 0.45:
+    raise SystemExit("verify_playback_routing_invariants: missed key-up reset must cover a normal physical press without becoming a routing cooldown")
+if "private func finishTransportKeyDown" not in hotkeys:
+    raise SystemExit("verify_playback_routing_invariants: transport key duplicate detection must release the held media-key latch on key-up")
+if "activeTransportKeyDownResetTimer?.cancel()" not in hotkeys:
+    raise SystemExit("verify_playback_routing_invariants: transport key reset timer must be cancelled when the latch is released")
+if "resetInputStateAfterTapInterruption" not in hotkeys:
+    raise SystemExit("verify_playback_routing_invariants: event-tap interruptions must clear held input state")
+if "onInterrupted:" not in hotkeys:
+    raise SystemExit("verify_playback_routing_invariants: ShortcutEventTap must report timeout/user-input interruptions to the controller")
+duplicate_interval = re.search(r'duplicateCallbackInterval: TimeInterval = ([0-9.]+)', command_center)
+if not duplicate_interval:
+    raise SystemExit("verify_playback_routing_invariants: command-center duplicate callback interval must be explicit")
+if float(duplicate_interval.group(1)) > 0.15:
+    raise SystemExit("verify_playback_routing_invariants: command-center duplicate callback interval must stay below 150ms")
+PY
+
+grep -q 'AVAudioEngine' "$command_center" \
+  || fail "Command Center route shield must keep Keyway's Now Playing session active with silent audio"
+
+grep -q 'startRouteShieldAudio()' "$command_center" \
+  || fail "Command Center route shield must start silent audio before publishing Now Playing state"
+
+grep -q 'commandCenterRoute=enabled' "$hotkeys" \
+  || fail "command-center routing must be logged when it is published"
+
+grep -q 'commandCenterRoute=already_enabled' "$hotkeys" \
+  || fail "command-center transport routing must log duplicate start attempts"
+
+grep -q 'ensureCommandCenterRoute(reason:' "$hotkeys" \
+  || fail "command-center routing must start through the explicit route boundary"
+
+grep -q 'ensureCommandCenterRoute(reason: "event_tap_enabled_route_shield")' "$hotkeys" \
+  || fail "event-tap success must publish the Command Center route shield only after cghid ownership is established"
+
+grep -q 'routeFromCommandCenter(command: command, metadata: metadata)' "$hotkeys" \
+  || fail "command-center route-shield callbacks must enter the same transport filter"
+
+grep -q 'ensureCommandCenterRoute(reason: "event_tap_running_route_shield")' "$hotkeys" \
+  || fail "already-running event-tap ownership must keep the Command Center route shield active"
+
+grep -q 'event_tap_unhandled_system_defined' "$hotkeys" \
+  || fail "event-tap parser misses must be traced instead of looking like silent key loss"
+
+grep -q 'unhandledSystemDefinedDiagnostic' "$parser" \
+  || fail "event parser must expose unhandled system-defined media-key diagnostics"
+
+grep -q 'f8KeyCode' "$parser" \
+  || fail "event parser must intercept raw F8 Play/Pause key-down events as a media key"
+
+grep -q 'observedPlayPauseKeyCode = 2' "$parser" \
+  || fail "event parser must intercept the observed hardware Play/Pause system-defined key code"
+
+grep -q 'media_key_observed_play_pause' "$parser" \
+  || fail "observed hardware Play/Pause key-code routing must be traceable"
+
+grep -q 'transportFunctionKeyCommand' "$parser" \
+  || fail "event parser must map raw F7/F8/F9 function-key events onto transport commands"
+
+python3 - "$hotkeys" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+closure = text[
+    text.index("private lazy var commandCenterInterceptor = MediaCommandCenterInterceptor"):
+    text.index("    private let step =", text.index("private lazy var commandCenterInterceptor = MediaCommandCenterInterceptor"))
+]
+route = "self.mediaTransportActions.routeFromCommandCenter(command: command, metadata: metadata)"
+guard = 'self.eventTap.isRunning'
+if route not in closure:
+    raise SystemExit("verify_playback_routing_invariants: command-center callback must route through the transport filter when fallback routing is running")
+if "generatedTransportShadow" in closure:
+    raise SystemExit("verify_playback_routing_invariants: command-center generated-event shadows must be owned by the transport router")
+PY
+
+grep -q 'commandCenterRouteRunning' "$runtime_status" \
+  || fail "runtime status must persist command-center route state separately from event-tap permission state"
+
+grep -q 'eventTapRunning' "$runtime_status" \
+  || fail "runtime status must persist whether the intercepting event tap is actually running"
+
+grep -q 'activeEventTap' "$runtime_status" \
+  || fail "runtime status must persist which event tap is active for playback-key diagnosis"
+
+grep -q 'commandCenterRouteRunning(_ running: Bool)' "$runtime_reporter" \
+  || fail "runtime reporter must expose command-center route state updates"
+
+grep -q 'runtimeReporter.commandCenterRouteRunning(true)' "$hotkeys" \
+  || fail "command-center route startup must update runtime status"
+
+grep -q 'private lazy var commandCenterInterceptor = MediaCommandCenterInterceptor' "$hotkeys" \
+  || fail "command-center route must not be represented as optional runtime state"
+
+if grep -Eq 'startCommandCenterFallback|stopCommandCenterFallback' "$hotkeys"; then
+  fail "command-center fallback must use the same registered route, not a second start/stop path"
+fi
+
+python3 - "$hotkeys" <<'PY'
+import pathlib
+import re
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+start_match = re.search(r'func start\(\) \{(?P<body>.*?)\n    \}', text, re.S)
+if not start_match:
+    raise SystemExit("verify_playback_routing_invariants: hotkey start() body not found")
+if "ensureCommandCenterRoute(reason: \"startup\")" in start_match.group("body"):
+    raise SystemExit("verify_playback_routing_invariants: command-center must not publish a Now Playing route before event-tap permission probing")
+if "stopCommandCenterRoute(reason: \"permission_denied\")" not in text:
+    raise SystemExit("verify_playback_routing_invariants: denied event-tap permissions must not enable a non-intercepting command-center fallback")
+if "stopCommandCenterRoute(reason: \"event_tap_create_failed\")" not in text:
+    raise SystemExit("verify_playback_routing_invariants: event-tap creation failure must not enable a non-intercepting command-center fallback")
+if "ensureCommandCenterRoute(reason: \"event_tap_enabled_route_shield\")" not in text:
+    raise SystemExit("verify_playback_routing_invariants: event-tap success must start the Command Center route shield only after cghid ownership is established")
+if "ensureCommandCenterRoute(reason: \"event_tap_running_route_shield\")" not in text:
+    raise SystemExit("verify_playback_routing_invariants: existing event-tap ownership must keep the Command Center route shield active")
+if "commandCenterInterceptor.stop()" not in text:
+    raise SystemExit("verify_playback_routing_invariants: command-center route must still unregister on controller shutdown")
+PY
+
+grep -q 'command_center_media_key_shadow_ignored' "$command_filter" \
+  || fail "command-center events shadowing a swallowed media key must not re-open the chooser"
+
+grep -q 'media_key_command_center_shadow_ignored' "$command_filter" \
+  || fail "media-key events shadowing an accepted command-center route must not re-open the chooser"
+
+grep -q 'programmatic_media_key_echo_ignored' "$command_filter" \
+  || fail "programmatic dispatch must expose generated media-key echo suppression in traces"
+
+grep -q 'inFlightProgrammaticMediaKeyEchoes' "$command_filter" \
+  || fail "programmatic dispatch must suppress generated media-key echoes without delaying selected-row dispatch"
+
+grep -q '!metadata.isPhysicalHIDSystemSource' "$command_filter" \
+  || fail "programmatic media-key echo suppression must allow HID-shaped fresh input through"
+
+if grep -q 'chooserGeneratedEchoInterval\|chooserMediaKeyReboundInterval\|1.75' "$command_filter"; then
+  fail "chooser dispatch must not keep long hidden media-key suppression windows"
+fi
+
+grep -q 'commandCenterMetadata: commandCenterMetadata' "$transport" \
+  || fail "chooser presentation must carry command-center metadata into the selected-row echo guard"
+
+if grep -q 'chooserMediaKeyEchoSuppressionInterval\|chooserCommandCenterEchoSuppressionInterval' "$transport"; then
+  fail "chooser dispatch must not keep broad media-key or command-center suppression windows"
+fi
+
+grep -q 'inFlightProgrammaticCommandCenterEchoes' "$command_filter" \
+  || fail "programmatic echo suppression must remain active while MediaRemote dispatch is still in flight"
+
+grep -q 'programmaticCommandCenterEchoWindow' "$command_filter" \
+  || fail "programmatic Command Center echo suppression must be bounded independently from helper latency"
+
+grep -q 'programmaticGeneratedMediaKeyCallbackWindow' "$command_filter" \
+  || fail "programmatic generated media-key suppression must be bounded independently from helper latency"
+
+grep -q 'consumeTimedCommand' "$command_filter" \
+  || fail "timed echo suppression must consume bounded matching callback bursts"
+
+grep -q 'values.removeAll { now > $0.expiresAt }' "$command_filter" \
+  || fail "expired in-flight programmatic echo suppression must be pruned before routing decisions"
+
+grep -q 'MediaTransportCommandCenterFilter' "$transport" \
+  || fail "command-center echo handling must use the bounded transport filter"
+
+python3 - "$app_environment" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+live_start = text.index("static func live()")
+live_body = text[live_start:]
+if "importLegacyState()" in live_body:
+    raise SystemExit("verify_playback_routing_invariants: app startup must not block media-key routing on legacy config or Keychain import")
+if "let configImportReport: ConfigImportReport?" not in text:
+    raise SystemExit("verify_playback_routing_invariants: startup config import report must be optional so import can stay out of the hotkey startup path")
+if "configImportReport: nil" not in live_body:
+    raise SystemExit("verify_playback_routing_invariants: live startup must defer legacy config import until explicit settings action")
+PY
+
+grep -q 'recordMediaTransportEvent' "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutRuntimeStatus.swift" \
+  || fail "playback routing must persist a small runtime trace for physical-key diagnosis"
+
+grep -q 'mediaTransportTrace' "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutRuntimeStatus.swift" \
+  || fail "runtime playback trace must be visible in the persisted status JSON"
+
+grep -q 'mediaTransportTraceSequence' "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutRuntimeStatus.swift" \
+  || fail "runtime playback trace must persist monotonic sequence ids for reliable HITL slicing"
+
+grep -q 'payload\["sequence"\]' "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutRuntimeStatus.swift" \
+  || fail "each playback trace event must include its monotonic sequence id"
+
+grep -q 'payload\["monotonicMilliseconds"\]' "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutRuntimeStatus.swift" \
+  || fail "each playback trace event must include monotonic timing for latency verification"
+
+python3 - "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutRuntimeStatus.swift" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+start = text.index("    func recordMediaTransportEvent(")
+end = text.index("    private func scheduleTracePersistence()", start)
+body = text[start:end]
+if "persistSnapshot()" in body:
+    raise SystemExit("verify_playback_routing_invariants: physical media-key trace recording must not synchronously write the status file from the event-tap hot path")
+if "scheduleTracePersistence()" not in body:
+    raise SystemExit("verify_playback_routing_invariants: physical media-key trace recording must schedule persistence after the routing decision")
+if "private func scheduleTracePersistence()" not in text:
+    raise SystemExit("verify_playback_routing_invariants: trace persistence scheduling must be explicit and testable")
+if "tracePersistenceScheduled" not in text:
+    raise SystemExit("verify_playback_routing_invariants: trace persistence must coalesce bursts from one media-key routing decision")
+PY
+
+grep -q 'trace("chooser_dispatch"' "$transport" \
+  || fail "chooser row dispatch must be visible in the persisted playback trace"
+
+grep -q '"input_ignored"' "$transport" \
+  || fail "suppressed media-key and command-center echoes must be visible in the persisted playback trace"
+
+grep -q 'traceTransportKey("transport_key_down"' "$hotkeys" \
+  || fail "physical transport key-down capture must be visible in the persisted playback trace"
+
+grep -q 'traceTransportKey("transport_duplicate_ignored"' "$hotkeys" \
+  || fail "physical transport key duplicate suppression must be visible in the persisted playback trace"
+
+grep -q 'programmatic_media_key_echo_ignored' "$command_filter" \
+  || fail "generated media-key callback suppression must be visible in the persisted playback trace"
+
+grep -q '"generated_media_key_shadow_armed"' "$transport" \
+  || fail "event-tap generated-shadow arming must be visible in the persisted playback trace"
+
+grep -q 'recordHelperResult' "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportTraceRecorder.swift" \
+  || fail "MediaRemote helper command results must be visible in the persisted playback trace"
+
+grep -q 'eventSourceUnixProcessID' "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportTraceRecorder.swift" \
+  || fail "transport decision traces must include media-key source process metadata"
+
+grep -q 'eventSourceIsUntargetedPhysicalHIDSystem' "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportTraceRecorder.swift" \
+  || fail "transport decision traces must include physical HID classification metadata"
+
+grep -q 'commandCenterEventTimestamp' "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportTraceRecorder.swift" \
+  || fail "transport decision traces must include Command Center event timestamps"
+
+grep -q '"requestID": result.requestID ?? ""' "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportTraceRecorder.swift" \
+  || fail "MediaRemote helper command results must include request ids for selected-row correlation"
+
+grep -q 'trace(result: result)' "$transport" \
+  || fail "transport dispatch callbacks must record helper command results before closing echo state"
+
+grep -q 'showCommandFailureIfNeeded(result: result, target: target)' "$transport" \
+  || fail "async MediaRemote command failures must surface after accepted helper writes"
+
+grep -q 'async_route_failed' "$transport" \
+  || fail "async MediaRemote command failures must be logged"
+
+grep -q 'onFailure:' "$remote_helper_process" \
+  || fail "MediaRemote helper process must report internal output failures to the controller"
+
+grep -q 'handleHelperFailure' "$remote_controller" \
+  || fail "MediaRemote helper internal failures must drive controller failure and recovery"
+
+grep -q 'mediaTransportTrace json' "$repo_root/scripts/show_playback_trace" \
+  || fail "playback trace reader must print persisted media routing events"
+
+grep -q 'expected cghid event_tap interception' "$repo_root/scripts/hitl_playback_routing_check" \
+  || fail "HITL playback check must require cghid event-tap interception"
+
+grep -q 'event-tap routing occurred without a transport key-down' "$repo_root/scripts/hitl_playback_routing_check" \
+  || fail "HITL playback check must require captured event-tap transport input when the route source is event tap"
+
+grep -q 'chooser_open_latency_ms_max' "$repo_root/scripts/hitl_playback_routing_check" \
+  || fail "HITL playback check must enforce instant chooser-open latency"
+
+grep -q 'helper_result_latency_ms_max' "$repo_root/scripts/hitl_playback_routing_check" \
+  || fail "HITL playback check must enforce bounded helper completion after row dispatch"
+
+grep -q 'starting after trace sequence' "$repo_root/scripts/hitl_playback_routing_check" \
+  || fail "HITL playback check must slice by monotonic trace sequence, not capped array length"
+
+grep -q 'payload\["mediaTransportTraceSequence"\]' "$repo_root/scripts/hitl_playback_routing_check" \
+  || fail "HITL playback check must use the persisted trace sequence marker, not the capped trace array maximum"
+
+grep -q 'chooser_open_latency_ms_max' "$repo_root/scripts/hitl_playback_routing_check" \
+  || fail "physical HITL chooser dispatch proof must assert chooser open latency"
+
+grep -q 'row_dispatch_latency_ms_max' "$repo_root/scripts/hitl_playback_routing_check" \
+  || fail "physical HITL chooser dispatch proof must assert selected-row dispatch latency"
+
+grep -q 'helper_result_latency_ms_max' "$repo_root/scripts/hitl_playback_routing_check" \
+  || fail "physical HITL chooser dispatch proof must assert bounded helper result latency"
+
+grep -q 'expected at least two playing/background sources' "$repo_root/scripts/hitl_playback_routing_check" \
+  || fail "physical HITL chooser dispatch proof must require the two-source scenario"
+
+grep -q 'selected playing target routed' "$repo_root/scripts/hitl_playback_routing_check" \
+  || fail "physical HITL chooser dispatch proof must reject row actions that do not match selected row play state"
+
+grep -q 'probe_generated_media_key_swallowed' "$repo_root/scripts/probe_playback_event_tap" \
+  || fail "runtime event-tap probe must prove generated media-key bursts are swallowed before routing"
+
+grep -q 'post_generated_play_pause_burst' "$repo_root/scripts/probe_playback_event_tap" \
+  || fail "runtime event-tap probe must send a generated key-down/key-up burst"
+
+grep -q 'generated_media_key_shadow_armed' "$repo_root/scripts/probe_playback_event_tap" \
+  || fail "runtime event-tap probe must prove generated key-down arms central Command Center shadow state"
+
+grep -q 'forbidden in ("transport_key_down", "decision_chooser", "chooser_show")' "$repo_root/scripts/probe_playback_event_tap" \
+  || fail "runtime event-tap probe must fail if generated media-key callbacks reach the chooser route"
+
+grep -q 'probe_chooser_selection_stable' "$repo_root/scripts/probe_playback_chooser_selection" \
+  || fail "runtime chooser-selection probe must verify selected-row dispatch without late modal re-entry"
+
+grep -q 'chooser reopened after row dispatch' "$repo_root/scripts/probe_playback_chooser_selection" \
+  || fail "runtime chooser-selection probe must fail when row dispatch reopens the modal"
+
+grep -q 'run_probe_cleanly scripts/probe_playback_event_tap' "$repo_root/scripts/probe_playback_routing_suite" \
+  || fail "playback routing suite must run the generated media-key rejection probe"
+
+grep -q 'verify_playback_filter_semantics' "$repo_root/scripts/probe_playback_routing_suite" \
+  || fail "playback routing suite must run selected-row echo semantics"
+
+if grep -Eq 'lastEventTapRoute|programmaticDispatchCount|noteProgrammaticDispatch' "$transport" "$command_filter"; then
+  fail "transport echo handling must not keep stale route memory or instant-only dispatch suppression"
+fi
+
+grep -q 'panel?.isVisible == true' "$overlay" \
+  || fail "chooser visibility must be based on the panel, not app activation state"
+
+if grep -q 'onFocusLost' "$overlay"; then
+  fail "chooser must not auto-dismiss from focus churn while media-key echoes are still arriving"
+fi
+
+if grep -q 'didResignActiveNotification' "$overlay"; then
+  fail "chooser must not auto-dismiss from app deactivation while media-key echoes are still arriving"
+fi
+
+grep -q 'panel.level = .statusBar' "$overlay" \
+  || fail "chooser panel must be raised above foreground app windows"
+
+grep -q 'panel.orderFrontRegardless()' "$overlay" \
+  || fail "chooser panel must be ordered front after activation"
+
+grep -q 'panel.hidesOnDeactivate = false' "$overlay" \
+  || fail "chooser panel must remain visible when Keyway activation is delayed"
+
+grep -q 'let choose = onChoose' "$overlay" \
+  || fail "chooser selection must preserve the pending callback while closing the panel"
+
+grep -q 'choose?(target, command)' "$overlay" \
+  || fail "chooser must invoke its callback for the selected row"
+
+python3 - "$overlay" "$overlay_model" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+model = pathlib.Path(sys.argv[2]).read_text()
+choose = text.index("choose?(target, command)")
+close = text.index("close(notifyDismiss: false)")
+if close > choose:
+    raise SystemExit("verify_playback_routing_invariants: chooser must close the panel before selected-row dispatch")
+update = model[model.index("func updateTargetsPreservingSelection"):model.index("    func moveSelection")]
+if "updatedTarget(" not in update:
+    raise SystemExit("verify_playback_routing_invariants: visible chooser rows must be refreshed through a stable target matcher")
+if "consumedIDs" not in update:
+    raise SystemExit("verify_playback_routing_invariants: visible chooser row refresh must not duplicate refreshed targets")
+if "selectedIndex(matching: selectedTarget)" not in update:
+    raise SystemExit("verify_playback_routing_invariants: visible chooser selection must survive metadata-derived id churn")
+if "preservedSelectedTargetID" not in update:
+    raise SystemExit("verify_playback_routing_invariants: visible chooser selection must track refreshed row identity explicitly")
+matcher = model[model.index("private func updatedTarget"):model.index("    func moveSelection")]
+if "$0.id == existingTarget.id" not in matcher:
+    raise SystemExit("verify_playback_routing_invariants: visible chooser row refresh must prefer exact target ids")
+if "isSameProcessTarget(candidate, existingTarget)" not in matcher:
+    raise SystemExit("verify_playback_routing_invariants: visible chooser row refresh must tolerate metadata-derived id churn")
+if "candidates.count == 1" not in matcher:
+    raise SystemExit("verify_playback_routing_invariants: visible chooser row refresh must reject ambiguous same-process matches")
+    if "targets.isEmpty" not in update or "self.targets = []" not in update:
+        raise SystemExit("verify_playback_routing_invariants: empty target refresh must clear visible chooser rows")
+    if "?? existingTarget" in update:
+        raise SystemExit("verify_playback_routing_invariants: visible chooser refresh must not keep stale rows that disappeared from the current snapshot")
+PY
+
+grep -q 'routeFromCache(command: command)' "$transport" \
+  || fail "transport commands must route from the current cache without waiting for a snapshot"
+
+if grep -q 'hasFreshSnapshot(maxAge: 1.5)' "$status_item"; then
+  fail "playback UI must not blank controls behind a 1.5s snapshot freshness delay"
+fi
+
+grep -q 'let displayTarget = target' "$status_item" \
+  || fail "status menu playback controls must keep the cached target visible during refresh"
+
+if grep -Eq 'target\.isCurrentlyPlaying \\? MediaRemoteTransportCommand\.pause : \\.play|repairIfNeeded|MediaTransportLeakRepairController' "$transport" "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar.xcodeproj/project.pbxproj"; then
+  fail "transport routing must not repair or infer Play/Pause from delayed playback state"
+fi
+
+if grep -Eq 'showChooserAfterRefreshingSnapshot|chooserSnapshotWaitNanoseconds|refreshSnapshotAndWait' "$transport"; then
+  fail "playback chooser must present immediately from cache and refresh snapshots only in the background"
+fi
+
+if grep -Eq 'selectedTargetID|selectedTargetIdentity|pinnedTarget|recentTarget|markRecentTarget|togglePinnedTarget' "$transport"; then
   fail "transport routing must not use selected, pinned, or recent hidden state"
 fi
+
+if grep -q 'lastChooserRequest' "$transport"; then
+  fail "transport routing must not use unstructured chooser debounce state"
+fi
+
+python3 - "$transport" <<'PY'
+import pathlib
+import re
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+for name, value in re.findall(r'private static let (\w*(?:Callback|Echo|Rebound|Shadow|Suppression)\w*(?:Interval|Window)): TimeInterval = ([0-9.]+)', text):
+    if name == "programmaticCommandCenterEchoWindow":
+        low, high = 0.0, 0.25
+    elif name == "programmaticGeneratedMediaKeyCallbackWindow":
+        low, high = 0.0, 0.25
+    elif name == "physicalMediaKeyReboundWindow":
+        low, high = 0.0, 0.25
+    elif name == "chooserTargetedMediaKeyEchoWindow":
+        low, high = 0.0, 1.25
+    elif name == "commandCenterMediaKeyShadowInterval":
+        low, high = 0.0, 0.30
+    else:
+        low, high = 0.0, 0.15
+    parsed = float(value)
+    if parsed < low or parsed > high:
+        raise SystemExit(
+            f"verify_playback_routing_invariants: {name} must stay between {low}s and {high}s; got {value}s"
+        )
+fallback_delay = re.search(r'programmaticDispatchFallbackDelayNanoseconds: UInt64 = ([0-9_]+)', text)
+if not fallback_delay:
+    raise SystemExit("verify_playback_routing_invariants: programmatic dispatch fallback delay must be explicit")
+fallback_nanoseconds = int(fallback_delay.group(1).replace("_", ""))
+if fallback_nanoseconds <= 0 or fallback_nanoseconds > 250_000_000:
+    raise SystemExit("verify_playback_routing_invariants: programmatic dispatch fallback must stay below visible cooldown territory")
+PY
+
+"$repo_root/scripts/verify_playback_filter_semantics" >/dev/null
+"$repo_root/scripts/verify_media_chooser_guard_semantics" >/dev/null
+"$repo_root/scripts/verify_playback_reentry_semantics" >/dev/null
+"$repo_root/scripts/verify_media_target_overlay_model_semantics" >/dev/null
+"$repo_root/scripts/verify_media_transport_command_rules_semantics" >/dev/null
+"$repo_root/scripts/verify_media_transport_route_source_semantics" >/dev/null
+
+grep -q 'MRMediaRemoteSetOverriddenNowPlayingApplication' "$command_center" \
+  || fail "route shield must force Keyway as the overridden now-playing application"
+
+grep -q 'MRMediaRemoteSetNowPlayingApplicationOverrideEnabled' "$command_center" \
+  || fail "route shield must enable the MediaRemote now-playing override"
+
+grep -q 'mediaRemoteRouteShield.disable()' "$command_center" \
+  || fail "route shield must disable its MediaRemote override when relaxed for selected-row MediaRemote dispatch"
+
+grep -q '0.0000001' "$command_center" \
+  || fail "route shield audio must use tiny non-zero samples so macOS keeps Keyway eligible as active media route"
 
 grep -q 'initWithPlayerPath:playerPath' "$helper" \
   || fail "MediaRemote commands must use a matched MRPlayerPath"
 
 grep -q 'KeywaySendCommandToPlayerPath' "$helper" \
+  || grep -q 'KeywaySubmitCommandToPlayerPath' "$helper" \
   || fail "MediaRemote helper must dispatch through player-path requests"
+
+grep -q 'KeywayClientCache' "$helper" \
+  || fail "MediaRemote helper must cache snapshot clients for immediate chooser dispatch"
+
+python3 - "$helper" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+identifier = text[
+    text.index("static NSString *KeywayTargetIdentifier"):
+    text.index("static void KeywayRefreshRowIdentifier")
+]
+for field in ("title", "artist", "album", "mediaType"):
+    if field in identifier:
+        raise SystemExit(f"verify_playback_routing_invariants: target ids must not churn on now-playing {field}")
+apply_info = text[
+    text.index("static void KeywayApplyNowPlayingInfo"):
+    text.index("static BOOL KeywayRowHasMediaState")
+]
+if "KeywayRefreshRowIdentifier(row)" in apply_info:
+    raise SystemExit("verify_playback_routing_invariants: applying now-playing metadata must not change target ids")
+PY
+
+grep -q 'KeywayAddTargetRow(targets, clientsByTargetID, row, client)' "$helper" \
+  || fail "MediaRemote snapshot caching must preserve duplicate clients instead of overwriting target ids"
+
+grep -q 'submitted cached MediaRemote player path command' "$helper" \
+  || fail "MediaRemote command results must identify instant player-path submission"
+
+python3 - "$helper" <<'PY'
+import pathlib
+import re
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+if re.search(r'KeywayTargetIdentifier\(NSString \*bundleID, pid_t pid\)', text):
+    raise SystemExit("verify_playback_routing_invariants: target ids must not collapse to bundle id plus pid")
+if 'activeBaseTargetID' not in text:
+    raise SystemExit("verify_playback_routing_invariants: active target id must be resolved after final row ids are known")
+match = re.search(r'void keyway_mediaremote_send_command\(void\) \{(?P<body>.*?)\n\}', text, re.S)
+if not match:
+    raise SystemExit("verify_playback_routing_invariants: missing keyway_mediaremote_send_command")
+body = match.group("body")
+if "KeywayCachedClientForTargetID(targetID)" in body:
+    raise SystemExit("verify_playback_routing_invariants: selected playback commands must not submit through a stale process-local client cache")
+if "KeywayRefreshFastClientCache(targetID, &symbols, queue, &resolvedClient)" not in body:
+    raise SystemExit("verify_playback_routing_invariants: selected playback commands must resolve the selected target from a fresh fast client cache")
+if body.index("KeywayRefreshFastClientCache(targetID, &symbols, queue, &resolvedClient)") > body.index("KeywaySubmitCommandToPlayerPath"):
+    raise SystemExit("verify_playback_routing_invariants: selected playback commands must refresh target resolution before MRPlayerPath submission")
+if "fresh MediaRemote client cache unavailable" not in body or "target not found in fresh MediaRemote client cache" not in body:
+    raise SystemExit("verify_playback_routing_invariants: failed fresh target resolution must be explicit in command results")
+if "KeywaySubmitCommandToPlayerPath" not in body:
+    raise SystemExit("verify_playback_routing_invariants: selected playback commands must submit through MRPlayerPath")
+submit = text[text.index("static BOOL KeywaySubmitCommandToPlayerPath"):text.index("void keyway_mediaremote_snapshot")]
+if "appOptions:(unsigned int)appOptions" not in text or "appOptions:0" not in submit:
+    raise SystemExit("verify_playback_routing_invariants: MRNowPlayingRequest appOptions must use the runtime unsigned-int ABI, not an object")
+if "appOptions:@{}" in submit:
+    raise SystemExit("verify_playback_routing_invariants: MRNowPlayingRequest appOptions object corrupts selected-row command dispatch")
+if "dispatch_semaphore_wait" in submit:
+    raise SystemExit("verify_playback_routing_invariants: helper command results must not wait on the MediaRemote completion callback")
+if "commandCompletionTimeoutNanoseconds" in submit:
+    raise SystemExit("verify_playback_routing_invariants: helper command submission must not keep a hidden completion timeout")
+PY
 
 if grep -Eq 'MRMediaRemoteSendCommandToClient|sendCommandToClient|enqueueCommand|sendQueuedCommands' "$helper"; then
   fail "MediaRemote helper must not use global/client queued command fallbacks"

@@ -1,0 +1,337 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+status_file="${1:-$HOME/Library/Application Support/keyway/shortcut-runtime-status.json}"
+timeout_seconds="${KEYWAY_HITL_TIMEOUT_SECONDS:-30}"
+chooser_open_latency_ms_max="${KEYWAY_HITL_CHOOSER_OPEN_LATENCY_MS_MAX:-75}"
+row_dispatch_latency_ms_max="${KEYWAY_HITL_ROW_DISPATCH_LATENCY_MS_MAX:-260}"
+helper_result_latency_ms_max="${KEYWAY_HITL_HELPER_RESULT_LATENCY_MS_MAX:-200}"
+post_dispatch_settle_seconds="${KEYWAY_HITL_POST_DISPATCH_SETTLE_SECONDS:-0.35}"
+skip_wait="${KEYWAY_HITL_SKIP_WAIT:-0}"
+
+if [[ ! -f "$status_file" ]]; then
+  printf 'hitl_playback_routing_check: missing status file: %s\n' "$status_file" >&2
+  exit 1
+fi
+
+trace_marker() {
+  python3 - "$status_file" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+payload = json.loads(path.read_text())
+print(int(payload["mediaTransportTraceSequence"]))
+PY
+}
+
+trace_has_event() {
+  python3 - "$status_file" "$start_sequence" "$1" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+start = int(sys.argv[2])
+event_name = sys.argv[3]
+try:
+    payload = json.loads(path.read_text())
+except Exception:
+    raise SystemExit(1)
+events = [
+    event for event in payload.get("mediaTransportTrace", [])
+    if int(event.get("sequence", 0)) > start
+]
+raise SystemExit(0 if any(event.get("event") == event_name for event in events) else 1)
+PY
+}
+
+preflight_live_state() {
+  python3 - "$status_file" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+payload = json.loads(path.read_text())
+
+def fail(message: str) -> None:
+    print(f"hitl_playback_routing_check: FAIL: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+event_tap_running = payload.get("eventTapRunning") is True
+command_center_running = payload.get("commandCenterRouteRunning") is True
+if not event_tap_running:
+    fail("hardware Play/Pause interception requires the cghid event tap to be running")
+if not command_center_running:
+    fail("Command Center route shield is not active; macOS can still route hardware Play/Pause to its primary source")
+
+target_count = int(payload.get("mediaTargetCount") or 0)
+if target_count < 2:
+    targets = payload.get("mediaTargets", [])
+    if targets:
+        print("hitl_playback_routing_check: visible media targets before HITL:", file=sys.stderr)
+        for target in targets:
+            print(
+                "  - "
+                f"app={target.get('app')!r} "
+                f"id={target.get('id')!r} "
+                f"playing={target.get('playing')!r} "
+                f"title={target.get('title')!r}",
+                file=sys.stderr,
+            )
+    fail(f"need at least two visible media targets before HITL; got {target_count}")
+
+if payload.get("activeEventTap") != "cghid":
+    fail(f"event tap route is not cghid: {payload.get('activeEventTap')!r}")
+
+print(
+    "hitl_playback_routing_check: preflight ok "
+    f"targets={target_count} "
+    f"eventTapRunning={event_tap_running} "
+    f"commandCenterRouteRunning={command_center_running} "
+    f"rawActiveMediaTargetID={payload.get('rawActiveMediaTargetID')!r}"
+)
+PY
+}
+
+analyze_trace() {
+  python3 - "$status_file" "$1" "$chooser_open_latency_ms_max" "$row_dispatch_latency_ms_max" "$helper_result_latency_ms_max" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+start = int(sys.argv[2])
+chooser_open_latency_ms_max = float(sys.argv[3])
+row_dispatch_latency_ms_max = float(sys.argv[4])
+helper_result_latency_ms_max = float(sys.argv[5])
+payload = json.loads(path.read_text())
+events = [
+    event for event in payload.get("mediaTransportTrace", [])
+    if int(event.get("sequence", 0)) > start
+]
+
+def status_summary() -> str:
+    keys = [
+        "mediaFallback",
+        "eventTapRunning",
+        "activeEventTap",
+        "commandCenterRouteRunning",
+        "accessibilityGranted",
+        "listenEventGranted",
+        "plainHotkeysRegistered",
+        "mediaTransportTraceSequence",
+        "appPath",
+    ]
+    return " ".join(f"{key}={payload.get(key)!r}" for key in keys)
+
+def fail(message: str) -> None:
+    print(json.dumps(events, indent=2, sort_keys=True))
+    print(f"hitl_playback_routing_check: status: {status_summary()}", file=sys.stderr)
+    print(f"hitl_playback_routing_check: FAIL: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+def warn(message: str) -> None:
+    print(f"hitl_playback_routing_check: WARN: {message}", file=sys.stderr)
+
+def first(event_name: str):
+    return next((event for event in events if event.get("event") == event_name), None)
+
+def monotonic_ms(event) -> float:
+    value = event.get("monotonicMilliseconds")
+    if value is None:
+        fail(f"{event.get('event')} is missing monotonicMilliseconds")
+    return float(value)
+
+def latency_ms(start_event, end_event) -> float:
+    return monotonic_ms(end_event) - monotonic_ms(start_event)
+
+def transport_downs():
+    return [
+        event for event in events
+        if event.get("event") == "transport_key_down"
+    ]
+
+key_downs = transport_downs()
+input_event = first("input")
+decision = first("decision_chooser")
+show = first("chooser_show")
+select = first("chooser_select")
+close_for_dispatch = first("chooser_closed_for_dispatch")
+dispatch = first("chooser_dispatch")
+
+if input_event is None:
+    unhandled_system_defined = [
+        event for event in events
+        if event.get("event") == "event_tap_unhandled_system_defined"
+    ]
+    if unhandled_system_defined:
+        fail("event tap saw a media-key shaped system event, but the parser did not route it")
+    fail("no media transport input was recorded")
+if input_event.get("command") not in {"playPause", "pause", "play"}:
+    fail(f"first input was not a Play/Pause-family command: {input_event.get('command')}")
+if input_event.get("source") != "event_tap":
+    fail(f"first input source was {input_event.get('source')}; expected cghid event_tap interception")
+if not key_downs:
+    fail("event-tap routing occurred without a transport key-down")
+key_down = key_downs[0]
+if key_down.get("command") not in {"playPause", "pause", "play"}:
+    fail(f"first transport key-down was not Play/Pause-family: {key_down.get('command')}")
+if key_down.get("eventSourceIsPhysicalHIDSystem") is not True:
+    fail("hardware Play/Pause check did not record a physical HID media-key source")
+route_start = key_down
+if decision is None:
+    fail("the Play/Pause input did not choose the chooser path")
+if show is None:
+    fail("the chooser was not shown")
+show_target_count = show.get("targetCount")
+if show_target_count is None:
+    fail("chooser_show did not include targetCount")
+if int(show_target_count) < 2:
+    if show.get("targets"):
+        print("hitl_playback_routing_check: chooser targets:")
+        for target in show["targets"]:
+            print(
+                "  - "
+                f"app={target.get('app')!r} "
+                f"id={target.get('id')!r} "
+                f"bundle={target.get('bundleIdentifier')!r} "
+                f"parent={target.get('parentBundleIdentifier')!r} "
+                f"playing={target.get('playing')!r} "
+                f"title={target.get('title')!r}"
+            )
+    fail(f"chooser showed {show_target_count} target(s); expected at least two playing/background sources")
+chooser_open_latency = latency_ms(route_start, show)
+if chooser_open_latency < 0:
+    fail(f"chooser_show happened before routing input in the trace: {chooser_open_latency:.1f}ms")
+if chooser_open_latency > chooser_open_latency_ms_max:
+    fail(f"chooser took {chooser_open_latency:.1f}ms to open; budget is {chooser_open_latency_ms_max:.1f}ms")
+if select is None:
+    fail("no chooser row selection was recorded")
+if close_for_dispatch is None:
+    fail("chooser row selection did not close the chooser before dispatch")
+if dispatch is None:
+    fail("no chooser dispatch was recorded after row selection")
+select_index = events.index(select)
+close_index = events.index(close_for_dispatch)
+dispatch_index = events.index(dispatch)
+if close_index < select_index:
+    fail("chooser closed for dispatch before chooser_select")
+if close_index > dispatch_index:
+    fail("chooser_dispatch happened before chooser_closed_for_dispatch")
+close_latency = latency_ms(select, close_for_dispatch)
+if close_latency < 0:
+    fail(f"chooser_closed_for_dispatch happened before chooser_select in the trace: {close_latency:.1f}ms")
+row_dispatch_latency = latency_ms(select, dispatch)
+if row_dispatch_latency < 0:
+    fail(f"chooser_dispatch happened before chooser_select in the trace: {row_dispatch_latency:.1f}ms")
+if row_dispatch_latency > row_dispatch_latency_ms_max:
+    fail(f"chooser row dispatch took {row_dispatch_latency:.1f}ms; budget is {row_dispatch_latency_ms_max:.1f}ms")
+
+selected_id = select.get("targetID")
+close_id = close_for_dispatch.get("targetID")
+dispatch_id = dispatch.get("targetID")
+if selected_id and close_id and selected_id != close_id:
+    fail(f"selected targetID {selected_id} did not match closed targetID {close_id}")
+if selected_id and dispatch_id and selected_id != dispatch_id:
+    fail(f"selected targetID {selected_id} did not match dispatched targetID {dispatch_id}")
+show_target = next(
+    (
+        target for target in show.get("targets", [])
+        if target.get("id") == selected_id
+    ),
+    {},
+)
+selected_playing = select.get("targetPlaying")
+selected_uses_desktop_transport = (
+    select.get("target") in {"Spotify", "Helium"}
+    or show_target.get("bundleIdentifier") in {"com.spotify.client", "net.imput.helium"}
+)
+if not selected_uses_desktop_transport:
+    if selected_playing is True and dispatch.get("command") != "pause":
+        fail(f"selected playing target routed {dispatch.get('command')}; expected pause")
+    if selected_playing is False and dispatch.get("command") != "play":
+        fail(f"selected paused target routed {dispatch.get('command')}; expected play")
+
+next_transport_down_after_dispatch = next(
+    (
+        event for event in events[dispatch_index + 1 :]
+        if event.get("event") == "transport_key_down"
+    ),
+    None,
+)
+post_dispatch_window = events[dispatch_index + 1 :]
+if next_transport_down_after_dispatch is not None:
+    next_transport_index = events.index(next_transport_down_after_dispatch)
+    post_dispatch_window = events[dispatch_index + 1 : next_transport_index]
+late_shows = [
+    event for event in post_dispatch_window
+    if event.get("event") == "chooser_show"
+]
+if late_shows:
+    fail("chooser was shown again after chooser_dispatch before any new transport key-down")
+
+helper_results = [
+    event for event in events[dispatch_index + 1 :]
+    if event.get("event") == "helper_command_result"
+]
+if not helper_results:
+    fail("no helper command result was recorded after chooser dispatch")
+helper = helper_results[0]
+helper_latency = latency_ms(dispatch, helper)
+if helper_latency < 0:
+    fail(f"helper result happened before chooser_dispatch in the trace: {helper_latency:.1f}ms")
+if helper_latency > helper_result_latency_ms_max:
+    fail(f"helper result took {helper_latency:.1f}ms; budget is {helper_result_latency_ms_max:.1f}ms")
+helper_id = helper.get("targetID")
+if dispatch_id and helper_id and dispatch_id != helper_id:
+    fail(f"helper targetID {helper_id} did not match dispatched targetID {dispatch_id}")
+if not helper.get("requestID"):
+    fail("helper command result did not include a requestID")
+if helper.get("ok") is False:
+    fail(f"helper reported failure: {helper.get('message')}")
+
+ignored_after_dispatch = [
+    event for event in post_dispatch_window
+    if event.get("event") in {"input_ignored", "chooser_reentry_ignored", "transport_non_physical_ignored"}
+]
+if ignored_after_dispatch:
+    print("hitl_playback_routing_check: post-dispatch echoes suppressed:")
+    for event in ignored_after_dispatch:
+        print(f"  - {event.get('event')} reason={event.get('reason')} source={event.get('source')} command={event.get('command')}")
+
+print(json.dumps(events, indent=2, sort_keys=True))
+print(f"hitl_playback_routing_check: chooser_open_ms={chooser_open_latency:.1f} chooser_close_ms={close_latency:.1f} row_dispatch_ms={row_dispatch_latency:.1f} helper_result_ms={helper_latency:.1f}")
+print("hitl_playback_routing_check=ok")
+PY
+}
+
+start_sequence="${KEYWAY_HITL_START_SEQUENCE:-$(trace_marker)}"
+printf 'hitl_playback_routing_check: starting after trace sequence %s\n' "$start_sequence"
+
+if [[ "$skip_wait" == "1" ]]; then
+  printf 'hitl_playback_routing_check: replay mode; not waiting for live input.\n'
+else
+  preflight_live_state
+  printf '1. Start two media sources playing.\n'
+  printf '2. Press the hardware Play/Pause key once.\n'
+  printf '3. When the Keyway chooser appears, click the row you want to pause/play.\n'
+  printf 'This checker will poll the trace automatically. Timeout: %ss.\n' "$timeout_seconds"
+
+  deadline=$((SECONDS + timeout_seconds))
+  while (( SECONDS < deadline )); do
+    if trace_has_event "chooser_dispatch"; then
+      break
+    fi
+    sleep 0.25
+  done
+
+  if trace_has_event "chooser_dispatch"; then
+    printf 'hitl_playback_routing_check: chooser dispatched; observing %.2fs for late re-entry.\n' "$post_dispatch_settle_seconds"
+    sleep "$post_dispatch_settle_seconds"
+  fi
+fi
+
+analyze_trace "$start_sequence"

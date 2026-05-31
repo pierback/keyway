@@ -1,0 +1,477 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+workdir="$(mktemp -d)"
+trap 'rm -rf "$workdir"' EXIT
+
+cat >"$workdir/MediaRemoteTransportCommand.swift" <<'SWIFT'
+enum MediaRemoteTransportCommand: String, Equatable {
+    case play
+    case playPause
+    case next
+    case previous
+    case pause
+}
+SWIFT
+
+cat >"$workdir/FilterSemantics.swift" <<'SWIFT'
+import Foundation
+
+@main
+struct FilterSemantics {
+    @MainActor
+    static func main() async {
+        let filter = MediaTransportCommandCenterFilter(
+            mediaKeyShadowInterval: 0.15,
+            commandCenterInputShadowInterval: 0.15,
+            programmaticCommandCenterEchoWindow: 0.15,
+            programmaticGeneratedMediaKeyCallbackWindow: 0.15,
+            physicalMediaKeyReboundWindow: 0.15,
+            chooserTargetedMediaKeyEchoWindow: 0.45
+        )
+
+        expectNil(
+            filter.ignoreReasonForCommandCenter(command: .playPause),
+            "fresh command-center event must pass through"
+        )
+        expectNil(
+            filter.ignoreReasonForMediaKey(command: .playPause),
+            "fresh media-key event must pass through"
+        )
+
+        filter.noteCommandCenterInput(command: .playPause)
+        expectEqual(
+            filter.ignoreReasonForCommandCenter(command: .playPause),
+            .commandCenterInputShadow,
+            "command-center duplicate callbacks from one press must be ignored"
+        )
+        expectEqual(
+            filter.ignoreReasonForMediaKey(command: .playPause),
+            .commandCenterShadow,
+            "media-key duplicate after a command-center event must be ignored"
+        )
+
+        filter.noteMediaKey(command: .playPause)
+        for index in 1 ... 3 {
+            expectEqual(
+                filter.ignoreReasonForCommandCenter(command: .playPause),
+                .mediaKeyShadow,
+                "media-key shadow must suppress matching command-center callback \(index)"
+            )
+        }
+        expectNil(
+            filter.ignoreReasonForCommandCenter(command: .playPause),
+            "media-key shadow must be callback-count bounded"
+        )
+        expectNil(
+            filter.ignoreReasonForCommandCenter(command: .next),
+            "media-key shadow must not suppress unrelated commands"
+        )
+        try? await Task.sleep(nanoseconds: 400_000_000)
+        expectNil(
+            filter.ignoreReasonForCommandCenter(command: .playPause),
+            "media-key shadow must expire"
+        )
+
+        filter.beginProgrammaticDispatch(command: .playPause)
+        expectEqual(
+            filter.ignoreReasonForCommandCenter(command: .playPause),
+            .programmaticEcho,
+            "programmatic dispatch must suppress immediate Command Center rebounds even when macOS gives them fresh metadata"
+        )
+        filter.beginProgrammaticDispatch(command: .playPause)
+        expectNil(
+            filter.ignoreReasonForMediaKey(command: .playPause),
+            "programmatic dispatch without media-key metadata must not suppress metadata-less media-key input"
+        )
+        expectNil(
+            filter.ignoreReasonForMediaKey(
+                command: .playPause,
+                metadata: MediaTransportInputMetadata(
+                    sourceUnixProcessID: 0,
+                    sourceStateID: 1,
+                    sourceUserData: 0,
+                    eventTimestamp: 250
+                )
+            ),
+            "programmatic dispatch must not suppress a fresh physical HID media-key press"
+        )
+        expectEqual(
+            filter.ignoreReasonForMediaKey(
+                command: .playPause,
+                metadata: MediaTransportInputMetadata(
+                    sourceUnixProcessID: 123,
+                    sourceStateID: 0,
+                    sourceUserData: 0,
+                    targetUnixProcessID: 456,
+                    eventTimestamp: 200
+                )
+            ),
+            .programmaticMediaKeyEcho,
+            "programmatic dispatch must suppress generated non-HID media-key echoes"
+        )
+        filter.beginProgrammaticDispatch(command: .playPause)
+        expectNil(
+            filter.ignoreReasonForMediaKey(
+                command: .playPause,
+                metadata: MediaTransportInputMetadata(
+                    sourceUnixProcessID: 0,
+                    sourceStateID: 1,
+                    sourceUserData: 0,
+                    targetUnixProcessID: 456,
+                    eventTimestamp: 300
+                )
+            ),
+            "programmatic dispatch must not suppress HID-shaped input with a fresh event identity"
+        )
+
+        let lateEchoFilter = MediaTransportCommandCenterFilter(
+            mediaKeyShadowInterval: 0.15,
+            commandCenterInputShadowInterval: 0.15,
+            programmaticCommandCenterEchoWindow: 0.25,
+            programmaticGeneratedMediaKeyCallbackWindow: 0.25,
+            physicalMediaKeyReboundWindow: 0.15,
+            chooserTargetedMediaKeyEchoWindow: 0.75
+        )
+        lateEchoFilter.beginProgrammaticDispatch(command: .pause)
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        expectNil(
+            lateEchoFilter.ignoreReasonForCommandCenter(command: .playPause),
+            "programmatic Command Center echo suppression must expire before it becomes a visible cooldown"
+        )
+        expectNil(
+            lateEchoFilter.ignoreReasonForMediaKey(command: .playPause),
+            "programmatic Command Center echo suppression must not swallow a fresh physical media key"
+        )
+        let delayedOSEchoFilter = MediaTransportCommandCenterFilter(
+            mediaKeyShadowInterval: 0.15,
+            commandCenterInputShadowInterval: 0.15,
+            programmaticCommandCenterEchoWindow: 0.25,
+            programmaticGeneratedMediaKeyCallbackWindow: 0.25,
+            physicalMediaKeyReboundWindow: 0.15,
+            chooserTargetedMediaKeyEchoWindow: 1.25
+        )
+        delayedOSEchoFilter.beginProgrammaticDispatch(command: .pause)
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        expectNil(
+            delayedOSEchoFilter.ignoreReasonForCommandCenter(command: .playPause),
+            "programmatic dispatch must not hide delayed Command Center input"
+        )
+        let delayedChooserCommandCenterEchoFilter = MediaTransportCommandCenterFilter(
+            mediaKeyShadowInterval: 0.15,
+            commandCenterInputShadowInterval: 0.15,
+            programmaticCommandCenterEchoWindow: 0.25,
+            programmaticGeneratedMediaKeyCallbackWindow: 0.25,
+            physicalMediaKeyReboundWindow: 0.15,
+            chooserTargetedMediaKeyEchoWindow: 1.25
+        )
+        delayedChooserCommandCenterEchoFilter.beginChooserDispatch(command: .pause)
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        expectNil(
+            delayedChooserCommandCenterEchoFilter.ignoreReasonForCommandCenter(
+                command: .playPause,
+                metadata: MediaCommandCenterInputMetadata(eventTimestamp: 901)
+            ),
+            "chooser dispatch must not hide delayed Command Center input behind a selected-row cooldown"
+        )
+        delayedOSEchoFilter.beginProgrammaticDispatch(command: .pause)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        expectEqual(
+            delayedOSEchoFilter.ignoreReasonForMediaKey(
+                command: .playPause,
+                metadata: MediaTransportInputMetadata(
+                    sourceUnixProcessID: 123,
+                    sourceStateID: 0,
+                    sourceUserData: 0,
+                    targetUnixProcessID: 456,
+                    eventTimestamp: 100_000_000
+                )
+            ),
+            .programmaticMediaKeyEcho,
+            "programmatic dispatch must suppress generated media-key echoes without hiding fresh HID input"
+        )
+
+        let repeatedCommandCenter = MediaCommandCenterInputMetadata(eventTimestamp: 20)
+        let freshCommandCenter = MediaCommandCenterInputMetadata(eventTimestamp: 21)
+        filter.beginChooserDispatch(command: .pause)
+        expectEqual(
+            filter.ignoreReasonForCommandCenter(command: .playPause, metadata: repeatedCommandCenter),
+            .programmaticEcho,
+            "chooser command-center dispatch must suppress the same Command Center event"
+        )
+        expectEqual(
+            filter.ignoreReasonForCommandCenter(command: .playPause, metadata: freshCommandCenter),
+            .programmaticEcho,
+            "chooser command-center dispatch must suppress immediate fresh-timestamp Command Center rebounds"
+        )
+        let delayedGeneratedChooserEchoFilter = MediaTransportCommandCenterFilter(
+            mediaKeyShadowInterval: 0.15,
+            commandCenterInputShadowInterval: 0.15,
+            programmaticCommandCenterEchoWindow: 0.25,
+            programmaticGeneratedMediaKeyCallbackWindow: 0.25,
+            physicalMediaKeyReboundWindow: 0.15,
+            chooserTargetedMediaKeyEchoWindow: 0.75
+        )
+        delayedGeneratedChooserEchoFilter.beginChooserDispatch(command: .pause)
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        expectNil(
+            delayedGeneratedChooserEchoFilter.ignoreReasonForMediaKey(
+                command: .playPause,
+                metadata: MediaTransportInputMetadata(
+                    sourceUnixProcessID: 123,
+                    sourceStateID: 0,
+                    sourceUserData: 0,
+                    targetUnixProcessID: 456,
+                    eventTimestamp: 1_000_000_000
+                )
+            ),
+            "chooser dispatch must not keep a delayed generated media-key echo window after the instant boundary"
+        )
+        expectNil(
+            delayedGeneratedChooserEchoFilter.ignoreReasonForMediaKey(
+                command: .playPause,
+                metadata: MediaTransportInputMetadata(
+                    sourceUnixProcessID: 0,
+                    sourceStateID: 1,
+                    sourceUserData: 0,
+                    targetUnixProcessID: 456,
+                    eventTimestamp: 1_000_000_100
+                )
+            ),
+            "chooser dispatch without source metadata must not suppress delayed targeted HID-shaped input"
+        )
+        expectNil(
+            delayedGeneratedChooserEchoFilter.ignoreReasonForCommandCenter(command: .playPause),
+            "chooser dispatch must not keep a selected-row Command Center cooldown after the instant boundary"
+        )
+        let targetedEchoCommandCenterShadowFilter = MediaTransportCommandCenterFilter(
+            mediaKeyShadowInterval: 0.15,
+            commandCenterInputShadowInterval: 0.15,
+            programmaticCommandCenterEchoWindow: 0.25,
+            programmaticGeneratedMediaKeyCallbackWindow: 0.25,
+            physicalMediaKeyReboundWindow: 0.15,
+            chooserTargetedMediaKeyEchoWindow: 0.45
+        )
+        targetedEchoCommandCenterShadowFilter.beginChooserDispatch(
+            command: .pause,
+            metadata: MediaTransportInputMetadata(
+                sourceUnixProcessID: 0,
+                sourceStateID: 1,
+                sourceUserData: 0,
+                eventTimestamp: 100
+            ),
+            targetUnixProcessID: 456
+        )
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        expectEqual(
+            targetedEchoCommandCenterShadowFilter.ignoreReasonForMediaKey(
+                command: .playPause,
+                metadata: MediaTransportInputMetadata(
+                    sourceUnixProcessID: 0,
+                    sourceStateID: 1,
+                    sourceUserData: 0,
+                    targetUnixProcessID: 456,
+                    eventTimestamp: 100
+                )
+            ),
+            .chooserTargetedMediaKeyEcho,
+            "same-event targeted selected-row echoes must remain suppressed by exact selected-row process matching"
+        )
+        expectEqual(
+            targetedEchoCommandCenterShadowFilter.ignoreReasonForCommandCenter(command: .playPause),
+            .commandCenterInputShadow,
+            "targeted HID-shaped selected-row echoes must shadow the following Command Center callback"
+        )
+
+        let originalHID = MediaTransportInputMetadata(
+            sourceUnixProcessID: 0,
+            sourceStateID: 1,
+            sourceUserData: 0,
+            eventTimestamp: 100
+        )
+        let repeatedHID = MediaTransportInputMetadata(
+            sourceUnixProcessID: 0,
+            sourceStateID: 1,
+            sourceUserData: 0,
+            eventTimestamp: 100
+        )
+        let delayedReboundHID = MediaTransportInputMetadata(
+            sourceUnixProcessID: 0,
+            sourceStateID: 1,
+            sourceUserData: 0,
+            eventTimestamp: 900_000_100
+        )
+        let freshHID = MediaTransportInputMetadata(
+            sourceUnixProcessID: 0,
+            sourceStateID: 1,
+            sourceUserData: 0,
+            eventTimestamp: 2_000_000_100
+        )
+        let regeneratedHID = MediaTransportInputMetadata(
+            sourceUnixProcessID: 0,
+            sourceStateID: 1,
+            sourceUserData: 0,
+            targetUnixProcessID: 456,
+            eventTimestamp: 100
+        )
+        let lateTargetedHID = MediaTransportInputMetadata(
+            sourceUnixProcessID: 0,
+            sourceStateID: 1,
+            sourceUserData: 0,
+            targetUnixProcessID: 456,
+            eventTimestamp: 650_000_100
+        )
+        let applicationTargetedHID = MediaTransportInputMetadata(
+            sourceUnixProcessID: 0,
+            sourceStateID: 1,
+            sourceUserData: 0,
+            targetUnixProcessID: 999,
+            eventTimestamp: 650_000_200
+        )
+        let applicationTargetedSameEventHID = MediaTransportInputMetadata(
+            sourceUnixProcessID: 0,
+            sourceStateID: 1,
+            sourceUserData: 0,
+            targetUnixProcessID: 999,
+            eventTimestamp: 100
+        )
+        let regeneratedHIDFromDifferentSource = MediaTransportInputMetadata(
+            sourceUnixProcessID: 999,
+            sourceStateID: 1,
+            sourceUserData: 0,
+            targetUnixProcessID: 456,
+            eventTimestamp: 900_000_100
+        )
+        filter.beginChooserDispatch(command: .pause, metadata: originalHID, targetUnixProcessID: 456)
+        expectEqual(
+            filter.ignoreReasonForMediaKey(command: .playPause, metadata: repeatedHID),
+            .mediaKeyRebound,
+            "chooser dispatch must suppress exact media-key rebound before reopening the chooser"
+        )
+        expectEqual(
+            filter.ignoreReasonForMediaKey(command: .playPause, metadata: regeneratedHID),
+            .mediaKeyRebound,
+            "chooser dispatch must suppress same-event targeted callbacks before reopening the chooser"
+        )
+        let differentTargetFilter = MediaTransportCommandCenterFilter(
+            mediaKeyShadowInterval: 0.15,
+            commandCenterInputShadowInterval: 0.15,
+            programmaticCommandCenterEchoWindow: 0.25,
+            programmaticGeneratedMediaKeyCallbackWindow: 0.25,
+            physicalMediaKeyReboundWindow: 0.15,
+            chooserTargetedMediaKeyEchoWindow: 0.45
+        )
+        differentTargetFilter.beginChooserDispatch(command: .pause, metadata: originalHID, targetUnixProcessID: 789)
+        expectNil(
+            differentTargetFilter.ignoreReasonForMediaKey(command: .playPause, metadata: lateTargetedHID),
+            "chooser dispatch must not suppress a fresh targeted physical key for a different process"
+        )
+        let commandCenterChooserFilter = MediaTransportCommandCenterFilter(
+            mediaKeyShadowInterval: 0.15,
+            commandCenterInputShadowInterval: 0.15,
+            programmaticCommandCenterEchoWindow: 0.25,
+            programmaticGeneratedMediaKeyCallbackWindow: 0.25,
+            physicalMediaKeyReboundWindow: 0.15,
+            chooserTargetedMediaKeyEchoWindow: 0.45
+        )
+        commandCenterChooserFilter.beginChooserDispatch(command: .pause)
+        expectNil(
+            commandCenterChooserFilter.ignoreReasonForMediaKey(command: .playPause, metadata: regeneratedHID),
+            "chooser dispatch without source metadata must not suppress HID-shaped targeted callbacks"
+        )
+        expectNil(
+            filter.ignoreReasonForMediaKey(command: .playPause, metadata: regeneratedHIDFromDifferentSource),
+            "chooser dispatch must consume one targeted HID-shaped selected-row echo, then route a fresh physical key immediately"
+        )
+        let delayedTargetedEchoFilter = MediaTransportCommandCenterFilter(
+            mediaKeyShadowInterval: 0.15,
+            commandCenterInputShadowInterval: 0.15,
+            programmaticCommandCenterEchoWindow: 0.25,
+            programmaticGeneratedMediaKeyCallbackWindow: 0.25,
+            physicalMediaKeyReboundWindow: 0.15,
+            chooserTargetedMediaKeyEchoWindow: 1.25
+        )
+        delayedTargetedEchoFilter.beginChooserDispatch(command: .pause, metadata: originalHID, targetUnixProcessID: 456)
+        expectNil(
+            delayedTargetedEchoFilter.ignoreReasonForMediaKey(command: .playPause, metadata: lateTargetedHID),
+            "chooser dispatch must route fresh delayed HID-shaped targeted callbacks instead of treating them as a cooldown"
+        )
+        expectNil(
+            delayedTargetedEchoFilter.ignoreReasonForMediaKey(command: .playPause, metadata: regeneratedHIDFromDifferentSource),
+            "chooser dispatch must route the next targeted HID-shaped physical callback immediately after one selected-row echo is consumed"
+        )
+        let applicationTargetedEchoFilter = MediaTransportCommandCenterFilter(
+            mediaKeyShadowInterval: 0.15,
+            commandCenterInputShadowInterval: 0.15,
+            programmaticCommandCenterEchoWindow: 0.25,
+            programmaticGeneratedMediaKeyCallbackWindow: 0.25,
+            physicalMediaKeyReboundWindow: 0.15,
+            chooserTargetedMediaKeyEchoWindow: 1.25
+        )
+        applicationTargetedEchoFilter.beginChooserDispatch(
+            command: .pause,
+            metadata: originalHID,
+            targetUnixProcessID: 456,
+            applicationUnixProcessID: 999
+        )
+        expectNil(
+            applicationTargetedEchoFilter.ignoreReasonForMediaKey(command: .playPause, metadata: applicationTargetedHID),
+            "chooser dispatch must not suppress an immediate fresh press just because macOS targets it at Keyway"
+        )
+        try? await Task.sleep(nanoseconds: 400_000_000)
+        expectEqual(
+            applicationTargetedEchoFilter.ignoreReasonForMediaKey(command: .playPause, metadata: applicationTargetedSameEventHID),
+            .chooserTargetedMediaKeyEcho,
+            "chooser dispatch must suppress a delayed same-event selected-row rebound that macOS retargets at Keyway"
+        )
+        expectNil(
+            applicationTargetedEchoFilter.ignoreReasonForMediaKey(command: .playPause, metadata: applicationTargetedHID),
+            "Keyway-targeted selected-row rebound suppression must be one-shot"
+        )
+        expectNil(
+            filter.ignoreReasonForMediaKey(command: .playPause, metadata: delayedReboundHID),
+            "delayed untargeted HID input must be routeable immediately after the selected row dispatches"
+        )
+        expectNil(
+            filter.ignoreReasonForMediaKey(command: .playPause, metadata: freshHID),
+            "fresh HID input after the chooser rebound window must be routeable"
+        )
+
+        print("verify_playback_filter_semantics=ok")
+    }
+
+    private static func expectEqual(
+        _ actual: MediaTransportCommandCenterFilter.IgnoreReason?,
+        _ expected: MediaTransportCommandCenterFilter.IgnoreReason,
+        _ message: String
+    ) {
+        guard actual == expected else {
+            fail("\(message): expected \(expected.rawValue), got \(actual?.rawValue ?? "nil")")
+        }
+    }
+
+    private static func expectNil(
+        _ actual: MediaTransportCommandCenterFilter.IgnoreReason?,
+        _ message: String
+    ) {
+        guard actual == nil else {
+            fail("\(message): got \(actual?.rawValue ?? "nil")")
+        }
+    }
+
+    private static func fail(_ message: String) -> Never {
+        FileHandle.standardError.write(Data("verify_playback_filter_semantics: \(message)\n".utf8))
+        exit(1)
+    }
+}
+SWIFT
+
+swiftc \
+  "$workdir/MediaRemoteTransportCommand.swift" \
+  "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportRouteSource.swift" \
+  "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportCommandCenterFilter.swift" \
+  "$workdir/FilterSemantics.swift" \
+  -o "$workdir/verify_playback_filter_semantics"
+
+"$workdir/verify_playback_filter_semantics"

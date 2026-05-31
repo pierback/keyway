@@ -1,0 +1,180 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+workdir="$(mktemp -d)"
+trap 'rm -rf "$workdir"' EXIT
+
+cat >"$workdir/MediaRemoteTransportCommand.swift" <<'SWIFT'
+enum MediaRemoteTransportCommand: String, Equatable {
+    case play
+    case playPause
+    case next
+    case previous
+    case pause
+}
+SWIFT
+
+cat >"$workdir/PlaybackReentrySemantics.swift" <<'SWIFT'
+import Foundation
+
+@main
+struct PlaybackReentrySemantics {
+    @MainActor
+    static func main() async {
+        let guardStore = MediaChooserSessionGuard()
+        let chooserID = guardStore.begin(command: .playPause)
+        expectTrue(guardStore.isActive, "visible chooser must be guarded")
+        expectTrue(guardStore.finish(id: chooserID, selected: true), "row selection must close the chooser")
+        expectFalse(guardStore.isActive, "row selection must not leave chooser session state behind")
+
+        let originalHID = MediaTransportInputMetadata(
+            sourceUnixProcessID: 0,
+            sourceStateID: 1,
+            sourceUserData: 0,
+            eventTimestamp: 100
+        )
+        let repeatedHID = MediaTransportInputMetadata(
+            sourceUnixProcessID: 0,
+            sourceStateID: 1,
+            sourceUserData: 0,
+            eventTimestamp: 100
+        )
+        let generatedNonHID = MediaTransportInputMetadata(
+            sourceUnixProcessID: 123,
+            sourceStateID: 0,
+            sourceUserData: 0,
+            targetUnixProcessID: 456,
+            eventTimestamp: 200_000_200
+        )
+
+        let rowDispatchFilter = MediaTransportCommandCenterFilter(
+            mediaKeyShadowInterval: 0.15,
+            commandCenterInputShadowInterval: 0.15,
+            programmaticCommandCenterEchoWindow: 0.15,
+            programmaticGeneratedMediaKeyCallbackWindow: 0.15,
+            physicalMediaKeyReboundWindow: 0.15,
+            chooserTargetedMediaKeyEchoWindow: 1.25
+        )
+        rowDispatchFilter.noteMediaKey(command: .playPause, metadata: originalHID)
+        rowDispatchFilter.beginChooserDispatch(command: .pause, metadata: originalHID, targetUnixProcessID: 456)
+
+        expectEqual(
+            rowDispatchFilter.ignoreReasonForMediaKey(command: .playPause, metadata: repeatedHID),
+            .mediaKeyRebound,
+            "transport filter must suppress immediate media-key echo from chooser dispatch"
+        )
+        expectEqual(
+            rowDispatchFilter.ignoreReasonForMediaKey(command: .playPause, metadata: generatedNonHID),
+            .programmaticMediaKeyEcho,
+            "transport filter must suppress generated non-HID media-key echo from chooser dispatch"
+        )
+        expectEqual(
+            rowDispatchFilter.ignoreReasonForCommandCenter(
+                command: .pause,
+                metadata: MediaCommandCenterInputMetadata(eventTimestamp: 40)
+            ),
+            .programmaticEcho,
+            "transport filter must suppress immediate command-center echo from chooser dispatch"
+        )
+
+        let targetedFilter = MediaTransportCommandCenterFilter(
+            mediaKeyShadowInterval: 0.15,
+            commandCenterInputShadowInterval: 0.15,
+            programmaticCommandCenterEchoWindow: 0.15,
+            programmaticGeneratedMediaKeyCallbackWindow: 0.15,
+            physicalMediaKeyReboundWindow: 0.15,
+            chooserTargetedMediaKeyEchoWindow: 1.25
+        )
+        let applicationTargetedHID = MediaTransportInputMetadata(
+            sourceUnixProcessID: 0,
+            sourceStateID: 1,
+            sourceUserData: 0,
+            targetUnixProcessID: 999,
+            eventTimestamp: 650_000_100
+        )
+        targetedFilter.beginChooserDispatch(
+            command: .pause,
+            metadata: originalHID,
+            targetUnixProcessID: 456,
+            applicationUnixProcessID: 999
+        )
+        expectNil(
+            targetedFilter.ignoreReasonForMediaKey(command: .playPause, metadata: applicationTargetedHID),
+            "fresh Keyway-targeted HID events must remain routeable at the instant boundary"
+        )
+        try! await Task.sleep(nanoseconds: 400_000_000)
+        expectNil(
+            targetedFilter.ignoreReasonForMediaKey(command: .playPause, metadata: applicationTargetedHID),
+            "fresh delayed Keyway-targeted HID events must remain routeable instead of becoming a cooldown"
+        )
+
+        let commandCenterFilter = MediaTransportCommandCenterFilter(
+            mediaKeyShadowInterval: 0.15,
+            commandCenterInputShadowInterval: 0.15,
+            programmaticCommandCenterEchoWindow: 0.15,
+            programmaticGeneratedMediaKeyCallbackWindow: 0.15,
+            physicalMediaKeyReboundWindow: 0.15,
+            chooserTargetedMediaKeyEchoWindow: 1.25
+        )
+        commandCenterFilter.beginChooserDispatch(command: .pause)
+        expectEqual(
+            commandCenterFilter.ignoreReasonForCommandCenter(
+                command: .playPause,
+                metadata: MediaCommandCenterInputMetadata(eventTimestamp: 30)
+            ),
+            .programmaticEcho,
+            "transport filter must suppress immediate chooser Command Center rebounds through the bounded programmatic path"
+        )
+        try! await Task.sleep(nanoseconds: 500_000_000)
+        expectNil(
+            commandCenterFilter.ignoreReasonForCommandCenter(
+                command: .playPause,
+                metadata: MediaCommandCenterInputMetadata(eventTimestamp: 31)
+            ),
+            "chooser Command Center rebound suppression must expire without a selected-row cooldown"
+        )
+
+        print("verify_playback_reentry_semantics=ok")
+    }
+
+    private static func expectTrue(_ value: Bool, _ message: String) {
+        guard value else { fail(message) }
+    }
+
+    private static func expectFalse(_ value: Bool, _ message: String) {
+        guard !value else { fail(message) }
+    }
+
+    private static func expectEqual(
+        _ actual: MediaTransportCommandCenterFilter.IgnoreReason?,
+        _ expected: MediaTransportCommandCenterFilter.IgnoreReason,
+        _ message: String
+    ) {
+        guard actual == expected else {
+            fail("\(message): expected \(expected.rawValue), got \(actual?.rawValue ?? "nil")")
+        }
+    }
+
+    private static func expectNil<T>(_ value: T?, _ message: String) {
+        guard value == nil else {
+            fail("\(message): got \(String(describing: value))")
+        }
+    }
+
+    private static func fail(_ message: String) -> Never {
+        FileHandle.standardError.write(Data("verify_playback_reentry_semantics: \(message)\n".utf8))
+        exit(1)
+    }
+}
+SWIFT
+
+swiftc \
+  "$workdir/MediaRemoteTransportCommand.swift" \
+  "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportRouteSource.swift" \
+  "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportCommandCenterFilter.swift" \
+  "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaChooserSessionGuard.swift" \
+  "$workdir/PlaybackReentrySemantics.swift" \
+  -o "$workdir/verify_playback_reentry_semantics"
+
+"$workdir/verify_playback_reentry_semantics"

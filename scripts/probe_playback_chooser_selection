@@ -1,0 +1,353 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+status_file="${KEYWAY_STATUS_FILE:-$HOME/Library/Application Support/keyway/shortcut-runtime-status.json}"
+timeout_seconds="${KEYWAY_PROBE_TIMEOUT_SECONDS:-5}"
+settle_seconds="${KEYWAY_PROBE_CHOOSER_SELECTION_SETTLE_SECONDS:-1.15}"
+pre_select_delay_seconds="${KEYWAY_PROBE_PRE_SELECT_DELAY_SECONDS:-0.25}"
+chooser_open_latency_ms_max="${KEYWAY_PROBE_CHOOSER_OPEN_LATENCY_MS_MAX:-75}"
+row_dispatch_latency_ms_max="${KEYWAY_PROBE_ROW_DISPATCH_LATENCY_MS_MAX:-260}"
+helper_result_latency_ms_max="${KEYWAY_PROBE_HELPER_RESULT_LATENCY_MS_MAX:-350}"
+min_target_count="${KEYWAY_PROBE_MIN_TARGET_COUNT:-1}"
+selection_down_count="${KEYWAY_PROBE_SELECTION_DOWN_COUNT:-0}"
+selection_index=""
+expected_target_name="${KEYWAY_PROBE_EXPECT_TARGET_NAME:-}"
+
+fail() {
+  printf 'probe_playback_chooser_selection: %s\n' "$1" >&2
+  exit 1
+}
+
+read_trace_sequence() {
+  python3 - "$status_file" <<'PY'
+import json
+import pathlib
+import sys
+
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
+print(int(payload.get("mediaTransportTraceSequence", 0)))
+PY
+}
+
+read_trace_json() {
+  python3 - "$status_file" <<'PY'
+import json
+import pathlib
+import sys
+
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
+print(json.dumps(payload.get("mediaTransportTrace", []), separators=(",", ":")))
+PY
+}
+
+post_physical_play_pause() {
+  swift - <<'SWIFT'
+import AppKit
+import ApplicationServices
+
+let playPauseKeyCode = 16
+let keyDownState = 0x0A
+let keyUpState = 0x0B
+let mediaKeySubtype: Int16 = 8
+
+func postMediaKey(state: Int) {
+    let data1 = (playPauseKeyCode << 16) | (state << 8)
+    guard let event = NSEvent.otherEvent(
+        with: .systemDefined,
+        location: .zero,
+        modifierFlags: [],
+        timestamp: ProcessInfo.processInfo.systemUptime,
+        windowNumber: 0,
+        context: nil,
+        subtype: mediaKeySubtype,
+        data1: data1,
+        data2: -1
+    ), let cgEvent = event.cgEvent else {
+        fatalError("failed to create media key event")
+    }
+    cgEvent.setIntegerValueField(.eventSourceUnixProcessID, value: 0)
+    cgEvent.setIntegerValueField(.eventSourceStateID, value: 1)
+    cgEvent.setIntegerValueField(.eventSourceUserData, value: 0)
+    cgEvent.setIntegerValueField(.eventTargetUnixProcessID, value: 0)
+    cgEvent.post(tap: .cghidEventTap)
+}
+
+postMediaKey(state: keyDownState)
+usleep(35_000)
+postMediaKey(state: keyUpState)
+SWIFT
+}
+
+select_chooser_row() {
+  if [[ -n "$selection_index" ]]; then
+    osascript -e '
+on run argv
+  set numberKeyCodes to {18, 19, 20, 21, 23, 22, 26, 28, 25}
+  set targetIndex to (item 1 of argv as integer) + 1
+  tell application "System Events"
+    key code (item targetIndex of numberKeyCodes)
+  end tell
+end run
+' "$selection_index" >/dev/null
+    return
+  fi
+
+  osascript -e '
+on run argv
+  tell application "System Events"
+    repeat (item 1 of argv as integer) times
+      key code 125
+      delay 0.03
+    end repeat
+    key code 36
+  end tell
+end run
+' "$selection_down_count" >/dev/null
+}
+
+close_chooser() {
+  osascript -e 'tell application "System Events" to key code 53' >/dev/null || true
+}
+
+expected_target_selection_index() {
+  local start_sequence="$1"
+  trace_json="$(read_trace_json)"
+  python3 - "$start_sequence" "$expected_target_name" "$trace_json" <<'PY'
+import json
+import sys
+
+start_sequence = int(sys.argv[1])
+expected_target_name = sys.argv[2]
+events = [
+    event for event in json.loads(sys.argv[3])
+    if int(event.get("sequence", 0)) > start_sequence
+]
+show = next((event for event in events if event.get("event") == "chooser_show"), None)
+if show is None:
+    raise SystemExit(1)
+for index, target in enumerate(show.get("targets", [])):
+    if target.get("app") == expected_target_name or target.get("bundleIdentifier") == expected_target_name:
+        print(index)
+        raise SystemExit(0)
+raise SystemExit(2)
+PY
+}
+
+wait_for_event() {
+  local start_sequence="$1"
+  local event_name="$2"
+  local deadline=$((SECONDS + timeout_seconds))
+  while (( SECONDS < deadline )); do
+    trace_json="$(read_trace_json)"
+    if python3 - "$start_sequence" "$event_name" "$trace_json" <<'PY'
+import json
+import sys
+
+start_sequence = int(sys.argv[1])
+event_name = sys.argv[2]
+events = [
+    event for event in json.loads(sys.argv[3])
+    if int(event.get("sequence", 0)) > start_sequence
+]
+raise SystemExit(0 if any(event.get("event") == event_name for event in events) else 1)
+PY
+    then
+      return 0
+    fi
+    sleep 0.05
+  done
+  return 1
+}
+
+analyze_trace() {
+  local start_sequence="$1"
+  local trace_json
+  trace_json="$(read_trace_json)"
+  python3 - "$start_sequence" "$chooser_open_latency_ms_max" "$row_dispatch_latency_ms_max" "$helper_result_latency_ms_max" "$min_target_count" "$expected_target_name" "$trace_json" <<'PY'
+import json
+import sys
+
+start_sequence = int(sys.argv[1])
+chooser_open_latency_ms_max = float(sys.argv[2])
+row_dispatch_latency_ms_max = float(sys.argv[3])
+helper_result_latency_ms_max = float(sys.argv[4])
+min_target_count = int(sys.argv[5])
+expected_target_name = sys.argv[6]
+events = [
+    event for event in json.loads(sys.argv[7])
+    if int(event.get("sequence", 0)) > start_sequence
+]
+
+def fail(message):
+    print(json.dumps(events, indent=2, sort_keys=True))
+    print(f"probe_playback_chooser_selection: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+def first(name):
+    return next((event for event in events if event.get("event") == name), None)
+
+def monotonic_ms(event):
+    value = event.get("monotonicMilliseconds")
+    if value is None:
+        fail(f"{event.get('event')} is missing monotonicMilliseconds")
+    return float(value)
+
+def latency_ms(start, end):
+    return monotonic_ms(end) - monotonic_ms(start)
+
+required = [
+    "transport_key_down",
+    "input",
+    "decision_chooser",
+    "chooser_show",
+    "chooser_select",
+    "chooser_closed_for_dispatch",
+    "chooser_dispatch",
+]
+missing = [name for name in required if first(name) is None]
+if missing:
+    fail("missing events: " + ", ".join(missing))
+
+key_down = first("transport_key_down")
+input_event = first("input")
+decision = first("decision_chooser")
+show = first("chooser_show")
+select = first("chooser_select")
+closed = first("chooser_closed_for_dispatch")
+dispatch = first("chooser_dispatch")
+
+ordered = [key_down, input_event, decision, show, select, closed, dispatch]
+indices = [events.index(event) for event in ordered]
+if indices != sorted(indices):
+    fail("chooser selection events were not ordered key_down -> input -> decision -> show -> select -> close -> dispatch")
+
+chooser_shows = [event for event in events if event.get("event") == "chooser_show"]
+if len(chooser_shows) != 1:
+    fail(f"expected exactly one chooser_show, got {len(chooser_shows)}")
+if int(show.get("targetCount", 0)) < min_target_count:
+    fail(f"chooser showed {show.get('targetCount')} targets; expected at least {min_target_count} routable target(s)")
+
+chooser_open_latency = latency_ms(key_down, show)
+if chooser_open_latency < 0 or chooser_open_latency > chooser_open_latency_ms_max:
+    fail(f"chooser open latency {chooser_open_latency:.1f}ms exceeds {chooser_open_latency_ms_max:.1f}ms")
+
+row_dispatch_latency = latency_ms(select, dispatch)
+if row_dispatch_latency < 0 or row_dispatch_latency > row_dispatch_latency_ms_max:
+    fail(f"row dispatch latency {row_dispatch_latency:.1f}ms exceeds {row_dispatch_latency_ms_max:.1f}ms")
+
+selected_id = select.get("targetID")
+selected_target = select.get("target")
+if expected_target_name and selected_target != expected_target_name:
+    fail(f"selected target {selected_target!r}; expected {expected_target_name!r}")
+dispatch_id = dispatch.get("targetID")
+if selected_id and dispatch_id and selected_id != dispatch_id:
+    fail(f"selected targetID {selected_id} did not match dispatch targetID {dispatch_id}")
+
+show_target = next(
+    (
+        target for target in show.get("targets", [])
+        if target.get("id") == selected_id
+    ),
+    None,
+)
+if show_target is None:
+    fail(f"selected targetID {selected_id} was not present in chooser_show targets")
+if show_target.get("playing") != select.get("targetPlaying"):
+    fail(
+        "selected target playback state changed before row selection; "
+        f"chooser_show={show_target.get('playing')} chooser_select={select.get('targetPlaying')}"
+    )
+
+selected_playing = select.get("targetPlaying")
+selected_uses_desktop_transport = (
+    selected_target in {"Spotify", "Helium"}
+    or show_target.get("bundleIdentifier") in {"com.spotify.client", "net.imput.helium"}
+)
+if not selected_uses_desktop_transport:
+    if selected_playing is True and dispatch.get("command") != "pause":
+        fail(f"selected playing target routed {dispatch.get('command')}; expected pause")
+    if selected_playing is False and dispatch.get("command") != "play":
+        fail(f"selected paused target routed {dispatch.get('command')}; expected play")
+
+dispatch_index = events.index(dispatch)
+next_transport_down = next(
+    (
+        event for event in events[dispatch_index + 1:]
+        if event.get("event") == "transport_key_down"
+    ),
+    None,
+)
+post_dispatch_events = events[dispatch_index + 1:]
+if next_transport_down is not None:
+    post_dispatch_events = events[dispatch_index + 1:events.index(next_transport_down)]
+
+late_shows = [
+    event for event in post_dispatch_events
+    if event.get("event") == "chooser_show"
+]
+if late_shows:
+    fail("chooser reopened after row dispatch before any new media-key down")
+
+helper_results = [
+    event for event in events[dispatch_index + 1:]
+    if event.get("event") == "helper_command_result"
+]
+if not helper_results:
+    fail("no helper command result was recorded after chooser dispatch")
+helper = helper_results[0]
+helper_latency = latency_ms(dispatch, helper)
+if helper_latency < 0 or helper_latency > helper_result_latency_ms_max:
+    fail(f"helper result latency {helper_latency:.1f}ms exceeds {helper_result_latency_ms_max:.1f}ms")
+if helper.get("ok") is False:
+    fail(f"helper reported failure: {helper.get('message')}")
+if dispatch_id and helper.get("targetID") and dispatch_id != helper.get("targetID"):
+    fail(f"helper targetID {helper.get('targetID')} did not match dispatch targetID {dispatch_id}")
+if not helper.get("requestID"):
+    fail("helper command result did not include requestID")
+
+suppressed = [
+    event for event in post_dispatch_events
+    if event.get("event") in {"input_ignored", "chooser_reentry_ignored", "command_center_ignored", "transport_generated_shadow_ignored"}
+]
+
+print(json.dumps({
+    "event": "probe_chooser_selection_stable",
+    "chooserOpenLatencyMilliseconds": chooser_open_latency,
+    "rowDispatchLatencyMilliseconds": row_dispatch_latency,
+    "helperResultLatencyMilliseconds": helper_latency,
+    "postDispatchSuppressedEchoes": len(suppressed),
+    "selectedCommand": dispatch.get("command"),
+    "selectedTarget": selected_target,
+    "selectedTargetID": selected_id,
+    "selectedTargetPlaying": selected_playing,
+    "targetCount": show.get("targetCount"),
+}, sort_keys=True))
+PY
+}
+
+trap close_chooser EXIT
+
+start_sequence="$(read_trace_sequence)"
+printf 'probe_playback_chooser_selection: starting after trace sequence %s\n' "$start_sequence"
+post_physical_play_pause
+
+if ! wait_for_event "$start_sequence" "chooser_show"; then
+  read_trace_json | python3 -m json.tool >&2
+  fail "timed out waiting for chooser_show"
+fi
+
+sleep "$pre_select_delay_seconds"
+if [[ -n "$expected_target_name" ]]; then
+  selection_index="$(expected_target_selection_index "$start_sequence")" \
+    || fail "expected target '$expected_target_name' was not present in chooser_show"
+fi
+select_chooser_row
+
+if ! wait_for_event "$start_sequence" "chooser_dispatch"; then
+  read_trace_json | python3 -m json.tool >&2
+  fail "timed out waiting for chooser_dispatch after selecting the row"
+fi
+
+sleep "$settle_seconds"
+analyze_trace "$start_sequence"
+printf 'probe_playback_chooser_selection=ok\n'

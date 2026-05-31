@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+app_path="${KEYWAY_APP_PATH:-$HOME/Applications/Keyway.app}"
+helper_script="$app_path/Contents/Resources/MediaRemoteHelper/keyway-mediaremote-helper.pl"
+helper_dylib="$app_path/Contents/Resources/MediaRemoteHelper/libkeyway_mediaremote.dylib"
+probe_audio="${KEYWAY_TWO_TARGET_AUDIO:-/tmp/keyway-routing-probe-long.aiff}"
+probe_text="${KEYWAY_TWO_TARGET_TEXT:-/tmp/keyway-routing-probe-text.txt}"
+settle_seconds="${KEYWAY_TWO_TARGET_SETTLE_SECONDS:-5.5}"
+first_target_name="${KEYWAY_TWO_TARGET_FIRST_TARGET_NAME:-QuickTime Player}"
+second_target_name="${KEYWAY_TWO_TARGET_SECOND_TARGET_NAME:-}"
+second_expected_target_name="$second_target_name"
+selected_targets_file="$(mktemp)"
+
+fail() {
+  printf 'probe_playback_two_target_selection: %s\n' "$1" >&2
+  exit 1
+}
+
+cleanup() {
+  osascript -e 'tell application "QuickTime Player" to pause every document' >/dev/null 2>&1 || true
+  rm -f "$selected_targets_file"
+}
+
+write_probe_audio() {
+  python3 - "$probe_text" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+path.write_text(" ".join(["Keyway routing probe media target playing for verification."] * 80))
+PY
+  say -o "$probe_audio" -f "$probe_text"
+}
+
+start_targets() {
+  if [[ "$second_target_name" == "Spotify" ]]; then
+    osascript -e 'tell application "Spotify" to play' >/dev/null
+  fi
+  open -a "QuickTime Player" "$probe_audio"
+  sleep 0.8
+  osascript -e 'tell application "QuickTime Player" to play front document' >/dev/null
+  sleep "$settle_seconds"
+}
+
+assert_helper_targets() {
+  local helper_output
+  helper_output="$(
+    printf '{"type":"refresh","requestID":"two-target"}\n' \
+      | KEYWAY_MEDIAREMOTE_DISABLE_NOTIFICATIONS=1 KEYWAY_MEDIAREMOTE_ROLE=snapshot /usr/bin/perl "$helper_script" "$helper_dylib"
+  )"
+  python3 - "$first_target_name" "$second_target_name" "$selected_targets_file" "$helper_output" <<'PY'
+import json
+import pathlib
+import sys
+
+first_target_name = sys.argv[1]
+second_target_name = sys.argv[2]
+selected_targets_file = pathlib.Path(sys.argv[3])
+helper_output = sys.argv[4]
+snapshot = None
+for line in helper_output.splitlines():
+    payload = json.loads(line)
+    if payload.get("type") == "snapshot":
+        snapshot = payload
+
+if snapshot is None:
+    raise SystemExit("probe_playback_two_target_selection: helper did not return a snapshot")
+
+targets = [
+    target for target in snapshot.get("targets", [])
+    if target.get("bundleIdentifier") != "com.fpieringer.Keyway"
+]
+names = [target.get("displayName") for target in targets]
+if first_target_name not in names:
+    raise SystemExit(f"probe_playback_two_target_selection: missing helper target {first_target_name!r}; got {names!r}")
+if second_target_name:
+    if second_target_name not in names:
+        raise SystemExit(f"probe_playback_two_target_selection: missing helper target {second_target_name!r}; got {names!r}")
+else:
+    second_target_name = next((name for name in names if name != first_target_name), "")
+    if not second_target_name:
+        raise SystemExit(
+            f"probe_playback_two_target_selection: expected another helper target besides {first_target_name!r}; got {names!r}"
+        )
+if len(targets) < 2:
+    raise SystemExit(f"probe_playback_two_target_selection: expected at least two helper targets, got {len(targets)}")
+
+selected_targets_file.write_text(json.dumps({
+    "first": first_target_name,
+    "second": second_target_name,
+}))
+print(json.dumps([
+    {
+        "name": target.get("displayName"),
+        "id": target.get("id"),
+        "rate": target.get("playbackRate"),
+        "title": target.get("title"),
+    }
+    for target in targets
+], sort_keys=True))
+PY
+}
+
+[[ -d "$app_path" ]] || fail "missing app at $app_path; run scripts/install_menubar_app first"
+[[ -f "$helper_script" ]] || fail "missing helper script at $helper_script"
+[[ -f "$helper_dylib" ]] || fail "missing helper dylib at $helper_dylib"
+
+trap cleanup EXIT
+
+write_probe_audio
+start_targets
+assert_helper_targets
+first_target_name="$(python3 -c 'import json, pathlib, sys; print(json.loads(pathlib.Path(sys.argv[1]).read_text())["first"])' "$selected_targets_file")"
+second_target_name="$(python3 -c 'import json, pathlib, sys; print(json.loads(pathlib.Path(sys.argv[1]).read_text())["second"])' "$selected_targets_file")"
+
+KEYWAY_PROBE_MIN_TARGET_COUNT=2 \
+KEYWAY_PROBE_EXPECT_TARGET_NAME="$first_target_name" \
+  "$repo_root/scripts/probe_playback_chooser_selection"
+
+start_targets
+KEYWAY_PROBE_MIN_TARGET_COUNT=2 \
+KEYWAY_PROBE_SELECTION_DOWN_COUNT=1 \
+KEYWAY_PROBE_EXPECT_TARGET_NAME="$second_expected_target_name" \
+  "$repo_root/scripts/probe_playback_chooser_selection"
+
+if [[ -n "$second_expected_target_name" ]]; then
+  printf 'probe_playback_two_target_selection=ok first=%s second=%s\n' "$first_target_name" "$second_expected_target_name"
+else
+  printf 'probe_playback_two_target_selection=ok first=%s second=auto\n' "$first_target_name"
+fi

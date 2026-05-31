@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+iterations="${KEYWAY_PLAYBACK_STRESS_ITERATIONS:-3}"
+
+fail() {
+  printf 'probe_playback_routing_stress: %s\n' "$1" >&2
+  exit 1
+}
+
+case "$iterations" in
+  ''|*[!0-9]*)
+    fail "KEYWAY_PLAYBACK_STRESS_ITERATIONS must be a positive integer"
+    ;;
+esac
+
+if (( iterations < 1 )); then
+  fail "KEYWAY_PLAYBACK_STRESS_ITERATIONS must be at least 1"
+fi
+
+for iteration in $(seq 1 "$iterations"); do
+  printf 'probe_playback_routing_stress: iteration %s/%s\n' "$iteration" "$iterations"
+  "$repo_root/scripts/probe_playback_routing_suite"
+done
+
+printf 'probe_playback_routing_stress=ok iterations=%s generatedMediaKeySuppression=verified\n' "$iterations"

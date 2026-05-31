@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+workdir="$(mktemp -d)"
+trap 'rm -rf "$workdir"' EXIT
+
+grep -v '^import SonosHandoffCore$' \
+  "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportCommandRules.swift" \
+  >"$workdir/MediaTransportCommandRules.swift"
+
+cat >"$workdir/CommandRuleStubs.swift" <<'SWIFT'
+import Foundation
+
+enum MediaRemoteTransportCommand: String, Equatable {
+    case play
+    case playPause
+    case next
+    case previous
+    case pause
+}
+
+enum MediaTransportRoutingReason {
+    case single
+    case focused
+    case current
+    case chooser
+}
+
+enum MediaRouteStatusKind {
+    case auto
+    case focused
+    case chooser
+}
+
+struct MediaRemoteTarget: Equatable, Identifiable {
+    let id: String
+    let appName: String
+    let isCurrentlyPlaying: Bool
+    let playbackFreshness: Double
+}
+SWIFT
+
+cat >"$workdir/CommandRuleSemantics.swift" <<'SWIFT'
+import Foundation
+
+@main
+struct CommandRuleSemantics {
+    static func main() {
+        expectEqual(
+            MediaTransportCommandRules.rowScopedCommand(.playPause, for: target(id: "playing", playing: true)),
+            .pause,
+            "Play/Pause row dispatch must pause a playing row"
+        )
+        expectEqual(
+            MediaTransportCommandRules.rowScopedCommand(.playPause, for: target(id: "paused", playing: false)),
+            .play,
+            "Play/Pause row dispatch must play a paused row"
+        )
+        expectEqual(
+            MediaTransportCommandRules.rowScopedCommand(.next, for: target(id: "playing", playing: true)),
+            .next,
+            "Non-Play/Pause row dispatch must keep the requested command"
+        )
+
+        let newestPlaying = target(id: "helium", name: "Helium", playing: true, freshness: 300)
+        let activeOlderPlaying = target(id: "spotify", name: "Spotify", playing: true, freshness: 200)
+        let stoppedNewer = target(id: "quicktime", name: "QuickTime", playing: false, freshness: 500)
+        expectEqual(
+            MediaTransportCommandRules.sortedTargets(
+                [activeOlderPlaying, stoppedNewer, newestPlaying],
+                activeTargetID: activeOlderPlaying.id
+            ).map(\.id),
+            ["helium", "spotify", "quicktime"],
+            "Chooser ordering must put playing targets first, then the freshest playing source, before active-target tie-breaking"
+        )
+
+        let activeTie = target(id: "spotify", name: "Spotify", playing: true, freshness: 300)
+        let inactiveTie = target(id: "helium", name: "Helium", playing: true, freshness: 300)
+        expectEqual(
+            MediaTransportCommandRules.sortedTargets(
+                [inactiveTie, activeTie],
+                activeTargetID: activeTie.id
+            ).map(\.id),
+            ["spotify", "helium"],
+            "Active target must only break freshness ties"
+        )
+
+        print("verify_media_transport_command_rules_semantics=ok")
+    }
+
+    private static func target(
+        id: String,
+        name: String = "App",
+        playing: Bool,
+        freshness: Double = 0
+    ) -> MediaRemoteTarget {
+        MediaRemoteTarget(
+            id: id,
+            appName: name,
+            isCurrentlyPlaying: playing,
+            playbackFreshness: freshness
+        )
+    }
+
+    private static func expectEqual<T: Equatable>(
+        _ actual: T,
+        _ expected: T,
+        _ message: String
+    ) {
+        guard actual == expected else {
+            fail("\(message): expected \(expected), got \(actual)")
+        }
+    }
+
+    private static func fail(_ message: String) -> Never {
+        FileHandle.standardError.write(Data("verify_media_transport_command_rules_semantics: \(message)\n".utf8))
+        exit(1)
+    }
+}
+SWIFT
+
+swiftc \
+  "$workdir/CommandRuleStubs.swift" \
+  "$workdir/MediaTransportCommandRules.swift" \
+  "$workdir/CommandRuleSemantics.swift" \
+  -o "$workdir/verify_media_transport_command_rules_semantics"
+
+"$workdir/verify_media_transport_command_rules_semantics"

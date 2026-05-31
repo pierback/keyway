@@ -1,0 +1,217 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+status_file="${KEYWAY_STATUS_FILE:-$HOME/Library/Application Support/keyway/shortcut-runtime-status.json}"
+timeout_seconds="${KEYWAY_PROBE_TIMEOUT_SECONDS:-5}"
+immediate_delay_seconds="${KEYWAY_PROBE_POST_SELECTION_IMMEDIATE_DELAY_SECONDS:-0.05}"
+settle_seconds="${KEYWAY_PROBE_POST_SELECTION_IMMEDIATE_SETTLE_SECONDS:-0.35}"
+pre_select_delay_seconds="${KEYWAY_PROBE_PRE_SELECT_DELAY_SECONDS:-0.25}"
+workdir="$(mktemp -d)"
+media_key_poster="$workdir/post_media_key"
+
+fail() {
+  printf 'probe_playback_post_selection_immediate_key: %s\n' "$1" >&2
+  exit 1
+}
+
+read_trace_sequence() {
+  python3 - "$status_file" <<'PY'
+import json
+import pathlib
+import sys
+
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
+print(int(payload.get("mediaTransportTraceSequence", 0)))
+PY
+}
+
+read_trace_json() {
+  python3 - "$status_file" <<'PY'
+import json
+import pathlib
+import sys
+
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
+print(json.dumps(payload.get("mediaTransportTrace", []), separators=(",", ":")))
+PY
+}
+
+compile_media_key_poster() {
+  cat >"$workdir/PostMediaKey.swift" <<'SWIFT'
+import AppKit
+import ApplicationServices
+
+let playPauseKeyCode = 16
+let keyDownState = 0x0A
+let keyUpState = 0x0B
+let mediaKeySubtype: Int16 = 8
+
+func postMediaKey(state: Int) {
+    let data1 = (playPauseKeyCode << 16) | (state << 8)
+    guard let event = NSEvent.otherEvent(
+        with: .systemDefined,
+        location: .zero,
+        modifierFlags: [],
+        timestamp: ProcessInfo.processInfo.systemUptime,
+        windowNumber: 0,
+        context: nil,
+        subtype: mediaKeySubtype,
+        data1: data1,
+        data2: -1
+    ), let cgEvent = event.cgEvent else {
+        fatalError("failed to create media key event")
+    }
+    cgEvent.setIntegerValueField(.eventSourceUnixProcessID, value: 0)
+    cgEvent.setIntegerValueField(.eventSourceStateID, value: 1)
+    cgEvent.setIntegerValueField(.eventSourceUserData, value: 0)
+    cgEvent.setIntegerValueField(.eventTargetUnixProcessID, value: 0)
+    cgEvent.post(tap: .cghidEventTap)
+}
+
+postMediaKey(state: keyDownState)
+usleep(35_000)
+postMediaKey(state: keyUpState)
+SWIFT
+  swiftc "$workdir/PostMediaKey.swift" -o "$media_key_poster"
+}
+
+post_physical_play_pause() {
+  "$media_key_poster"
+}
+
+select_chooser_row() {
+  osascript -e 'tell application "System Events" to key code 36' >/dev/null
+}
+
+close_chooser() {
+  osascript -e 'tell application "System Events" to key code 53' >/dev/null || true
+}
+
+cleanup() {
+  close_chooser
+  rm -rf "$workdir"
+}
+
+wait_for_event_count() {
+  local start_sequence="$1"
+  local event_name="$2"
+  local min_count="$3"
+  local deadline=$((SECONDS + timeout_seconds))
+  while (( SECONDS < deadline )); do
+    trace_json="$(read_trace_json)"
+    if python3 - "$start_sequence" "$event_name" "$min_count" "$trace_json" <<'PY'
+import json
+import sys
+
+start_sequence = int(sys.argv[1])
+event_name = sys.argv[2]
+min_count = int(sys.argv[3])
+events = [
+    event for event in json.loads(sys.argv[4])
+    if int(event.get("sequence", 0)) > start_sequence
+]
+count = sum(1 for event in events if event.get("event") == event_name)
+raise SystemExit(0 if count >= min_count else 1)
+PY
+    then
+      return 0
+    fi
+    sleep 0.05
+  done
+  return 1
+}
+
+analyze_trace() {
+  local start_sequence="$1"
+  local trace_json
+  trace_json="$(read_trace_json)"
+  python3 - "$start_sequence" "$trace_json" <<'PY'
+import json
+import sys
+
+start_sequence = int(sys.argv[1])
+events = [
+    event for event in json.loads(sys.argv[2])
+    if int(event.get("sequence", 0)) > start_sequence
+]
+
+def fail(message):
+    print(json.dumps(events, indent=2, sort_keys=True))
+    print(f"probe_playback_post_selection_immediate_key: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+def indexes(name):
+    return [index for index, event in enumerate(events) if event.get("event") == name]
+
+show_indexes = indexes("chooser_show")
+dispatch_indexes = indexes("chooser_dispatch")
+key_down_indexes = indexes("transport_key_down")
+if len(show_indexes) < 2:
+    fail(f"expected immediate fresh key to show chooser again, got {len(show_indexes)} chooser_show event(s)")
+if not dispatch_indexes:
+    fail("missing chooser_dispatch")
+if len(key_down_indexes) < 2:
+    fail("missing immediate fresh transport_key_down after chooser dispatch")
+
+first_dispatch_index = dispatch_indexes[0]
+second_key_index = next((index for index in key_down_indexes if index > first_dispatch_index), None)
+if second_key_index is None:
+    fail("fresh key did not arrive after chooser dispatch")
+
+ignored_after_fresh_key = [
+    event for event in events[second_key_index + 1:]
+    if event.get("event") in {"input_ignored", "chooser_reentry_ignored"}
+]
+second_show = next((index for index in show_indexes if index > second_key_index), None)
+if second_show is None:
+    fail("fresh key after chooser dispatch did not reopen chooser")
+if ignored_after_fresh_key and events.index(ignored_after_fresh_key[0]) < second_show:
+    fail(f"fresh key was ignored before chooser reopened: {ignored_after_fresh_key[0].get('reason')}")
+
+first_dispatch = events[first_dispatch_index]
+second_key = events[second_key_index]
+second_show_event = events[second_show]
+latency = float(second_show_event["monotonicMilliseconds"]) - float(second_key["monotonicMilliseconds"])
+if latency > 75:
+    fail(f"fresh key chooser latency {latency:.1f}ms exceeds 75ms")
+
+print(json.dumps({
+    "event": "probe_post_selection_immediate_key_routeable",
+    "chooserShowSequence": int(second_show_event.get("sequence", 0)),
+    "dispatchSequence": int(first_dispatch.get("sequence", 0)),
+    "latencyMilliseconds": latency,
+}, sort_keys=True))
+PY
+}
+
+trap cleanup EXIT
+compile_media_key_poster
+
+start_sequence="$(read_trace_sequence)"
+printf 'probe_playback_post_selection_immediate_key: starting after trace sequence %s\n' "$start_sequence"
+post_physical_play_pause
+
+if ! wait_for_event_count "$start_sequence" "chooser_show" 1; then
+  read_trace_json | python3 -m json.tool >&2
+  fail "timed out waiting for first chooser_show"
+fi
+
+sleep "$pre_select_delay_seconds"
+select_chooser_row
+
+if ! wait_for_event_count "$start_sequence" "chooser_dispatch" 1; then
+  read_trace_json | python3 -m json.tool >&2
+  fail "timed out waiting for chooser_dispatch"
+fi
+
+sleep "$immediate_delay_seconds"
+post_physical_play_pause
+
+if ! wait_for_event_count "$start_sequence" "chooser_show" 2; then
+  read_trace_json | python3 -m json.tool >&2
+  fail "timed out waiting for second chooser_show"
+fi
+
+sleep "$settle_seconds"
+analyze_trace "$start_sequence"
+printf 'probe_playback_post_selection_immediate_key=ok\n'

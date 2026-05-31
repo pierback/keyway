@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+app_path="${KEYWAY_APP_PATH:-$HOME/Applications/Keyway.app}"
+status_file="${KEYWAY_STATUS_FILE:-$HOME/Library/Application Support/keyway/shortcut-runtime-status.json}"
+
+fail() {
+  printf 'probe_playback_routing_suite: %s\n' "$1" >&2
+  exit 1
+}
+
+restart_keyway() {
+  pkill -x Keyway >/dev/null 2>&1 || true
+  sleep 0.5
+  open -a "$app_path"
+  sleep 2
+}
+
+assert_runtime_ready() {
+  python3 - "$status_file" "$app_path" <<'PY'
+import json
+import pathlib
+import sys
+
+status_path = pathlib.Path(sys.argv[1])
+expected_app_path = sys.argv[2]
+if not status_path.exists():
+    raise SystemExit(f"missing status file: {status_path}")
+
+payload = json.loads(status_path.read_text())
+checks = {
+    "accessibilityGranted": True,
+    "listenEventGranted": True,
+    "eventTapRunning": True,
+    "commandCenterRouteRunning": True,
+}
+for key, expected in checks.items():
+    actual = payload.get(key)
+    if actual is not expected:
+        raise SystemExit(f"{key} expected {expected}, got {actual!r}")
+
+if payload.get("activeEventTap") != "cghid":
+    raise SystemExit(f"activeEventTap is not cghid: {payload.get('activeEventTap')!r}")
+
+if payload.get("appPath") != expected_app_path:
+    raise SystemExit(f"appPath expected {expected_app_path!r}, got {payload.get('appPath')!r}")
+PY
+}
+
+run_probe_cleanly() {
+  local probe="$1"
+  restart_keyway
+  assert_runtime_ready
+  "$repo_root/$probe"
+}
+
+[[ -d "$app_path" ]] || fail "missing app at $app_path; run scripts/install_menubar_app first"
+
+run_probe_cleanly scripts/probe_playback_event_tap
+"$repo_root/scripts/verify_playback_filter_semantics" >/dev/null
+"$repo_root/scripts/verify_media_remote_refresh_gate_semantics" >/dev/null
+"$repo_root/scripts/verify_media_chooser_guard_semantics" >/dev/null
+"$repo_root/scripts/verify_playback_reentry_semantics" >/dev/null
+"$repo_root/scripts/verify_media_target_overlay_model_semantics" >/dev/null
+"$repo_root/scripts/verify_media_transport_command_rules_semantics" >/dev/null
+"$repo_root/scripts/verify_media_transport_route_source_semantics" >/dev/null
+
+restart_keyway
+assert_runtime_ready
+printf 'probe_playback_routing_suite=ok\n'

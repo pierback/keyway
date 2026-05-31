@@ -26,8 +26,10 @@ if (!$handle) {
 
 my $snapshot_symbol = DynaLoader::dl_find_symbol($handle, "keyway_mediaremote_snapshot");
 my $command_symbol = DynaLoader::dl_find_symbol($handle, "keyway_mediaremote_send_command");
+my $client_cache_symbol = DynaLoader::dl_find_symbol($handle, "keyway_mediaremote_refresh_client_cache");
 my $register_symbol = DynaLoader::dl_find_symbol($handle, "keyway_mediaremote_register_notifications");
-if (!$snapshot_symbol || !$command_symbol) {
+my $role = $ENV{KEYWAY_MEDIAREMOTE_ROLE} // "snapshot";
+if (!$snapshot_symbol || !$command_symbol || !$client_cache_symbol) {
     print encode_json({
         type => "fatal",
         message => "missing helper symbols"
@@ -37,8 +39,9 @@ if (!$snapshot_symbol || !$command_symbol) {
 
 DynaLoader::dl_install_xsub("Keyway::MediaRemote::snapshot", $snapshot_symbol);
 DynaLoader::dl_install_xsub("Keyway::MediaRemote::send_command", $command_symbol);
+DynaLoader::dl_install_xsub("Keyway::MediaRemote::refresh_client_cache", $client_cache_symbol);
 
-if ($register_symbol) {
+if ($register_symbol && !$ENV{KEYWAY_MEDIAREMOTE_DISABLE_NOTIFICATIONS}) {
     DynaLoader::dl_install_xsub("Keyway::MediaRemote::register_notifications", $register_symbol);
     Keyway::MediaRemote::register_notifications();
 }
@@ -46,6 +49,7 @@ if ($register_symbol) {
 print encode_json({
     type => "ready",
     host => "/usr/bin/perl",
+    role => $role,
     pid => $$
 }) . "\n";
 
@@ -73,6 +77,8 @@ while (defined(my $line = <STDIN>)) {
         }) . "\n";
     } elsif ($type eq "refresh") {
         Keyway::MediaRemote::snapshot();
+    } elsif ($type eq "refreshClientCache") {
+        Keyway::MediaRemote::refresh_client_cache();
     } elsif ($type eq "sendCommand") {
         local $ENV{KEYWAY_MEDIAREMOTE_TARGET_ID} = $message->{targetID} // "";
         local $ENV{KEYWAY_MEDIAREMOTE_COMMAND} = $message->{command} // "";

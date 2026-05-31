@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+status_file="${KEYWAY_STATUS_FILE:-$HOME/Library/Application Support/keyway/shortcut-runtime-status.json}"
+timeout_seconds="${KEYWAY_PROBE_TIMEOUT_SECONDS:-5}"
+settle_seconds="${KEYWAY_PROBE_SETTLE_SECONDS:-0.35}"
+
+fail() {
+  printf 'probe_playback_event_tap: %s\n' "$1" >&2
+  exit 1
+}
+
+read_trace_json() {
+  python3 - "$status_file" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+if not path.exists():
+    print("[]")
+    raise SystemExit
+
+payload = json.loads(path.read_text())
+print(json.dumps(payload.get("mediaTransportTrace", []), separators=(",", ":")))
+PY
+}
+
+read_trace_sequence() {
+  python3 - "$status_file" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+if not path.exists():
+    print(0)
+    raise SystemExit
+
+payload = json.loads(path.read_text())
+print(int(payload.get("mediaTransportTraceSequence", 0)))
+PY
+}
+
+post_generated_play_pause_burst() {
+  swift - <<'SWIFT'
+import AppKit
+import ApplicationServices
+
+let playPauseKeyCode = 16
+let keyDownState = 0x0A
+let keyUpState = 0x0B
+let mediaKeySubtype: Int16 = 8
+
+func postMediaKey(state: Int) {
+    let data1 = (playPauseKeyCode << 16) | (state << 8)
+    guard let event = NSEvent.otherEvent(
+        with: .systemDefined,
+        location: .zero,
+        modifierFlags: [],
+        timestamp: ProcessInfo.processInfo.systemUptime,
+        windowNumber: 0,
+        context: nil,
+        subtype: mediaKeySubtype,
+        data1: data1,
+        data2: -1
+    ), let cgEvent = event.cgEvent else {
+        fatalError("failed to create media key event")
+    }
+    cgEvent.post(tap: .cghidEventTap)
+}
+
+postMediaKey(state: keyDownState)
+usleep(30_000)
+postMediaKey(state: keyUpState)
+usleep(30_000)
+postMediaKey(state: keyDownState)
+usleep(30_000)
+postMediaKey(state: keyUpState)
+SWIFT
+}
+
+assert_generated_burst_is_swallowed() {
+  local start_sequence="$1"
+  local label="$2"
+  local deadline=$((SECONDS + timeout_seconds))
+  while (( SECONDS < deadline )); do
+    trace_json="$(read_trace_json)"
+    result="$(python3 - "$start_sequence" "$label" "$trace_json" <<'PY'
+import json
+import sys
+
+start_sequence = int(sys.argv[1])
+label = sys.argv[2]
+events = [
+    event for event in json.loads(sys.argv[3])
+    if int(event.get("sequence", 0)) > start_sequence
+]
+names = [event.get("event") for event in events]
+ignored = [
+    event for event in events
+    if event.get("event") in {
+        "transport_generated_input_ignored",
+        "generated_media_key_shadow_armed",
+    }
+]
+if not ignored:
+    print("missing:generated_input_ignored")
+    raise SystemExit
+if any(event.get("eventSourceIsPhysicalHIDSystem") is True for event in ignored):
+    print("missing:generated_source_metadata")
+    raise SystemExit
+for forbidden in ("transport_key_down", "decision_chooser", "chooser_show"):
+    if forbidden in names:
+        print("forbidden:" + forbidden)
+        raise SystemExit
+for event in events:
+    if event.get("event") == "input" and event.get("source") != "command_center":
+        print("forbidden:input")
+        raise SystemExit
+print(json.dumps({
+    "event": "probe_generated_media_key_swallowed",
+    "label": label,
+    "ignoredEvents": len(ignored),
+}, sort_keys=True))
+PY
+)"
+    if [[ "$result" != missing:* && "$result" != forbidden:* ]]; then
+      sleep "$settle_seconds"
+      trace_json="$(read_trace_json)"
+      python3 - "$start_sequence" "$trace_json" <<'PY'
+import json
+import sys
+
+start_sequence = int(sys.argv[1])
+events = [
+    event for event in json.loads(sys.argv[2])
+    if int(event.get("sequence", 0)) > start_sequence
+]
+late_chooser = [
+    event for event in events
+    if event.get("event") in {"decision_chooser", "chooser_show"}
+    or (event.get("event") == "input" and event.get("source") != "command_center")
+]
+if late_chooser:
+    print(json.dumps(events, indent=2, sort_keys=True))
+    raise SystemExit("probe_playback_event_tap: generated media-key callback routed after settle")
+PY
+      printf '%s\n' "$result"
+      return 0
+    fi
+    sleep 0.1
+  done
+
+  trace_json="$(read_trace_json)"
+  python3 - "$start_sequence" "$trace_json" <<'PY' >&2
+import json
+import sys
+
+start_sequence = int(sys.argv[1])
+events = [
+    event for event in json.loads(sys.argv[2])
+    if int(event.get("sequence", 0)) > start_sequence
+]
+print(json.dumps(events, indent=2, sort_keys=True))
+PY
+  fail "timed out waiting for $label generated media-key rejection"
+}
+
+start_sequence="$(read_trace_sequence)"
+printf 'probe_playback_event_tap: starting after trace sequence %s\n' "$start_sequence"
+post_generated_play_pause_burst
+assert_generated_burst_is_swallowed "$start_sequence" "first_generated_burst"
+
+second_start_sequence="$(read_trace_sequence)"
+post_generated_play_pause_burst
+assert_generated_burst_is_swallowed "$second_start_sequence" "second_generated_burst"
+printf 'probe_playback_event_tap=ok\n'

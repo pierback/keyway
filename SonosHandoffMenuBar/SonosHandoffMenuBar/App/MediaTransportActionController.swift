@@ -1,62 +1,32 @@
 import AppKit
+import Combine
 import Foundation
 import os
 import SonosHandoffCore
 
-enum MediaRouteStatusKind: String, Equatable {
-    case auto
-    case focused
-    case chooser
-    case unavailable
-
-    var title: String {
-        switch self {
-        case .auto:
-            return "Auto"
-        case .focused:
-            return "Focused"
-        case .chooser:
-            return "Chooser"
-        case .unavailable:
-            return "Unavailable"
-        }
-    }
-}
-
-struct MediaRouteStatus: Equatable {
-    var kind: MediaRouteStatusKind
-    var target: MediaRemoteTarget?
-    var targetCount: Int
-
-    var subtitle: String {
-        switch kind {
-        case .auto:
-            return targetCount == 1 ? "Single media target" : "Automatic routing"
-        case .focused:
-            return "Foreground or visible window"
-        case .chooser:
-            return "Choose target"
-        case .unavailable:
-            return "Start Spotify, browser media, or QuickTime"
-        }
-    }
-}
-
 @MainActor
 final class MediaTransportActionController {
-    private static let routeSnapshotMaxAge: TimeInterval = 0.75
-    private static let chooserSnapshotMaxAge: TimeInterval = 1.5
-
-    private enum RoutingReason: String {
-        case single = "single target"
-        case focused = "focused target"
-        case current = "current media target"
-        case chooser = "chooser"
-    }
+    private static let commandCenterMediaKeyShadowInterval: TimeInterval = 0.25
+    private static let commandCenterInputShadowInterval: TimeInterval = 0.15
+    private static let programmaticCommandCenterEchoWindow: TimeInterval = 0.25
+    private static let programmaticGeneratedMediaKeyCallbackWindow: TimeInterval = 0.25
+    private static let physicalMediaKeyReboundWindow: TimeInterval = 0.25
+    private static let chooserTargetedMediaKeyEchoWindow: TimeInterval = 1.25
+    private static let programmaticDispatchFallbackDelayNanoseconds: UInt64 = 250_000_000
+    private static let selectedRowDispatchRouteShieldReleaseDelayNanoseconds: UInt64 = 180_000_000
 
     private let logger = Logger(subsystem: AppIdentity.loggerSubsystem, category: "MediaTransport")
     private let mediaRemoteController: MediaRemoteController
     private let overlayController: MediaTargetOverlayController
+    private let commandCenterFilter: MediaTransportCommandCenterFilter
+    private let traceRecorder = MediaTransportTraceRecorder()
+    private let chooserSession = MediaChooserSessionGuard()
+    private let focusResolver = MediaTargetFocusResolver()
+    var relaxRouteShield: ((String) -> Void)?
+    private var targetSubscription: AnyCancellable?
+    private var programmaticDispatches: [UUID: MediaTransportPendingDispatchEcho] = [:]
+    private var spotifyDesktopIsPlaying: Bool?
+    private var spotifyDesktopStateRefreshInFlight = false
 
     init(
         mediaRemoteController: MediaRemoteController,
@@ -64,40 +34,155 @@ final class MediaTransportActionController {
     ) {
         self.mediaRemoteController = mediaRemoteController
         self.overlayController = overlayController
+        self.commandCenterFilter = MediaTransportCommandCenterFilter(
+            mediaKeyShadowInterval: Self.commandCenterMediaKeyShadowInterval,
+            commandCenterInputShadowInterval: Self.commandCenterInputShadowInterval,
+            programmaticCommandCenterEchoWindow: Self.programmaticCommandCenterEchoWindow,
+            programmaticGeneratedMediaKeyCallbackWindow: Self.programmaticGeneratedMediaKeyCallbackWindow,
+            physicalMediaKeyReboundWindow: Self.physicalMediaKeyReboundWindow,
+            chooserTargetedMediaKeyEchoWindow: Self.chooserTargetedMediaKeyEchoWindow
+        )
+        targetSubscription = mediaRemoteController.$targets
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] newTargets in
+                guard let self else { return }
+                guard !self.chooserSession.isActive else { return }
+                let sorted = MediaTransportCommandRules.sortedTargets(
+                    newTargets,
+                    activeTargetID: self.mediaRemoteController.activeTargetID
+                )
+                self.overlayController.updateTargetsIfVisible(
+                    targets: sorted,
+                    generation: self.overlayController.currentGeneration
+                )
+                self.refreshSpotifyDesktopPlaybackStateIfNeeded(targets: newTargets)
+            }
     }
 
     func route(command: MediaRemoteTransportCommand) {
-        if command == .playPause || command == .pause {
-            if !showChooserImmediately(command: command) {
-                showChooser(command: command)
+        route(command: command, source: .userInterface)
+    }
+
+    func routeFromMediaKey(command: MediaRemoteTransportCommand, metadata: MediaTransportInputMetadata? = nil) {
+        route(command: command, source: .eventTap, metadata: metadata)
+    }
+
+    func noteGeneratedMediaKeyIgnored(command: MediaRemoteTransportCommand, metadata: MediaTransportInputMetadata) {
+        commandCenterFilter.noteMediaKey(command: command, metadata: metadata)
+        trace(
+            "generated_media_key_shadow_armed",
+            command: command,
+            source: .eventTap,
+            metadata: metadata
+        )
+    }
+
+    func routeFromCommandCenter(
+        command: MediaRemoteTransportCommand,
+        metadata: MediaCommandCenterInputMetadata? = nil
+    ) {
+        route(command: command, source: .commandCenter, commandCenterMetadata: metadata)
+    }
+
+    private func route(
+        command: MediaRemoteTransportCommand,
+        source: MediaTransportRouteSource,
+        metadata: MediaTransportInputMetadata? = nil,
+        commandCenterMetadata: MediaCommandCenterInputMetadata? = nil
+    ) {
+        logger.info("MediaTransport input command=\(command.rawValue, privacy: .public) source=\(source.rawValue, privacy: .public) overlayVisible=\(self.overlayController.isVisible, privacy: .public) chooserActive=\(self.chooserSession.isActive, privacy: .public) canRoute=\(self.mediaRemoteController.canRouteCommands, privacy: .public) targetCount=\(self.mediaRemoteController.targets.count, privacy: .public)")
+        trace(
+            "input",
+            command: command,
+            source: source,
+            metadata: metadata,
+            commandCenterMetadata: commandCenterMetadata
+        )
+        switch source {
+        case .eventTap:
+            if let reason = commandCenterFilter.ignoreReasonForMediaKey(command: command, metadata: metadata) {
+                logger.info("MediaTransport \(reason.rawValue, privacy: .public) command=\(command.rawValue, privacy: .public)")
+                trace(
+                    "input_ignored",
+                    command: command,
+                    source: source,
+                    reason: reason.rawValue,
+                    metadata: metadata
+                )
+                return
             }
+            commandCenterFilter.noteMediaKey(command: command, metadata: metadata)
+        case .commandCenter:
+            if let reason = commandCenterFilter.ignoreReasonForCommandCenter(command: command, metadata: commandCenterMetadata) {
+                logger.info("MediaTransport \(reason.rawValue, privacy: .public) command=\(command.rawValue, privacy: .public)")
+                trace(
+                    "input_ignored",
+                    command: command,
+                    source: source,
+                    reason: reason.rawValue,
+                    commandCenterMetadata: commandCenterMetadata
+                )
+                return
+            }
+            logger.info("MediaTransport command_center_route_shield_only_ignored command=\(command.rawValue, privacy: .public)")
+            trace(
+                "input_ignored",
+                command: command,
+                source: source,
+                reason: "command_center_route_shield_only_ignored",
+                commandCenterMetadata: commandCenterMetadata
+            )
+            return
+        case .userInterface:
+            break
+        }
+
+        if MediaTransportCommandRules.isPlayFamily(command) {
+            logger.info("MediaTransport decision=chooser command=\(command.rawValue, privacy: .public) source=\(source.rawValue, privacy: .public)")
+            trace(
+                "decision_chooser",
+                command: command,
+                source: source,
+                metadata: metadata,
+                commandCenterMetadata: commandCenterMetadata
+            )
+            showChooserImmediately(
+                command: command,
+                source: source,
+                metadata: metadata,
+                commandCenterMetadata: commandCenterMetadata
+            )
             return
         }
-        Task { [weak self] in
-            await self?.routeAfterRefreshingSnapshot(command: command)
-        }
+        logger.info("MediaTransport decision=cache_route command=\(command.rawValue, privacy: .public) source=\(source.rawValue, privacy: .public)")
+        trace(
+            "decision_cache_route",
+            command: command,
+            source: source,
+            metadata: metadata,
+            commandCenterMetadata: commandCenterMetadata
+        )
+        routeFromCache(command: command)
     }
 
     func showChooser(command: MediaRemoteTransportCommand = .playPause) {
-        Task { [weak self] in
-            await self?.showChooserAfterRefreshingSnapshot(command: command)
-        }
+        showChooserFromCache(command: command)
     }
 
     func showTargetChooser() {
-        Task { [weak self] in
-            await self?.showChooserAfterRefreshingSnapshot(command: .playPause)
-        }
+        showChooserFromCache(command: nil)
     }
 
     func route(command: MediaRemoteTransportCommand, to target: MediaRemoteTarget) {
-        Task { [weak self] in
-            await self?.send(command: command, to: target, reason: .current)
-        }
+        send(command: command, to: target, reason: .current)
     }
 
     func currentRouteStatus() -> MediaRouteStatus {
-        let targets = sortedTargets(mediaRemoteController.targets)
+        let targets = MediaTransportCommandRules.sortedTargets(
+            mediaRemoteController.targets,
+            activeTargetID: mediaRemoteController.activeTargetID
+        )
         guard !targets.isEmpty, mediaRemoteController.canRouteCommands else {
             return MediaRouteStatus(kind: .unavailable, target: nil, targetCount: 0)
         }
@@ -105,7 +190,7 @@ final class MediaTransportActionController {
         if let decision = automaticTarget(from: targets) {
             let kind: MediaRouteStatusKind = targets.count > 1
                 ? .chooser
-                : statusKind(for: decision.reason)
+                : MediaTransportCommandRules.statusKind(for: decision.reason)
 
             return MediaRouteStatus(
                 kind: kind,
@@ -121,156 +206,184 @@ final class MediaTransportActionController {
         )
     }
 
-    private func showChooserImmediately(command: MediaRemoteTransportCommand) -> Bool {
-        guard mediaRemoteController.canRouteCommands,
-              !mediaRemoteController.targets.isEmpty,
-              mediaRemoteController.hasFreshSnapshot(maxAge: Self.chooserSnapshotMaxAge)
-        else {
-            return false
+    private func showChooserFromCache(command: MediaRemoteTransportCommand?) {
+        showChooserImmediately(command: command, source: .userInterface)
+    }
+
+    private func showChooserImmediately(
+        command: MediaRemoteTransportCommand?,
+        source: MediaTransportRouteSource,
+        metadata: MediaTransportInputMetadata? = nil,
+        commandCenterMetadata: MediaCommandCenterInputMetadata? = nil
+    ) {
+        let commandName = command?.rawValue ?? "none"
+        if overlayController.isVisible || chooserSession.isActive {
+            let chooserState = chooserSession.stateName
+            logger.info("MediaTransport chooser_reentry_ignored command=\(commandName, privacy: .public) source=\(source.rawValue, privacy: .public) state=\(chooserState, privacy: .public)")
+            trace(
+                "chooser_reentry_ignored",
+                command: command,
+                source: source,
+                reason: chooserState,
+                metadata: metadata,
+                commandCenterMetadata: commandCenterMetadata
+            )
+            return
+        }
+        guard mediaRemoteController.canRouteCommands else {
+            logger.error("MediaTransport chooser_blocked command=\(commandName, privacy: .public) reason=helper_not_running")
+            StatusHUD.shared.finish(
+                title: "Media Targets Unavailable",
+                message: "MediaRemote helper is not running.",
+                dismissAfter: 2.4
+            )
+            return
+        }
+
+        let sortedTargets = MediaTransportCommandRules.sortedTargets(
+            mediaRemoteController.targets,
+            activeTargetID: mediaRemoteController.activeTargetID
+        )
+        let cached = targetsIncludingHeliumDesktop(sortedTargets)
+        refreshSpotifyDesktopPlaybackStateIfNeeded(targets: cached)
+        let refreshQueued = mediaRemoteController.refreshSnapshot()
+
+        logger.info("MediaTransport chooser_show command=\(commandName, privacy: .public) source=\(source.rawValue, privacy: .public) targetCount=\(cached.count, privacy: .public) refreshQueued=\(refreshQueued, privacy: .public) targets=\(MediaTransportCommandRules.targetLogSummary(cached), privacy: .public)")
+        trace(
+            "chooser_show",
+            command: command,
+            source: source,
+            targets: cached,
+            targetCount: cached.count,
+            metadata: metadata,
+            commandCenterMetadata: commandCenterMetadata
+        )
+        showChooserOverlay(
+            command: command,
+            targets: cached,
+            source: source,
+            metadata: metadata,
+            commandCenterMetadata: commandCenterMetadata
+        )
+    }
+
+    private func routeFromCache(command: MediaRemoteTransportCommand) {
+        let targets = MediaTransportCommandRules.sortedTargets(
+            mediaRemoteController.targets,
+            activeTargetID: mediaRemoteController.activeTargetID
+        )
+        guard !targets.isEmpty, mediaRemoteController.canRouteCommands else {
+            mediaRemoteController.refreshSnapshot()
+            StatusHUD.shared.finish(
+                title: "No Media Target",
+                message: "Start Spotify, a browser video, or QuickTime playback.",
+                dismissAfter: 2.4
+            )
+            return
         }
 
         mediaRemoteController.refreshSnapshot()
-
-        let targets = sortedTargets(mediaRemoteController.targets)
-        guard !targets.isEmpty else {
-            return false
-        }
-
-        showChooserOverlay(command: command, targets: targets)
-
-        return true
-    }
-
-    private func routeAfterRefreshingSnapshot(command: MediaRemoteTransportCommand) async {
-        let needsFreshSnapshot = !mediaRemoteController.canRouteCommands
-            || mediaRemoteController.targets.isEmpty
-            || !mediaRemoteController.hasFreshSnapshot(maxAge: Self.routeSnapshotMaxAge)
-
-        if needsFreshSnapshot {
-            StatusHUD.shared.show(title: "Media Targets", message: "Looking for Now Playing sessions...")
-            let refreshed = await mediaRemoteController.refreshSnapshotAndWait()
-            guard refreshed || mediaRemoteController.hasFreshSnapshot(maxAge: Self.routeSnapshotMaxAge) else {
-                StatusHUD.shared.finish(
-                    title: "Media Targets Unavailable",
-                    message: "Keyway could not refresh Now Playing sessions.",
-                    dismissAfter: 2.4
-                )
-                return
-            }
-        } else {
-            mediaRemoteController.refreshSnapshot()
-        }
-
-        let targets = sortedTargets(mediaRemoteController.targets)
-        guard !targets.isEmpty, mediaRemoteController.canRouteCommands else {
-            StatusHUD.shared.finish(
-                title: "No Media Target",
-                message: "Start Spotify, a browser video, or QuickTime playback.",
-                dismissAfter: 2.4
-            )
-            return
-        }
-
         route(command: command, targets: targets)
-    }
-
-    private func showChooserAfterRefreshingSnapshot(command: MediaRemoteTransportCommand?) async {
-        let needsFreshSnapshot = !mediaRemoteController.canRouteCommands
-            || mediaRemoteController.targets.isEmpty
-            || !mediaRemoteController.hasFreshSnapshot(maxAge: Self.chooserSnapshotMaxAge)
-
-        if needsFreshSnapshot {
-            StatusHUD.shared.show(title: "Media Targets", message: "Looking for Now Playing sessions...")
-            let refreshed = await mediaRemoteController.refreshSnapshotAndWait()
-            guard refreshed || mediaRemoteController.hasFreshSnapshot(maxAge: Self.chooserSnapshotMaxAge) else {
-                StatusHUD.shared.finish(
-                    title: "Media Targets Unavailable",
-                    message: "Keyway could not refresh Now Playing sessions.",
-                    dismissAfter: 2.4
-                )
-                return
-            }
-        } else {
-            mediaRemoteController.refreshSnapshot()
-        }
-
-        let targets = sortedTargets(mediaRemoteController.targets)
-        guard !targets.isEmpty, mediaRemoteController.canRouteCommands else {
-            StatusHUD.shared.finish(
-                title: "No Media Target",
-                message: "Start Spotify, a browser video, or QuickTime playback.",
-                dismissAfter: 2.4
-            )
-            return
-        }
-
-        showChooserOverlay(command: command, targets: targets)
     }
 
     private func route(command: MediaRemoteTransportCommand, targets: [MediaRemoteTarget]) {
         if let decision = automaticTarget(from: targets) {
-            Task { [weak self] in
-                await self?.send(command: command, to: decision.target, reason: decision.reason)
-            }
+            send(command: command, to: decision.target, reason: decision.reason)
             return
         }
 
         showChooserOverlay(command: command, targets: targets)
     }
 
-    private func showChooserOverlay(command: MediaRemoteTransportCommand?, targets: [MediaRemoteTarget]) {
-        let displayedTargets = targets
+    private func showChooserOverlay(
+        command: MediaRemoteTransportCommand?,
+        targets: [MediaRemoteTarget],
+        source: MediaTransportRouteSource = .userInterface,
+        metadata: MediaTransportInputMetadata? = nil,
+        commandCenterMetadata: MediaCommandCenterInputMetadata? = nil
+    ) {
+        let chooserID = chooserSession.begin(command: command)
+
         overlayController.show(
             command: command,
             targets: targets,
             onChoose: { [weak self] target, command in
                 guard let self else { return }
-                let displayedTarget = displayedTargets.first { $0.id == target.id } ?? target
+                self.logger.info("MediaTransport chooser_select requestedCommand=\(command?.rawValue ?? "none", privacy: .public) target=\(target.appName, privacy: .public) targetID=\(target.id, privacy: .public) playing=\(target.isCurrentlyPlaying, privacy: .public)")
+                self.trace(
+                    "chooser_select",
+                    command: command,
+                    target: target,
+                    targetCount: self.mediaRemoteController.targets.count
+                )
 
                 guard let command else {
+                    self.finishChooser(id: chooserID)
+                    self.trace(
+                        "chooser_closed_without_command",
+                        command: nil,
+                        target: target,
+                        targetCount: self.mediaRemoteController.targets.count
+                    )
                     self.mediaRemoteController.refreshSnapshot()
                     StatusHUD.shared.finish(
-                        title: "\(displayedTarget.appName)",
+                        title: "\(target.appName)",
                         message: "No transport command was pending.",
                         dismissAfter: 1.35
                     )
                     return
                 }
 
-                if command == .playPause || command == .pause {
-                    Task { [weak self] in
-                        await self?.sendFromChooser(command: command, to: displayedTarget)
-                    }
+                let routedCommand = self.chooserScopedCommand(command, for: target)
+                self.finishChooser(
+                    id: chooserID,
+                    selected: true
+                )
+                self.trace(
+                    "chooser_closed_for_dispatch",
+                    command: command,
+                    target: target,
+                    targetCount: self.mediaRemoteController.targets.count
+                )
+                if let desktopTransport = self.desktopTransportName(target: target) {
+                    self.trace(
+                        "selected_row_dispatch_route_shield_kept",
+                        command: command,
+                        target: target,
+                        reason: desktopTransport
+                    )
                 } else {
-                    Task { [weak self] in
-                        await self?.send(command: command, to: displayedTarget, reason: .chooser)
-                    }
+                    self.relaxRouteShield?("selected_row_dispatch")
                 }
+                Task { @MainActor [weak self] in
+                    try! await Task.sleep(nanoseconds: Self.selectedRowDispatchRouteShieldReleaseDelayNanoseconds)
+                    self?.dispatchFromChooser(
+                        command: routedCommand,
+                        requestedCommand: command,
+                        to: target,
+                        metadata: metadata
+                    )
+                }
+            },
+            onDismiss: { [weak self] in
+                guard let self else { return }
+                let activeCommand = self.chooserSession.activeCommandRawValue(for: chooserID) ?? "stale"
+                self.logger.info("MediaTransport chooser_dismissed command=\(activeCommand, privacy: .public)")
+                self.trace("chooser_dismissed", command: self.chooserSession.activeCommand(for: chooserID))
+                self.finishChooser(id: chooserID)
+                self.relaxRouteShield?("chooser_dismissed")
             }
         )
     }
 
-    private func statusKind(for reason: RoutingReason) -> MediaRouteStatusKind {
-        switch reason {
-        case .single:
-            return .auto
-        case .focused:
-            return .focused
-        case .current:
-            return .auto
-        case .chooser:
-            return .chooser
-        }
-    }
-
-    private func automaticTarget(from targets: [MediaRemoteTarget]) -> (target: MediaRemoteTarget, reason: RoutingReason)? {
+    private func automaticTarget(from targets: [MediaRemoteTarget]) -> (target: MediaRemoteTarget, reason: MediaTransportRoutingReason)? {
         if targets.count == 1, let target = targets.first {
             return (target, .single)
         }
 
         let playingTargets = targets.filter(\.isCurrentlyPlaying)
 
-        if let focusedTarget = focusedTarget(in: targets) {
+        if let focusedTarget = focusResolver.focusedTarget(in: targets) {
             return (focusedTarget, .focused)
         }
 
@@ -281,9 +394,43 @@ final class MediaTransportActionController {
         return nil
     }
 
-    private func send(command: MediaRemoteTransportCommand, to target: MediaRemoteTarget, reason: RoutingReason) async {
-        let sent = await mediaRemoteController.send(command: command, targetID: target.id)
+    private func send(command: MediaRemoteTransportCommand, to target: MediaRemoteTarget, reason: MediaTransportRoutingReason) {
+        logger.info("MediaTransport dispatch command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) targetID=\(target.id, privacy: .public) reason=\(reason.rawValue, privacy: .public)")
+        let dispatchID = beginBoundedProgrammaticDispatch(command: command)
+        if usesSpotifyDesktopTransport(target: target) {
+            let result = submitSpotifyDesktopCommand(command: command, target: target)
+            trace(result: result)
+            finishProgrammaticDispatch(
+                id: dispatchID,
+                fallback: false
+            )
+            mediaRemoteController.refreshSnapshot()
+            showCommandFailureIfNeeded(result: result, target: target)
+            logger.info("MediaTransport route command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) reason=\(reason.rawValue, privacy: .public) transport=spotify_desktop")
+            return
+        }
+        if usesHeliumDesktopTransport(target: target), command == .playPause {
+            let result = submitHeliumDesktopCommand(command: command, target: target)
+            trace(result: result)
+            finishProgrammaticDispatch(
+                id: dispatchID,
+                fallback: false
+            )
+            mediaRemoteController.refreshSnapshot()
+            showCommandFailureIfNeeded(result: result, target: target)
+            logger.info("MediaTransport route command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) reason=\(reason.rawValue, privacy: .public) transport=helium_desktop")
+            return
+        }
+        let sent = mediaRemoteController.submit(command: command, targetID: target.id) { [weak self] result in
+            self?.trace(result: result)
+            self?.finishProgrammaticDispatch(
+                id: dispatchID,
+                fallback: false
+            )
+            self?.showCommandFailureIfNeeded(result: result, target: target)
+        }
         guard sent else {
+            finishProgrammaticDispatch(id: dispatchID, fallback: true)
             logger.error("MediaTransport route_failed command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) reason=\(reason.rawValue, privacy: .public)")
             StatusHUD.shared.finish(
                 title: "Media Command Failed",
@@ -294,20 +441,75 @@ final class MediaTransportActionController {
         }
 
         logger.info("MediaTransport route command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) reason=\(reason.rawValue, privacy: .public)")
-        StatusHUD.shared.finish(
-            title: "\(command.displayName) → \(target.appName)",
-            message: "Routed by \(reason.rawValue)",
-            dismissAfter: 1.35
+    }
+
+    private func dispatchFromChooser(
+        command: MediaRemoteTransportCommand,
+        requestedCommand: MediaRemoteTransportCommand,
+        to target: MediaRemoteTarget,
+        metadata: MediaTransportInputMetadata?
+    ) {
+        logger.info("MediaTransport chooser_dispatch requestedCommand=\(requestedCommand.rawValue, privacy: .public) routedCommand=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) targetID=\(target.id, privacy: .public) playing=\(target.isCurrentlyPlaying, privacy: .public)")
+        trace("chooser_dispatch", command: command, target: target)
+        let dispatchID = beginBoundedChooserDispatch(
+            command: command,
+            metadata: metadata,
+            targetUnixProcessID: Int64(target.pid),
+            applicationUnixProcessID: Int64(ProcessInfo.processInfo.processIdentifier)
+        )
+        sendFromChooser(command: command, to: target, dispatchID: dispatchID)
+    }
+
+    private func finishChooser(
+        id: UUID,
+        selected: Bool = false
+    ) {
+        chooserSession.finish(
+            id: id,
+            selected: selected
         )
     }
 
-    private func sendFromChooser(command: MediaRemoteTransportCommand, to target: MediaRemoteTarget) async {
-        let routedCommand = command == .playPause
-            ? (target.isCurrentlyPlaying ? MediaRemoteTransportCommand.pause : .play)
-            : command
-        let sent = await mediaRemoteController.send(command: routedCommand, targetID: target.id)
+    private func sendFromChooser(
+        command: MediaRemoteTransportCommand,
+        to target: MediaRemoteTarget,
+        dispatchID: UUID
+    ) {
+        if usesSpotifyDesktopTransport(target: target) {
+            let result = submitSpotifyDesktopCommand(command: command, target: target)
+            trace(result: result)
+            finishChooserDispatch(
+                id: dispatchID,
+                fallback: false
+            )
+            mediaRemoteController.refreshSnapshot()
+            showCommandFailureIfNeeded(result: result, target: target)
+            logger.info("MediaTransport chooser command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) transport=spotify_desktop")
+            return
+        }
+        if usesHeliumDesktopTransport(target: target), command == .playPause {
+            let result = submitHeliumDesktopCommand(command: command, target: target)
+            trace(result: result)
+            finishChooserDispatch(
+                id: dispatchID,
+                fallback: false
+            )
+            mediaRemoteController.refreshSnapshot()
+            showCommandFailureIfNeeded(result: result, target: target)
+            logger.info("MediaTransport chooser command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) transport=helium_desktop")
+            return
+        }
+        let sent = mediaRemoteController.submit(command: command, targetID: target.id) { [weak self] result in
+            self?.trace(result: result)
+            self?.finishChooserDispatch(
+                id: dispatchID,
+                fallback: false
+            )
+            self?.showCommandFailureIfNeeded(result: result, target: target)
+        }
         guard sent else {
-            logger.error("MediaTransport chooser_failed command=\(routedCommand.rawValue, privacy: .public) target=\(target.appName, privacy: .public)")
+            finishChooserDispatch(id: dispatchID, fallback: true)
+            logger.error("MediaTransport chooser_failed command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public)")
             StatusHUD.shared.finish(
                 title: "Media Command Failed",
                 message: "Keyway could not reach \(target.appName).",
@@ -316,146 +518,316 @@ final class MediaTransportActionController {
             return
         }
 
-        logger.info("MediaTransport chooser command=\(routedCommand.rawValue, privacy: .public) target=\(target.appName, privacy: .public)")
-        StatusHUD.shared.finish(
-            title: "\(routedCommand.displayName) → \(target.appName)",
-            message: "Routed by chooser",
-            dismissAfter: 1.35
-        )
+        logger.info("MediaTransport chooser command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public)")
     }
 
-    private func focusedTarget(in targets: [MediaRemoteTarget]) -> MediaRemoteTarget? {
-        guard let app = NSWorkspace.shared.frontmostApplication else {
-            return prominentWindowTarget(in: targets)
+    private func chooserScopedCommand(
+        _ command: MediaRemoteTransportCommand,
+        for target: MediaRemoteTarget
+    ) -> MediaRemoteTransportCommand {
+        guard command == .playPause else {
+            return MediaTransportCommandRules.rowScopedCommand(command, for: target)
         }
-        let bundleID = app.bundleIdentifier ?? ""
-        let pid = Int(app.processIdentifier)
-        if let foregroundTarget = targets.first(where: { target in
-            target.pid == pid
-                || target.bundleIdentifier == bundleID
-                || target.parentBundleIdentifier == bundleID
-                || target.routingIdentity == bundleID
-        }) {
-            return foregroundTarget
+        if usesSpotifyDesktopTransport(target: target) || usesHeliumDesktopTransport(target: target) {
+            return .playPause
         }
-
-        return prominentWindowTarget(in: targets)
+        return MediaTransportCommandRules.rowScopedCommand(command, for: target)
     }
 
-    private func sortedTargets(_ targets: [MediaRemoteTarget]) -> [MediaRemoteTarget] {
-        let activeTargetID = mediaRemoteController.activeTargetID
-
-        return targets.sorted { lhs, rhs in
-            if lhs.isCurrentlyPlaying != rhs.isCurrentlyPlaying {
-                return lhs.isCurrentlyPlaying
-            }
-            if lhs.isCurrentlyPlaying, rhs.isCurrentlyPlaying {
-                let lhsActive = lhs.id == activeTargetID
-                let rhsActive = rhs.id == activeTargetID
-                if lhsActive != rhsActive {
-                    return lhsActive
-                }
-                if lhs.playbackFreshness != rhs.playbackFreshness {
-                    return lhs.playbackFreshness > rhs.playbackFreshness
-                }
-            }
-
-            return lhs.appName.localizedCaseInsensitiveCompare(rhs.appName) == .orderedAscending
+    private func desktopTransportName(target: MediaRemoteTarget) -> String? {
+        if usesSpotifyDesktopTransport(target: target) {
+            return "spotify_desktop"
         }
-    }
-
-    private func prominentWindowTarget(in targets: [MediaRemoteTarget]) -> MediaRemoteTarget? {
-        guard let screen = screenContainingMouse(),
-              let screenWindowFrame = windowCoordinateFrame(for: screen),
-              let windowInfo = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
-        else {
-            return nil
+        if usesHeliumDesktopTransport(target: target) {
+            return "helium_desktop"
         }
-
-        var higherWindows: [CGRect] = []
-        for window in windowInfo {
-            guard let candidate = windowCandidate(from: window, within: screenWindowFrame) else {
-                continue
-            }
-
-            if candidate.frame.width >= 80,
-               candidate.frame.height >= 60,
-               isProminentlyVisible(candidate.frame, aboveWindows: higherWindows),
-               let target = target(forWindowOwnerPID: candidate.ownerPID, in: targets) {
-                return target
-            }
-
-            higherWindows.append(candidate.frame)
-        }
-
         return nil
     }
 
-    private func windowCandidate(from window: [String: Any], within screenFrame: CGRect) -> (ownerPID: Int, frame: CGRect)? {
-        guard let layer = window[kCGWindowLayer as String] as? Int,
-              layer == 0,
-              let alpha = window[kCGWindowAlpha as String] as? Double,
-              alpha > 0,
-              let ownerPID = window[kCGWindowOwnerPID as String] as? Int,
-              let bounds = window[kCGWindowBounds as String] as? [String: CGFloat],
-              let x = bounds["X"],
-              let y = bounds["Y"],
-              let width = bounds["Width"],
-              let height = bounds["Height"],
-              width > 0,
-              height > 0
+    private func usesSpotifyDesktopTransport(target: MediaRemoteTarget) -> Bool {
+        target.bundleIdentifier == "com.spotify.client" || target.parentBundleIdentifier == "com.spotify.client"
+    }
+
+    private func usesHeliumDesktopTransport(target: MediaRemoteTarget) -> Bool {
+        target.bundleIdentifier == "net.imput.helium" || target.parentBundleIdentifier == "net.imput.helium"
+    }
+
+    private func targetsIncludingHeliumDesktop(_ targets: [MediaRemoteTarget]) -> [MediaRemoteTarget] {
+        guard !targets.contains(where: usesHeliumDesktopTransport),
+              let app = NSRunningApplication.runningApplications(withBundleIdentifier: "net.imput.helium").first,
+              !app.isTerminated
         else {
-            return nil
+            return targets
         }
 
-        let frame = CGRect(x: x, y: y, width: width, height: height).intersection(screenFrame)
-        guard !frame.isNull, !frame.isEmpty else {
-            return nil
+        return targets + [MediaRemoteTarget(
+            id: "net.imput.helium:\(app.processIdentifier):desktop",
+            bundleIdentifier: "net.imput.helium",
+            parentBundleIdentifier: "",
+            displayName: app.localizedName ?? "Helium",
+            pid: Int(app.processIdentifier),
+            title: "Browser media",
+            artist: "",
+            album: "",
+            playbackRate: "",
+            mediaType: nil,
+            artworkBase64: nil,
+            duration: nil,
+            elapsedTime: nil,
+            elapsedTimestamp: nil
+        )]
+    }
+
+    private func refreshSpotifyDesktopPlaybackStateIfNeeded(targets: [MediaRemoteTarget]) {
+        guard targets.contains(where: usesSpotifyDesktopTransport) else {
+            spotifyDesktopIsPlaying = nil
+            return
         }
-        return (ownerPID, frame)
-    }
+        guard !spotifyDesktopStateRefreshInFlight else {
+            return
+        }
 
-    private func isProminentlyVisible(_ frame: CGRect, aboveWindows: [CGRect]) -> Bool {
-        let samplePoints = visibilitySamplePoints(in: frame)
-        let visibleCount = samplePoints.filter { point in
-            !aboveWindows.contains { $0.contains(point) }
-        }.count
-        return visibleCount >= 3
-    }
-
-    private func visibilitySamplePoints(in frame: CGRect) -> [CGPoint] {
-        let xPositions = [frame.minX + frame.width * 0.25, frame.midX, frame.minX + frame.width * 0.75]
-        let yPositions = [frame.minY + frame.height * 0.25, frame.midY, frame.minY + frame.height * 0.75]
-        return xPositions.flatMap { x in
-            yPositions.map { y in
-                CGPoint(x: x, y: y)
+        spotifyDesktopStateRefreshInFlight = true
+        DispatchQueue.global(qos: .utility).async {
+            let result = Self.runDesktopAppleScript(Self.spotifyDesktopStateAppleScriptSource())
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if result.status == 0 {
+                    self.spotifyDesktopIsPlaying = result.output == "playing"
+                }
+                self.spotifyDesktopStateRefreshInFlight = false
             }
         }
     }
 
-    private func target(forWindowOwnerPID pid: Int, in targets: [MediaRemoteTarget]) -> MediaRemoteTarget? {
-        let app = NSRunningApplication(processIdentifier: pid_t(pid))
-        let bundleID = app?.bundleIdentifier ?? ""
-        return targets.first { target in
-            target.pid == pid
-                || target.bundleIdentifier == bundleID
-                || target.parentBundleIdentifier == bundleID
-                || target.routingIdentity == bundleID
+    private func submitSpotifyDesktopCommand(
+        command: MediaRemoteTransportCommand,
+        target: MediaRemoteTarget
+    ) -> MediaRemoteCommandResultEvent {
+        let result = Self.runDesktopAppleScript(spotifyDesktopAppleScriptSource(command: command))
+        let ok = result.status == 0
+        if ok {
+            spotifyDesktopIsPlaying = result.output == "playing"
+        }
+        return MediaRemoteCommandResultEvent(
+            type: "commandResult",
+            requestID: UUID().uuidString,
+            targetID: target.id,
+            command: command.rawValue,
+            ok: ok,
+            message: ok ? "submitted Spotify osascript command state=\(result.output)" : "Spotify osascript failed: \(result.error)"
+        )
+    }
+
+    private func submitHeliumDesktopCommand(
+        command: MediaRemoteTransportCommand,
+        target: MediaRemoteTarget
+    ) -> MediaRemoteCommandResultEvent {
+        let result = Self.runDesktopAppleScript(heliumDesktopAppleScriptSource(command: command))
+        let ok = result.status == 0
+        return MediaRemoteCommandResultEvent(
+            type: "commandResult",
+            requestID: UUID().uuidString,
+            targetID: target.id,
+            command: command.rawValue,
+            ok: ok,
+            message: ok ? "submitted Helium osascript command state=\(result.output)" : "Helium osascript failed: \(result.output.isEmpty ? result.error : result.output)"
+        )
+    }
+
+    nonisolated private static func runDesktopAppleScript(_ source: String) -> (status: Int32, output: String, error: String) {
+        let process = Process()
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", source]
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
+        try! process.run()
+        process.waitUntilExit()
+        return (
+            process.terminationStatus,
+            String(decoding: outputPipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            String(decoding: errorPipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        )
+    }
+
+    nonisolated private static func spotifyDesktopStateAppleScriptSource() -> String {
+        #"""
+        tell application id "com.spotify.client"
+            return player state as string
+        end tell
+        """#
+    }
+
+    private func spotifyDesktopAppleScriptSource(command: MediaRemoteTransportCommand) -> String {
+        switch command {
+        case .play:
+            return #"""
+tell application id "com.spotify.client"
+    play
+    delay 0.05
+    return player state as string
+end tell
+"""#
+        case .pause:
+            return #"""
+tell application id "com.spotify.client"
+    pause
+    delay 0.05
+    return player state as string
+end tell
+"""#
+        case .playPause:
+            return #"""
+tell application id "com.spotify.client"
+    if player state is playing then
+        pause
+    else
+        play
+    end if
+    delay 0.05
+    return player state as string
+end tell
+"""#
+        case .next:
+            return #"""
+tell application id "com.spotify.client"
+    next track
+    delay 0.05
+    return player state as string
+end tell
+"""#
+        case .previous:
+            return #"""
+tell application id "com.spotify.client"
+    previous track
+    delay 0.05
+    return player state as string
+end tell
+"""#
         }
     }
 
-    private func screenContainingMouse() -> NSScreen? {
-        let location = NSEvent.mouseLocation
-        if let screen = NSScreen.screens.first(where: { $0.frame.contains(location) }) {
-            return screen
-        }
-        return NSScreen.main ?? NSScreen.screens.first
+    private func heliumDesktopAppleScriptSource(command: MediaRemoteTransportCommand) -> String {
+        #"""
+tell application id "net.imput.helium" to activate
+delay 0.05
+tell application "System Events" to key code 49
+return "keyboard_toggle"
+"""#
     }
 
-    private func windowCoordinateFrame(for screen: NSScreen) -> CGRect? {
-        guard let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID else {
-            return nil
-        }
-        return CGDisplayBounds(displayID)
+    private func beginBoundedProgrammaticDispatch(command: MediaRemoteTransportCommand) -> UUID {
+        let id = UUID()
+        programmaticDispatches[id] = MediaTransportPendingDispatchEcho(command: command, kind: .automatic)
+        commandCenterFilter.beginProgrammaticDispatch(command: command)
+        scheduleProgrammaticDispatchFallback(id: id)
+        return id
     }
+
+    private func beginBoundedChooserDispatch(
+        command: MediaRemoteTransportCommand,
+        metadata: MediaTransportInputMetadata?,
+        targetUnixProcessID: Int64,
+        applicationUnixProcessID: Int64
+    ) -> UUID {
+        let id = UUID()
+        programmaticDispatches[id] = MediaTransportPendingDispatchEcho(command: command, kind: .chooser)
+        commandCenterFilter.beginChooserDispatch(
+            command: command,
+            metadata: metadata,
+            targetUnixProcessID: targetUnixProcessID,
+            applicationUnixProcessID: applicationUnixProcessID
+        )
+        scheduleProgrammaticDispatchFallback(id: id)
+        return id
+    }
+
+    private func finishProgrammaticDispatch(id: UUID, fallback: Bool) {
+        guard let pending = programmaticDispatches.removeValue(forKey: id) else {
+            return
+        }
+        let command = pending.command
+        logger.info("MediaTransport programmatic_echo_window_closed command=\(command.rawValue, privacy: .public) fallback=\(fallback, privacy: .public)")
+        trace("programmatic_echo_window_closed", command: command, reason: fallback ? "fallback" : "helper")
+    }
+
+    private func finishChooserDispatch(id: UUID, fallback: Bool) {
+        guard let pending = programmaticDispatches.removeValue(forKey: id) else {
+            return
+        }
+        let command = pending.command
+        logger.info("MediaTransport chooser_echo_window_closed command=\(command.rawValue, privacy: .public) fallback=\(fallback, privacy: .public)")
+        trace("chooser_echo_window_closed", command: command, reason: fallback ? "fallback" : "helper")
+    }
+
+    private func scheduleProgrammaticDispatchFallback(id: UUID) {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: Self.programmaticDispatchFallbackDelayNanoseconds)
+            guard let self,
+                  let pending = self.programmaticDispatches[id]
+            else {
+                return
+            }
+            self.programmaticDispatches[id] = nil
+            self.logger.error("MediaTransport programmatic_echo_window_fallback command=\(pending.command.rawValue, privacy: .public) kind=\(pending.kind.rawValue, privacy: .public)")
+            self.trace(
+                "echo_window_fallback",
+                command: pending.command,
+                reason: pending.kind.rawValue
+            )
+        }
+    }
+
+    private func trace(
+        _ event: String,
+        command: MediaRemoteTransportCommand?,
+        source: MediaTransportRouteSource? = nil,
+        target: MediaRemoteTarget? = nil,
+        reason: String? = nil,
+        targets: [MediaRemoteTarget]? = nil,
+        targetCount: Int? = nil,
+        metadata: MediaTransportInputMetadata? = nil,
+        commandCenterMetadata: MediaCommandCenterInputMetadata? = nil
+    ) {
+        traceRecorder.record(
+            event,
+            command: command,
+            source: source,
+            target: target,
+            targets: targets,
+            reason: reason,
+            targetCount: targetCount,
+            mediaKeyMetadata: metadata,
+            commandCenterMetadata: commandCenterMetadata,
+            overlayVisible: overlayController.isVisible,
+            chooserActive: chooserSession.isActive,
+            canRoute: mediaRemoteController.canRouteCommands
+        )
+    }
+
+    private func trace(result: MediaRemoteCommandResultEvent) {
+        traceRecorder.recordHelperResult(
+            result,
+            overlayVisible: overlayController.isVisible,
+            chooserActive: chooserSession.isActive,
+            canRoute: mediaRemoteController.canRouteCommands
+        )
+    }
+
+    private func showCommandFailureIfNeeded(result: MediaRemoteCommandResultEvent, target: MediaRemoteTarget) {
+        guard !result.ok else {
+            return
+        }
+
+        logger.error("MediaTransport async_route_failed command=\(result.command, privacy: .public) target=\(target.appName, privacy: .public) targetID=\(result.targetID, privacy: .public) message=\(result.message, privacy: .public)")
+        StatusHUD.shared.finish(
+            title: "Media Command Failed",
+            message: "Keyway could not reach \(target.appName).",
+            dismissAfter: 2.2
+        )
+    }
+
 }

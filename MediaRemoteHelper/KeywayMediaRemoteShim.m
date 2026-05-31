@@ -20,8 +20,8 @@ typedef pid_t (*MRNowPlayingClientGetProcessIdentifierFn)(id client);
 @interface MRNowPlayingRequest : NSObject
 - (instancetype)initWithPlayerPath:(id)playerPath;
 - (void)requestNowPlayingInfoOnQueue:(dispatch_queue_t)queue completion:(void (^)(NSDictionary *info))completion;
-- (void)sendCommand:(unsigned int)command options:(NSDictionary *)options appOptions:(NSDictionary *)appOptions queue:(dispatch_queue_t)queue completion:(void (^)(NSError *error))completion;
-- (void)sendCommand:(unsigned int)command options:(NSDictionary *)options queue:(dispatch_queue_t)queue completion:(void (^)(NSError *error))completion;
+- (void)sendCommand:(unsigned int)command options:(NSDictionary *)options appOptions:(unsigned int)appOptions queue:(dispatch_queue_t)queue completion:(void (^)(id result))completion;
+- (void)sendCommand:(unsigned int)command options:(NSDictionary *)options queue:(dispatch_queue_t)queue completion:(void (^)(id result))completion;
 @end
 
 typedef struct {
@@ -35,6 +35,30 @@ typedef struct {
     MRNowPlayingClientGetDisplayNameFn getDisplayName;
     MRNowPlayingClientGetProcessIdentifierFn getPID;
 } KeywayMediaRemoteSymbols;
+
+static NSMutableDictionary *KeywayClientCache(void) {
+    static NSMutableDictionary *cache = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        cache = [NSMutableDictionary dictionary];
+    });
+    return cache;
+}
+
+static void KeywayReplaceClientCache(NSDictionary *clientsByTargetID) {
+    NSMutableDictionary *cache = KeywayClientCache();
+    @synchronized (cache) {
+        [cache removeAllObjects];
+        [cache addEntriesFromDictionary:clientsByTargetID ?: @{}];
+    }
+}
+
+static id KeywayCachedClientForTargetID(NSString *targetID) {
+    NSMutableDictionary *cache = KeywayClientCache();
+    @synchronized (cache) {
+        return cache[targetID ?: @""];
+    }
+}
 
 static NSString *KeywayRequestID(void) {
     NSString *requestID = [NSProcessInfo processInfo].environment[@"KEYWAY_MEDIAREMOTE_REQUEST_ID"];
@@ -52,6 +76,22 @@ static NSString *KeywaySafeString(id value) {
         return [(NSNumber *)value stringValue];
     }
     return [value description];
+}
+
+static NSString *KeywayStableHash(NSString *value) {
+    const uint64_t offsetBasis = 1469598103934665603ULL;
+    const uint64_t prime = 1099511628211ULL;
+    uint64_t hash = offsetBasis;
+    const char *bytes = value.UTF8String;
+    if (bytes == NULL) {
+        return @"0000000000000000";
+    }
+
+    for (const unsigned char *cursor = (const unsigned char *)bytes; *cursor != '\0'; cursor += 1) {
+        hash ^= (uint64_t)(*cursor);
+        hash *= prime;
+    }
+    return [NSString stringWithFormat:@"%016llx", hash];
 }
 
 static void KeywayPrintJSON(id object) {
@@ -121,9 +161,21 @@ static void KeywayReleaseSymbols(KeywayMediaRemoteSymbols *symbols) {
     memset(symbols, 0, sizeof(KeywayMediaRemoteSymbols));
 }
 
-static NSString *KeywayTargetIdentifier(NSString *bundleID, pid_t pid) {
-    NSString *normalizedBundleID = bundleID.length > 0 ? bundleID : @"unknown";
-    return [NSString stringWithFormat:@"%@:%d", normalizedBundleID, pid];
+static NSString *KeywayTargetIdentifierForRow(NSDictionary *row) {
+    NSString *bundleID = KeywaySafeString(row[@"bundleIdentifier"]);
+    NSString *parentBundleID = KeywaySafeString(row[@"parentBundleIdentifier"]);
+    NSString *identityBundleID = bundleID.length > 0 ? bundleID : parentBundleID;
+    NSString *normalizedBundleID = identityBundleID.length > 0 ? identityBundleID : @"unknown";
+    NSString *fingerprint = [@[
+        normalizedBundleID,
+        parentBundleID,
+        KeywaySafeString(row[@"displayName"])
+    ] componentsJoinedByString:@"|"];
+    return [NSString stringWithFormat:@"%@:%d:%@", normalizedBundleID, [row[@"pid"] intValue], KeywayStableHash(fingerprint)];
+}
+
+static void KeywayRefreshRowIdentifier(NSMutableDictionary *row) {
+    row[@"id"] = KeywayTargetIdentifierForRow(row);
 }
 
 static NSMutableDictionary *KeywayRowForClient(id client, const KeywayMediaRemoteSymbols *symbols) {
@@ -131,10 +183,8 @@ static NSMutableDictionary *KeywayRowForClient(id client, const KeywayMediaRemot
     NSString *parentBundleID = KeywaySafeString(symbols->getParentBundleID(client));
     NSString *displayName = KeywaySafeString(symbols->getDisplayName(client));
     pid_t pid = symbols->getPID(client);
-    NSString *identityBundleID = bundleID.length > 0 ? bundleID : parentBundleID;
 
     NSMutableDictionary *row = [NSMutableDictionary dictionary];
-    row[@"id"] = KeywayTargetIdentifier(identityBundleID, pid);
     row[@"bundleIdentifier"] = bundleID;
     row[@"parentBundleIdentifier"] = parentBundleID;
     row[@"displayName"] = displayName;
@@ -147,6 +197,8 @@ static NSMutableDictionary *KeywayRowForClient(id client, const KeywayMediaRemot
     row[@"duration"] = @(0);
     row[@"elapsedTime"] = @(0);
     row[@"elapsedTimestamp"] = @(0);
+    row[@"mediaType"] = @"";
+    KeywayRefreshRowIdentifier(row);
     return row;
 }
 
@@ -178,6 +230,7 @@ static void KeywayApplyNowPlayingInfo(NSMutableDictionary *row, NSDictionary *in
     } else if ([timestamp isKindOfClass:[NSDate class]]) {
         row[@"elapsedTimestamp"] = @([(NSDate *)timestamp timeIntervalSince1970]);
     }
+
 }
 
 static BOOL KeywayRowHasMediaState(NSDictionary *row) {
@@ -185,17 +238,101 @@ static BOOL KeywayRowHasMediaState(NSDictionary *row) {
         || [row[@"artist"] length] > 0
         || [row[@"album"] length] > 0
         || [row[@"playbackRate"] length] > 0
-        || [row[@"mediaType"] length] > 0;
+        || [row[@"mediaType"] length] > 0
+        || [row[@"artworkBase64"] length] > 0;
 }
 
-static BOOL KeywayClientMatchesTarget(id client, NSString *targetID, const KeywayMediaRemoteSymbols *symbols) {
-    pid_t pid = symbols->getPID(client);
-    NSString *bundleID = KeywaySafeString(symbols->getBundleID(client));
-    NSString *parentBundleID = KeywaySafeString(symbols->getParentBundleID(client));
-    NSString *identityBundleID = bundleID.length > 0 ? bundleID : parentBundleID;
-    NSString *clientID = KeywayTargetIdentifier(identityBundleID, pid);
+static BOOL KeywaySameClient(id lhs, id rhs) {
+    if (lhs == nil || rhs == nil) {
+        return NO;
+    }
+    if (lhs == rhs) {
+        return YES;
+    }
+    if ([lhs respondsToSelector:@selector(isEqual:)]) {
+        return [lhs isEqual:rhs];
+    }
+    return NO;
+}
 
-    return [clientID isEqualToString:targetID];
+static NSString *KeywayReserveTargetRow(
+    NSMutableArray *targets,
+    NSMutableDictionary *clientsByTargetID,
+    NSMutableDictionary *row,
+    id client,
+    BOOL exposeTarget
+) {
+    NSString *baseTargetID = KeywaySafeString(row[@"id"]);
+    NSString *targetID = baseTargetID;
+    NSUInteger suffix = 2;
+    while (clientsByTargetID[targetID] != nil) {
+        targetID = [NSString stringWithFormat:@"%@#%lu", baseTargetID, (unsigned long)suffix];
+        suffix += 1;
+    }
+    row[@"id"] = targetID;
+    clientsByTargetID[targetID] = client;
+    if (exposeTarget) {
+        [targets addObject:row];
+    }
+    return targetID;
+}
+
+static NSString *KeywayAddTargetRow(
+    NSMutableArray *targets,
+    NSMutableDictionary *clientsByTargetID,
+    NSMutableDictionary *row,
+    id client
+) {
+    return KeywayReserveTargetRow(targets, clientsByTargetID, row, client, YES);
+}
+
+static NSUInteger KeywayRefreshFastClientCache(
+    NSString *matchingTargetID,
+    const KeywayMediaRemoteSymbols *symbols,
+    dispatch_queue_t queue,
+    id *matchingClient
+) {
+    static const int64_t clientListTimeoutNanoseconds = 150 * NSEC_PER_MSEC;
+    dispatch_group_t group = dispatch_group_create();
+    __block NSArray *clients = @[];
+
+    dispatch_group_enter(group);
+    symbols->getClients(queue, ^(NSArray *receivedClients) {
+        clients = receivedClients ?: @[];
+        dispatch_group_leave(group);
+    });
+
+    long clientsWait = dispatch_group_wait(
+        group,
+        dispatch_time(DISPATCH_TIME_NOW, clientListTimeoutNanoseconds)
+    );
+    if (clientsWait != 0) {
+        return 0;
+    }
+
+    NSMutableArray *targets = [NSMutableArray array];
+    NSMutableDictionary *clientsByTargetID = [NSMutableDictionary dictionary];
+    id resolvedClient = nil;
+    for (id client in clients) {
+        NSMutableDictionary *row = KeywayRowForClient(client, symbols);
+        BOOL hasIdentity = [row[@"bundleIdentifier"] length] > 0
+            || [row[@"parentBundleIdentifier"] length] > 0
+            || [row[@"displayName"] length] > 0;
+        if (!hasIdentity) {
+            continue;
+        }
+
+        NSString *targetID = KeywayAddTargetRow(targets, clientsByTargetID, row, client);
+        if (resolvedClient == nil && matchingTargetID.length > 0 && [targetID isEqualToString:matchingTargetID]) {
+            resolvedClient = client;
+        }
+    }
+
+    KeywayReplaceClientCache(clientsByTargetID);
+    if (matchingClient != NULL) {
+        *matchingClient = resolvedClient;
+    }
+    return clientsByTargetID.count;
 }
 
 static NSNumber *KeywayCommandNumber(NSString *commandName) {
@@ -217,19 +354,7 @@ static NSNumber *KeywayCommandNumber(NSString *commandName) {
     return nil;
 }
 
-static NSString *KeywayBundleIdentifierFromTargetID(NSString *targetID) {
-    NSRange separator = [targetID rangeOfString:@":" options:NSBackwardsSearch];
-    if (separator.location == NSNotFound) {
-        return targetID;
-    }
-    return [targetID substringToIndex:separator.location];
-}
-
-static NSString *KeywayFrontmostBundleIdentifier(void) {
-    return KeywaySafeString([NSWorkspace sharedWorkspace].frontmostApplication.bundleIdentifier);
-}
-
-static void KeywaySendCommandToPlayerPath(
+static BOOL KeywaySubmitCommandToPlayerPath(
     id localOrigin,
     id client,
     unsigned int command,
@@ -240,34 +365,38 @@ static void KeywaySendCommandToPlayerPath(
     Class requestClass = NSClassFromString(@"MRNowPlayingRequest");
     if (playerPathClass == Nil || requestClass == Nil || localOrigin == nil) {
         completion(NO, @"missing MediaRemote player-path command API");
-        return;
+        return NO;
     }
 
     id playerPath = [[playerPathClass alloc] initWithOrigin:localOrigin client:client player:nil];
     id request = [[requestClass alloc] initWithPlayerPath:playerPath];
     if (request == nil) {
         completion(NO, @"failed to create MediaRemote player-path request");
-        return;
+        return NO;
     }
 
-    void (^finish)(NSError *) = ^(NSError *error) {
-        if (error != nil) {
+    void (^finish)(id) = ^(id result) {
+        if ([result isKindOfClass:[NSError class]]) {
+            NSError *error = (NSError *)result;
             completion(NO, error.localizedDescription ?: @"MediaRemote command failed");
-            return;
+        } else {
+            completion(YES, @"submitted cached MediaRemote player path command");
         }
-        completion(YES, @"");
+        (void)playerPath;
+        (void)request;
+        (void)queue;
     };
 
     if ([request respondsToSelector:@selector(sendCommand:options:appOptions:queue:completion:)]) {
-        [request sendCommand:command options:@{} appOptions:@{} queue:queue completion:finish];
-        return;
-    }
-    if ([request respondsToSelector:@selector(sendCommand:options:queue:completion:)]) {
+        [request sendCommand:command options:@{} appOptions:0 queue:queue completion:finish];
+    } else if ([request respondsToSelector:@selector(sendCommand:options:queue:completion:)]) {
         [request sendCommand:command options:@{} queue:queue completion:finish];
-        return;
+    } else {
+        completion(NO, @"missing MediaRemote player-path sendCommand selector");
+        return NO;
     }
 
-    completion(NO, @"missing MediaRemote player-path sendCommand selector");
+    return YES;
 }
 
 void keyway_mediaremote_snapshot(void) {
@@ -284,14 +413,19 @@ void keyway_mediaremote_snapshot(void) {
         Class requestClass = NSClassFromString(@"MRNowPlayingRequest");
 
         __block NSMutableArray *targets = [NSMutableArray array];
+        __block NSMutableDictionary *clientsByTargetID = [NSMutableDictionary dictionary];
         __block NSString *activeTargetID = @"";
+        __block NSString *activeBaseTargetID = @"";
+        __block id activeClientReference = nil;
 
         dispatch_group_enter(group);
         symbols.getActiveClient(queue, ^(id activeClient) {
             if (activeClient != nil) {
+                activeClientReference = activeClient;
                 NSMutableDictionary *activeRow = KeywayRowForClient(activeClient, &symbols);
-                activeTargetID = KeywaySafeString(activeRow[@"id"]);
                 symbols.getActiveInfo(queue, ^(NSDictionary *info) {
+                    KeywayApplyNowPlayingInfo(activeRow, info ?: @{});
+                    activeBaseTargetID = KeywaySafeString(activeRow[@"id"]);
                     dispatch_group_leave(group);
                 });
             } else {
@@ -302,7 +436,21 @@ void keyway_mediaremote_snapshot(void) {
         dispatch_group_enter(group);
         symbols.getClients(queue, ^(NSArray *clients) {
             dispatch_group_t clientGroup = dispatch_group_create();
-            for (id client in clients ?: @[]) {
+            NSArray *receivedClients = clients ?: @[];
+            NSMutableArray *targetEntries = [NSMutableArray arrayWithCapacity:receivedClients.count];
+            for (NSUInteger index = 0; index < receivedClients.count; index += 1) {
+                [targetEntries addObject:[NSNull null]];
+            }
+            void (^recordTargetEntry)(NSUInteger, NSMutableDictionary *, id) = ^(NSUInteger index, NSMutableDictionary *row, id client) {
+                targetEntries[index] = @{
+                    @"row": row,
+                    @"client": client,
+                    @"visible": @(KeywayRowHasMediaState(row))
+                };
+            };
+
+            for (NSUInteger index = 0; index < receivedClients.count; index += 1) {
+                id client = receivedClients[index];
                 NSMutableDictionary *row = KeywayRowForClient(client, &symbols);
                 BOOL hasIdentity = [row[@"bundleIdentifier"] length] > 0 || [row[@"parentBundleIdentifier"] length] > 0 || [row[@"displayName"] length] > 0;
                 if (!hasIdentity) {
@@ -316,24 +464,30 @@ void keyway_mediaremote_snapshot(void) {
                         dispatch_group_enter(clientGroup);
                         [request requestNowPlayingInfoOnQueue:queue completion:^(NSDictionary *info) {
                             KeywayApplyNowPlayingInfo(row, info ?: @{});
-                            if (KeywayRowHasMediaState(row)) {
-                                [targets addObject:row];
-                            }
+                            recordTargetEntry(index, row, client);
                             dispatch_group_leave(clientGroup);
                         }];
                     } else {
-                        if (KeywayRowHasMediaState(row)) {
-                            [targets addObject:row];
-                        }
+                        recordTargetEntry(index, row, client);
                     }
                 } else {
-                    if (KeywayRowHasMediaState(row)) {
-                        [targets addObject:row];
-                    }
+                    recordTargetEntry(index, row, client);
                 }
             }
 
             dispatch_group_notify(clientGroup, queue, ^{
+                for (id entry in targetEntries) {
+                    if (![entry isKindOfClass:[NSDictionary class]]) {
+                        continue;
+                    }
+                    NSMutableDictionary *row = entry[@"row"];
+                    id client = entry[@"client"];
+                    BOOL visible = [entry[@"visible"] boolValue];
+                    NSString *targetID = KeywayReserveTargetRow(targets, clientsByTargetID, row, client, visible);
+                    if (visible && activeTargetID.length == 0 && KeywaySameClient(client, activeClientReference)) {
+                        activeTargetID = targetID;
+                    }
+                }
                 dispatch_group_leave(group);
             });
         });
@@ -345,11 +499,46 @@ void keyway_mediaremote_snapshot(void) {
             return;
         }
 
+        if (activeTargetID.length == 0 && activeBaseTargetID.length > 0) {
+            NSString *activeDuplicatePrefix = [activeBaseTargetID stringByAppendingString:@"#"];
+            NSMutableArray *matchingActiveTargetIDs = [NSMutableArray array];
+            for (NSDictionary *target in targets) {
+                NSString *targetID = KeywaySafeString(target[@"id"]);
+                if ([targetID isEqualToString:activeBaseTargetID] || [targetID hasPrefix:activeDuplicatePrefix]) {
+                    [matchingActiveTargetIDs addObject:targetID];
+                }
+            }
+            if (matchingActiveTargetIDs.count == 1) {
+                activeTargetID = matchingActiveTargetIDs.firstObject;
+            }
+        }
+
+        KeywayReplaceClientCache(clientsByTargetID);
         KeywayPrintJSON(@{
             @"type": @"snapshot",
             @"requestID": KeywayRequestID(),
             @"activeTargetID": activeTargetID,
             @"targets": targets
+        });
+        KeywayReleaseSymbols(&symbols);
+    }
+}
+
+void keyway_mediaremote_refresh_client_cache(void) {
+    @autoreleasepool {
+        KeywayMediaRemoteSymbols symbols;
+        if (!KeywayLoadSymbols(&symbols)) {
+            return;
+        }
+
+        dispatch_queue_t queue = dispatch_queue_create("keyway.mediaremote.command-cache", DISPATCH_QUEUE_SERIAL);
+        NSUInteger cachedCount = KeywayRefreshFastClientCache(nil, &symbols, queue, NULL);
+        KeywayPrintJSON(@{
+            @"type": @"clientCache",
+            @"requestID": KeywayRequestID(),
+            @"ok": cachedCount > 0 ? (__bridge id)kCFBooleanTrue : (__bridge id)kCFBooleanFalse,
+            @"targetCount": @(cachedCount),
+            @"message": cachedCount > 0 ? @"refreshed fast MediaRemote command cache" : @"no MediaRemote clients available for command cache"
         });
         KeywayReleaseSymbols(&symbols);
     }
@@ -377,48 +566,40 @@ void keyway_mediaremote_send_command(void) {
             return;
         }
 
-        dispatch_queue_t queue = dispatch_queue_create("keyway.mediaremote.command", DISPATCH_QUEUE_SERIAL);
-        dispatch_semaphore_t done = dispatch_semaphore_create(0);
         id localOrigin = symbols.getLocalOrigin();
-        __block BOOL sent = NO;
-        __block NSString *matchedTargetID = targetID;
-        __block NSString *message = @"target not found";
-
-        symbols.getClients(queue, ^(NSArray *clients) {
-            for (id client in clients ?: @[]) {
-                if (!KeywayClientMatchesTarget(client, targetID, &symbols)) {
-                    continue;
+        dispatch_queue_t queue = dispatch_queue_create("keyway.mediaremote.command", DISPATCH_QUEUE_SERIAL);
+        id resolvedClient = nil;
+        NSUInteger freshClientCount = KeywayRefreshFastClientCache(targetID, &symbols, queue, &resolvedClient);
+        id client = resolvedClient;
+        NSString *message = freshClientCount > 0
+            ? @"target not found in fresh MediaRemote client cache"
+            : @"fresh MediaRemote client cache unavailable";
+        NSString *requestID = KeywayRequestID();
+        void (^printCommandResult)(BOOL, NSString *) = ^(BOOL ok, NSString *resultMessage) {
+            KeywayPrintJSON(@{
+                @"type": @"commandResult",
+                @"requestID": requestID,
+                @"targetID": targetID,
+                @"command": commandName,
+                @"ok": ok ? (__bridge id)kCFBooleanTrue : (__bridge id)kCFBooleanFalse,
+                @"message": KeywaySafeString(resultMessage)
+            });
+        };
+        if (client != nil) {
+            message = @"resolved MediaRemote player path from fresh command cache";
+            KeywaySubmitCommandToPlayerPath(
+                localOrigin,
+                client,
+                commandNumber.unsignedIntValue,
+                queue,
+                ^(BOOL commandSent, NSString *commandMessage) {
+                    NSString *resultMessage = commandMessage.length > 0 ? commandMessage : message;
+                    printCommandResult(commandSent, resultMessage);
                 }
-
-                NSMutableDictionary *row = KeywayRowForClient(client, &symbols);
-                matchedTargetID = KeywaySafeString(row[@"id"]);
-                KeywaySendCommandToPlayerPath(
-                    localOrigin,
-                    client,
-                    commandNumber.unsignedIntValue,
-                    queue,
-                    ^(BOOL commandSent, NSString *commandMessage) {
-                        sent = commandSent;
-                        message = KeywaySafeString(commandMessage);
-                        dispatch_semaphore_signal(done);
-                    }
-                );
-                return;
-            }
-
-            dispatch_semaphore_signal(done);
-        });
-
-        long waitResult = dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC));
-        BOOL timedOut = waitResult != 0;
-        KeywayPrintJSON(@{
-            @"type": @"commandResult",
-            @"requestID": KeywayRequestID(),
-            @"targetID": matchedTargetID,
-            @"command": commandName,
-            @"ok": (sent && !timedOut) ? (__bridge id)kCFBooleanTrue : (__bridge id)kCFBooleanFalse,
-            @"message": sent ? @"" : (timedOut ? @"timed out" : message)
-        });
+            );
+        } else {
+            printCommandResult(NO, message);
+        }
         KeywayReleaseSymbols(&symbols);
     }
 }

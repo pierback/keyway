@@ -1,0 +1,197 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+status_file="${1:-$HOME/Library/Application Support/keyway/shortcut-runtime-status.json}"
+timeout_seconds="${KEYWAY_HITL_TIMEOUT_SECONDS:-45}"
+chooser_open_latency_ms_max="${KEYWAY_HITL_CHOOSER_OPEN_LATENCY_MS_MAX:-75}"
+row_dispatch_latency_ms_max="${KEYWAY_HITL_ROW_DISPATCH_LATENCY_MS_MAX:-260}"
+second_chooser_latency_ms_max="${KEYWAY_HITL_SECOND_CHOOSER_LATENCY_MS_MAX:-75}"
+skip_wait="${KEYWAY_HITL_SKIP_WAIT:-0}"
+
+if [[ ! -f "$status_file" ]]; then
+  printf 'hitl_playback_instant_reentry_check: missing status file: %s\n' "$status_file" >&2
+  exit 1
+fi
+
+trace_marker() {
+  python3 - "$status_file" <<'PY'
+import json
+import pathlib
+import sys
+
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
+print(int(payload["mediaTransportTraceSequence"]))
+PY
+}
+
+trace_event_count() {
+  python3 - "$status_file" "$start_sequence" "$1" <<'PY'
+import json
+import pathlib
+import sys
+
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
+start = int(sys.argv[2])
+event_name = sys.argv[3]
+events = [
+    event for event in payload.get("mediaTransportTrace", [])
+    if int(event.get("sequence", 0)) > start
+]
+print(sum(1 for event in events if event.get("event") == event_name))
+PY
+}
+
+preflight_live_state() {
+  python3 - "$status_file" <<'PY'
+import json
+import pathlib
+import sys
+
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
+
+def fail(message):
+    print(f"hitl_playback_instant_reentry_check: FAIL: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+if payload.get("eventTapRunning") is not True:
+    fail("hardware instant reentry requires the event tap route to be running")
+if payload.get("activeEventTap") != "cghid":
+    fail(f"event tap route is not cghid: {payload.get('activeEventTap')!r}")
+if payload.get("commandCenterRouteRunning") is not True:
+    fail("Command Center route shield is not active; macOS can still route hardware Play/Pause to its primary source")
+target_count = int(payload.get("mediaTargetCount") or 0)
+if target_count < 2:
+    fail(f"need at least two visible media targets before HITL; got {target_count}")
+
+print(
+    "hitl_playback_instant_reentry_check: preflight ok "
+    f"targets={target_count} activeEventTap={payload.get('activeEventTap')}"
+)
+PY
+}
+
+analyze_trace() {
+  python3 - "$status_file" "$1" "$chooser_open_latency_ms_max" "$row_dispatch_latency_ms_max" "$second_chooser_latency_ms_max" <<'PY'
+import json
+import pathlib
+import sys
+
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
+start = int(sys.argv[2])
+chooser_open_latency_ms_max = float(sys.argv[3])
+row_dispatch_latency_ms_max = float(sys.argv[4])
+second_chooser_latency_ms_max = float(sys.argv[5])
+events = [
+    event for event in payload.get("mediaTransportTrace", [])
+    if int(event.get("sequence", 0)) > start
+]
+
+def fail(message):
+    print(json.dumps(events, indent=2, sort_keys=True))
+    print(f"hitl_playback_instant_reentry_check: FAIL: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+def indexes(name):
+    return [index for index, event in enumerate(events) if event.get("event") == name]
+
+def monotonic_ms(event):
+    value = event.get("monotonicMilliseconds")
+    if value is None:
+        fail(f"{event.get('event')} is missing monotonicMilliseconds")
+    return float(value)
+
+def latency_ms(start_event, end_event):
+    return monotonic_ms(end_event) - monotonic_ms(start_event)
+
+key_down_indexes = indexes("transport_key_down")
+show_indexes = indexes("chooser_show")
+select_indexes = indexes("chooser_select")
+dispatch_indexes = indexes("chooser_dispatch")
+
+if len(key_down_indexes) < 2:
+    fail(f"expected two hardware Play/Pause key-downs, got {len(key_down_indexes)}")
+if len(show_indexes) < 2:
+    fail(f"expected chooser to show for both key presses, got {len(show_indexes)}")
+if not select_indexes:
+    fail("missing chooser_select after first chooser")
+if not dispatch_indexes:
+    fail("missing chooser_dispatch after first chooser")
+
+first_key = events[key_down_indexes[0]]
+first_show = events[show_indexes[0]]
+first_select = events[select_indexes[0]]
+first_dispatch = events[dispatch_indexes[0]]
+
+if first_key.get("eventSourceIsPhysicalHIDSystem") is not True:
+    fail("first key-down was not recorded as physical HID input")
+if first_key.get("command") not in {"playPause", "play", "pause"}:
+    fail(f"first key-down was not Play/Pause-family: {first_key.get('command')}")
+
+first_open_latency = latency_ms(first_key, first_show)
+if first_open_latency < 0 or first_open_latency > chooser_open_latency_ms_max:
+    fail(f"first chooser latency {first_open_latency:.1f}ms exceeds {chooser_open_latency_ms_max:.1f}ms")
+
+row_dispatch_latency = latency_ms(first_select, first_dispatch)
+if row_dispatch_latency < 0 or row_dispatch_latency > row_dispatch_latency_ms_max:
+    fail(f"row dispatch latency {row_dispatch_latency:.1f}ms exceeds {row_dispatch_latency_ms_max:.1f}ms")
+
+second_key_index = next((index for index in key_down_indexes if index > dispatch_indexes[0]), None)
+if second_key_index is None:
+    fail("missing second hardware Play/Pause key-down after chooser dispatch")
+second_show_index = next((index for index in show_indexes if index > second_key_index), None)
+if second_show_index is None:
+    fail("second hardware Play/Pause did not reopen the chooser")
+
+second_key = events[second_key_index]
+second_show = events[second_show_index]
+if second_key.get("eventSourceIsPhysicalHIDSystem") is not True:
+    fail("second key-down was not recorded as physical HID input")
+
+ignored_before_second_show = [
+    event for event in events[second_key_index + 1:second_show_index]
+    if event.get("event") in {"input_ignored", "chooser_reentry_ignored"}
+]
+if ignored_before_second_show:
+    fail(
+        "second hardware Play/Pause was ignored before chooser reopened: "
+        + ", ".join(str(event.get("reason")) for event in ignored_before_second_show)
+    )
+
+second_open_latency = latency_ms(second_key, second_show)
+if second_open_latency < 0 or second_open_latency > second_chooser_latency_ms_max:
+    fail(f"second chooser latency {second_open_latency:.1f}ms exceeds {second_chooser_latency_ms_max:.1f}ms")
+
+print(json.dumps(events, indent=2, sort_keys=True))
+print(
+    "hitl_playback_instant_reentry_check: "
+    f"first_chooser_ms={first_open_latency:.1f} "
+    f"row_dispatch_ms={row_dispatch_latency:.1f} "
+    f"second_chooser_ms={second_open_latency:.1f}"
+)
+print("hitl_playback_instant_reentry_check=ok")
+PY
+}
+
+start_sequence="${KEYWAY_HITL_START_SEQUENCE:-$(trace_marker)}"
+printf 'hitl_playback_instant_reentry_check: starting after trace sequence %s\n' "$start_sequence"
+
+if [[ "$skip_wait" == "1" ]]; then
+  printf 'hitl_playback_instant_reentry_check: replay mode; not waiting for live input.\n'
+else
+  preflight_live_state
+  printf '1. Start two media sources playing in the background.\n'
+  printf '2. Press the hardware Play/Pause key once.\n'
+  printf '3. Select any chooser row.\n'
+  printf '4. Immediately press the hardware Play/Pause key again.\n'
+  printf 'This checker waits for the second chooser_show. Timeout: %ss.\n' "$timeout_seconds"
+
+  deadline=$((SECONDS + timeout_seconds))
+  while (( SECONDS < deadline )); do
+    if [[ "$(trace_event_count chooser_show)" -ge 2 ]]; then
+      break
+    fi
+    sleep 0.1
+  done
+fi
+
+analyze_trace "$start_sequence"

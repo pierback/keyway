@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+workdir="$(mktemp -d)"
+trap 'rm -rf "$workdir"' EXIT
+
+cat >"$workdir/RefreshGateSemantics.swift" <<'SWIFT'
+import Foundation
+
+@main
+struct RefreshGateSemantics {
+    static func main() {
+        var gate = MediaRemoteSnapshotRefreshGate()
+        expectFalse(gate.isRefreshing, "fresh gate must not be refreshing")
+
+        let first = gate.begin(requestID: "first")
+        expectEqual(first, "first", "first refresh must begin")
+        expectTrue(gate.isRefreshing, "begun refresh must be visible")
+        expectEqual(gate.activeRequestID, "first", "active request id must be inspectable")
+        expectNil(gate.begin(requestID: "second"), "second refresh must coalesce while first is in flight")
+        expectTrue(gate.isRefreshing, "coalesced refresh must leave first in flight")
+
+        expectFalse(gate.finish(requestID: "stale"), "stale snapshot must not finish the active request")
+        expectTrue(gate.isRefreshing, "stale snapshot must leave active request in flight")
+
+        expectTrue(gate.finish(requestID: "first"), "matching snapshot must finish the active request")
+        expectFalse(gate.isRefreshing, "matching snapshot must clear in-flight state")
+
+        expectEqual(gate.begin(requestID: "third"), "third", "third refresh must begin after first finishes")
+        expectFalse(gate.finish(requestID: nil), "nil request id must not finish a hard-cutover request")
+        expectTrue(gate.isRefreshing, "nil completion must leave the active request in flight")
+        expectTrue(gate.finish(requestID: "third"), "matching third snapshot must finish the active request")
+        expectFalse(gate.isRefreshing, "matching third snapshot must clear in-flight state")
+
+        _ = gate.begin(requestID: "fourth")
+        gate.reset()
+        expectFalse(gate.isRefreshing, "reset must clear in-flight state")
+
+        print("verify_media_remote_refresh_gate_semantics=ok")
+    }
+
+    private static func expectTrue(_ value: Bool, _ message: String) {
+        guard value else { fail(message) }
+    }
+
+    private static func expectFalse(_ value: Bool, _ message: String) {
+        guard !value else { fail(message) }
+    }
+
+    private static func expectNil<T>(_ value: T?, _ message: String) {
+        guard value == nil else {
+            fail("\(message): got \(String(describing: value))")
+        }
+    }
+
+    private static func expectEqual<T: Equatable>(_ actual: T?, _ expected: T, _ message: String) {
+        guard actual == expected else {
+            fail("\(message): expected \(expected), got \(String(describing: actual))")
+        }
+    }
+
+    private static func fail(_ message: String) -> Never {
+        FileHandle.standardError.write(Data("verify_media_remote_refresh_gate_semantics: \(message)\n".utf8))
+        exit(1)
+    }
+}
+SWIFT
+
+swiftc \
+  "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaRemoteSnapshotRefreshGate.swift" \
+  "$workdir/RefreshGateSemantics.swift" \
+  -o "$workdir/verify_media_remote_refresh_gate_semantics"
+
+"$workdir/verify_media_remote_refresh_gate_semantics"

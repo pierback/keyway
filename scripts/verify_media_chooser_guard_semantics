@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+workdir="$(mktemp -d)"
+trap 'rm -rf "$workdir"' EXIT
+
+cp "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaChooserSessionGuard.swift" "$workdir/MediaChooserSessionGuard.swift"
+
+cat >"$workdir/MediaRemoteTransportCommand.swift" <<'SWIFT'
+enum MediaRemoteTransportCommand: String, Equatable {
+    case play
+    case playPause
+    case next
+    case previous
+    case pause
+}
+SWIFT
+
+cat >"$workdir/ChooserGuardSemantics.swift" <<'SWIFT'
+import Foundation
+
+@main
+struct ChooserGuardSemantics {
+    @MainActor
+    static func main() {
+        let guardStore = MediaChooserSessionGuard()
+        let staleID = UUID()
+
+        expectFalse(guardStore.isActive, "fresh guard must not start active")
+        expectEqual(guardStore.stateName, "inactive", "inactive guard must report inactive")
+
+        let noCommandID = guardStore.begin(command: nil)
+        expectFalse(guardStore.isActive, "chooser without pending command must not create routing guard state")
+        expectFalse(guardStore.finish(id: noCommandID), "finishing a no-command chooser must not clear unrelated state")
+
+        let chooserID = guardStore.begin(command: .playPause)
+        expectTrue(guardStore.isActive, "pending chooser command must create active guard state")
+        expectEqual(guardStore.stateName, "visible", "new chooser must start visible")
+        expectEqual(guardStore.activeCommandRawValue(for: chooserID), "playPause", "active command must be visible for dismiss logging")
+        expectEqual(guardStore.activeCommand(for: chooserID), .playPause, "active command must be accessible before selection")
+        expectFalse(guardStore.finish(id: staleID), "stale finish must not clear visible chooser")
+        expectTrue(guardStore.isActive, "stale finish must leave visible chooser active")
+        expectTrue(guardStore.finish(id: chooserID), "dismiss finish must clear chooser guard immediately")
+        expectFalse(guardStore.isActive, "dismiss finish must not leave delayed dispatch state")
+        expectEqual(guardStore.stateName, "inactive", "finished chooser must report inactive")
+
+        let selectedID = guardStore.begin(command: .pause)
+        expectTrue(guardStore.finish(id: selectedID, selected: true), "selected finish must clear chooser guard immediately")
+        expectFalse(guardStore.isActive, "selected finish must not leave post-selection routing state")
+        expectNil(guardStore.activeCommandRawValue(for: selectedID), "selected finish must clear active command lookup")
+        expectNil(guardStore.activeCommand(for: selectedID), "selected finish must clear active command")
+
+        let newerID = guardStore.begin(command: .next)
+        expectFalse(guardStore.finish(id: selectedID), "stale selected id must not clear newer chooser")
+        expectTrue(guardStore.isActive, "stale selected id must leave newer chooser active")
+        expectEqual(guardStore.activeCommand(for: newerID), .next, "newer chooser must keep its command")
+        expectTrue(guardStore.finish(id: newerID), "matching finish must clear newer chooser")
+        expectFalse(guardStore.isActive, "matching finish must clear active state")
+
+        print("verify_media_chooser_guard_semantics=ok")
+    }
+
+    private static func expectTrue(_ value: Bool, _ message: String) {
+        guard value else { fail(message) }
+    }
+
+    private static func expectFalse(_ value: Bool, _ message: String) {
+        guard !value else { fail(message) }
+    }
+
+    private static func expectNil<T>(_ value: T?, _ message: String) {
+        guard value == nil else { fail(message) }
+    }
+
+    private static func expectEqual<T: Equatable>(_ actual: T, _ expected: T, _ message: String) {
+        guard actual == expected else {
+            fail("\(message): expected \(expected), got \(actual)")
+        }
+    }
+
+    private static func fail(_ message: String) -> Never {
+        FileHandle.standardError.write(Data("verify_media_chooser_guard_semantics: \(message)\n".utf8))
+        exit(1)
+    }
+}
+SWIFT
+
+swiftc \
+  "$workdir/MediaRemoteTransportCommand.swift" \
+  "$workdir/MediaChooserSessionGuard.swift" \
+  "$workdir/ChooserGuardSemantics.swift" \
+  -o "$workdir/verify_media_chooser_guard_semantics"
+
+"$workdir/verify_media_chooser_guard_semantics"

@@ -1,16 +1,32 @@
 @preconcurrency import ApplicationServices
+import os
 
 @MainActor
 final class ShortcutEventTap {
+    enum TapKind: String {
+        case hid = "cghid"
+
+        var tapLocation: CGEventTapLocation {
+            .cghidEventTap
+        }
+    }
+
+    private let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "ShortcutEventTap")
+    private let onInterrupted: @MainActor (CGEventType) -> Void
     private let onEvent: @MainActor (CGEventType, CGEvent) -> Unmanaged<CGEvent>?
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
+    private(set) var activeTapKind: TapKind?
 
     var isRunning: Bool {
         eventTap != nil
     }
 
-    init(onEvent: @escaping @MainActor (CGEventType, CGEvent) -> Unmanaged<CGEvent>?) {
+    init(
+        onInterrupted: @escaping @MainActor (CGEventType) -> Void,
+        onEvent: @escaping @MainActor (CGEventType, CGEvent) -> Unmanaged<CGEvent>?
+    ) {
+        self.onInterrupted = onInterrupted
         self.onEvent = onEvent
     }
 
@@ -19,30 +35,48 @@ final class ShortcutEventTap {
             return true
         }
 
+        let kind = TapKind.hid
         guard let eventTap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
+            tap: kind.tapLocation,
             place: .headInsertEventTap,
             options: .defaultTap,
             eventsOfInterest: ShortcutEventParser.eventMask,
             callback: shortcutEventTapCallback,
             userInfo: Unmanaged.passUnretained(self).toOpaque()
         ) else {
+            logger.error("ShortcutEventTap start_failed tap=\(kind.rawValue, privacy: .public)")
             return false
         }
 
         self.eventTap = eventTap
+        activeTapKind = kind
         let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
         self.runLoopSource = runLoopSource
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: eventTap, enable: true)
+        logger.info("ShortcutEventTap started tap=\(kind.rawValue, privacy: .public) place=headInsert options=default events=media_and_function_keys")
         return true
+    }
+
+    func stop() {
+        if let eventTap {
+            CGEvent.tapEnable(tap: eventTap, enable: false)
+        }
+        if let runLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
+        }
+        runLoopSource = nil
+        eventTap = nil
+        activeTapKind = nil
     }
 
     func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            onInterrupted(type)
             if let eventTap {
                 CGEvent.tapEnable(tap: eventTap, enable: true)
             }
+            logger.error("ShortcutEventTap reenabled reason=\(Int(type.rawValue), privacy: .public)")
             return Unmanaged.passUnretained(event)
         }
 

@@ -498,9 +498,8 @@ private struct KeywayControlCenterPopoverView: View {
 
     private var nowPlayingCard: some View {
         let target = currentPlaybackTarget
-        let isRefreshingStaleSnapshot = mediaRemoteController.isRefreshingSnapshot
-            && !mediaRemoteController.hasFreshSnapshot(maxAge: 1.5)
-        let displayTarget = isRefreshingStaleSnapshot ? nil : target
+        let isRefreshingWithoutTarget = mediaRemoteController.isRefreshingSnapshot && target == nil
+        let displayTarget = target
         let isPlaying = displayTarget?.isCurrentlyPlaying == true
 
         return card(cornerRadius: Metrics.cardCornerRadius, padding: 10) {
@@ -509,10 +508,10 @@ private struct KeywayControlCenterPopoverView: View {
                     artworkView(displayTarget, size: 40)
 
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(nowPlayingTitle(target: displayTarget, refreshing: isRefreshingStaleSnapshot))
+                        Text(nowPlayingTitle(target: displayTarget, refreshing: isRefreshingWithoutTarget))
                             .font(.system(size: 12, weight: .medium))
                             .lineLimit(1)
-                        Text(nowPlayingSubtitle(target: displayTarget, refreshing: isRefreshingStaleSnapshot))
+                        Text(nowPlayingSubtitle(target: displayTarget, refreshing: isRefreshingWithoutTarget))
                             .font(.system(size: 11))
                             .foregroundStyle(.white.opacity(0.50))
                             .lineLimit(1)
@@ -536,23 +535,23 @@ private struct KeywayControlCenterPopoverView: View {
     }
 
     private func nowPlayingTitle(target: MediaRemoteTarget?, refreshing: Bool) -> String {
-        if refreshing {
-            return "Refreshing..."
-        }
         if let target, !target.title.isEmpty {
             return target.title
+        }
+        if refreshing {
+            return "Refreshing..."
         }
         return "Not Playing"
     }
 
     private func nowPlayingSubtitle(target: MediaRemoteTarget?, refreshing: Bool) -> String {
-        if refreshing {
-            return "Updating media target"
-        }
         if let target, !target.artist.isEmpty {
             return target.artist
         }
-        return target?.appName ?? "No media target"
+        if let target {
+            return target.appName
+        }
+        return refreshing ? "Updating media target" : "No media target"
     }
 
     private var currentPlaybackTarget: MediaRemoteTarget? {

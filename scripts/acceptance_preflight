@@ -223,24 +223,46 @@ section "Accessibility And Media Keys"
 shortcut_status_file="$KEYWAY_SUPPORT_DIR/shortcut-runtime-status.json"
 shortcut_media_fallback=""
 shortcut_accessibility=""
+shortcut_listen_event=""
+shortcut_event_tap_running=""
+shortcut_active_event_tap=""
+shortcut_command_center_route=""
 shortcut_app_path=""
 if [[ -f "$shortcut_status_file" ]]; then
   shortcut_media_fallback="$(plutil -extract mediaFallback raw "$shortcut_status_file" 2>/dev/null || true)"
   shortcut_accessibility="$(plutil -extract accessibilityGranted raw "$shortcut_status_file" 2>/dev/null || true)"
+  shortcut_listen_event="$(plutil -extract listenEventGranted raw "$shortcut_status_file" 2>/dev/null || true)"
+  shortcut_event_tap_running="$(plutil -extract eventTapRunning raw "$shortcut_status_file" 2>/dev/null || true)"
+  shortcut_active_event_tap="$(plutil -extract activeEventTap raw "$shortcut_status_file" 2>/dev/null || true)"
+  shortcut_command_center_route="$(plutil -extract commandCenterRouteRunning raw "$shortcut_status_file" 2>/dev/null || true)"
   shortcut_app_path="$(plutil -extract appPath raw "$shortcut_status_file" 2>/dev/null || true)"
 fi
 
 hotkey_logs="$(/usr/bin/log show --last 30m --info --debug --style compact --predicate 'subsystem == "com.fpieringer.Keyway" && category == "Hotkeys"' 2>/dev/null || true)"
-if [[ "$shortcut_media_fallback" == "enabled" && "$shortcut_app_path" == "$APP_DIR" ]]; then
-  pass "Keyway persisted shortcut runtime status is mediaFallback=enabled"
-elif grep -q 'mediaFallback=enabled' <<<"$hotkey_logs"; then
-  pass "Keyway event tap has reached mediaFallback=enabled"
+if [[ "$shortcut_media_fallback" == "enabled" \
+    && "$shortcut_app_path" == "$APP_DIR" \
+    && "$shortcut_accessibility" == "true" \
+    && "$shortcut_listen_event" == "true" \
+    && "$shortcut_event_tap_running" == "true" \
+    && "$shortcut_active_event_tap" == "cghid" \
+    && "$shortcut_command_center_route" == "true" ]]; then
+  pass "Keyway persisted shortcut runtime status is cghid event-tap interception enabled with Command Center route shield"
+elif grep -q 'mediaFallback=enabled tap=cghid' <<<"$hotkey_logs"; then
+  pass "Keyway cghid event tap has reached mediaFallback=enabled"
+elif [[ "$shortcut_app_path" != "" && "$shortcut_app_path" != "$APP_DIR" ]]; then
+  block "Keyway shortcut status belongs to $shortcut_app_path, not installed app $APP_DIR"
+elif [[ "$shortcut_event_tap_running" == "true" && "$shortcut_active_event_tap" == "cghid" && "$shortcut_command_center_route" != "true" ]]; then
+  block "Command Center route shield is not active; macOS can still route hardware media keys to its primary source"
+elif [[ "$shortcut_active_event_tap" != "" && "$shortcut_active_event_tap" != "cghid" ]]; then
+  block "active media-key event tap is $shortcut_active_event_tap, not cghid"
 elif [[ "$shortcut_media_fallback" == "event_tap_create_failed" && "$shortcut_accessibility" != "true" ]]; then
   block "Accessibility is not granted for Keyway; media-key interception cannot pass yet"
+elif [[ "$shortcut_listen_event" == "false" ]]; then
+  block "Input Monitoring is not granted for Keyway; media-key interception cannot pass yet"
 elif grep -q 'accessibility=false' <<<"$hotkey_logs"; then
   block "Accessibility is not granted for Keyway; media-key interception cannot pass yet"
 else
-  block "No enabled media-key event-tap status found; restart Keyway or refresh shortcuts from Settings"
+  block "No enabled cghid media-key event-tap status found; restart Keyway or refresh shortcuts from Settings"
 fi
 
 section "Spotify And Sonos"

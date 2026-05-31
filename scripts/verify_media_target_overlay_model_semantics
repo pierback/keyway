@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+workdir="$(mktemp -d)"
+trap 'rm -rf "$workdir"' EXIT
+
+cp "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTargetOverlayModel.swift" "$workdir/MediaTargetOverlayModel.swift"
+
+cat >"$workdir/ModelStubs.swift" <<'SWIFT'
+import Foundation
+
+enum MediaRemoteTransportCommand: String {
+    case playPause
+}
+
+struct MediaAudioControlPresentation {
+    let title: String
+    let detail: String
+    let isEnabled: Bool
+
+    static func disabled(title: String, detail: String) -> MediaAudioControlPresentation {
+        MediaAudioControlPresentation(title: title, detail: detail, isEnabled: false)
+    }
+}
+
+struct MediaAudioControlSnapshot {
+    let sonos: MediaAudioControlPresentation
+    let spotify: MediaAudioControlPresentation
+    let browser: MediaAudioControlPresentation
+}
+
+struct MediaRemoteTarget: Equatable, Identifiable {
+    let id: String
+    let pid: Int
+    let routingIdentity: String
+    let appName: String
+}
+SWIFT
+
+cat >"$workdir/OverlayModelSemantics.swift" <<'SWIFT'
+import Foundation
+
+@main
+struct OverlayModelSemantics {
+    @MainActor
+    static func main() {
+        exactIDsPreserveRowsAndSelection()
+        metadataIDChurnPreservesVisibleRowsAndSelection()
+        ambiguousIDChurnDropsStaleVisibleRows()
+        emptyRefreshClearsVisibleRows()
+        print("verify_media_target_overlay_model_semantics=ok")
+    }
+
+    @MainActor
+    private static func exactIDsPreserveRowsAndSelection() {
+        let model = MediaTargetOverlayModel()
+        model.update(command: .playPause, targets: [
+            target(id: "helium:old", pid: 10, identity: "app.helium", appName: "Helium"),
+            target(id: "spotify:old", pid: 20, identity: "com.spotify.client", appName: "Spotify"),
+        ])
+        model.select(index: 1)
+
+        model.updateTargetsPreservingSelection([
+            target(id: "spotify:old", pid: 20, identity: "com.spotify.client", appName: "Spotify"),
+            target(id: "helium:old", pid: 10, identity: "app.helium", appName: "Helium"),
+        ])
+
+        expectEqual(model.targets.map(\.id), ["helium:old", "spotify:old"], "exact id refresh must keep visible row order stable")
+        expectEqual(model.selectedIndex, 1, "exact id refresh must preserve selected row index")
+        expectEqual(model.selectedTarget?.appName, "Spotify", "exact id refresh must keep selected target")
+    }
+
+    @MainActor
+    private static func metadataIDChurnPreservesVisibleRowsAndSelection() {
+        let model = MediaTargetOverlayModel()
+        model.update(command: .playPause, targets: [
+            target(id: "helium:title-a", pid: 10, identity: "app.helium", appName: "Helium"),
+            target(id: "spotify:title-a", pid: 20, identity: "com.spotify.client", appName: "Spotify"),
+        ])
+        model.select(index: 1)
+
+        model.updateTargetsPreservingSelection([
+            target(id: "spotify:title-b", pid: 20, identity: "com.spotify.client", appName: "Spotify"),
+            target(id: "helium:title-b", pid: 10, identity: "app.helium", appName: "Helium"),
+        ])
+
+        expectEqual(model.targets.map(\.id), ["helium:title-b", "spotify:title-b"], "metadata id churn must refresh rows in visible order")
+        expectEqual(model.selectedIndex, 1, "metadata id churn must preserve selected index")
+        expectEqual(model.selectedTarget?.id, "spotify:title-b", "metadata id churn must retarget selection only when unambiguous")
+    }
+
+    @MainActor
+    private static func ambiguousIDChurnDropsStaleVisibleRows() {
+        let model = MediaTargetOverlayModel()
+        model.update(command: .playPause, targets: [
+            target(id: "spotify:title-a", pid: 20, identity: "com.spotify.client", appName: "Spotify"),
+        ])
+        model.select(index: 0)
+
+        model.updateTargetsPreservingSelection([
+            target(id: "spotify:title-b", pid: 20, identity: "com.spotify.client", appName: "Spotify"),
+            target(id: "spotify:title-c", pid: 20, identity: "com.spotify.client", appName: "Spotify"),
+        ])
+
+        expectEqual(model.targets.map(\.id), ["spotify:title-b", "spotify:title-c"], "ambiguous id churn must drop stale visible rows and keep only current snapshot rows")
+        expectEqual(model.selectedIndex, 0, "ambiguous id churn must clamp selection onto a current row")
+        expectEqual(model.selectedTarget?.id, "spotify:title-b", "ambiguous id churn must not keep a stale target")
+    }
+
+    @MainActor
+    private static func emptyRefreshClearsVisibleRows() {
+        let model = MediaTargetOverlayModel()
+        model.update(command: .playPause, targets: [
+            target(id: "helium:old", pid: 10, identity: "app.helium", appName: "Helium"),
+            target(id: "spotify:old", pid: 20, identity: "com.spotify.client", appName: "Spotify"),
+        ])
+        model.select(index: 1)
+
+        model.updateTargetsPreservingSelection([])
+
+        expectEqual(model.targets.map(\.id), [], "empty target refresh must clear visible rows")
+        expectEqual(model.selectedIndex, 0, "empty target refresh must reset selection")
+        expectEqual(model.selectedTarget?.id, nil, "empty target refresh must clear selected target")
+    }
+
+    private static func target(
+        id: String,
+        pid: Int,
+        identity: String,
+        appName: String
+    ) -> MediaRemoteTarget {
+        MediaRemoteTarget(id: id, pid: pid, routingIdentity: identity, appName: appName)
+    }
+
+    private static func expectEqual<T: Equatable>(
+        _ actual: T,
+        _ expected: T,
+        _ message: String
+    ) {
+        guard actual == expected else {
+            fail("\(message): expected \(expected), got \(actual)")
+        }
+    }
+
+    private static func fail(_ message: String) -> Never {
+        FileHandle.standardError.write(Data("verify_media_target_overlay_model_semantics: \(message)\n".utf8))
+        exit(1)
+    }
+}
+SWIFT
+
+swiftc \
+  "$workdir/ModelStubs.swift" \
+  "$workdir/MediaTargetOverlayModel.swift" \
+  "$workdir/OverlayModelSemantics.swift" \
+  -o "$workdir/verify_media_target_overlay_model_semantics"
+
+"$workdir/verify_media_target_overlay_model_semantics"

@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DERIVED_DATA_DIR="$ROOT_DIR/.build/xcode-derived-data"
 BUILT_APP="$DERIVED_DATA_DIR/Build/Products/Debug/Keyway.app"
+APP_ENTITLEMENTS="$DERIVED_DATA_DIR/Build/Intermediates.noindex/SonosHandoffMenuBar.build/Debug/Keyway.build/Keyway.app.xcent"
 APP_DIR="$HOME/Applications/Keyway.app"
 APP_PROCESS_NAME="Keyway"
 APP_PROCESS_PATTERN="$APP_DIR/Contents/MacOS/$APP_PROCESS_NAME"
@@ -42,7 +43,12 @@ fi
 
 rm -rf "$APP_DIR"
 ditto "$BUILT_APP" "$APP_DIR"
-codesign --force --deep --sign "$SIGNING_IDENTITY" "$APP_DIR"
+if [[ -f "$APP_ENTITLEMENTS" ]]; then
+  codesign --force --deep --sign "$SIGNING_IDENTITY" --entitlements "$APP_ENTITLEMENTS" "$APP_DIR"
+else
+  codesign --force --deep --sign "$SIGNING_IDENTITY" "$APP_DIR"
+fi
+codesign --verify --deep --strict "$APP_DIR"
 open "$APP_DIR"
 
 echo "$APP_DIR"

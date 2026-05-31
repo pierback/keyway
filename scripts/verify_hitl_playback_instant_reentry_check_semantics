@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+workdir="$(mktemp -d)"
+trap 'rm -rf "$workdir"' EXIT
+
+ok_status="$workdir/ok-status.json"
+ignored_status="$workdir/ignored-status.json"
+missing_second_status="$workdir/missing-second-status.json"
+
+cat >"$ok_status" <<'JSON'
+{
+  "activeEventTap": "cghid",
+  "commandCenterRouteRunning": true,
+  "eventTapRunning": true,
+  "mediaTargetCount": 2,
+  "mediaTransportTraceSequence": 10,
+  "mediaTransportTrace": [
+    {"sequence": 1, "event": "transport_key_down", "command": "playPause", "eventSourceIsPhysicalHIDSystem": true, "monotonicMilliseconds": 100},
+    {"sequence": 2, "event": "input", "command": "playPause", "source": "event_tap", "monotonicMilliseconds": 100},
+    {"sequence": 3, "event": "decision_chooser", "command": "playPause", "source": "event_tap", "monotonicMilliseconds": 100},
+    {"sequence": 4, "event": "chooser_show", "command": "playPause", "source": "event_tap", "targetCount": 2, "monotonicMilliseconds": 101},
+    {"sequence": 5, "event": "chooser_select", "command": "playPause", "targetID": "spotify", "targetPlaying": true, "monotonicMilliseconds": 120},
+    {"sequence": 6, "event": "chooser_closed_for_dispatch", "command": "playPause", "targetID": "spotify", "monotonicMilliseconds": 120},
+    {"sequence": 7, "event": "chooser_dispatch", "command": "pause", "targetID": "spotify", "targetPlaying": true, "monotonicMilliseconds": 120},
+    {"sequence": 8, "event": "transport_key_down", "command": "playPause", "eventSourceIsPhysicalHIDSystem": true, "monotonicMilliseconds": 150},
+    {"sequence": 9, "event": "input", "command": "playPause", "source": "event_tap", "monotonicMilliseconds": 150},
+    {"sequence": 10, "event": "chooser_show", "command": "playPause", "source": "event_tap", "targetCount": 2, "monotonicMilliseconds": 150}
+  ]
+}
+JSON
+
+python3 - "$ok_status" "$ignored_status" "$missing_second_status" <<'PY'
+import json
+import pathlib
+import sys
+
+ok = pathlib.Path(sys.argv[1])
+ignored = pathlib.Path(sys.argv[2])
+missing = pathlib.Path(sys.argv[3])
+payload = json.loads(ok.read_text())
+
+ignored_payload = json.loads(json.dumps(payload))
+ignored_payload["mediaTransportTrace"].insert(
+    9,
+    {
+        "sequence": 10,
+        "event": "input_ignored",
+        "command": "playPause",
+        "source": "event_tap",
+        "reason": "chooser_targeted_media_key_echo_ignored",
+        "monotonicMilliseconds": 150,
+    },
+)
+for index, event in enumerate(ignored_payload["mediaTransportTrace"], start=1):
+    event["sequence"] = index
+ignored.write_text(json.dumps(ignored_payload))
+
+missing_payload = json.loads(json.dumps(payload))
+missing_payload["mediaTransportTrace"] = [
+    event for event in missing_payload["mediaTransportTrace"]
+    if not (event.get("event") == "chooser_show" and event.get("sequence") == 10)
+]
+for index, event in enumerate(missing_payload["mediaTransportTrace"], start=1):
+    event["sequence"] = index
+missing.write_text(json.dumps(missing_payload))
+PY
+
+KEYWAY_HITL_SKIP_WAIT=1 KEYWAY_HITL_START_SEQUENCE=0 \
+  "$repo_root/scripts/hitl_playback_instant_reentry_check" "$ok_status" >/dev/null
+
+if KEYWAY_HITL_SKIP_WAIT=1 KEYWAY_HITL_START_SEQUENCE=0 \
+  "$repo_root/scripts/hitl_playback_instant_reentry_check" "$ignored_status" >/dev/null 2>&1; then
+  printf 'verify_hitl_playback_instant_reentry_check_semantics: ignored second key unexpectedly passed\n' >&2
+  exit 1
+fi
+
+if KEYWAY_HITL_SKIP_WAIT=1 KEYWAY_HITL_START_SEQUENCE=0 \
+  "$repo_root/scripts/hitl_playback_instant_reentry_check" "$missing_second_status" >/dev/null 2>&1; then
+  printf 'verify_hitl_playback_instant_reentry_check_semantics: missing second chooser unexpectedly passed\n' >&2
+  exit 1
+fi
+
+printf 'verify_hitl_playback_instant_reentry_check_semantics=ok\n'

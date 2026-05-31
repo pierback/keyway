@@ -1,0 +1,427 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+workdir="$(mktemp -d)"
+trap 'rm -rf "$workdir"' EXIT
+
+ok_status="$workdir/ok-status.json"
+late_show_status="$workdir/late-show-status.json"
+missing_close_status="$workdir/missing-close-status.json"
+no_input_status="$workdir/no-input-status.json"
+capped_status="$workdir/capped-status.json"
+single_target_status="$workdir/single-target-status.json"
+wrong_action_status="$workdir/wrong-action-status.json"
+generated_key_status="$workdir/generated-key-status.json"
+command_center_while_tap_status="$workdir/command-center-while-tap-status.json"
+unhandled_system_defined_status="$workdir/unhandled-system-defined-status.json"
+preflight_one_target_status="$workdir/preflight-one-target-status.json"
+
+cat >"$ok_status" <<'JSON'
+{
+  "accessibilityGranted": true,
+  "activeEventTap": "cghid",
+  "appPath": "/Users/f.pieringer/Applications/Keyway.app",
+  "commandCenterRouteRunning": true,
+  "eventTapRunning": true,
+  "listenEventGranted": true,
+  "mediaFallback": "enabled",
+  "mediaTransportTraceSequence": 9,
+  "plainHotkeysRegistered": true,
+  "mediaTransportTrace": [
+    {
+      "sequence": 1,
+      "event": "transport_key_down",
+      "command": "playPause",
+      "eventSourceIsPhysicalHIDSystem": true,
+      "eventSourceUnixProcessID": 0,
+      "eventSourceStateID": 1,
+      "eventSourceUserData": 0,
+      "monotonicMilliseconds": 100
+    },
+    {
+      "sequence": 2,
+      "event": "input",
+      "command": "playPause",
+      "source": "event_tap",
+      "monotonicMilliseconds": 101
+    },
+    {
+      "sequence": 3,
+      "event": "decision_chooser",
+      "command": "playPause",
+      "source": "event_tap",
+      "monotonicMilliseconds": 102
+    },
+    {
+      "sequence": 4,
+      "event": "chooser_show",
+      "command": "playPause",
+      "source": "event_tap",
+      "targetCount": 2,
+      "monotonicMilliseconds": 110
+    },
+    {
+      "sequence": 5,
+      "event": "chooser_select",
+      "command": "playPause",
+      "targetID": "spotify",
+      "targetPlaying": true,
+      "monotonicMilliseconds": 130
+    },
+    {
+      "sequence": 6,
+      "event": "chooser_closed_for_dispatch",
+      "command": "playPause",
+      "targetID": "spotify",
+      "monotonicMilliseconds": 131
+    },
+    {
+      "sequence": 7,
+      "event": "chooser_dispatch",
+      "command": "pause",
+      "targetID": "spotify",
+      "targetPlaying": true,
+      "monotonicMilliseconds": 132
+    },
+    {
+      "sequence": 8,
+      "event": "input_ignored",
+      "command": "pause",
+      "source": "command_center",
+      "reason": "command_center_echo_ignored",
+      "monotonicMilliseconds": 135
+    },
+    {
+      "sequence": 9,
+      "event": "helper_command_result",
+      "command": "pause",
+      "requestID": "cmd-1",
+      "targetID": "spotify",
+      "ok": true,
+      "message": "sent",
+      "monotonicMilliseconds": 150
+    }
+  ]
+}
+JSON
+
+cat >"$no_input_status" <<'JSON'
+{
+  "accessibilityGranted": true,
+  "activeEventTap": "cghid",
+  "appPath": "/Users/f.pieringer/Applications/Keyway.app",
+  "commandCenterRouteRunning": true,
+  "eventTapRunning": true,
+  "listenEventGranted": true,
+  "mediaFallback": "enabled",
+  "mediaTransportTraceSequence": 0,
+  "plainHotkeysRegistered": true,
+  "mediaTransportTrace": []
+}
+JSON
+
+cat >"$unhandled_system_defined_status" <<'JSON'
+{
+  "accessibilityGranted": true,
+  "activeEventTap": "cghid",
+  "appPath": "/Users/f.pieringer/Applications/Keyway.app",
+  "commandCenterRouteRunning": true,
+  "eventTapRunning": true,
+  "listenEventGranted": true,
+  "mediaFallback": "enabled",
+  "mediaTransportTraceSequence": 1,
+  "plainHotkeysRegistered": true,
+  "mediaTransportTrace": [
+    {
+      "sequence": 1,
+      "event": "event_tap_unhandled_system_defined",
+      "eventSubtype": 8,
+      "mediaKeyCode": 16,
+      "mediaKeyState": 9,
+      "eventSourceIsPhysicalHIDSystem": true,
+      "monotonicMilliseconds": 100
+    }
+  ]
+}
+JSON
+
+cat >"$capped_status" <<'JSON'
+{
+  "accessibilityGranted": true,
+  "activeEventTap": "cghid",
+  "appPath": "/Users/f.pieringer/Applications/Keyway.app",
+  "commandCenterRouteRunning": true,
+  "eventTapRunning": true,
+  "listenEventGranted": true,
+  "mediaFallback": "enabled",
+  "mediaTransportTraceSequence": 99,
+  "plainHotkeysRegistered": true,
+  "mediaTransportTrace": [
+    {
+      "sequence": 40,
+      "event": "helper_command_result",
+      "command": "pause",
+      "targetID": "spotify",
+      "ok": true,
+      "monotonicMilliseconds": 400
+    }
+  ]
+}
+JSON
+
+cat >"$preflight_one_target_status" <<'JSON'
+{
+  "accessibilityGranted": true,
+  "activeEventTap": "cghid",
+  "appPath": "/Users/f.pieringer/Applications/Keyway.app",
+  "commandCenterRouteRunning": true,
+  "eventTapRunning": true,
+  "listenEventGranted": true,
+  "mediaFallback": "enabled",
+  "mediaTargetCount": 1,
+  "mediaTargets": [
+    {
+      "app": "Arc",
+      "id": "arc",
+      "playing": true,
+      "title": "one visible source"
+    }
+  ],
+  "mediaTransportTraceSequence": 0,
+  "plainHotkeysRegistered": true,
+  "mediaTransportTrace": []
+}
+JSON
+
+python3 - "$ok_status" "$late_show_status" "$missing_close_status" <<'PY'
+import json
+import pathlib
+import sys
+
+ok = pathlib.Path(sys.argv[1])
+late = pathlib.Path(sys.argv[2])
+missing = pathlib.Path(sys.argv[3])
+payload = json.loads(ok.read_text())
+
+late_payload = json.loads(json.dumps(payload))
+late_payload["mediaTransportTrace"].insert(
+    8,
+    {
+        "sequence": 9,
+        "event": "chooser_show",
+        "command": "playPause",
+        "source": "command_center",
+        "monotonicMilliseconds": 140,
+    },
+)
+for index, event in enumerate(late_payload["mediaTransportTrace"], start=1):
+    event["sequence"] = index
+late.write_text(json.dumps(late_payload))
+
+missing_payload = json.loads(json.dumps(payload))
+missing_payload["mediaTransportTrace"] = [
+    event for event in missing_payload["mediaTransportTrace"]
+    if event["event"] != "chooser_closed_for_dispatch"
+]
+for index, event in enumerate(missing_payload["mediaTransportTrace"], start=1):
+    event["sequence"] = index
+missing.write_text(json.dumps(missing_payload))
+PY
+
+python3 - "$ok_status" "$single_target_status" "$wrong_action_status" <<'PY'
+import json
+import pathlib
+import sys
+
+ok = pathlib.Path(sys.argv[1])
+single_target = pathlib.Path(sys.argv[2])
+wrong_action = pathlib.Path(sys.argv[3])
+payload = json.loads(ok.read_text())
+
+single_target_payload = json.loads(json.dumps(payload))
+for event in single_target_payload["mediaTransportTrace"]:
+    if event["event"] == "chooser_show":
+        event["targetCount"] = 1
+single_target.write_text(json.dumps(single_target_payload))
+
+wrong_action_payload = json.loads(json.dumps(payload))
+for event in wrong_action_payload["mediaTransportTrace"]:
+    if event["event"] == "chooser_dispatch":
+        event["command"] = "play"
+wrong_action.write_text(json.dumps(wrong_action_payload))
+PY
+
+python3 - "$ok_status" "$generated_key_status" "$command_center_while_tap_status" <<'PY'
+import json
+import pathlib
+import sys
+
+ok = pathlib.Path(sys.argv[1])
+generated_key = pathlib.Path(sys.argv[2])
+command_center_while_tap = pathlib.Path(sys.argv[3])
+payload = json.loads(ok.read_text())
+
+generated_key_payload = json.loads(json.dumps(payload))
+for event in generated_key_payload["mediaTransportTrace"]:
+    if event["event"] == "transport_key_down":
+        event["eventSourceIsPhysicalHIDSystem"] = False
+generated_key.write_text(json.dumps(generated_key_payload))
+
+command_center_payload = json.loads(json.dumps(payload))
+command_center_payload["mediaTransportTrace"] = [
+    event for event in command_center_payload["mediaTransportTrace"]
+    if event["event"] != "transport_key_down"
+]
+for event in command_center_payload["mediaTransportTrace"]:
+    if event["event"] in {"input", "decision_chooser", "chooser_show"}:
+        event["source"] = "command_center"
+for index, event in enumerate(command_center_payload["mediaTransportTrace"], start=1):
+    event["sequence"] = index
+command_center_payload["mediaTransportTraceSequence"] = len(command_center_payload["mediaTransportTrace"])
+command_center_while_tap.write_text(json.dumps(command_center_payload))
+PY
+
+KEYWAY_HITL_SKIP_WAIT=1 \
+KEYWAY_HITL_START_SEQUENCE=0 \
+  "$repo_root/scripts/hitl_playback_routing_check" "$ok_status" >/dev/null
+
+if KEYWAY_HITL_SKIP_WAIT=1 KEYWAY_HITL_START_SEQUENCE=0 \
+  "$repo_root/scripts/hitl_playback_routing_check" "$generated_key_status" >"$workdir/generated-key.out" 2>"$workdir/generated-key.err"; then
+  printf 'verify_hitl_playback_routing_check_semantics: generated-key fixture unexpectedly passed\n' >&2
+  exit 1
+fi
+grep -q 'hardware Play/Pause check did not record a physical HID media-key source' "$workdir/generated-key.err" \
+  || {
+    printf 'verify_hitl_playback_routing_check_semantics: generated-key failure reason was wrong\n' >&2
+    cat "$workdir/generated-key.err" >&2
+    exit 1
+  }
+
+if KEYWAY_HITL_SKIP_WAIT=1 KEYWAY_HITL_START_SEQUENCE=0 \
+  "$repo_root/scripts/hitl_playback_routing_check" "$unhandled_system_defined_status" >"$workdir/unhandled-system-defined.out" 2>"$workdir/unhandled-system-defined.err"; then
+  printf 'verify_hitl_playback_routing_check_semantics: unhandled-system-defined fixture unexpectedly passed\n' >&2
+  exit 1
+fi
+grep -q 'event tap saw a media-key shaped system event, but the parser did not route it' "$workdir/unhandled-system-defined.err" \
+  || {
+    printf 'verify_hitl_playback_routing_check_semantics: unhandled-system-defined failure reason was wrong\n' >&2
+    cat "$workdir/unhandled-system-defined.err" >&2
+    exit 1
+  }
+
+if KEYWAY_HITL_SKIP_WAIT=1 KEYWAY_HITL_START_SEQUENCE=0 \
+  "$repo_root/scripts/hitl_playback_routing_check" "$command_center_while_tap_status" >"$workdir/command-center-while-tap.out" 2>"$workdir/command-center-while-tap.err"; then
+  printf 'verify_hitl_playback_routing_check_semantics: command-center-while-tap fixture unexpectedly passed\n' >&2
+  exit 1
+fi
+grep -q 'first input source was command_center; expected cghid event_tap interception' "$workdir/command-center-while-tap.err" \
+  || {
+    printf 'verify_hitl_playback_routing_check_semantics: command-center-while-tap failure reason was wrong\n' >&2
+    cat "$workdir/command-center-while-tap.err" >&2
+    exit 1
+  }
+
+if KEYWAY_HITL_SKIP_WAIT=1 KEYWAY_HITL_START_SEQUENCE=0 \
+  "$repo_root/scripts/hitl_playback_routing_check" "$late_show_status" >"$workdir/late.out" 2>"$workdir/late.err"; then
+  printf 'verify_hitl_playback_routing_check_semantics: late chooser_show fixture unexpectedly passed\n' >&2
+  exit 1
+fi
+grep -q 'chooser was shown again after chooser_dispatch before any new transport key-down' "$workdir/late.err" \
+  || {
+    printf 'verify_hitl_playback_routing_check_semantics: late chooser_show failure reason was wrong\n' >&2
+    cat "$workdir/late.err" >&2
+    exit 1
+  }
+grep -q 'KEYWAY_HITL_POST_DISPATCH_SETTLE_SECONDS' "$repo_root/scripts/hitl_playback_routing_check" \
+  || {
+    printf 'verify_hitl_playback_routing_check_semantics: HITL checker must wait after chooser_dispatch so late modal re-entry is observable\n' >&2
+    exit 1
+  }
+grep -q 'observing %.2fs for late re-entry' "$repo_root/scripts/hitl_playback_routing_check" \
+  || {
+    printf 'verify_hitl_playback_routing_check_semantics: HITL checker must announce the post-dispatch late re-entry observation window\n' >&2
+    exit 1
+  }
+
+if KEYWAY_HITL_SKIP_WAIT=1 KEYWAY_HITL_START_SEQUENCE=0 \
+  "$repo_root/scripts/hitl_playback_routing_check" "$single_target_status" >"$workdir/single-target.out" 2>"$workdir/single-target.err"; then
+  printf 'verify_hitl_playback_routing_check_semantics: single-target fixture unexpectedly passed\n' >&2
+  exit 1
+fi
+grep -q 'expected at least two playing/background sources' "$workdir/single-target.err" \
+  || {
+    printf 'verify_hitl_playback_routing_check_semantics: single-target failure reason was wrong\n' >&2
+    cat "$workdir/single-target.err" >&2
+    exit 1
+  }
+
+if KEYWAY_HITL_SKIP_WAIT=1 KEYWAY_HITL_START_SEQUENCE=0 \
+  "$repo_root/scripts/hitl_playback_routing_check" "$wrong_action_status" >"$workdir/wrong-action.out" 2>"$workdir/wrong-action.err"; then
+  printf 'verify_hitl_playback_routing_check_semantics: wrong-action fixture unexpectedly passed\n' >&2
+  exit 1
+fi
+grep -q 'selected playing target routed play; expected pause' "$workdir/wrong-action.err" \
+  || {
+    printf 'verify_hitl_playback_routing_check_semantics: wrong-action failure reason was wrong\n' >&2
+    cat "$workdir/wrong-action.err" >&2
+    exit 1
+  }
+
+if KEYWAY_HITL_SKIP_WAIT=1 KEYWAY_HITL_START_SEQUENCE=0 \
+  "$repo_root/scripts/hitl_playback_routing_check" "$missing_close_status" >"$workdir/missing.out" 2>"$workdir/missing.err"; then
+  printf 'verify_hitl_playback_routing_check_semantics: missing close fixture unexpectedly passed\n' >&2
+  exit 1
+fi
+grep -q 'chooser row selection did not close the chooser before dispatch' "$workdir/missing.err" \
+  || {
+    printf 'verify_hitl_playback_routing_check_semantics: missing close failure reason was wrong\n' >&2
+    cat "$workdir/missing.err" >&2
+    exit 1
+  }
+
+if KEYWAY_HITL_SKIP_WAIT=1 KEYWAY_HITL_START_SEQUENCE=0 \
+  "$repo_root/scripts/hitl_playback_routing_check" "$no_input_status" >"$workdir/no-input.out" 2>"$workdir/no-input.err"; then
+  printf 'verify_hitl_playback_routing_check_semantics: no-input fixture unexpectedly passed\n' >&2
+  exit 1
+fi
+grep -q "status: mediaFallback='enabled' eventTapRunning=True activeEventTap='cghid'" "$workdir/no-input.err" \
+  || {
+    printf 'verify_hitl_playback_routing_check_semantics: no-input status summary was missing\n' >&2
+    cat "$workdir/no-input.err" >&2
+    exit 1
+  }
+grep -q 'no media transport input was recorded' "$workdir/no-input.err" \
+  || {
+    printf 'verify_hitl_playback_routing_check_semantics: no-input failure reason was wrong\n' >&2
+    cat "$workdir/no-input.err" >&2
+    exit 1
+  }
+
+if KEYWAY_HITL_TIMEOUT_SECONDS=0 KEYWAY_HITL_START_SEQUENCE=0 \
+  "$repo_root/scripts/hitl_playback_routing_check" "$preflight_one_target_status" >"$workdir/preflight-one-target.out" 2>"$workdir/preflight-one-target.err"; then
+  printf 'verify_hitl_playback_routing_check_semantics: preflight-one-target fixture unexpectedly passed\n' >&2
+  exit 1
+fi
+grep -q 'need at least two visible media targets before HITL; got 1' "$workdir/preflight-one-target.err" \
+  || {
+    printf 'verify_hitl_playback_routing_check_semantics: preflight one-target failure reason was wrong\n' >&2
+    cat "$workdir/preflight-one-target.out" >&2
+    cat "$workdir/preflight-one-target.err" >&2
+    exit 1
+  }
+
+if KEYWAY_HITL_SKIP_WAIT=1 \
+  "$repo_root/scripts/hitl_playback_routing_check" "$capped_status" >"$workdir/capped.out" 2>"$workdir/capped.err"; then
+  printf 'verify_hitl_playback_routing_check_semantics: capped trace fixture unexpectedly passed\n' >&2
+  exit 1
+fi
+grep -q 'starting after trace sequence 99' "$workdir/capped.out" \
+  || {
+    printf 'verify_hitl_playback_routing_check_semantics: capped trace did not use persisted sequence marker\n' >&2
+    cat "$workdir/capped.out" >&2
+    cat "$workdir/capped.err" >&2
+    exit 1
+  }
+
+printf 'verify_hitl_playback_routing_check_semantics=ok\n'

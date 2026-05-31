@@ -11,11 +11,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var statusItemController: KeywayStatusItemController?
 
     func configure(environment: AppEnvironment) {
-        volumeHotkeys = VolumeHotkeyController(
+        let volumeHotkeys = VolumeHotkeyController(
             volumeService: environment.volumeService,
             outputSelection: environment.outputSelection,
             mediaTransportActions: environment.mediaTransportActionController
         )
+        environment.mediaTransportActionController.relaxRouteShield = { [weak volumeHotkeys] reason in
+            volumeHotkeys?.suspendCommandCenterRouteShieldForSelectedDispatch(reason: reason)
+        }
+        self.volumeHotkeys = volumeHotkeys
         statusItemController = KeywayStatusItemController(environment: environment)
     }
 

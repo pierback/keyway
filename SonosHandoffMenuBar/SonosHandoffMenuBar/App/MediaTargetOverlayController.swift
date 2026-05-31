@@ -2,57 +2,15 @@ import AppKit
 import SwiftUI
 
 @MainActor
-final class MediaTargetOverlayModel: ObservableObject {
-    @Published var command: MediaRemoteTransportCommand?
-    @Published var targets: [MediaRemoteTarget] = []
-    @Published var selectedIndex = 0
-    @Published var expanded = false
-    @Published var audioSnapshot = MediaAudioControlSnapshot(
-        sonos: .disabled(title: "Sonos", detail: "Checking output"),
-        spotify: .disabled(title: "Spotify", detail: "Checking active device"),
-        browser: .disabled(title: "Browser", detail: "Select a browser media target")
-    )
-
-    var selectedTarget: MediaRemoteTarget? {
-        guard targets.indices.contains(selectedIndex) else {
-            return nil
-        }
-        return targets[selectedIndex]
-    }
-
-    func update(
-        command: MediaRemoteTransportCommand?,
-        targets: [MediaRemoteTarget]
-    ) {
-        self.command = command
-        self.targets = targets
-        selectedIndex = 0
-        expanded = false
-    }
-
-    func moveSelection(by delta: Int) {
-        guard !targets.isEmpty else {
-            return
-        }
-        selectedIndex = (selectedIndex + delta + targets.count) % targets.count
-    }
-
-    func select(index: Int) {
-        guard targets.indices.contains(index) else {
-            return
-        }
-        selectedIndex = index
-    }
-
-}
-
-@MainActor
 final class MediaTargetOverlayController {
     private let model = MediaTargetOverlayModel()
     private let audioController: MediaAudioControlController
     private var panel: MediaTargetOverlayPanel?
     private var onChoose: ((MediaRemoteTarget, MediaRemoteTransportCommand?) -> Void)?
+    private var onDismiss: (() -> Void)?
+    private var isClosing = false
     private var audioSnapshotGeneration = 0
+    private var generation = 0
 
     init(audioController: MediaAudioControlController) {
         self.audioController = audioController
@@ -62,12 +20,20 @@ final class MediaTargetOverlayController {
         panel?.isVisible == true
     }
 
+    var currentGeneration: Int {
+        generation
+    }
+
     func show(
         command: MediaRemoteTransportCommand?,
         targets: [MediaRemoteTarget],
-        onChoose: @escaping (MediaRemoteTarget, MediaRemoteTransportCommand?) -> Void
+        onChoose: @escaping (MediaRemoteTarget, MediaRemoteTransportCommand?) -> Void,
+        onDismiss: @escaping () -> Void = {}
     ) {
+        generation &+= 1
         self.onChoose = onChoose
+        self.onDismiss = onDismiss
+        isClosing = false
         model.update(command: command, targets: targets)
         refreshAudioSnapshot()
 
@@ -75,10 +41,39 @@ final class MediaTargetOverlayController {
         resizeAndPosition(panel)
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
+        panel.orderFrontRegardless()
+        resizeAndPosition(panel)
     }
 
     func close() {
+        close(notifyDismiss: true)
+    }
+
+    private func close(notifyDismiss: Bool) {
+        guard !isClosing else {
+            return
+        }
+
+        isClosing = true
+        let dismiss = onDismiss
         panel?.orderOut(nil)
+        onChoose = nil
+        onDismiss = nil
+        isClosing = false
+
+        if notifyDismiss {
+            dismiss?()
+        }
+    }
+
+    func updateTargetsIfVisible(targets: [MediaRemoteTarget], generation: Int) {
+        guard isVisible, generation == self.generation else {
+            return
+        }
+
+        model.updateTargetsPreservingSelection(targets)
+        resizeAndPosition(ensurePanel())
+        refreshAudioSnapshot()
     }
 
     private func ensurePanel() -> MediaTargetOverlayPanel {
@@ -92,15 +87,16 @@ final class MediaTargetOverlayController {
             backing: .buffered,
             defer: false
         )
-        panel.level = .modalPanel
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
-        panel.hidesOnDeactivate = true
+        panel.level = .statusBar
+        panel.collectionBehavior = [
+            .canJoinAllSpaces,
+            .fullScreenAuxiliary,
+            .transient,
+        ]
+        panel.hidesOnDeactivate = false
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
-        panel.onFocusLost = { [weak self] in
-            self?.close()
-        }
         panel.onKeyDown = { [weak self] event in
             self?.handleKeyDown(event) ?? false
         }
@@ -188,8 +184,12 @@ final class MediaTargetOverlayController {
     }
 
     private func choose(_ target: MediaRemoteTarget) {
-        close()
-        onChoose?(target, model.command)
+        let choose = onChoose
+        let command = model.command
+        onChoose = nil
+        onDismiss = nil
+        close(notifyDismiss: false)
+        choose?(target, command)
     }
 
     private func adjustSelectedExpandedVolume(direction: MediaAudioVolumeDirection) {
@@ -276,7 +276,6 @@ final class MediaTargetOverlayController {
 @MainActor
 private final class MediaTargetOverlayPanel: NSPanel {
     var onKeyDown: ((NSEvent) -> Bool)?
-    var onFocusLost: (() -> Void)?
 
     override var canBecomeKey: Bool {
         true
@@ -295,290 +294,6 @@ private final class MediaTargetOverlayPanel: NSPanel {
 
     override func resignKey() {
         super.resignKey()
-        onFocusLost?()
     }
 
-}
-
-private struct MediaTargetOverlayView: View {
-    @ObservedObject var model: MediaTargetOverlayModel
-    let onChoose: (MediaRemoteTarget) -> Void
-    let onSelect: (Int) -> Void
-    let onSonosVolume: (MediaAudioVolumeDirection) -> Void
-    let onSonosMute: () -> Void
-    let onSpotifyVolume: (MediaAudioVolumeDirection) -> Void
-
-    var body: some View {
-        VStack(spacing: 0) {
-            targetList
-            if model.expanded {
-                expandedSectionDivider
-                expandedControls
-            }
-            Divider().opacity(0.42)
-            footer
-        }
-        .background {
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.94))
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 24, style: .continuous)
-                        .stroke(Color.white.opacity(0.18), lineWidth: 1)
-                }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .frame(width: 680)
-        .accessibilityIdentifier("mediaTargetOverlay")
-    }
-
-    private var expandedSectionDivider: some View {
-        HStack(spacing: 8) {
-            VStack { Divider().opacity(0.42) }
-            Text("Volume")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.tertiary)
-            VStack { Divider().opacity(0.42) }
-        }
-        .padding(.horizontal, 20)
-        .frame(height: 10)
-    }
-
-    private var targetList: some View {
-        Group {
-            if model.targets.count > 6 {
-                ScrollView {
-                    targetRows
-                }
-                .scrollIndicators(.hidden)
-                .frame(height: targetListHeight)
-            } else {
-                targetRows
-            }
-        }
-        .accessibilityIdentifier("mediaTargetOverlay.targetList")
-    }
-
-    private var targetRows: some View {
-        LazyVStack(spacing: 3) {
-            ForEach(Array(model.targets.enumerated()), id: \.element.id) { index, target in
-                targetRow(index: index, target: target)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.top, 14)
-        .padding(.bottom, model.expanded ? 0 : 8)
-    }
-
-    private var targetListHeight: CGFloat {
-        let visibleRows = min(model.targets.count, 6)
-        let topPad: CGFloat = 14
-        let bottomPad: CGFloat = model.expanded ? 0 : 8
-        return topPad
-            + CGFloat(max(1, visibleRows)) * 52
-            + CGFloat(max(0, visibleRows - 1)) * 3
-            + bottomPad
-    }
-
-    private func targetRow(index: Int, target: MediaRemoteTarget) -> some View {
-        let selected = index == model.selectedIndex
-
-        return Button {
-            if model.expanded {
-                onSelect(index)
-            } else {
-                onChoose(target)
-            }
-        } label: {
-            HStack(spacing: 12) {
-                Text("\(index + 1)")
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 23, height: 23)
-                    .background(Color.primary.opacity(selected ? 0.14 : 0.08), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-
-                Image(nsImage: target.appIcon)
-                    .resizable()
-                    .frame(width: 32, height: 32)
-                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(target.appName)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                    Text(target.detailText)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-
-                Spacer()
-
-                if target.id == model.selectedTarget?.id {
-                    Image(systemName: "return")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .padding(.horizontal, 11)
-            .frame(height: 52)
-            .contentShape(Rectangle())
-            .background {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(selected ? Color.primary.opacity(0.12) : Color.clear)
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("mediaTargetOverlay.target.\(target.id)")
-    }
-
-    private var expandedControls: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                audioRow(
-                    control: model.audioSnapshot.sonos,
-                    systemImage: "hifispeaker.fill",
-                    trailing: {
-                        HStack(spacing: 6) {
-                            iconButton(
-                                "speaker.wave.1.fill",
-                                identifier: "mediaTargetOverlay.sonosVolumeDown",
-                                enabled: model.audioSnapshot.sonos.isEnabled
-                            ) {
-                                onSonosVolume(.down)
-                            }
-                            iconButton(
-                                "speaker.slash.fill",
-                                identifier: "mediaTargetOverlay.sonosMute",
-                                enabled: model.audioSnapshot.sonos.isEnabled
-                            ) {
-                                onSonosMute()
-                            }
-                            iconButton(
-                                "speaker.wave.3.fill",
-                                identifier: "mediaTargetOverlay.sonosVolumeUp",
-                                enabled: model.audioSnapshot.sonos.isEnabled
-                            ) {
-                                onSonosVolume(.up)
-                            }
-                        }
-                    }
-                )
-
-                audioRow(
-                    control: model.audioSnapshot.spotify,
-                    systemImage: "music.note",
-                    trailing: {
-                        HStack(spacing: 6) {
-                            iconButton(
-                                "speaker.wave.1.fill",
-                                identifier: "mediaTargetOverlay.spotifyVolumeDown",
-                                enabled: model.audioSnapshot.spotify.isEnabled
-                            ) {
-                                onSpotifyVolume(.down)
-                            }
-                            iconButton(
-                                "speaker.wave.3.fill",
-                                identifier: "mediaTargetOverlay.spotifyVolumeUp",
-                                enabled: model.audioSnapshot.spotify.isEnabled
-                            ) {
-                                onSpotifyVolume(.up)
-                            }
-                        }
-                    }
-                )
-            }
-
-            audioRow(
-                control: model.audioSnapshot.browser,
-                systemImage: "globe",
-                trailing: {
-                    Text("Disabled")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                }
-            )
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 10)
-        .accessibilityIdentifier("mediaTargetOverlay.expandedControls")
-    }
-
-    private func audioRow<Trailing: View>(
-        control: MediaAudioControlPresentation,
-        systemImage: String,
-        @ViewBuilder trailing: () -> Trailing
-    ) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: systemImage)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(control.isEnabled ? Color.primary : Color.secondary)
-                .frame(width: 24, height: 24)
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(control.title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(control.isEnabled ? Color.primary : Color.secondary)
-                Text(control.detail)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-
-            Spacer(minLength: 8)
-            trailing()
-        }
-        .padding(.horizontal, 10)
-        .frame(height: 40)
-        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-    }
-
-    private func iconButton(
-        _ systemName: String,
-        identifier: String,
-        enabled: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 12, weight: .semibold))
-                .frame(width: 28, height: 26)
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(enabled ? Color.primary : Color.secondary.opacity(0.55))
-        .background(Color.primary.opacity(enabled ? 0.08 : 0.04), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-        .disabled(!enabled)
-        .accessibilityIdentifier(identifier)
-    }
-
-    private var footer: some View {
-        HStack(spacing: 8) {
-            footerHint("↑↓", "Select")
-            footerHint("Enter", "Route")
-            footerHint("Esc", "Close")
-            footerHint("Tab", "Controls")
-            footerHint("1-9", "Quick select")
-            if model.expanded {
-                footerHint("⌘↑/⌘↓", "Volume")
-            }
-            Spacer()
-        }
-        .padding(.horizontal, 16)
-        .frame(height: 36)
-    }
-
-    private func footerHint(_ key: String, _ label: String) -> some View {
-        HStack(spacing: 4) {
-            Text(key)
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                .foregroundStyle(.primary)
-                .padding(.horizontal, 5)
-                .frame(height: 20)
-                .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-            Text(label)
-                .font(.system(size: 10))
-                .foregroundStyle(.secondary)
-        }
-    }
 }
