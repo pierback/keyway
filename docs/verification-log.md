@@ -10,6 +10,7 @@ Last updated: 2026-05-31
   - `f67ec58 Add Helium playback HITL regression` / `good-media-routing-helium-hitl`
   - `2df9e3c Broaden Helium JavaScript media targeting` / `good-media-routing-helium-dom-targeting`
   - `e7a2e51 Explain Apple Events automation failures` / `good-media-routing-tcc-recovery`
+  - `eca5bdd Handle deep Helium media while preserving fast path` / `good-media-routing-helium-deep-playing`
 - Installed app path verified: `/Users/f.pieringer/Applications/Keyway.app`.
 - Hardware Play/Pause routing now requires `activeEventTap=cghid`; Command Center callbacks are route-shield-only and do not open the chooser.
 - Selected-row dispatch now records structured `transportBackend` values:
@@ -17,7 +18,7 @@ Last updated: 2026-05-31
   - `spotify_apple_event`
   - `helium_javascript`
 - Spotify selected-row dispatch uses in-process Apple Events instead of MediaRemote player-path commands or `/usr/bin/osascript`.
-- Helium selected-row dispatch uses Chromium active-tab JavaScript, with direct media lookup first and fallback coverage for open shadow roots and same-origin frames. It does not simulate Space.
+- Helium selected-row dispatch uses Chromium active-tab JavaScript, with direct playing-media lookup first, then deeper coverage for open shadow roots and same-origin frames before choosing a paused target. It does not simulate Space.
 - Desktop selected-row dispatch keeps the route shield armed; normal MediaRemote selected-row dispatch suspends and rearms the route shield.
 - Apple Events/TCC failures now surface an actionable Automation permission recovery hint.
 - Verification passed after the final installed build:
@@ -34,7 +35,7 @@ Last updated: 2026-05-31
   - `KEYWAY_PROBE_EXPECT_TARGET_NAME=Helium scripts/probe_playback_chooser_selection`
 - Observed selected-row backend latency in probes:
   - Spotify AppleEvent helper result: `0ms`
-  - Helium JavaScript helper result: `103ms`
+  - Helium JavaScript helper result: `81ms`
 - `scripts/acceptance_preflight` remains environment-blocked, not Keyway-routing-blocked:
   - `sonos-handoff-port: Spotify has no active playback`
   - `sonos-handoff-port: Sonos target not found: Port`
