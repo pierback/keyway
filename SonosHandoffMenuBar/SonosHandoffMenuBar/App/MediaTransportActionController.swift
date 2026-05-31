@@ -347,7 +347,8 @@ final class MediaTransportActionController {
                         "selected_row_dispatch_route_shield_kept",
                         command: command,
                         target: target,
-                        reason: desktopTransport
+                        reason: desktopTransport,
+                        transportBackend: desktopTransport
                     )
                 } else {
                     self.relaxRouteShield?("selected_row_dispatch")
@@ -396,7 +397,7 @@ final class MediaTransportActionController {
         let dispatchID = beginBoundedProgrammaticDispatch(command: command)
         if usesSpotifyDesktopTransport(target: target) {
             let result = submitSpotifyDesktopCommand(command: command, target: target)
-            trace(result: result)
+            trace(result: result, transportBackend: result.backend)
             finishProgrammaticDispatch(
                 id: dispatchID,
                 fallback: false
@@ -408,7 +409,7 @@ final class MediaTransportActionController {
         }
         if usesHeliumDesktopTransport(target: target), command == .playPause {
             let result = submitHeliumDesktopCommand(command: command, target: target)
-            trace(result: result)
+            trace(result: result, transportBackend: result.backend)
             finishProgrammaticDispatch(
                 id: dispatchID,
                 fallback: false
@@ -419,7 +420,7 @@ final class MediaTransportActionController {
             return
         }
         let sent = mediaRemoteController.submit(command: command, targetID: target.id) { [weak self] result in
-            self?.trace(result: result)
+            self?.trace(result: result, transportBackend: Self.mediaRemotePlayerPathBackend)
             self?.finishProgrammaticDispatch(
                 id: dispatchID,
                 fallback: false
@@ -447,7 +448,8 @@ final class MediaTransportActionController {
         metadata: MediaTransportInputMetadata?
     ) {
         logger.info("MediaTransport chooser_dispatch requestedCommand=\(requestedCommand.rawValue, privacy: .public) routedCommand=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) targetID=\(target.id, privacy: .public) playing=\(target.isCurrentlyPlaying, privacy: .public)")
-        trace("chooser_dispatch", command: command, target: target)
+        let transportBackend = transportBackendName(command: command, target: target)
+        trace("chooser_dispatch", command: command, target: target, transportBackend: transportBackend)
         let dispatchID = beginBoundedChooserDispatch(
             command: command,
             metadata: metadata,
@@ -474,7 +476,7 @@ final class MediaTransportActionController {
     ) {
         if usesSpotifyDesktopTransport(target: target) {
             let result = submitSpotifyDesktopCommand(command: command, target: target)
-            trace(result: result)
+            trace(result: result, transportBackend: result.backend)
             finishChooserDispatch(
                 id: dispatchID,
                 fallback: false
@@ -486,7 +488,7 @@ final class MediaTransportActionController {
         }
         if usesHeliumDesktopTransport(target: target), command == .playPause {
             let result = submitHeliumDesktopCommand(command: command, target: target)
-            trace(result: result)
+            trace(result: result, transportBackend: result.backend)
             finishChooserDispatch(
                 id: dispatchID,
                 fallback: false
@@ -497,7 +499,7 @@ final class MediaTransportActionController {
             return
         }
         let sent = mediaRemoteController.submit(command: command, targetID: target.id) { [weak self] result in
-            self?.trace(result: result)
+            self?.trace(result: result, transportBackend: Self.mediaRemotePlayerPathBackend)
             self?.finishChooserDispatch(
                 id: dispatchID,
                 fallback: false
@@ -531,12 +533,24 @@ final class MediaTransportActionController {
         return MediaTransportCommandRules.rowScopedCommand(command, for: target)
     }
 
+    private static let mediaRemotePlayerPathBackend = "mediaremote_player_path"
+
+    private func transportBackendName(command: MediaRemoteTransportCommand, target: MediaRemoteTarget) -> String {
+        if usesSpotifyDesktopTransport(target: target) {
+            return "spotify_apple_event"
+        }
+        if usesHeliumDesktopTransport(target: target), command == .playPause {
+            return "helium_javascript"
+        }
+        return Self.mediaRemotePlayerPathBackend
+    }
+
     private func desktopTransportName(target: MediaRemoteTarget) -> String? {
         if usesSpotifyDesktopTransport(target: target) {
-            return "spotify_desktop"
+            return "spotify_apple_event"
         }
         if usesHeliumDesktopTransport(target: target) {
-            return "helium_desktop"
+            return "helium_javascript"
         }
         return nil
     }
@@ -592,7 +606,8 @@ final class MediaTransportActionController {
             targetID: target.id,
             command: command.rawValue,
             ok: ok,
-            message: ok ? "submitted Spotify AppleEvent command event=\(eventID)" : "Spotify AppleEvent failed status=\(status)"
+            message: ok ? "submitted Spotify AppleEvent command event=\(eventID)" : "Spotify AppleEvent failed status=\(status)",
+            backend: "spotify_apple_event"
         )
     }
 
@@ -607,7 +622,8 @@ final class MediaTransportActionController {
             targetID: target.id,
             command: command.rawValue,
             ok: result.ok,
-            message: result.ok ? "submitted Helium JavaScript command state=\(result.message)" : "Helium JavaScript failed: \(result.message)"
+            message: result.ok ? "submitted Helium JavaScript command state=\(result.message)" : "Helium JavaScript failed: \(result.message)",
+            backend: "helium_javascript"
         )
     }
 
@@ -762,6 +778,7 @@ end tell
         source: MediaTransportRouteSource? = nil,
         target: MediaRemoteTarget? = nil,
         reason: String? = nil,
+        transportBackend: String? = nil,
         targets: [MediaRemoteTarget]? = nil,
         targetCount: Int? = nil,
         metadata: MediaTransportInputMetadata? = nil,
@@ -774,6 +791,7 @@ end tell
             target: target,
             targets: targets,
             reason: reason,
+            transportBackend: transportBackend,
             targetCount: targetCount,
             mediaKeyMetadata: metadata,
             commandCenterMetadata: commandCenterMetadata,
@@ -783,9 +801,10 @@ end tell
         )
     }
 
-    private func trace(result: MediaRemoteCommandResultEvent) {
+    private func trace(result: MediaRemoteCommandResultEvent, transportBackend: String?) {
         traceRecorder.recordHelperResult(
             result,
+            backend: transportBackend,
             overlayVisible: overlayController.isVisible,
             chooserActive: chooserSession.isActive,
             canRoute: mediaRemoteController.canRouteCommands

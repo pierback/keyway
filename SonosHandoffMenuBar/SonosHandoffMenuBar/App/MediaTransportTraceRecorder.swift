@@ -15,6 +15,7 @@ final class MediaTransportTraceRecorder {
         target: MediaRemoteTarget? = nil,
         targets: [MediaRemoteTarget]? = nil,
         reason: String? = nil,
+        transportBackend: String? = nil,
         targetCount: Int? = nil,
         mediaKeyMetadata: MediaTransportInputMetadata? = nil,
         commandCenterMetadata: MediaCommandCenterInputMetadata? = nil,
@@ -40,6 +41,9 @@ final class MediaTransportTraceRecorder {
         }
         if let reason {
             fields["reason"] = reason
+        }
+        if let transportBackend {
+            fields["transportBackend"] = transportBackend
         }
         if let targetCount {
             fields["targetCount"] = targetCount
@@ -79,22 +83,27 @@ final class MediaTransportTraceRecorder {
 
     func recordHelperResult(
         _ result: MediaRemoteCommandResultEvent,
+        backend: String? = nil,
         overlayVisible: Bool,
         chooserActive: Bool,
         canRoute: Bool
     ) {
+        var fields: [String: Any] = [
+            "command": result.command,
+            "requestID": result.requestID ?? "",
+            "targetID": result.targetID,
+            "ok": result.ok,
+            "message": result.message,
+            "overlayVisible": overlayVisible,
+            "chooserActive": chooserActive,
+            "canRoute": canRoute,
+        ]
+        if let backend = backend ?? result.backend {
+            fields["transportBackend"] = backend
+        }
         runtimeStatus.recordMediaTransportEvent(
             "helper_command_result",
-            fields: [
-                "command": result.command,
-                "requestID": result.requestID ?? "",
-                "targetID": result.targetID,
-                "ok": result.ok,
-                "message": result.message,
-                "overlayVisible": overlayVisible,
-                "chooserActive": chooserActive,
-                "canRoute": canRoute,
-            ]
+            fields: fields
         )
     }
 }

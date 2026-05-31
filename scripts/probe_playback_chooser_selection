@@ -8,6 +8,8 @@ pre_select_delay_seconds="${KEYWAY_PROBE_PRE_SELECT_DELAY_SECONDS:-0.25}"
 chooser_open_latency_ms_max="${KEYWAY_PROBE_CHOOSER_OPEN_LATENCY_MS_MAX:-75}"
 row_dispatch_latency_ms_max="${KEYWAY_PROBE_ROW_DISPATCH_LATENCY_MS_MAX:-260}"
 helper_result_latency_ms_max="${KEYWAY_PROBE_HELPER_RESULT_LATENCY_MS_MAX:-350}"
+spotify_helper_result_latency_ms_max="${KEYWAY_PROBE_SPOTIFY_HELPER_RESULT_LATENCY_MS_MAX:-50}"
+helium_helper_result_latency_ms_max="${KEYWAY_PROBE_HELIUM_HELPER_RESULT_LATENCY_MS_MAX:-125}"
 min_target_count="${KEYWAY_PROBE_MIN_TARGET_COUNT:-1}"
 selection_down_count="${KEYWAY_PROBE_SELECTION_DOWN_COUNT:-0}"
 selection_index=""
@@ -163,7 +165,7 @@ analyze_trace() {
   local start_sequence="$1"
   local trace_json
   trace_json="$(read_trace_json)"
-  python3 - "$start_sequence" "$chooser_open_latency_ms_max" "$row_dispatch_latency_ms_max" "$helper_result_latency_ms_max" "$min_target_count" "$expected_target_name" "$trace_json" <<'PY'
+  python3 - "$start_sequence" "$chooser_open_latency_ms_max" "$row_dispatch_latency_ms_max" "$helper_result_latency_ms_max" "$spotify_helper_result_latency_ms_max" "$helium_helper_result_latency_ms_max" "$min_target_count" "$expected_target_name" "$trace_json" <<'PY'
 import json
 import sys
 
@@ -171,10 +173,12 @@ start_sequence = int(sys.argv[1])
 chooser_open_latency_ms_max = float(sys.argv[2])
 row_dispatch_latency_ms_max = float(sys.argv[3])
 helper_result_latency_ms_max = float(sys.argv[4])
-min_target_count = int(sys.argv[5])
-expected_target_name = sys.argv[6]
+spotify_helper_result_latency_ms_max = float(sys.argv[5])
+helium_helper_result_latency_ms_max = float(sys.argv[6])
+min_target_count = int(sys.argv[7])
+expected_target_name = sys.argv[8]
 events = [
-    event for event in json.loads(sys.argv[7])
+    event for event in json.loads(sys.argv[9])
     if int(event.get("sequence", 0)) > start_sequence
 ]
 
@@ -259,10 +263,15 @@ if show_target.get("playing") != select.get("targetPlaying"):
     )
 
 selected_playing = select.get("targetPlaying")
-selected_uses_desktop_transport = (
-    selected_target in {"Spotify", "Helium"}
-    or show_target.get("bundleIdentifier") in {"com.spotify.client", "net.imput.helium"}
-)
+selected_bundle = show_target.get("bundleIdentifier")
+expected_backend = "mediaremote_player_path"
+if selected_target == "Spotify" or selected_bundle == "com.spotify.client":
+    expected_backend = "spotify_apple_event"
+elif selected_target == "Helium" or selected_bundle == "net.imput.helium":
+    expected_backend = "helium_javascript"
+selected_uses_desktop_transport = expected_backend != "mediaremote_player_path"
+if dispatch.get("transportBackend") != expected_backend:
+    fail(f"chooser_dispatch transportBackend {dispatch.get('transportBackend')!r}; expected {expected_backend!r}")
 if not selected_uses_desktop_transport:
     if selected_playing is True and dispatch.get("command") != "pause":
         fail(f"selected playing target routed {dispatch.get('command')}; expected pause")
@@ -295,9 +304,17 @@ helper_results = [
 if not helper_results:
     fail("no helper command result was recorded after chooser dispatch")
 helper = helper_results[0]
+if helper.get("transportBackend") != expected_backend:
+    fail(f"helper transportBackend {helper.get('transportBackend')!r}; expected {expected_backend!r}")
 helper_latency = latency_ms(dispatch, helper)
-if helper_latency < 0 or helper_latency > helper_result_latency_ms_max:
-    fail(f"helper result latency {helper_latency:.1f}ms exceeds {helper_result_latency_ms_max:.1f}ms")
+if expected_backend == "spotify_apple_event":
+    helper_latency_ms_max = spotify_helper_result_latency_ms_max
+elif expected_backend == "helium_javascript":
+    helper_latency_ms_max = helium_helper_result_latency_ms_max
+else:
+    helper_latency_ms_max = helper_result_latency_ms_max
+if helper_latency < 0 or helper_latency > helper_latency_ms_max:
+    fail(f"helper result latency {helper_latency:.1f}ms exceeds {helper_latency_ms_max:.1f}ms for {expected_backend}")
 if helper.get("ok") is False:
     fail(f"helper reported failure: {helper.get('message')}")
 if dispatch_id and helper.get("targetID") and dispatch_id != helper.get("targetID"):
@@ -321,6 +338,7 @@ print(json.dumps({
     "selectedTargetID": selected_id,
     "selectedTargetPlaying": selected_playing,
     "targetCount": show.get("targetCount"),
+    "transportBackend": expected_backend,
 }, sort_keys=True))
 PY
 }

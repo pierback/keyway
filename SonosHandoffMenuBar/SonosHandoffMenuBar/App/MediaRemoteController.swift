@@ -570,7 +570,8 @@ final class MediaRemoteController: ObservableObject {
                 targetID: targetID,
                 command: command.rawValue,
                 ok: false,
-                message: "MediaRemote command timed out"
+                message: "MediaRemote command timed out",
+                backend: nil
             ))
             self.warmCommandClientCacheIfNeeded(targets: self.targets, reason: "command_timeout")
         }

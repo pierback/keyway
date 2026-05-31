@@ -41,6 +41,7 @@ struct MediaRemoteCommandResultEvent: Decodable {
     let command: String
     let ok: Bool
     let message: String
+    let backend: String?
 }
 
 struct MediaRemoteClientCacheEvent: Decodable {

@@ -82,6 +82,7 @@ cat >"$ok_status" <<'JSON'
       "command": "pause",
       "targetID": "spotify",
       "targetPlaying": true,
+      "transportBackend": "mediaremote_player_path",
       "monotonicMilliseconds": 132
     },
     {
@@ -100,6 +101,7 @@ cat >"$ok_status" <<'JSON'
       "targetID": "spotify",
       "ok": true,
       "message": "sent",
+      "transportBackend": "mediaremote_player_path",
       "monotonicMilliseconds": 150
     }
   ]
