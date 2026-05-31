@@ -42,8 +42,7 @@ Last updated: 2026-05-31
   - Helium JavaScript helper result: `68ms`
 - `scripts/acceptance_preflight` remains environment-blocked, not Keyway-routing-blocked:
   - `sonos-handoff-port: Spotify has no active playback`
-  - `sonos-handoff-port: Sonos target not found: Port`
-  - App identity, installed helper, MediaRemote snapshot, cghid event-tap readiness, Command Center route shield readiness, config import, and legacy-file integrity passed before those blocks.
+  - App identity, installed helper, MediaRemote snapshot, cghid event-tap readiness, Command Center route shield readiness, config import, Sonos `Port` discovery, and legacy-file integrity passed before that block.
 
 ## Verified In This Branch
 
