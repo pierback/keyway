@@ -32,6 +32,8 @@ Last updated: 2026-05-31
   - `scripts/verify_playback_reentry_semantics`
   - `scripts/probe_playback_routing_suite`
   - `KEYWAY_PROBE_ROUTING_SUITE_TARGETS=1 scripts/probe_playback_routing_suite`
+  - `scripts/hitl_helium_playback_toggle_check`
+- Live Helium HITL passed with `beforePlayingCount=1`, `afterPlayingCount=0`, selected target `net.imput.helium:776:desktop`, and backend `helium_javascript`.
 - Observed selected-row backend latency in probes:
   - Spotify AppleEvent helper result: `1ms`
   - Helium JavaScript helper result: `68ms`
@@ -175,8 +177,7 @@ Last updated: 2026-05-31
 
 ## Not Yet Passed Locally
 
-- Live physical-key verification is still needed for full hardware Play/Pause, Next, Previous behavior and overlay keyboard operation. Synthetic HID media-key routing now passes for pinned automatic routing and native notification confirmation.
-- Live Helium active-tab HITL remains to be run with real user media and hardware Play/Pause via `scripts/hitl_helium_playback_toggle_check`; deterministic replay and synthetic chooser probes pass.
+- Live physical-key verification is still needed for full Next, Previous behavior and overlay keyboard operation. Synthetic HID media-key routing now passes for pinned automatic routing and native notification confirmation; live Helium hardware Play/Pause selected-row routing now passes.
 - The physical-key verification scripts are ready but have not yet been run in this log:
   - `KEYWAY_PHYSICAL_MEDIA_KEYS=1 scripts/smoke_transport_routing_confirmation`
   - `KEYWAY_PHYSICAL_MEDIA_KEYS=1 scripts/smoke_overlay_browser_controls`
