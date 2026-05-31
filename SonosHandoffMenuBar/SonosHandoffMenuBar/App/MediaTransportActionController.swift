@@ -238,11 +238,10 @@ final class MediaTransportActionController {
             return
         }
 
-        let sortedTargets = MediaTransportCommandRules.sortedTargets(
-            mediaRemoteController.targets,
+        let cached = MediaTransportCommandRules.sortedTargets(
+            targetsIncludingHeliumDesktop(mediaRemoteController.targets),
             activeTargetID: mediaRemoteController.activeTargetID
         )
-        let cached = targetsIncludingHeliumDesktop(sortedTargets)
         let refreshQueued = mediaRemoteController.refreshSnapshot()
 
         logger.info("MediaTransport chooser_show command=\(commandName, privacy: .public) source=\(source.rawValue, privacy: .public) targetCount=\(cached.count, privacy: .public) refreshQueued=\(refreshQueued, privacy: .public) targets=\(MediaTransportCommandRules.targetLogSummary(cached), privacy: .public)")

@@ -36,6 +36,7 @@ enum MediaRouteStatusKind {
 struct MediaRemoteTarget: Equatable, Identifiable {
     let id: String
     let appName: String
+    let title: String
     let isCurrentlyPlaying: Bool
     let playbackFreshness: Double
 }
@@ -63,27 +64,27 @@ struct CommandRuleSemantics {
             "Non-Play/Pause row dispatch must keep the requested command"
         )
 
-        let newestPlaying = target(id: "helium", name: "Helium", playing: true, freshness: 300)
-        let activeOlderPlaying = target(id: "spotify", name: "Spotify", playing: true, freshness: 200)
-        let stoppedNewer = target(id: "quicktime", name: "QuickTime", playing: false, freshness: 500)
+        let newerSpotify = target(id: "spotify", name: "Spotify", playing: true, freshness: 300)
+        let olderArc = target(id: "arc", name: "Arc", playing: true, freshness: 100)
+        let stoppedNewerHelium = target(id: "helium", name: "Helium", playing: false, freshness: 500)
         expectEqual(
             MediaTransportCommandRules.sortedTargets(
-                [activeOlderPlaying, stoppedNewer, newestPlaying],
-                activeTargetID: activeOlderPlaying.id
+                [newerSpotify, stoppedNewerHelium, olderArc],
+                activeTargetID: newerSpotify.id
             ).map(\.id),
-            ["helium", "spotify", "quicktime"],
-            "Chooser ordering must put playing targets first, then the freshest playing source, before active-target tie-breaking"
+            ["arc", "spotify", "helium"],
+            "Chooser ordering must be stable: playing targets first, then app name, ignoring freshness and active-target churn"
         )
 
-        let activeTie = target(id: "spotify", name: "Spotify", playing: true, freshness: 300)
-        let inactiveTie = target(id: "helium", name: "Helium", playing: true, freshness: 300)
+        let beta = target(id: "beta", name: "Arc", title: "Beta", playing: true, freshness: 300)
+        let alpha = target(id: "alpha", name: "Arc", title: "Alpha", playing: true, freshness: 300)
         expectEqual(
             MediaTransportCommandRules.sortedTargets(
-                [inactiveTie, activeTie],
-                activeTargetID: activeTie.id
+                [beta, alpha],
+                activeTargetID: beta.id
             ).map(\.id),
-            ["spotify", "helium"],
-            "Active target must only break freshness ties"
+            ["alpha", "beta"],
+            "Rows with the same app name must use title and id tie-breakers so order cannot depend on helper array order"
         )
 
         print("verify_media_transport_command_rules_semantics=ok")
@@ -92,12 +93,14 @@ struct CommandRuleSemantics {
     private static func target(
         id: String,
         name: String = "App",
+        title: String = "Title",
         playing: Bool,
         freshness: Double = 0
     ) -> MediaRemoteTarget {
         MediaRemoteTarget(
             id: id,
             appName: name,
+            title: title,
             isCurrentlyPlaying: playing,
             playbackFreshness: freshness
         )

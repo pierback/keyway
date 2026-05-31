@@ -43,6 +43,7 @@ Last updated: 2026-05-31
   - Spotify AppleEvent helper result: `1ms`
   - Helium JavaScript helper result: `68ms`
 - Display brightness keys were verified as pass-through after removing the mistaken `keyCode=2` Play/Pause mapping; `keyCode=2` is brightness-up, not Play/Pause.
+- Media chooser rows now use deterministic order: playing rows first, then app name, title, and id. Ordering no longer depends on MediaRemote freshness timestamps, active-route churn, or helper array order.
 - `scripts/acceptance_preflight` remains environment-blocked, not Keyway-routing-blocked:
   - `sonos-handoff-port: Spotify has no active playback`
   - App identity, installed helper, MediaRemote snapshot, cghid event-tap readiness, Command Center route shield readiness, config import, Sonos `Port` discovery, and legacy-file integrity passed before that block.

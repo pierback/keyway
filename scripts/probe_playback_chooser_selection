@@ -231,6 +231,18 @@ if len(chooser_shows) != 1:
 if int(show.get("targetCount", 0)) < min_target_count:
     fail(f"chooser showed {show.get('targetCount')} targets; expected at least {min_target_count} routable target(s)")
 
+def stable_target_order_key(target):
+    return (
+        0 if target.get("playing") is True else 1,
+        str(target.get("app") or "").casefold(),
+        str(target.get("title") or "").casefold(),
+        str(target.get("id") or "").casefold(),
+    )
+
+show_targets = show.get("targets", [])
+if show_targets != sorted(show_targets, key=stable_target_order_key):
+    fail("chooser target order was not stable playing/app/title/id order")
+
 chooser_open_latency = latency_ms(key_down, show)
 if chooser_open_latency < 0 or chooser_open_latency > chooser_open_latency_ms_max:
     fail(f"chooser open latency {chooser_open_latency:.1f}ms exceeds {chooser_open_latency_ms_max:.1f}ms")

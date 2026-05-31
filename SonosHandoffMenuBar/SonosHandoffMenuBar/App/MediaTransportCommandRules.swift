@@ -31,21 +31,21 @@ enum MediaTransportCommandRules {
 
     static func sortedTargets(
         _ targets: [MediaRemoteTarget],
-        activeTargetID: String?
+        activeTargetID _: String?
     ) -> [MediaRemoteTarget] {
         targets.sorted { lhs, rhs in
             if lhs.isCurrentlyPlaying != rhs.isCurrentlyPlaying {
                 return lhs.isCurrentlyPlaying
             }
-            if lhs.playbackFreshness != rhs.playbackFreshness {
-                return lhs.playbackFreshness > rhs.playbackFreshness
+            let appOrder = lhs.appName.localizedStandardCompare(rhs.appName)
+            if appOrder != .orderedSame {
+                return appOrder == .orderedAscending
             }
-            let lhsActive = lhs.id == activeTargetID
-            let rhsActive = rhs.id == activeTargetID
-            if lhsActive != rhsActive {
-                return lhsActive
+            let titleOrder = lhs.title.localizedStandardCompare(rhs.title)
+            if titleOrder != .orderedSame {
+                return titleOrder == .orderedAscending
             }
-            return lhs.appName.localizedCaseInsensitiveCompare(rhs.appName) == .orderedAscending
+            return lhs.id.localizedStandardCompare(rhs.id) == .orderedAscending
         }
     }
 
