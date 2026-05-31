@@ -1,6 +1,44 @@
 # Keyway Verification Log
 
-Last updated: 2026-05-20
+Last updated: 2026-05-31
+
+## Playback Routing Hardening Update (2026-05-31)
+
+- Branch: `keyway-planning`
+- Current good routing commits/tags:
+  - `d72307f Harden media dispatch backend tracing` / `good-media-routing-backend-traces`
+  - `f67ec58 Add Helium playback HITL regression` / `good-media-routing-helium-hitl`
+  - `2df9e3c Broaden Helium JavaScript media targeting` / `good-media-routing-helium-dom-targeting`
+  - `e7a2e51 Explain Apple Events automation failures` / `good-media-routing-tcc-recovery`
+- Installed app path verified: `/Users/f.pieringer/Applications/Keyway.app`.
+- Hardware Play/Pause routing now requires `activeEventTap=cghid`; Command Center callbacks are route-shield-only and do not open the chooser.
+- Selected-row dispatch now records structured `transportBackend` values:
+  - `mediaremote_player_path`
+  - `spotify_apple_event`
+  - `helium_javascript`
+- Spotify selected-row dispatch uses in-process Apple Events instead of MediaRemote player-path commands or `/usr/bin/osascript`.
+- Helium selected-row dispatch uses Chromium active-tab JavaScript, with direct media lookup first and fallback coverage for open shadow roots and same-origin frames. It does not simulate Space.
+- Desktop selected-row dispatch keeps the route shield armed; normal MediaRemote selected-row dispatch suspends and rearms the route shield.
+- Apple Events/TCC failures now surface an actionable Automation permission recovery hint.
+- Verification passed after the final installed build:
+  - `xcodebuild -workspace Keyway.xcworkspace -scheme Keyway -configuration Debug build CODE_SIGNING_ALLOWED=NO`
+  - `scripts/install_menubar_app`
+  - `scripts/verify_playback_routing_invariants`
+  - `scripts/verify_hitl_helium_playback_toggle_check_semantics`
+  - `scripts/verify_hitl_playback_routing_check_semantics`
+  - `scripts/verify_hitl_playback_instant_reentry_check_semantics`
+  - `scripts/verify_playback_filter_semantics`
+  - `scripts/verify_playback_reentry_semantics`
+  - `scripts/probe_playback_routing_suite`
+  - `KEYWAY_PROBE_EXPECT_TARGET_NAME=Spotify scripts/probe_playback_chooser_selection`
+  - `KEYWAY_PROBE_EXPECT_TARGET_NAME=Helium scripts/probe_playback_chooser_selection`
+- Observed selected-row backend latency in probes:
+  - Spotify AppleEvent helper result: `0ms`
+  - Helium JavaScript helper result: `103ms`
+- `scripts/acceptance_preflight` remains environment-blocked, not Keyway-routing-blocked:
+  - `sonos-handoff-port: Spotify has no active playback`
+  - `sonos-handoff-port: Sonos target not found: Port`
+  - App identity, installed helper, MediaRemote snapshot, cghid event-tap readiness, Command Center route shield readiness, config import, and legacy-file integrity passed before those blocks.
 
 ## Verified In This Branch
 
@@ -138,6 +176,7 @@ Last updated: 2026-05-20
 ## Not Yet Passed Locally
 
 - Live physical-key verification is still needed for full hardware Play/Pause, Next, Previous behavior and overlay keyboard operation. Synthetic HID media-key routing now passes for pinned automatic routing and native notification confirmation.
+- Live Helium active-tab HITL remains to be run with real user media and hardware Play/Pause via `scripts/hitl_helium_playback_toggle_check`; deterministic replay and synthetic chooser probes pass.
 - The physical-key verification scripts are ready but have not yet been run in this log:
   - `KEYWAY_PHYSICAL_MEDIA_KEYS=1 scripts/smoke_transport_routing_confirmation`
   - `KEYWAY_PHYSICAL_MEDIA_KEYS=1 scripts/smoke_overlay_browser_controls`
