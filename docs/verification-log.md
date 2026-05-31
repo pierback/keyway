@@ -31,11 +31,10 @@ Last updated: 2026-05-31
   - `scripts/verify_playback_filter_semantics`
   - `scripts/verify_playback_reentry_semantics`
   - `scripts/probe_playback_routing_suite`
-  - `KEYWAY_PROBE_EXPECT_TARGET_NAME=Spotify scripts/probe_playback_chooser_selection`
-  - `KEYWAY_PROBE_EXPECT_TARGET_NAME=Helium scripts/probe_playback_chooser_selection`
+  - `KEYWAY_PROBE_ROUTING_SUITE_TARGETS=1 scripts/probe_playback_routing_suite`
 - Observed selected-row backend latency in probes:
-  - Spotify AppleEvent helper result: `0ms`
-  - Helium JavaScript helper result: `81ms`
+  - Spotify AppleEvent helper result: `1ms`
+  - Helium JavaScript helper result: `68ms`
 - `scripts/acceptance_preflight` remains environment-blocked, not Keyway-routing-blocked:
   - `sonos-handoff-port: Spotify has no active playback`
   - `sonos-handoff-port: Sonos target not found: Port`
