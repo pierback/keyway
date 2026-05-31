@@ -217,6 +217,18 @@ grep -q 'execute active tab of front window javascript' "$repo_root/scripts/hitl
     exit 1
   }
 
+grep -q 'shadowRoot' "$repo_root/scripts/hitl_helium_playback_toggle_check" \
+  || {
+    printf 'verify_hitl_helium_playback_toggle_check_semantics: HITL checker must inspect shadow DOM media state\n' >&2
+    exit 1
+  }
+
+grep -q 'contentDocument' "$repo_root/scripts/hitl_helium_playback_toggle_check" \
+  || {
+    printf 'verify_hitl_helium_playback_toggle_check_semantics: HITL checker must inspect same-origin iframe media state\n' >&2
+    exit 1
+  }
+
 grep -q 'KEYWAY_HITL_HELIUM_BEFORE_STATE_JSON' "$repo_root/scripts/hitl_helium_playback_toggle_check" \
   || {
     printf 'verify_hitl_helium_playback_toggle_check_semantics: HITL checker must support deterministic replay fixtures\n' >&2

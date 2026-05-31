@@ -224,6 +224,12 @@ grep -q 'runHeliumJavaScriptToggle' "$transport" \
 grep -q 'execute active tab of front window javascript' "$transport" \
   || fail "Helium desktop dispatch must target browser media through Chromium scripting"
 
+grep -q 'shadowRoot' "$transport" \
+  || fail "Helium desktop dispatch must inspect open shadow DOM media elements"
+
+grep -q 'contentDocument' "$transport" \
+  || fail "Helium desktop dispatch must inspect same-origin iframe media elements"
+
 if grep -q '/usr/bin/osascript' "$transport"; then
   fail "selected-row desktop dispatch must not spawn osascript from the app hot path"
 fi
@@ -240,6 +246,9 @@ grep -q 'transportBackendName(command: command, target: target)' "$transport" \
 
 grep -q 'transportBackend: result.backend' "$transport" \
   || fail "desktop helper results must preserve their selected transport backend"
+
+grep -q 'output == "paused" || output == "playing" || output == "play_requested"' "$transport" \
+  || fail "Helium JavaScript dispatch must fail closed for no_media/no_windows states"
 
 grep -q 'selected_row_dispatch_route_shield_kept' "$transport" \
   || fail "desktop selected-row dispatch must keep the route shield armed"
