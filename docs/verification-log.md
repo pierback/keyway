@@ -31,6 +31,8 @@ Last updated: 2026-05-31
   - `scripts/verify_playback_filter_semantics`
   - `scripts/verify_playback_reentry_semantics`
   - `scripts/probe_playback_routing_suite`
+  - `scripts/probe_display_brightness_passthrough`
+  - `scripts/verify_shortcut_event_parser_semantics`
   - `KEYWAY_PROBE_ROUTING_SUITE_TARGETS=1 scripts/probe_playback_routing_suite`
   - `scripts/hitl_helium_playback_toggle_check`
   - `KEYWAY_APP="$HOME/Applications/Keyway.app" scripts/smoke_transport_routing_confirmation`
@@ -40,6 +42,7 @@ Last updated: 2026-05-31
 - Observed selected-row backend latency in probes:
   - Spotify AppleEvent helper result: `1ms`
   - Helium JavaScript helper result: `68ms`
+- Display brightness keys were verified as pass-through after removing the mistaken `keyCode=2` Play/Pause mapping; `keyCode=2` is brightness-up, not Play/Pause.
 - `scripts/acceptance_preflight` remains environment-blocked, not Keyway-routing-blocked:
   - `sonos-handoff-port: Spotify has no active playback`
   - App identity, installed helper, MediaRemote snapshot, cghid event-tap readiness, Command Center route shield readiness, config import, Sonos `Port` discovery, and legacy-file integrity passed before that block.

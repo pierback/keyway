@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+parser="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutEventParser.swift"
+workdir="$(mktemp -d)"
+trap 'rm -rf "$workdir"' EXIT
+harness="$workdir/shortcut-event-parser-harness.swift"
+
+cat >"$harness" <<'SWIFT'
+import AppKit
+import ApplicationServices
+
+enum MediaRemoteTransportCommand: String, Equatable {
+    case play
+    case pause
+    case playPause
+    case next
+    case previous
+}
+
+enum VolumeDirection: Equatable {
+    case up
+    case down
+}
+
+struct MediaTransportInputMetadata: Equatable {
+    let sourceUnixProcessID: Int64
+    let sourceStateID: Int64
+    let sourceUserData: Int64
+    let targetUnixProcessID: Int64
+    let sourceUserID: Int64
+    let sourceGroupID: Int64
+    let eventTimestamp: UInt64
+}
+SWIFT
+
+awk '!/^import / && !/^@preconcurrency import / { print }' "$parser" >>"$harness"
+
+cat >>"$harness" <<'SWIFT'
+func mediaKeyEvent(keyCode: Int, state: Int, shift: Bool = false) -> CGEvent {
+    let data1 = (keyCode << 16) | (state << 8)
+    let flags: NSEvent.ModifierFlags = shift ? [.shift] : []
+    guard let nsEvent = NSEvent.otherEvent(
+        with: .systemDefined,
+        location: .zero,
+        modifierFlags: flags,
+        timestamp: ProcessInfo.processInfo.systemUptime,
+        windowNumber: 0,
+        context: nil,
+        subtype: 8,
+        data1: data1,
+        data2: -1
+    ), let event = nsEvent.cgEvent else {
+        fatalError("failed to create media key event")
+    }
+    event.setIntegerValueField(.eventSourceUnixProcessID, value: 0)
+    event.setIntegerValueField(.eventSourceStateID, value: 1)
+    event.setIntegerValueField(.eventSourceUserData, value: 0)
+    event.setIntegerValueField(.eventTargetUnixProcessID, value: 0)
+    return event
+}
+
+func expect(_ condition: Bool, _ message: String) {
+    if !condition {
+        fputs("verify_shortcut_event_parser_semantics: \(message)\n", stderr)
+        exit(1)
+    }
+}
+
+let parser = ShortcutEventParser()
+let systemDefined = CGEventType(rawValue: 14)!
+
+expect(
+    parser.outcome(type: systemDefined, event: mediaKeyEvent(keyCode: 2, state: 0x0A), isRepeating: false) == .passThrough,
+    "display brightness-up key code 2 must pass through, not open the media chooser"
+)
+expect(
+    parser.outcome(type: systemDefined, event: mediaKeyEvent(keyCode: 2, state: 0x0B), isRepeating: false) == .passThrough,
+    "display brightness-up key-up must pass through"
+)
+expect(
+    parser.outcome(type: systemDefined, event: mediaKeyEvent(keyCode: 3, state: 0x0A), isRepeating: false) == .passThrough,
+    "display brightness-down key code 3 must pass through, not open the media chooser"
+)
+
+switch parser.outcome(type: systemDefined, event: mediaKeyEvent(keyCode: 16, state: 0x0A), isRepeating: false) {
+case .transportKeyDown(let command, let source, _):
+    expect(command == .playPause, "NX_KEYTYPE_PLAY key-down must route Play/Pause")
+    expect(source == "media_key", "NX_KEYTYPE_PLAY source should remain media_key")
+default:
+    expect(false, "NX_KEYTYPE_PLAY key-down did not route Play/Pause")
+}
+
+switch parser.outcome(type: systemDefined, event: mediaKeyEvent(keyCode: 0, state: 0x0A, shift: true), isRepeating: false) {
+case .volumeHoldStart(let direction, let source):
+    expect(direction == .up, "Shift+sound-up must start volume-up hold")
+    expect(source == "media_key", "Shift+sound-up source should be media_key")
+default:
+    expect(false, "Shift+sound-up did not start volume-up hold")
+}
+
+print("verify_shortcut_event_parser_semantics=ok")
+SWIFT
+
+swift "$harness"

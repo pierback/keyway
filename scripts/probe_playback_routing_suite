@@ -58,7 +58,9 @@ run_probe_cleanly() {
 [[ -d "$app_path" ]] || fail "missing app at $app_path; run scripts/install_menubar_app first"
 
 run_probe_cleanly scripts/probe_playback_event_tap
+run_probe_cleanly scripts/probe_display_brightness_passthrough
 "$repo_root/scripts/verify_playback_routing_invariants" >/dev/null
+"$repo_root/scripts/verify_shortcut_event_parser_semantics" >/dev/null
 "$repo_root/scripts/verify_hitl_playback_routing_check_semantics" >/dev/null
 "$repo_root/scripts/verify_hitl_playback_instant_reentry_check_semantics" >/dev/null
 "$repo_root/scripts/verify_hitl_helium_playback_toggle_check_semantics" >/dev/null

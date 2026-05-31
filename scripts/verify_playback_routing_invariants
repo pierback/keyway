@@ -810,11 +810,15 @@ grep -q 'unhandledSystemDefinedDiagnostic' "$parser" \
 grep -q 'f8KeyCode' "$parser" \
   || fail "event parser must intercept raw F8 Play/Pause key-down events as a media key"
 
-grep -q 'observedPlayPauseKeyCode = 2' "$parser" \
-  || fail "event parser must intercept the observed hardware Play/Pause system-defined key code"
+if grep -Eq 'observedPlayPauseKeyCode|media_key_observed_play_pause' "$parser"; then
+  fail "display brightness key code 2 must not be treated as observed Play/Pause"
+fi
 
-grep -q 'media_key_observed_play_pause' "$parser" \
-  || fail "observed hardware Play/Pause key-code routing must be traceable"
+grep -q 'verify_shortcut_event_parser_semantics=ok' "$repo_root/scripts/verify_shortcut_event_parser_semantics" \
+  || fail "event parser semantics must lock display brightness keys to pass-through"
+
+grep -q 'probe_display_brightness_passthrough_stable' "$repo_root/scripts/probe_display_brightness_passthrough" \
+  || fail "runtime probe must reject display brightness keys opening the media chooser"
 
 grep -q 'transportFunctionKeyCommand' "$parser" \
   || fail "event parser must map raw F7/F8/F9 function-key events onto transport commands"

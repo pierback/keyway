@@ -35,7 +35,6 @@ struct ShortcutEventParser {
     private let soundMuteKeyCode = 7
     private let soundUpKeyCode = 0
     private let soundDownKeyCode = 1
-    private let observedPlayPauseKeyCode = 2
     private let playPauseKeyCode = 16
     private let nextKeyCode = 17
     private let previousKeyCode = 18
@@ -62,7 +61,7 @@ struct ShortcutEventParser {
         let keyState = (nsEvent.data1 & 0x0000_FF00) >> 8
         if let command = transportCommand(for: keyCode) {
             let metadata = transportInputMetadata(from: event)
-            let source = keyCode == observedPlayPauseKeyCode ? "media_key_observed_play_pause" : "media_key"
+            let source = "media_key"
             if keyState == keyDownState {
                 return .transportKeyDown(command: command, source: source, metadata: metadata)
             }
@@ -138,7 +137,7 @@ struct ShortcutEventParser {
 
     private func transportCommand(for keyCode: Int) -> MediaRemoteTransportCommand? {
         switch keyCode {
-        case observedPlayPauseKeyCode, playPauseKeyCode:
+        case playPauseKeyCode:
             return .playPause
         case nextKeyCode:
             return .next
