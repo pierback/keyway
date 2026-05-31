@@ -145,6 +145,23 @@ KEYWAY_PHYSICAL_MEDIA_KEYS=1 KEYWAY_APP="$HOME/Applications/Keyway.app" /Users/f
 
 This mode uses the same routing setup and assertions, but prompts for real hardware Previous, Play/Pause, and Next key presses instead of posting synthetic HID events. It also prompts for plain hardware Volume Up, Volume Down, and Mute presses and fails if Keyway logs a plain media-key volume or mute interception.
 
+Playback chooser routing hardening suite:
+
+```bash
+/Users/f.pieringer/projects/keyway/scripts/probe_playback_routing_suite
+KEYWAY_PROBE_ROUTING_SUITE_TARGETS=1 /Users/f.pieringer/projects/keyway/scripts/probe_playback_routing_suite
+```
+
+The default suite verifies cghid event-tap readiness, generated media-key rejection, selected-row echo semantics, route-shield invariants, and HITL replay fixtures. The target mode additionally selects Spotify and Helium rows and asserts the selected backend is `spotify_apple_event` or `helium_javascript`, with latency thresholds that reject slow `/usr/bin/osascript`-style dispatch.
+
+Live Helium selected-row regression:
+
+```bash
+/Users/f.pieringer/projects/keyway/scripts/hitl_helium_playback_toggle_check
+```
+
+Start media in Helium first, then press the real hardware Play/Pause key and select Helium in the chooser. The checker verifies active-tab JavaScript state before and after selection, selected target identity, `helium_javascript` backend traces, and that the Helium media is paused after dispatch.
+
 ## 10. Settings
 
 - [ ] Confirm Settings opens as a normal macOS window.
