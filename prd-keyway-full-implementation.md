@@ -115,9 +115,9 @@ As of 2026-05-20, the main implementation is present on branch `keyway-planning`
 - Settings normal-window behavior has been verified through the menu bar UI; System Events reports Keyway as visible and not background-only while Settings is open.
 - Focused Target routing now checks the global foreground Media Target first, then a prominently visible, unobscured Media Target window on the display containing the pointer before falling back to Pinned Target, Recent Target, or chooser.
 - Status feedback now uses native macOS notifications through `UNUserNotificationCenter`; the legacy top-of-screen custom HUD panel implementation has been removed from the app, and status notifications reuse a stable identifier so repeated route confirmations replace instead of stacking.
-- `scripts/smoke_transport_routing_confirmation` verifies pinned automatic routing for Play/Pause, Next, and Previous, native-notification request logging, absence of legacy custom popup windows, and clean MediaRemote helper command parsing.
+- `scripts/smoke_transport_routing_confirmation` verifies focused-target automatic routing for Previous and Next, absence of chooser/legacy custom popup windows during automatic routing, and clean MediaRemote helper command parsing. Play/Pause is chooser-first and is covered by playback chooser probes/HITL checks.
 - Spotify Active Device Volume still needs a run against an unrestricted Spotify active device; the current active device is Sonos `Port`, which Spotify reports as `restricted=true`.
-- Full live hardware Transport Key routing and overlay keyboard behavior still need a manual run with Play/Pause, Next, and Previous keypresses.
+- Live Helium hardware Play/Pause selected-row routing has passed. Full live hardware Next/Previous routing and overlay keyboard behavior still need manual runs.
 
 The current verification record is maintained in `docs/verification-log.md`.
 

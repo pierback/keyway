@@ -1105,6 +1105,19 @@ grep -q 'verify_hitl_helium_playback_toggle_check_semantics' "$repo_root/scripts
 grep -q 'KEYWAY_PROBE_ROUTING_SUITE_TARGETS' "$repo_root/scripts/probe_playback_routing_suite" \
   || fail "playback routing suite must expose optional Spotify/Helium selected-row probes"
 
+grep -q 'assert_routing_confirmation previous' "$repo_root/scripts/smoke_transport_routing_confirmation" \
+  || fail "transport routing smoke must cover Previous focused-target routing"
+
+grep -q 'assert_routing_confirmation next' "$repo_root/scripts/smoke_transport_routing_confirmation" \
+  || fail "transport routing smoke must cover Next focused-target routing"
+
+if grep -q 'assert_routing_confirmation playPause' "$repo_root/scripts/smoke_transport_routing_confirmation"; then
+  fail "transport routing smoke must not expect automatic Play/Pause; Play/Pause is chooser-first"
+fi
+
+grep -q 'reason=focused target' "$repo_root/scripts/smoke_transport_routing_confirmation" \
+  || fail "transport routing smoke must assert the current focused-target route reason"
+
 if grep -Eq 'lastEventTapRoute|programmaticDispatchCount|noteProgrammaticDispatch' "$transport" "$command_filter"; then
   fail "transport echo handling must not keep stale route memory or instant-only dispatch suppression"
 fi

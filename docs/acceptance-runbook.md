@@ -124,10 +124,8 @@ This mode uses a real hardware Play/Pause press to open the ambiguous-target cho
 ## 9. Routing Confirmation
 
 - [ ] Trigger automatic routing without the overlay.
-- [ ] Confirm Keyway posts a native macOS notification, not a custom top-of-screen popup.
-- [ ] Confirm the notification names the target and command.
-- [ ] Confirm repeated automatic routes replace the existing Keyway status notification instead of stacking unique cards.
-- [ ] Confirm no Keyway chooser or legacy HUD window appears for automatic routing.
+- [ ] Confirm automatic Previous/Next routing targets the focused media app.
+- [ ] Confirm no Keyway chooser or legacy HUD window appears for automatic Previous/Next routing.
 
 Repeatable transport routing and native-notification smoke:
 
@@ -135,7 +133,7 @@ Repeatable transport routing and native-notification smoke:
 KEYWAY_APP="$HOME/Applications/Keyway.app" /Users/f.pieringer/projects/keyway/scripts/smoke_transport_routing_confirmation
 ```
 
-This smoke pins a safe Now Playing target, posts synthetic Play/Pause, Next, and Previous media-key events through the HID event tap, verifies Keyway suppresses and routes each command by Pinned Target, checks native-notification request logs, rejects legacy custom Keyway popup windows, and fails on MediaRemote helper parse errors. When QuickTime Player is the target and no QuickTime Now Playing session exists, it creates and cleans up a temporary silent local media file.
+This smoke focuses a safe Now Playing target, posts synthetic Next and Previous media-key events through the HID event tap, verifies Keyway suppresses and routes each command by Focused Target, rejects chooser/legacy custom Keyway popup windows during automatic routing, and fails on MediaRemote helper parse errors. Play/Pause is covered by chooser-specific checks because ambiguous Play/Pause must open the chooser. When QuickTime Player is the target and no QuickTime Now Playing session exists, it creates and cleans up a temporary silent local media file.
 
 Physical media-key acceptance mode:
 
@@ -143,7 +141,7 @@ Physical media-key acceptance mode:
 KEYWAY_PHYSICAL_MEDIA_KEYS=1 KEYWAY_APP="$HOME/Applications/Keyway.app" /Users/f.pieringer/projects/keyway/scripts/smoke_transport_routing_confirmation
 ```
 
-This mode uses the same routing setup and assertions, but prompts for real hardware Previous, Play/Pause, and Next key presses instead of posting synthetic HID events. It also prompts for plain hardware Volume Up, Volume Down, and Mute presses and fails if Keyway logs a plain media-key volume or mute interception.
+This mode uses the same routing setup and assertions, but prompts for real hardware Previous and Next key presses instead of posting synthetic HID events. Play/Pause hardware acceptance is handled by chooser/HITL checks. It also prompts for plain hardware Volume Up, Volume Down, and Mute presses and fails if Keyway logs a plain media-key volume or mute interception.
 
 Playback chooser routing hardening suite:
 

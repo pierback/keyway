@@ -78,13 +78,13 @@ For final hardware-key acceptance, run the same overlay smoke in physical media-
 KEYWAY_PHYSICAL_MEDIA_KEYS=1 /Users/f.pieringer/projects/keyway/scripts/smoke_overlay_browser_controls
 ```
 
-Run the transport routing confirmation smoke while at least two Now Playing targets are active. The script can create a temporary silent QuickTime Player target when QuickTime is selected as the safe routing target:
+Run the transport routing confirmation smoke while at least two Now Playing targets are active. It verifies focused-target routing for Previous/Next; Play/Pause chooser behavior is covered by the playback routing probes. The script can create a temporary silent QuickTime Player target when QuickTime is selected as the safe routing target:
 
 ```bash
 /Users/f.pieringer/projects/keyway/scripts/smoke_transport_routing_confirmation
 ```
 
-For final hardware-key acceptance, run the same transport smoke in physical media-key mode and press real Previous, Play/Pause, Next, Volume Up, Volume Down, and Mute keys when prompted:
+For final hardware-key acceptance, run the same transport smoke in physical media-key mode and press real Previous, Next, Volume Up, Volume Down, and Mute keys when prompted:
 
 ```bash
 KEYWAY_PHYSICAL_MEDIA_KEYS=1 /Users/f.pieringer/projects/keyway/scripts/smoke_transport_routing_confirmation

@@ -33,7 +33,10 @@ Last updated: 2026-05-31
   - `scripts/probe_playback_routing_suite`
   - `KEYWAY_PROBE_ROUTING_SUITE_TARGETS=1 scripts/probe_playback_routing_suite`
   - `scripts/hitl_helium_playback_toggle_check`
+  - `KEYWAY_APP="$HOME/Applications/Keyway.app" scripts/smoke_transport_routing_confirmation`
+  - `KEYWAY_TRANSPORT_UI_SMOKE=1 scripts/regression_gate`
 - Live Helium HITL passed with `beforePlayingCount=1`, `afterPlayingCount=0`, selected target `net.imput.helium:776:desktop`, and backend `helium_javascript`.
+- Transport routing smoke now covers focused-target Previous/Next only; Play/Pause is chooser-first and is covered by chooser/HITL probes.
 - Observed selected-row backend latency in probes:
   - Spotify AppleEvent helper result: `1ms`
   - Helium JavaScript helper result: `68ms`
@@ -177,7 +180,7 @@ Last updated: 2026-05-31
 
 ## Not Yet Passed Locally
 
-- Live physical-key verification is still needed for full Next, Previous behavior and overlay keyboard operation. Synthetic HID media-key routing now passes for pinned automatic routing and native notification confirmation; live Helium hardware Play/Pause selected-row routing now passes.
+- Live physical-key verification is still needed for full Next, Previous behavior and overlay keyboard operation. Synthetic HID media-key routing now passes for focused-target Previous/Next; live Helium hardware Play/Pause selected-row routing now passes.
 - The physical-key verification scripts are ready but have not yet been run in this log:
   - `KEYWAY_PHYSICAL_MEDIA_KEYS=1 scripts/smoke_transport_routing_confirmation`
   - `KEYWAY_PHYSICAL_MEDIA_KEYS=1 scripts/smoke_overlay_browser_controls`
@@ -185,6 +188,6 @@ Last updated: 2026-05-31
 
 ## Next Required Acceptance Checks
 
-1. Re-run media-key checks with physical Play/Pause, Next, Previous keys for chooser, pinning, focused target, prominent-window target, recent target, and single target.
+1. Re-run media-key checks with physical Play/Pause, Next, and Previous keys for chooser and focused-target routing.
 2. Re-run full overlay keyboard checks with live media-key presses.
 3. Move Spotify playback to an unrestricted active device, then verify Spotify Active Device Volume.

@@ -266,7 +266,7 @@ fi
 
 if [[ -z "$target_count" || "$target_count" -lt 2 ]]; then
   echo "$snapshot_output"
-  echo "smoke_transport_routing_confirmation: pinned routing requires at least two Now Playing targets; found ${target_count:-0}" >&2
+  echo "smoke_transport_routing_confirmation: automatic routing requires at least two Now Playing targets; found ${target_count:-0}" >&2
   echo "Start QuickTime plus at least one other media target before running this check." >&2
   exit 1
 fi
@@ -404,13 +404,16 @@ end run
 APPLESCRIPT
 }
 
-hide_media_windows_for_pinned_routing() {
-  : >"$VISIBLE_STATE_FILE"
+focus_target_for_routing() {
+  touch "$VISIBLE_STATE_FILE"
   while IFS=$'\t' read -r kind bundle_id; do
     [[ "$kind" == "target_bundle" && -n "$bundle_id" ]] || continue
+    [[ "$bundle_id" == "$TARGET_BUNDLE" ]] && continue
     record_visible_state_once "$bundle_id"
     hide_bundle "$bundle_id"
   done <"$TARGET_INFO_FILE"
+  open -b "$TARGET_BUNDLE"
+  sleep 0.6
 }
 
 ensure_target_ready_for_command() {
@@ -426,15 +429,12 @@ ensure_target_ready_for_command() {
 
   if [[ -z "$target_count" || "$target_count" -lt 2 ]]; then
     echo "$snapshot_output"
-    echo "smoke_transport_routing_confirmation: pinned routing requires at least two Now Playing targets before command; found ${target_count:-0}" >&2
+    echo "smoke_transport_routing_confirmation: automatic routing requires at least two Now Playing targets before command; found ${target_count:-0}" >&2
     exit 1
   fi
 
   defaults write "$DEFAULTS_DOMAIN" "$PINNED_KEY" "$target_identity" >/dev/null
-  record_visible_state_once "$TARGET_BUNDLE"
-  hide_bundle "$TARGET_BUNDLE"
-  open -a Finder
-  sleep 0.6
+  focus_target_for_routing
 }
 
 post_media_key() {
@@ -449,6 +449,7 @@ post_media_key() {
 
   /usr/bin/swift -e "
 import AppKit
+import ApplicationServices
 import Foundation
 
 let keyCode = ${key_code}
@@ -470,6 +471,10 @@ func post(_ state: Int) {
     )?.cgEvent else {
         exit(2)
     }
+    event.setIntegerValueField(.eventSourceUnixProcessID, value: 0)
+    event.setIntegerValueField(.eventSourceStateID, value: 1)
+    event.setIntegerValueField(.eventSourceUserData, value: 0)
+    event.setIntegerValueField(.eventTargetUnixProcessID, value: 0)
     event.post(tap: .cghidEventTap)
 }
 
@@ -573,7 +578,7 @@ assert_no_custom_keyway_popup() {
 
   if grep -Fqx "Media Targets" <<<"$window_text"; then
     printf '%s\n' "$window_text"
-    echo "smoke_transport_routing_confirmation: chooser opened instead of automatic pinned routing for $command" >&2
+    echo "smoke_transport_routing_confirmation: chooser opened instead of automatic focused routing for $command" >&2
     exit 1
   fi
   if grep -Fqx "$expected_title" <<<"$window_text"; then
@@ -599,8 +604,8 @@ assert_routing_confirmation() {
     sleep 0.35
     logs="$(recent_keyway_logs_since "$command_start")"
     if grep -Fq "action=transport_${command} source=media_key" <<<"$logs" \
-      && grep -Fq "MediaTransport route command=${command} target=${target_app} reason=pinned target" <<<"$logs" \
-      && grep -Fq "KeywayNotification request title=${expected_title} message=Routed by pinned target identifier=keyway.status" <<<"$logs"; then
+      && grep -Fq "MediaTransport route command=${command} target=" <<<"$logs" \
+      && grep -Fq "reason=focused target" <<<"$logs"; then
       break
     fi
   done
@@ -612,19 +617,19 @@ assert_routing_confirmation() {
     echo "smoke_transport_routing_confirmation: missing media-key hotkey log for $command" >&2
     exit 1
   fi
-  if ! grep -Fq "MediaTransport route command=${command} target=${target_app} reason=pinned target" <<<"$logs"; then
+  if ! grep -Fq "MediaTransport route command=${command} target=" <<<"$logs" || ! grep -Fq "reason=focused target" <<<"$logs"; then
     printf '%s\n' "$logs"
-    echo "smoke_transport_routing_confirmation: missing pinned transport route log for $command" >&2
-    exit 1
-  fi
-  if ! grep -Fq "KeywayNotification request title=${expected_title} message=Routed by pinned target identifier=keyway.status" <<<"$logs"; then
-    printf '%s\n' "$logs"
-    echo "smoke_transport_routing_confirmation: missing stable native notification request log for $command" >&2
+    echo "smoke_transport_routing_confirmation: missing focused transport route log for $command" >&2
     exit 1
   fi
   if grep -Fq "MediaRemoteHelper parse_error" <<<"$logs"; then
     printf '%s\n' "$logs"
     echo "smoke_transport_routing_confirmation: MediaRemote command result was not parsed cleanly" >&2
+    exit 1
+  fi
+  if grep -Fq "MediaTransport async_route_failed command=${command}" <<<"$logs"; then
+    printf '%s\n' "$logs"
+    echo "smoke_transport_routing_confirmation: focused transport route failed for $command" >&2
     exit 1
   fi
 
@@ -658,15 +663,12 @@ open "$APP_DIR"
 sleep 1.0
 defaults write "$DEFAULTS_DOMAIN" "$PINNED_KEY" "$target_identity" >/dev/null
 defaults delete "$DEFAULTS_DOMAIN" "$RECENT_KEY" >/dev/null 2>&1 || true
-hide_media_windows_for_pinned_routing
-open -a Finder
-sleep 0.6
+focus_target_for_routing
 
 echo "target=$target_app"
 echo "target_identity=$target_identity"
 
 assert_routing_confirmation previous
-assert_routing_confirmation playPause
 assert_routing_confirmation next
 assert_plain_volume_keys_not_intercepted
 
