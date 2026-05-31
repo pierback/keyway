@@ -230,6 +230,12 @@ grep -q 'shadowRoot' "$transport" \
 grep -q 'contentDocument' "$transport" \
   || fail "Helium desktop dispatch must inspect same-origin iframe media elements"
 
+grep -q 'const directPlaying = direct.filter(isPlaying)' "$transport" \
+  || fail "Helium desktop dispatch must keep the direct playing-media path fast before deep DOM traversal"
+
+grep -q 'const deepPlaying = deep.filter(isPlaying)' "$transport" \
+  || fail "Helium desktop dispatch must pause playing media found in shadow DOM or same-origin frames"
+
 if grep -q '/usr/bin/osascript' "$transport"; then
   fail "selected-row desktop dispatch must not spawn osascript from the app hot path"
 fi
