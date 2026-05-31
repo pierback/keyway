@@ -1,0 +1,281 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+status_file="${1:-$HOME/Library/Application Support/keyway/shortcut-runtime-status.json}"
+timeout_seconds="${KEYWAY_HITL_TIMEOUT_SECONDS:-30}"
+post_dispatch_settle_seconds="${KEYWAY_HITL_HELIUM_POST_DISPATCH_SETTLE_SECONDS:-0.45}"
+skip_wait="${KEYWAY_HITL_SKIP_WAIT:-0}"
+
+if [[ ! -f "$status_file" ]]; then
+  printf 'hitl_helium_playback_toggle_check: missing status file: %s\n' "$status_file" >&2
+  exit 1
+fi
+
+trace_marker() {
+  python3 - "$status_file" <<'PY'
+import json
+import pathlib
+import sys
+
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
+print(int(payload["mediaTransportTraceSequence"]))
+PY
+}
+
+helium_media_state() {
+  osascript <<'APPLESCRIPT'
+tell application id "net.imput.helium"
+    if (count of windows) = 0 then return "{\"ok\":false,\"reason\":\"no_windows\"}"
+    return execute active tab of front window javascript "(() => { const media = Array.from(document.querySelectorAll('video,audio')).filter(element => !element.ended && element.readyState > 0 && (Number.isFinite(element.duration) ? element.duration > 0 : true)); const playing = media.filter(element => !element.paused && !element.ended); const serialise = element => ({tag: element.tagName.toLowerCase(), paused: element.paused, ended: element.ended, readyState: element.readyState, currentTime: Number(element.currentTime.toFixed(3)), duration: Number.isFinite(element.duration) ? Number(element.duration.toFixed(3)) : null, width: element.videoWidth || 0, height: element.videoHeight || 0}); return JSON.stringify({ok: true, mediaCount: media.length, playingCount: playing.length, firstPlaying: playing[0] ? serialise(playing[0]) : null, firstMedia: media[0] ? serialise(media[0]) : null, href: location.href, title: document.title}); })()"
+end tell
+APPLESCRIPT
+}
+
+preflight_live_state() {
+  python3 - "$status_file" <<'PY'
+import json
+import pathlib
+import sys
+
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
+
+def fail(message: str) -> None:
+    print(f"hitl_helium_playback_toggle_check: FAIL: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+if payload.get("eventTapRunning") is not True:
+    fail("hardware Play/Pause interception requires the cghid event tap to be running")
+if payload.get("activeEventTap") != "cghid":
+    fail(f"event tap route is not cghid: {payload.get('activeEventTap')!r}")
+if payload.get("commandCenterRouteRunning") is not True:
+    fail("Command Center route shield is not active; macOS can still route hardware Play/Pause")
+
+targets = payload.get("mediaTargets", [])
+helium = [
+    target for target in targets
+    if target.get("bundleIdentifier") == "net.imput.helium"
+    or target.get("parentBundleIdentifier") == "net.imput.helium"
+    or target.get("app") == "Helium"
+]
+if not helium:
+    fail("Helium is not visible as a chooser target before HITL")
+if len(targets) < 2:
+    fail(f"need at least two visible media targets so chooser opens; got {len(targets)}")
+
+print(
+    "hitl_helium_playback_toggle_check: preflight ok "
+    f"targets={len(targets)} "
+    f"heliumTargetID={helium[0].get('id')!r} "
+    f"rawActiveMediaTargetID={payload.get('rawActiveMediaTargetID')!r}"
+)
+PY
+}
+
+validate_before_state() {
+  python3 - "$1" <<'PY'
+import json
+import sys
+
+state = json.loads(sys.argv[1])
+
+def fail(message: str) -> None:
+    print(f"hitl_helium_playback_toggle_check: FAIL: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+if state.get("ok") is not True:
+    fail(f"Helium JavaScript state query failed before selection: {state}")
+if int(state.get("mediaCount") or 0) < 1:
+    fail("Helium active tab has no video/audio element ready to test")
+if int(state.get("playingCount") or 0) < 1:
+    fail("Helium active tab media must be playing before this HITL regression; start it, then rerun")
+print(
+    "hitl_helium_playback_toggle_check: before "
+    f"playingCount={state.get('playingCount')} "
+    f"mediaCount={state.get('mediaCount')} "
+    f"title={state.get('title')!r}"
+)
+PY
+}
+
+validate_after_state() {
+  python3 - "$1" "$2" <<'PY'
+import json
+import sys
+
+before = json.loads(sys.argv[1])
+after = json.loads(sys.argv[2])
+
+def fail(message: str) -> None:
+    print(f"hitl_helium_playback_toggle_check: FAIL: {message}", file=sys.stderr)
+    print("before=" + json.dumps(before, sort_keys=True), file=sys.stderr)
+    print("after=" + json.dumps(after, sort_keys=True), file=sys.stderr)
+    raise SystemExit(1)
+
+if after.get("ok") is not True:
+    fail(f"Helium JavaScript state query failed after selection: {after}")
+if int(after.get("mediaCount") or 0) < 1:
+    fail("Helium active tab no longer exposes a ready video/audio element after selection")
+if int(after.get("playingCount") or 0) != 0:
+    fail("Helium selected-row dispatch did not pause active-tab media")
+if int(before.get("playingCount") or 0) < 1:
+    fail("fixture error: before state was not playing")
+print(
+    "hitl_helium_playback_toggle_check: after "
+    f"playingCount={after.get('playingCount')} "
+    f"mediaCount={after.get('mediaCount')} "
+    f"title={after.get('title')!r}"
+)
+PY
+}
+
+wait_for_event() {
+  local start_sequence="$1"
+  local event_name="$2"
+  local deadline=$((SECONDS + timeout_seconds))
+  while (( SECONDS < deadline )); do
+    if python3 - "$status_file" "$start_sequence" "$event_name" <<'PY'
+import json
+import pathlib
+import sys
+
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
+start = int(sys.argv[2])
+event_name = sys.argv[3]
+events = [
+    event for event in payload.get("mediaTransportTrace", [])
+    if int(event.get("sequence", 0)) > start
+]
+raise SystemExit(0 if any(event.get("event") == event_name for event in events) else 1)
+PY
+    then
+      return 0
+    fi
+    sleep 0.05
+  done
+  return 1
+}
+
+analyze_trace() {
+  python3 - "$status_file" "$1" "$2" "$3" <<'PY'
+import json
+import pathlib
+import sys
+
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
+start = int(sys.argv[2])
+before = json.loads(sys.argv[3])
+after = json.loads(sys.argv[4])
+events = [
+    event for event in payload.get("mediaTransportTrace", [])
+    if int(event.get("sequence", 0)) > start
+]
+
+def fail(message: str) -> None:
+    print(json.dumps(events, indent=2, sort_keys=True))
+    print("before=" + json.dumps(before, sort_keys=True), file=sys.stderr)
+    print("after=" + json.dumps(after, sort_keys=True), file=sys.stderr)
+    print(f"hitl_helium_playback_toggle_check: FAIL: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+def first(event_name: str):
+    return next((event for event in events if event.get("event") == event_name), None)
+
+key_down = first("transport_key_down")
+input_event = first("input")
+show = first("chooser_show")
+select = first("chooser_select")
+shield_kept = first("selected_row_dispatch_route_shield_kept")
+dispatch = first("chooser_dispatch")
+if key_down is None:
+    fail("no hardware transport key-down was recorded")
+if key_down.get("eventSourceIsPhysicalHIDSystem") is not True:
+    fail("hardware Play/Pause check did not record a physical HID media-key source")
+if input_event is None or input_event.get("source") != "event_tap":
+    fail(f"first input source was {None if input_event is None else input_event.get('source')}; expected cghid event_tap interception")
+if show is None:
+    fail("chooser was not shown")
+if select is None:
+    fail("no chooser row selection was recorded")
+if dispatch is None:
+    fail("no chooser dispatch was recorded")
+
+selected_id = select.get("targetID")
+dispatch_id = dispatch.get("targetID")
+show_target = next(
+    (
+        target for target in show.get("targets", [])
+        if target.get("id") == selected_id
+    ),
+    {},
+)
+selected_bundle = show_target.get("bundleIdentifier")
+if select.get("target") != "Helium" and selected_bundle != "net.imput.helium":
+    fail(f"selected target was {select.get('target')!r}/{selected_bundle!r}; expected Helium")
+if selected_id and dispatch_id and selected_id != dispatch_id:
+    fail(f"selected targetID {selected_id} did not match dispatch targetID {dispatch_id}")
+if dispatch.get("transportBackend") != "helium_javascript":
+    fail(f"chooser_dispatch transportBackend {dispatch.get('transportBackend')!r}; expected 'helium_javascript'")
+if shield_kept is None:
+    fail("Helium selected-row dispatch did not keep the route shield armed")
+if shield_kept.get("transportBackend") != "helium_javascript":
+    fail(f"route-shield keep backend {shield_kept.get('transportBackend')!r}; expected 'helium_javascript'")
+
+helper_results = [
+    event for event in events[events.index(dispatch) + 1:]
+    if event.get("event") == "helper_command_result"
+]
+if not helper_results:
+    fail("no helper command result was recorded after chooser dispatch")
+helper = helper_results[0]
+if helper.get("targetID") and dispatch_id and helper.get("targetID") != dispatch_id:
+    fail(f"helper targetID {helper.get('targetID')} did not match dispatch targetID {dispatch_id}")
+if helper.get("transportBackend") != "helium_javascript":
+    fail(f"helper transportBackend {helper.get('transportBackend')!r}; expected 'helium_javascript'")
+if helper.get("ok") is not True:
+    fail(f"helper did not report success: {helper.get('message')}")
+if "submitted Helium JavaScript command state=paused" not in str(helper.get("message")):
+    fail(f"helper did not report a JavaScript pause: {helper.get('message')!r}")
+if int(before.get("playingCount") or 0) < 1:
+    fail("before state was not playing")
+if int(after.get("playingCount") or 0) != 0:
+    fail("after state was not paused")
+
+print(json.dumps({
+    "event": "hitl_helium_playback_toggle_stable",
+    "selectedTargetID": selected_id,
+    "transportBackend": "helium_javascript",
+    "beforePlayingCount": before.get("playingCount"),
+    "afterPlayingCount": after.get("playingCount"),
+    "helperMessage": helper.get("message"),
+}, sort_keys=True))
+PY
+}
+
+start_sequence="${KEYWAY_HITL_START_SEQUENCE:-$(trace_marker)}"
+printf 'hitl_helium_playback_toggle_check: starting after trace sequence %s\n' "$start_sequence"
+
+if [[ "$skip_wait" == "1" ]]; then
+  printf 'hitl_helium_playback_toggle_check: replay mode; not waiting for live input.\n'
+else
+  preflight_live_state
+fi
+
+before_state="${KEYWAY_HITL_HELIUM_BEFORE_STATE_JSON:-$(helium_media_state)}"
+validate_before_state "$before_state"
+
+if [[ "$skip_wait" != "1" ]]; then
+  printf '1. Keep Helium active-tab video/audio playing.\n'
+  printf '2. Press the hardware Play/Pause key once.\n'
+  printf '3. In the Keyway chooser, select the Helium row.\n'
+  if ! wait_for_event "$start_sequence" "helper_command_result"; then
+    printf 'hitl_helium_playback_toggle_check: timed out waiting for helper_command_result\n' >&2
+    analyze_trace "$start_sequence" "$before_state" "$before_state"
+    exit 1
+  fi
+  sleep "$post_dispatch_settle_seconds"
+fi
+
+after_state="${KEYWAY_HITL_HELIUM_AFTER_STATE_JSON:-$(helium_media_state)}"
+validate_after_state "$before_state" "$after_state"
+analyze_trace "$start_sequence" "$before_state" "$after_state"
+printf 'hitl_helium_playback_toggle_check=ok\n'

@@ -1045,6 +1045,18 @@ grep -q 'expected at least two playing/background sources' "$repo_root/scripts/h
 grep -q 'selected playing target routed' "$repo_root/scripts/hitl_playback_routing_check" \
   || fail "physical HITL chooser dispatch proof must reject row actions that do not match selected row play state"
 
+grep -q 'hitl_helium_playback_toggle_stable' "$repo_root/scripts/hitl_helium_playback_toggle_check" \
+  || fail "Helium HITL regression must prove selected-row JavaScript toggled active-tab media state"
+
+grep -q 'execute active tab of front window javascript' "$repo_root/scripts/hitl_helium_playback_toggle_check" \
+  || fail "Helium HITL regression must inspect real active-tab media state through browser JavaScript"
+
+grep -q 'transportBackend.*helium_javascript' "$repo_root/scripts/hitl_helium_playback_toggle_check" \
+  || fail "Helium HITL regression must require the selected-row Helium JavaScript backend"
+
+grep -q 'verify_hitl_helium_playback_toggle_check_semantics=ok' "$repo_root/scripts/verify_hitl_helium_playback_toggle_check_semantics" \
+  || fail "Helium HITL regression semantics must be covered by replay fixtures"
+
 grep -q 'probe_generated_media_key_swallowed' "$repo_root/scripts/probe_playback_event_tap" \
   || fail "runtime event-tap probe must prove generated media-key bursts are swallowed before routing"
 

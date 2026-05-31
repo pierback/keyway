@@ -1,0 +1,226 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+workdir="$(mktemp -d)"
+trap 'rm -rf "$workdir"' EXIT
+
+ok_status="$workdir/ok-status.json"
+wrong_target_status="$workdir/wrong-target-status.json"
+wrong_backend_status="$workdir/wrong-backend-status.json"
+
+cat >"$ok_status" <<'JSON'
+{
+  "accessibilityGranted": true,
+  "activeEventTap": "cghid",
+  "appPath": "/Users/f.pieringer/Applications/Keyway.app",
+  "commandCenterRouteRunning": true,
+  "eventTapRunning": true,
+  "listenEventGranted": true,
+  "mediaFallback": "enabled",
+  "mediaTargetCount": 2,
+  "mediaTargets": [
+    {
+      "app": "Spotify",
+      "bundleIdentifier": "com.spotify.client",
+      "id": "spotify",
+      "playing": true
+    },
+    {
+      "app": "Helium",
+      "bundleIdentifier": "net.imput.helium",
+      "id": "helium",
+      "playing": true
+    }
+  ],
+  "mediaTransportTraceSequence": 9,
+  "plainHotkeysRegistered": true,
+  "mediaTransportTrace": [
+    {
+      "sequence": 1,
+      "event": "transport_key_down",
+      "command": "playPause",
+      "eventSourceIsPhysicalHIDSystem": true,
+      "eventSourceUnixProcessID": 0,
+      "eventSourceStateID": 1,
+      "eventSourceUserData": 0,
+      "monotonicMilliseconds": 100
+    },
+    {
+      "sequence": 2,
+      "event": "input",
+      "command": "playPause",
+      "source": "event_tap",
+      "monotonicMilliseconds": 101
+    },
+    {
+      "sequence": 3,
+      "event": "decision_chooser",
+      "command": "playPause",
+      "source": "event_tap",
+      "monotonicMilliseconds": 102
+    },
+    {
+      "sequence": 4,
+      "event": "chooser_show",
+      "command": "playPause",
+      "source": "event_tap",
+      "targetCount": 2,
+      "targets": [
+        {
+          "app": "Spotify",
+          "bundleIdentifier": "com.spotify.client",
+          "id": "spotify",
+          "playing": true
+        },
+        {
+          "app": "Helium",
+          "bundleIdentifier": "net.imput.helium",
+          "id": "helium",
+          "playing": true
+        }
+      ],
+      "monotonicMilliseconds": 110
+    },
+    {
+      "sequence": 5,
+      "event": "chooser_select",
+      "command": "playPause",
+      "target": "Helium",
+      "targetID": "helium",
+      "targetPlaying": true,
+      "monotonicMilliseconds": 130
+    },
+    {
+      "sequence": 6,
+      "event": "selected_row_dispatch_route_shield_kept",
+      "command": "playPause",
+      "target": "Helium",
+      "targetID": "helium",
+      "transportBackend": "helium_javascript",
+      "monotonicMilliseconds": 131
+    },
+    {
+      "sequence": 7,
+      "event": "chooser_closed_for_dispatch",
+      "command": "playPause",
+      "target": "Helium",
+      "targetID": "helium",
+      "monotonicMilliseconds": 132
+    },
+    {
+      "sequence": 8,
+      "event": "chooser_dispatch",
+      "command": "playPause",
+      "target": "Helium",
+      "targetID": "helium",
+      "transportBackend": "helium_javascript",
+      "monotonicMilliseconds": 133
+    },
+    {
+      "sequence": 9,
+      "event": "helper_command_result",
+      "command": "playPause",
+      "requestID": "cmd-1",
+      "targetID": "helium",
+      "ok": true,
+      "message": "submitted Helium JavaScript command state=paused",
+      "transportBackend": "helium_javascript",
+      "monotonicMilliseconds": 150
+    }
+  ]
+}
+JSON
+
+python3 - "$ok_status" "$wrong_target_status" "$wrong_backend_status" <<'PY'
+import json
+import pathlib
+import sys
+
+ok = pathlib.Path(sys.argv[1])
+wrong_target = pathlib.Path(sys.argv[2])
+wrong_backend = pathlib.Path(sys.argv[3])
+payload = json.loads(ok.read_text())
+
+wrong_target_payload = json.loads(json.dumps(payload))
+for event in wrong_target_payload["mediaTransportTrace"]:
+    if event.get("event") in {"chooser_select", "chooser_dispatch"}:
+        event["target"] = "Spotify"
+        event["targetID"] = "spotify"
+wrong_target.write_text(json.dumps(wrong_target_payload))
+
+wrong_backend_payload = json.loads(json.dumps(payload))
+for event in wrong_backend_payload["mediaTransportTrace"]:
+    if event.get("event") in {"selected_row_dispatch_route_shield_kept", "chooser_dispatch", "helper_command_result"}:
+        event["transportBackend"] = "mediaremote_player_path"
+wrong_backend.write_text(json.dumps(wrong_backend_payload))
+PY
+
+before_state='{"ok":true,"mediaCount":1,"playingCount":1,"title":"Helium test","firstPlaying":{"tag":"video","paused":false}}'
+after_state='{"ok":true,"mediaCount":1,"playingCount":0,"title":"Helium test","firstPlaying":null,"firstMedia":{"tag":"video","paused":true}}'
+unchanged_after_state='{"ok":true,"mediaCount":1,"playingCount":1,"title":"Helium test","firstPlaying":{"tag":"video","paused":false}}'
+
+KEYWAY_HITL_SKIP_WAIT=1 \
+KEYWAY_HITL_START_SEQUENCE=0 \
+KEYWAY_HITL_HELIUM_BEFORE_STATE_JSON="$before_state" \
+KEYWAY_HITL_HELIUM_AFTER_STATE_JSON="$after_state" \
+  "$repo_root/scripts/hitl_helium_playback_toggle_check" "$ok_status" >/dev/null
+
+if KEYWAY_HITL_SKIP_WAIT=1 \
+  KEYWAY_HITL_START_SEQUENCE=0 \
+  KEYWAY_HITL_HELIUM_BEFORE_STATE_JSON="$before_state" \
+  KEYWAY_HITL_HELIUM_AFTER_STATE_JSON="$after_state" \
+  "$repo_root/scripts/hitl_helium_playback_toggle_check" "$wrong_target_status" >"$workdir/wrong-target.out" 2>"$workdir/wrong-target.err"; then
+  printf 'verify_hitl_helium_playback_toggle_check_semantics: wrong-target fixture unexpectedly passed\n' >&2
+  exit 1
+fi
+grep -q 'expected Helium' "$workdir/wrong-target.err" \
+  || {
+    printf 'verify_hitl_helium_playback_toggle_check_semantics: wrong-target failure reason was wrong\n' >&2
+    cat "$workdir/wrong-target.err" >&2
+    exit 1
+  }
+
+if KEYWAY_HITL_SKIP_WAIT=1 \
+  KEYWAY_HITL_START_SEQUENCE=0 \
+  KEYWAY_HITL_HELIUM_BEFORE_STATE_JSON="$before_state" \
+  KEYWAY_HITL_HELIUM_AFTER_STATE_JSON="$after_state" \
+  "$repo_root/scripts/hitl_helium_playback_toggle_check" "$wrong_backend_status" >"$workdir/wrong-backend.out" 2>"$workdir/wrong-backend.err"; then
+  printf 'verify_hitl_helium_playback_toggle_check_semantics: wrong-backend fixture unexpectedly passed\n' >&2
+  exit 1
+fi
+grep -q "expected 'helium_javascript'" "$workdir/wrong-backend.err" \
+  || {
+    printf 'verify_hitl_helium_playback_toggle_check_semantics: wrong-backend failure reason was wrong\n' >&2
+    cat "$workdir/wrong-backend.err" >&2
+    exit 1
+  }
+
+if KEYWAY_HITL_SKIP_WAIT=1 \
+  KEYWAY_HITL_START_SEQUENCE=0 \
+  KEYWAY_HITL_HELIUM_BEFORE_STATE_JSON="$before_state" \
+  KEYWAY_HITL_HELIUM_AFTER_STATE_JSON="$unchanged_after_state" \
+  "$repo_root/scripts/hitl_helium_playback_toggle_check" "$ok_status" >"$workdir/unchanged.out" 2>"$workdir/unchanged.err"; then
+  printf 'verify_hitl_helium_playback_toggle_check_semantics: unchanged-after fixture unexpectedly passed\n' >&2
+  exit 1
+fi
+grep -q 'did not pause active-tab media' "$workdir/unchanged.err" \
+  || {
+    printf 'verify_hitl_helium_playback_toggle_check_semantics: unchanged-after failure reason was wrong\n' >&2
+    cat "$workdir/unchanged.err" >&2
+    exit 1
+  }
+
+grep -q 'execute active tab of front window javascript' "$repo_root/scripts/hitl_helium_playback_toggle_check" \
+  || {
+    printf 'verify_hitl_helium_playback_toggle_check_semantics: HITL checker must inspect Helium active-tab media state with JavaScript\n' >&2
+    exit 1
+  }
+
+grep -q 'KEYWAY_HITL_HELIUM_BEFORE_STATE_JSON' "$repo_root/scripts/hitl_helium_playback_toggle_check" \
+  || {
+    printf 'verify_hitl_helium_playback_toggle_check_semantics: HITL checker must support deterministic replay fixtures\n' >&2
+    exit 1
+  }
+
+printf 'verify_hitl_helium_playback_toggle_check_semantics=ok\n'
