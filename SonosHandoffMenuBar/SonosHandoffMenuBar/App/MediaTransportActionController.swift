@@ -1,5 +1,7 @@
 import AppKit
+import ApplicationServices
 import Combine
+import Darwin
 import Foundation
 import os
 import SonosHandoffCore
@@ -25,8 +27,6 @@ final class MediaTransportActionController {
     var relaxRouteShield: ((String) -> Void)?
     private var targetSubscription: AnyCancellable?
     private var programmaticDispatches: [UUID: MediaTransportPendingDispatchEcho] = [:]
-    private var spotifyDesktopIsPlaying: Bool?
-    private var spotifyDesktopStateRefreshInFlight = false
 
     init(
         mediaRemoteController: MediaRemoteController,
@@ -56,7 +56,6 @@ final class MediaTransportActionController {
                     targets: sorted,
                     generation: self.overlayController.currentGeneration
                 )
-                self.refreshSpotifyDesktopPlaybackStateIfNeeded(targets: newTargets)
             }
     }
 
@@ -245,7 +244,6 @@ final class MediaTransportActionController {
             activeTargetID: mediaRemoteController.activeTargetID
         )
         let cached = targetsIncludingHeliumDesktop(sortedTargets)
-        refreshSpotifyDesktopPlaybackStateIfNeeded(targets: cached)
         let refreshQueued = mediaRemoteController.refreshSnapshot()
 
         logger.info("MediaTransport chooser_show command=\(commandName, privacy: .public) source=\(source.rawValue, privacy: .public) targetCount=\(cached.count, privacy: .public) refreshQueued=\(refreshQueued, privacy: .public) targets=\(MediaTransportCommandRules.targetLogSummary(cached), privacy: .public)")
@@ -578,44 +576,24 @@ final class MediaTransportActionController {
         )]
     }
 
-    private func refreshSpotifyDesktopPlaybackStateIfNeeded(targets: [MediaRemoteTarget]) {
-        guard targets.contains(where: usesSpotifyDesktopTransport) else {
-            spotifyDesktopIsPlaying = nil
-            return
-        }
-        guard !spotifyDesktopStateRefreshInFlight else {
-            return
-        }
-
-        spotifyDesktopStateRefreshInFlight = true
-        DispatchQueue.global(qos: .utility).async {
-            let result = Self.runDesktopAppleScript(Self.spotifyDesktopStateAppleScriptSource())
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                if result.status == 0 {
-                    self.spotifyDesktopIsPlaying = result.output == "playing"
-                }
-                self.spotifyDesktopStateRefreshInFlight = false
-            }
-        }
-    }
-
     private func submitSpotifyDesktopCommand(
         command: MediaRemoteTransportCommand,
         target: MediaRemoteTarget
     ) -> MediaRemoteCommandResultEvent {
-        let result = Self.runDesktopAppleScript(spotifyDesktopAppleScriptSource(command: command))
-        let ok = result.status == 0
-        if ok {
-            spotifyDesktopIsPlaying = result.output == "playing"
-        }
+        let eventID = Self.spotifyAppleEventID(command: command)
+        let status = Self.sendAppleEvent(
+            bundleIdentifier: "com.spotify.client",
+            eventClass: "spfy",
+            eventID: eventID
+        )
+        let ok = status == noErr
         return MediaRemoteCommandResultEvent(
             type: "commandResult",
             requestID: UUID().uuidString,
             targetID: target.id,
             command: command.rawValue,
             ok: ok,
-            message: ok ? "submitted Spotify osascript command state=\(result.output)" : "Spotify osascript failed: \(result.error)"
+            message: ok ? "submitted Spotify AppleEvent command event=\(eventID)" : "Spotify AppleEvent failed status=\(status)"
         )
     }
 
@@ -623,100 +601,99 @@ final class MediaTransportActionController {
         command: MediaRemoteTransportCommand,
         target: MediaRemoteTarget
     ) -> MediaRemoteCommandResultEvent {
-        let result = Self.runDesktopAppleScript(heliumDesktopAppleScriptSource(command: command))
-        let ok = result.status == 0
+        let ok = postHeliumSpaceToggle(pid: pid_t(target.pid))
         return MediaRemoteCommandResultEvent(
             type: "commandResult",
             requestID: UUID().uuidString,
             targetID: target.id,
             command: command.rawValue,
             ok: ok,
-            message: ok ? "submitted Helium osascript command state=\(result.output)" : "Helium osascript failed: \(result.output.isEmpty ? result.error : result.output)"
+            message: ok ? "submitted Helium keyboard toggle" : "Helium keyboard toggle failed"
         )
     }
 
-    nonisolated private static func runDesktopAppleScript(_ source: String) -> (status: Int32, output: String, error: String) {
-        let process = Process()
-        let outputPipe = Pipe()
-        let errorPipe = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = ["-e", source]
-        process.standardOutput = outputPipe
-        process.standardError = errorPipe
-        try! process.run()
-        process.waitUntilExit()
-        return (
-            process.terminationStatus,
-            String(decoding: outputPipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-            String(decoding: errorPipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        )
+    private func postHeliumSpaceToggle(pid: pid_t) -> Bool {
+        guard let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated else {
+            return false
+        }
+        guard app.activate(options: [.activateIgnoringOtherApps]) else {
+            return false
+        }
+        usleep(50_000)
+        let source = CGEventSource(stateID: .hidSystemState)
+        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 49, keyDown: true),
+              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 49, keyDown: false)
+        else {
+            return false
+        }
+        keyDown.post(tap: .cghidEventTap)
+        usleep(20_000)
+        keyUp.post(tap: .cghidEventTap)
+        return true
     }
 
-    nonisolated private static func spotifyDesktopStateAppleScriptSource() -> String {
-        #"""
-        tell application id "com.spotify.client"
-            return player state as string
-        end tell
-        """#
-    }
-
-    private func spotifyDesktopAppleScriptSource(command: MediaRemoteTransportCommand) -> String {
+    nonisolated private static func spotifyAppleEventID(command: MediaRemoteTransportCommand) -> String {
         switch command {
         case .play:
-            return #"""
-tell application id "com.spotify.client"
-    play
-    delay 0.05
-    return player state as string
-end tell
-"""#
+            return "Play"
         case .pause:
-            return #"""
-tell application id "com.spotify.client"
-    pause
-    delay 0.05
-    return player state as string
-end tell
-"""#
+            return "Paus"
         case .playPause:
-            return #"""
-tell application id "com.spotify.client"
-    if player state is playing then
-        pause
-    else
-        play
-    end if
-    delay 0.05
-    return player state as string
-end tell
-"""#
+            return "PlPs"
         case .next:
-            return #"""
-tell application id "com.spotify.client"
-    next track
-    delay 0.05
-    return player state as string
-end tell
-"""#
+            return "Next"
         case .previous:
-            return #"""
-tell application id "com.spotify.client"
-    previous track
-    delay 0.05
-    return player state as string
-end tell
-"""#
+            return "Prev"
         }
     }
 
-    private func heliumDesktopAppleScriptSource(command: MediaRemoteTransportCommand) -> String {
-        #"""
-tell application id "net.imput.helium" to activate
-delay 0.05
-tell application "System Events" to key code 49
-return "keyboard_toggle"
-"""#
+    nonisolated private static func sendAppleEvent(
+        bundleIdentifier: String,
+        eventClass: String,
+        eventID: String
+    ) -> OSStatus {
+        var target = AEAddressDesc()
+        let targetStatus = bundleIdentifier.withCString { pointer in
+            AECreateDesc(
+                DescType(typeApplicationBundleID),
+                pointer,
+                bundleIdentifier.lengthOfBytes(using: .utf8),
+                &target
+            )
+        }
+        guard targetStatus == noErr else {
+            return OSStatus(targetStatus)
+        }
+        defer { AEDisposeDesc(&target) }
+
+        var event = AppleEvent()
+        let eventStatus = AECreateAppleEvent(
+            AEEventClass(fourCharCode(eventClass)),
+            AEEventID(fourCharCode(eventID)),
+            &target,
+            AEReturnID(kAutoGenerateReturnID),
+            AETransactionID(kAnyTransactionID),
+            &event
+        )
+        guard eventStatus == noErr else {
+            return OSStatus(eventStatus)
+        }
+        defer { AEDisposeDesc(&event) }
+
+        return AESendMessage(
+            &event,
+            nil,
+            AESendMode(kAENoReply | kAECanInteract | kAECanSwitchLayer),
+            kAEDefaultTimeout
+        )
+    }
+
+    nonisolated private static func fourCharCode(_ value: String) -> OSType {
+        var result: UInt32 = 0
+        for byte in value.utf8 {
+            result = (result << 8) + UInt32(byte)
+        }
+        return result
     }
 
     private func beginBoundedProgrammaticDispatch(command: MediaRemoteTransportCommand) -> UUID {

@@ -24,6 +24,8 @@
     <string>public.app-category.music</string>
     <key>LSUIElement</key>
     <true/>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Keyway sends playback commands to selected media apps after you choose them.</string>
     <key>NSUserNotificationAlertStyle</key>
     <string>banner</string>
     <key>NSPrincipalClass</key>
