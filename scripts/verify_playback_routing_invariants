@@ -1009,6 +1009,9 @@ grep -q 'trace(result: result, transportBackend:' "$transport" \
 grep -q 'showCommandFailureIfNeeded(result: result, target: target)' "$transport" \
   || fail "async MediaRemote command failures must surface after accepted helper writes"
 
+grep -q 'Privacy & Security > Automation' "$transport" \
+  || fail "Apple Events TCC failures must show an actionable Automation recovery hint"
+
 grep -q 'async_route_failed' "$transport" \
   || fail "async MediaRemote command failures must be logged"
 

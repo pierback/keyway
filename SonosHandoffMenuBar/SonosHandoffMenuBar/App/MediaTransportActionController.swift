@@ -819,7 +819,9 @@ end tell
         logger.error("MediaTransport async_route_failed command=\(result.command, privacy: .public) target=\(target.appName, privacy: .public) targetID=\(result.targetID, privacy: .public) message=\(result.message, privacy: .public)")
         StatusHUD.shared.finish(
             title: "Media Command Failed",
-            message: "Keyway could not reach \(target.appName).",
+            message: result.message.contains("-1743")
+                ? "Allow Keyway to control \(target.appName) in System Settings > Privacy & Security > Automation, then retry."
+                : "Keyway could not reach \(target.appName).",
             dismissAfter: 2.2
         )
     }
