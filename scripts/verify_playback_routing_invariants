@@ -218,11 +218,18 @@ grep -q 'targetsIncludingHeliumDesktop' "$remote_controller" \
 grep -q 'sendAppleEvent' "$transport" \
   || fail "Spotify desktop dispatch must use in-process Apple Events instead of spawning osascript"
 
-grep -q 'postHeliumSpaceToggle' "$transport" \
-  || fail "Helium desktop dispatch must post keyboard events directly instead of spawning osascript"
+grep -q 'runHeliumJavaScriptToggle' "$transport" \
+  || fail "Helium desktop dispatch must execute tab JavaScript instead of using MediaRemote or keypress guesses"
+
+grep -q 'execute active tab of front window javascript' "$transport" \
+  || fail "Helium desktop dispatch must target browser media through Chromium scripting"
 
 if grep -q '/usr/bin/osascript' "$transport"; then
   fail "selected-row desktop dispatch must not spawn osascript from the app hot path"
+fi
+
+if grep -q 'key code 49\|virtualKey: 49' "$transport"; then
+  fail "Helium selected-row dispatch must not simulate Space; focus-dependent browser keypresses are not target control"
 fi
 
 grep -q 'NSAppleEventsUsageDescription' "$info_plist" \

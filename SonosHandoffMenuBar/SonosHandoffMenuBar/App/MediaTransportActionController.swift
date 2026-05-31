@@ -1,7 +1,6 @@
 import AppKit
 import ApplicationServices
 import Combine
-import Darwin
 import Foundation
 import os
 import SonosHandoffCore
@@ -601,35 +600,25 @@ final class MediaTransportActionController {
         command: MediaRemoteTransportCommand,
         target: MediaRemoteTarget
     ) -> MediaRemoteCommandResultEvent {
-        let ok = postHeliumSpaceToggle(pid: pid_t(target.pid))
+        let result = runHeliumJavaScriptToggle()
         return MediaRemoteCommandResultEvent(
             type: "commandResult",
             requestID: UUID().uuidString,
             targetID: target.id,
             command: command.rawValue,
-            ok: ok,
-            message: ok ? "submitted Helium keyboard toggle" : "Helium keyboard toggle failed"
+            ok: result.ok,
+            message: result.ok ? "submitted Helium JavaScript command state=\(result.message)" : "Helium JavaScript failed: \(result.message)"
         )
     }
 
-    private func postHeliumSpaceToggle(pid: pid_t) -> Bool {
-        guard let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated else {
-            return false
+    private func runHeliumJavaScriptToggle() -> (ok: Bool, message: String) {
+        let script = NSAppleScript(source: Self.heliumJavaScriptToggleAppleScriptSource())!
+        var error: NSDictionary?
+        let output = script.executeAndReturnError(&error).stringValue ?? ""
+        if let error {
+            return (false, String(describing: error))
         }
-        guard app.activate(options: [.activateIgnoringOtherApps]) else {
-            return false
-        }
-        usleep(50_000)
-        let source = CGEventSource(stateID: .hidSystemState)
-        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 49, keyDown: true),
-              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 49, keyDown: false)
-        else {
-            return false
-        }
-        keyDown.post(tap: .cghidEventTap)
-        usleep(20_000)
-        keyUp.post(tap: .cghidEventTap)
-        return true
+        return (output != "no_media" && !output.isEmpty, output)
     }
 
     nonisolated private static func spotifyAppleEventID(command: MediaRemoteTransportCommand) -> String {
@@ -694,6 +683,15 @@ final class MediaTransportActionController {
             result = (result << 8) + UInt32(byte)
         }
         return result
+    }
+
+    nonisolated private static func heliumJavaScriptToggleAppleScriptSource() -> String {
+        #"""
+tell application id "net.imput.helium"
+    if (count of windows) = 0 then return "no_windows"
+    return execute active tab of front window javascript "(() => { const media = Array.from(document.querySelectorAll('video,audio')).filter(element => !element.ended && element.readyState > 0 && (Number.isFinite(element.duration) ? element.duration > 0 : true)); const playing = media.filter(element => !element.paused && !element.ended); if (playing.length > 0) { playing.forEach(element => element.pause()); return 'paused'; } const visibleArea = element => { const rect = element.getBoundingClientRect(); const width = Math.max(0, Math.min(rect.right, innerWidth) - Math.max(rect.left, 0)); const height = Math.max(0, Math.min(rect.bottom, innerHeight) - Math.max(rect.top, 0)); return width * height; }; media.sort((left, right) => visibleArea(right) - visibleArea(left) || ((right.videoWidth || 1) * (right.videoHeight || 1)) - ((left.videoWidth || 1) * (left.videoHeight || 1)) || right.duration - left.duration); const target = media[0]; if (!target) return 'no_media'; target.play(); return target.paused ? 'play_requested' : 'playing'; })()"
+end tell
+"""#
     }
 
     private func beginBoundedProgrammaticDispatch(command: MediaRemoteTransportCommand) -> UUID {
