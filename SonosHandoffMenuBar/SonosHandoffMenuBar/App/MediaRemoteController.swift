@@ -583,7 +583,12 @@ final class MediaRemoteController: ObservableObject {
     }
 
     private static func targetsIncludingHeliumDesktop(_ targets: [MediaRemoteTarget]) -> [MediaRemoteTarget] {
-        guard !targets.contains(where: { $0.bundleIdentifier == "net.imput.helium" || $0.parentBundleIdentifier == "net.imput.helium" }),
+        let heliumAvailability = heliumActiveTabMediaAvailable()
+        if heliumAvailability == false {
+            return targets.filter { !isHeliumTarget($0) }
+        }
+        guard !targets.contains(where: isHeliumTarget),
+              heliumAvailability == true,
               let app = NSRunningApplication.runningApplications(withBundleIdentifier: "net.imput.helium").first,
               !app.isTerminated
         else {
@@ -606,6 +611,38 @@ final class MediaRemoteController: ObservableObject {
             elapsedTime: nil,
             elapsedTimestamp: nil
         )]
+    }
+
+    private static func isHeliumTarget(_ target: MediaRemoteTarget) -> Bool {
+        target.bundleIdentifier == "net.imput.helium" || target.parentBundleIdentifier == "net.imput.helium"
+    }
+
+    private static func heliumActiveTabMediaAvailable() -> Bool? {
+        guard NSRunningApplication.runningApplications(withBundleIdentifier: "net.imput.helium").contains(where: { !$0.isTerminated }) else {
+            return false
+        }
+        let script = NSAppleScript(source: heliumMediaAvailabilityAppleScriptSource())!
+        var error: NSDictionary?
+        let output = script.executeAndReturnError(&error).stringValue ?? ""
+        if error != nil {
+            return nil
+        }
+        if output == "media" {
+            return true
+        }
+        if output == "no_windows" || output == "no_media" {
+            return false
+        }
+        return nil
+    }
+
+    private static func heliumMediaAvailabilityAppleScriptSource() -> String {
+        #"""
+tell application id "net.imput.helium"
+    if (count of windows) = 0 then return "no_windows"
+    return execute active tab of front window javascript "(() => { const isReady = element => !element.ended && element.readyState > 0 && (Number.isFinite(element.duration) ? element.duration > 0 : true); const direct = Array.from(document.querySelectorAll('video,audio')).filter(isReady); if (direct.length > 0) return 'media'; const seen = new Set(); const roots = [document]; for (let index = 0; index < roots.length; index += 1) { const root = roots[index]; root.querySelectorAll('video,audio').forEach(element => { if (!seen.has(element)) seen.add(element); }); root.querySelectorAll('*').forEach(element => { if (element.shadowRoot) roots.push(element.shadowRoot); }); root.querySelectorAll('iframe,frame').forEach(frame => { const source = frame.getAttribute('src') || ''; const sameOrigin = source === '' || source.startsWith('about:') || new URL(frame.src || source, location.href).origin === location.origin; const sandbox = frame.getAttribute('sandbox'); const sandboxAllowsSameOrigin = sandbox === null || sandbox.split(/\\s+/).includes('allow-same-origin'); if (sameOrigin && sandboxAllowsSameOrigin && frame.contentDocument) roots.push(frame.contentDocument); }); } for (const element of seen) { if (isReady(element)) return 'media'; } return 'no_media'; })()"
+end tell
+"""#
     }
 
     private static func nilIfEmpty(_ value: String?) -> String? {

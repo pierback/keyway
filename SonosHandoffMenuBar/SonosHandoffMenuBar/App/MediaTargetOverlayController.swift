@@ -1,4 +1,4 @@
-import AppKit
+@preconcurrency import AppKit
 import SwiftUI
 
 @MainActor
@@ -11,9 +11,42 @@ final class MediaTargetOverlayController {
     private var isClosing = false
     private var audioSnapshotGeneration = 0
     private var generation = 0
+    private var resignActiveObserver: NSObjectProtocol?
+    private var workspaceActivationObserver: NSObjectProtocol?
 
     init(audioController: MediaAudioControlController) {
         self.audioController = audioController
+        resignActiveObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: NSApp,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.scheduleFocusLossClose()
+            }
+        }
+        workspaceActivationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            let application = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            guard application?.bundleIdentifier != Bundle.main.bundleIdentifier else {
+                return
+            }
+            Task { @MainActor [weak self] in
+                self?.scheduleFocusLossClose()
+            }
+        }
+    }
+
+    deinit {
+        if let resignActiveObserver {
+            NotificationCenter.default.removeObserver(resignActiveObserver)
+        }
+        if let workspaceActivationObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(workspaceActivationObserver)
+        }
     }
 
     var isVisible: Bool {
@@ -46,6 +79,25 @@ final class MediaTargetOverlayController {
     }
 
     func close() {
+        close(notifyDismiss: true)
+    }
+
+    private func scheduleFocusLossClose() {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            guard let self,
+                  self.panel?.isKeyWindow != true
+            else {
+                return
+            }
+            self.closeFromFocusLoss()
+        }
+    }
+
+    private func closeFromFocusLoss() {
+        guard isVisible else {
+            return
+        }
         close(notifyDismiss: true)
     }
 
@@ -93,12 +145,15 @@ final class MediaTargetOverlayController {
             .fullScreenAuxiliary,
             .transient,
         ]
-        panel.hidesOnDeactivate = false
+        panel.hidesOnDeactivate = true
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
         panel.onKeyDown = { [weak self] event in
             self?.handleKeyDown(event) ?? false
+        }
+        panel.onResignKey = { [weak self] in
+            self?.scheduleFocusLossClose()
         }
         panel.contentView = NSHostingView(rootView: MediaTargetOverlayView(
             model: model,
@@ -276,6 +331,7 @@ final class MediaTargetOverlayController {
 @MainActor
 private final class MediaTargetOverlayPanel: NSPanel {
     var onKeyDown: ((NSEvent) -> Bool)?
+    var onResignKey: (() -> Void)?
 
     override var canBecomeKey: Bool {
         true
@@ -294,6 +350,7 @@ private final class MediaTargetOverlayPanel: NSPanel {
 
     override func resignKey() {
         super.resignKey()
+        onResignKey?()
     }
 
 }

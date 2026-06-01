@@ -44,6 +44,8 @@ Last updated: 2026-05-31
   - Helium JavaScript helper result: `68ms`
 - Display brightness keys were verified as pass-through after removing the mistaken `keyCode=2` Play/Pause mapping; `keyCode=2` is brightness-up, not Play/Pause.
 - Media chooser rows now use deterministic order: playing rows first, then app name, title, and id. Ordering no longer depends on MediaRemote freshness timestamps, active-route churn, or helper array order.
+- Helium chooser rows are now gated by active-tab JavaScript media availability, so stale MediaRemote Helium rows and desktop fallback rows are removed when Helium has no playable active-tab media.
+- The chooser now dismisses without dispatch when Keyway loses focus or another app is activated; this is covered by `scripts/probe_playback_chooser_focus_dismiss`.
 - `scripts/acceptance_preflight` remains environment-blocked, not Keyway-routing-blocked:
   - `sonos-handoff-port: Spotify has no active playback`
   - App identity, installed helper, MediaRemote snapshot, cghid event-tap readiness, Command Center route shield readiness, config import, Sonos `Port` discovery, and legacy-file integrity passed before that block.

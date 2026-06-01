@@ -817,6 +817,9 @@ fi
 grep -q 'verify_shortcut_event_parser_semantics=ok' "$repo_root/scripts/verify_shortcut_event_parser_semantics" \
   || fail "event parser semantics must lock display brightness keys to pass-through"
 
+grep -q 'heliumActiveTabMediaAvailable' "$remote_controller" \
+  || fail "Helium chooser rows must be gated by active-tab playable media"
+
 grep -q 'probe_display_brightness_passthrough_stable' "$repo_root/scripts/probe_display_brightness_passthrough" \
   || fail "runtime probe must reject display brightness keys opening the media chooser"
 
@@ -1133,9 +1136,14 @@ if grep -q 'onFocusLost' "$overlay"; then
   fail "chooser must not auto-dismiss from focus churn while media-key echoes are still arriving"
 fi
 
-if grep -q 'didResignActiveNotification' "$overlay"; then
-  fail "chooser must not auto-dismiss from app deactivation while media-key echoes are still arriving"
-fi
+grep -q 'didResignActiveNotification' "$overlay" \
+  || fail "chooser must dismiss when Keyway resigns active"
+
+grep -q 'NSWorkspace.didActivateApplicationNotification' "$overlay" \
+  || fail "chooser must dismiss when the workspace focuses another app"
+
+grep -q 'probe_chooser_focus_dismiss_stable' "$repo_root/scripts/probe_playback_chooser_focus_dismiss" \
+  || fail "runtime probe must prove focus-loss dismissal closes chooser without dispatch"
 
 grep -q 'panel.level = .statusBar' "$overlay" \
   || fail "chooser panel must be raised above foreground app windows"
@@ -1143,8 +1151,8 @@ grep -q 'panel.level = .statusBar' "$overlay" \
 grep -q 'panel.orderFrontRegardless()' "$overlay" \
   || fail "chooser panel must be ordered front after activation"
 
-grep -q 'panel.hidesOnDeactivate = false' "$overlay" \
-  || fail "chooser panel must remain visible when Keyway activation is delayed"
+grep -q 'panel.hidesOnDeactivate = true' "$overlay" \
+  || fail "chooser panel must disappear on app deactivation"
 
 grep -q 'let choose = onChoose' "$overlay" \
   || fail "chooser selection must preserve the pending callback while closing the panel"

@@ -239,7 +239,7 @@ final class MediaTransportActionController {
         }
 
         let cached = MediaTransportCommandRules.sortedTargets(
-            targetsIncludingHeliumDesktop(mediaRemoteController.targets),
+            mediaRemoteController.targets,
             activeTargetID: mediaRemoteController.activeTargetID
         )
         let refreshQueued = mediaRemoteController.refreshSnapshot()
@@ -560,32 +560,6 @@ final class MediaTransportActionController {
 
     private func usesHeliumDesktopTransport(target: MediaRemoteTarget) -> Bool {
         target.bundleIdentifier == "net.imput.helium" || target.parentBundleIdentifier == "net.imput.helium"
-    }
-
-    private func targetsIncludingHeliumDesktop(_ targets: [MediaRemoteTarget]) -> [MediaRemoteTarget] {
-        guard !targets.contains(where: usesHeliumDesktopTransport),
-              let app = NSRunningApplication.runningApplications(withBundleIdentifier: "net.imput.helium").first,
-              !app.isTerminated
-        else {
-            return targets
-        }
-
-        return targets + [MediaRemoteTarget(
-            id: "net.imput.helium:\(app.processIdentifier):desktop",
-            bundleIdentifier: "net.imput.helium",
-            parentBundleIdentifier: "",
-            displayName: app.localizedName ?? "Helium",
-            pid: Int(app.processIdentifier),
-            title: "Browser media",
-            artist: "",
-            album: "",
-            playbackRate: "",
-            mediaType: nil,
-            artworkBase64: nil,
-            duration: nil,
-            elapsedTime: nil,
-            elapsedTimestamp: nil
-        )]
     }
 
     private func submitSpotifyDesktopCommand(

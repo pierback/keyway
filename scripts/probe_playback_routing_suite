@@ -59,6 +59,7 @@ run_probe_cleanly() {
 
 run_probe_cleanly scripts/probe_playback_event_tap
 run_probe_cleanly scripts/probe_display_brightness_passthrough
+run_probe_cleanly scripts/probe_playback_chooser_focus_dismiss
 "$repo_root/scripts/verify_playback_routing_invariants" >/dev/null
 "$repo_root/scripts/verify_shortcut_event_parser_semantics" >/dev/null
 "$repo_root/scripts/verify_hitl_playback_routing_check_semantics" >/dev/null

@@ -86,6 +86,8 @@ select_chooser_row() {
 on run argv
   set numberKeyCodes to {18, 19, 20, 21, 23, 22, 26, 28, 25}
   set targetIndex to (item 1 of argv as integer) + 1
+  tell application id "com.fpieringer.Keyway" to activate
+  delay 0.05
   tell application "System Events"
     key code (item targetIndex of numberKeyCodes)
   end tell
@@ -96,6 +98,8 @@ end run
 
   osascript -e '
 on run argv
+  tell application id "com.fpieringer.Keyway" to activate
+  delay 0.05
   tell application "System Events"
     repeat (item 1 of argv as integer) times
       key code 125
