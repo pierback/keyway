@@ -39,6 +39,10 @@ struct MediaRemoteTarget: Equatable, Identifiable {
     let title: String
     let isCurrentlyPlaying: Bool
     let playbackFreshness: Double
+
+    func matchesRoutingIdentity(_ identity: String?) -> Bool {
+        id == identity
+    }
 }
 SWIFT
 
@@ -70,10 +74,10 @@ struct CommandRuleSemantics {
         expectEqual(
             MediaTransportCommandRules.sortedTargets(
                 [newerSpotify, stoppedNewerHelium, olderArc],
-                activeTargetID: newerSpotify.id
+                preferredTargetID: newerSpotify.id
             ).map(\.id),
-            ["arc", "spotify", "helium"],
-            "Chooser ordering must be stable: playing targets first, then app name, ignoring freshness and active-target churn"
+            ["spotify", "arc", "helium"],
+            "Chooser ordering must be stable: playing targets first, then recent selected target, then app name, ignoring freshness churn"
         )
 
         let beta = target(id: "beta", name: "Arc", title: "Beta", playing: true, freshness: 300)
@@ -81,10 +85,19 @@ struct CommandRuleSemantics {
         expectEqual(
             MediaTransportCommandRules.sortedTargets(
                 [beta, alpha],
-                activeTargetID: beta.id
+                preferredTargetID: nil
             ).map(\.id),
             ["alpha", "beta"],
             "Rows with the same app name must use title and id tie-breakers so order cannot depend on helper array order"
+        )
+
+        expectEqual(
+            MediaTransportCommandRules.sortedTargets(
+                [newerSpotify, stoppedNewerHelium, olderArc],
+                preferredTargetID: stoppedNewerHelium.id
+            ).map(\.id),
+            ["arc", "spotify", "helium"],
+            "Playing targets must stay above the recent selected target"
         )
 
         print("verify_media_transport_command_rules_semantics=ok")

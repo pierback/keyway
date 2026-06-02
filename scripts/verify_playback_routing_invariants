@@ -1210,9 +1210,15 @@ if grep -Eq 'showChooserAfterRefreshingSnapshot|chooserSnapshotWaitNanoseconds|r
   fail "playback chooser must present immediately from cache and refresh snapshots only in the background"
 fi
 
-if grep -Eq 'selectedTargetID|selectedTargetIdentity|pinnedTarget|recentTarget|markRecentTarget|togglePinnedTarget' "$transport"; then
-  fail "transport routing must not use selected, pinned, or recent hidden state"
+if grep -Eq 'selectedTargetID|selectedTargetIdentity|pinnedTarget|markRecentTarget|togglePinnedTarget' "$transport"; then
+  fail "transport routing must not use selected or pinned hidden state"
 fi
+
+grep -q 'private var recentTargetIdentity' "$transport" \
+  || fail "chooser order must remember the last selected target identity for stable repeated sessions"
+
+grep -q 'rememberTarget(target)' "$transport" \
+  || fail "chooser and automatic dispatch must update the recent target identity"
 
 if grep -q 'lastChooserRequest' "$transport"; then
   fail "transport routing must not use unstructured chooser debounce state"

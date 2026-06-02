@@ -31,11 +31,16 @@ enum MediaTransportCommandRules {
 
     static func sortedTargets(
         _ targets: [MediaRemoteTarget],
-        activeTargetID _: String?
+        preferredTargetID: String?
     ) -> [MediaRemoteTarget] {
         targets.sorted { lhs, rhs in
             if lhs.isCurrentlyPlaying != rhs.isCurrentlyPlaying {
                 return lhs.isCurrentlyPlaying
+            }
+            let lhsPreferred = lhs.matchesRoutingIdentity(preferredTargetID)
+            let rhsPreferred = rhs.matchesRoutingIdentity(preferredTargetID)
+            if lhsPreferred != rhsPreferred {
+                return lhsPreferred
             }
             let appOrder = lhs.appName.localizedStandardCompare(rhs.appName)
             if appOrder != .orderedSame {

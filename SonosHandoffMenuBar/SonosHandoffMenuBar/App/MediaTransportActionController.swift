@@ -23,6 +23,7 @@ final class MediaTransportActionController {
     private let traceRecorder = MediaTransportTraceRecorder()
     private let chooserSession = MediaChooserSessionGuard()
     private let focusResolver = MediaTargetFocusResolver()
+    private var recentTargetIdentity: String?
     var relaxRouteShield: ((String) -> Void)?
     private var targetSubscription: AnyCancellable?
     private var programmaticDispatches: [UUID: MediaTransportPendingDispatchEcho] = [:]
@@ -47,10 +48,7 @@ final class MediaTransportActionController {
             .sink { [weak self] newTargets in
                 guard let self else { return }
                 guard !self.chooserSession.isActive else { return }
-                let sorted = MediaTransportCommandRules.sortedTargets(
-                    newTargets,
-                    activeTargetID: self.mediaRemoteController.activeTargetID
-                )
+                let sorted = self.sortedTargets(newTargets)
                 self.overlayController.updateTargetsIfVisible(
                     targets: sorted,
                     generation: self.overlayController.currentGeneration
@@ -177,10 +175,7 @@ final class MediaTransportActionController {
     }
 
     func currentRouteStatus() -> MediaRouteStatus {
-        let targets = MediaTransportCommandRules.sortedTargets(
-            mediaRemoteController.targets,
-            activeTargetID: mediaRemoteController.activeTargetID
-        )
+        let targets = sortedTargets(mediaRemoteController.targets)
         guard !targets.isEmpty, mediaRemoteController.canRouteCommands else {
             return MediaRouteStatus(kind: .unavailable, target: nil, targetCount: 0)
         }
@@ -238,10 +233,7 @@ final class MediaTransportActionController {
             return
         }
 
-        let cached = MediaTransportCommandRules.sortedTargets(
-            mediaRemoteController.targets,
-            activeTargetID: mediaRemoteController.activeTargetID
-        )
+        let cached = sortedTargets(mediaRemoteController.targets)
         let refreshQueued = mediaRemoteController.refreshSnapshot()
 
         logger.info("MediaTransport chooser_show command=\(commandName, privacy: .public) source=\(source.rawValue, privacy: .public) targetCount=\(cached.count, privacy: .public) refreshQueued=\(refreshQueued, privacy: .public) targets=\(MediaTransportCommandRules.targetLogSummary(cached), privacy: .public)")
@@ -264,10 +256,7 @@ final class MediaTransportActionController {
     }
 
     private func routeFromCache(command: MediaRemoteTransportCommand) {
-        let targets = MediaTransportCommandRules.sortedTargets(
-            mediaRemoteController.targets,
-            activeTargetID: mediaRemoteController.activeTargetID
-        )
+        let targets = sortedTargets(mediaRemoteController.targets)
         guard !targets.isEmpty, mediaRemoteController.canRouteCommands else {
             mediaRemoteController.refreshSnapshot()
             StatusHUD.shared.finish(
@@ -373,6 +362,17 @@ final class MediaTransportActionController {
         )
     }
 
+    private func sortedTargets(_ targets: [MediaRemoteTarget]) -> [MediaRemoteTarget] {
+        MediaTransportCommandRules.sortedTargets(
+            targets,
+            preferredTargetID: recentTargetIdentity
+        )
+    }
+
+    private func rememberTarget(_ target: MediaRemoteTarget) {
+        recentTargetIdentity = target.routingIdentity
+    }
+
     private func automaticTarget(from targets: [MediaRemoteTarget]) -> (target: MediaRemoteTarget, reason: MediaTransportRoutingReason)? {
         if targets.count == 1, let target = targets.first {
             return (target, .single)
@@ -393,6 +393,7 @@ final class MediaTransportActionController {
 
     private func send(command: MediaRemoteTransportCommand, to target: MediaRemoteTarget, reason: MediaTransportRoutingReason) {
         logger.info("MediaTransport dispatch command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) targetID=\(target.id, privacy: .public) reason=\(reason.rawValue, privacy: .public)")
+        rememberTarget(target)
         let dispatchID = beginBoundedProgrammaticDispatch(command: command)
         if usesSpotifyDesktopTransport(target: target) {
             let result = submitSpotifyDesktopCommand(command: command, target: target)
@@ -447,6 +448,7 @@ final class MediaTransportActionController {
         metadata: MediaTransportInputMetadata?
     ) {
         logger.info("MediaTransport chooser_dispatch requestedCommand=\(requestedCommand.rawValue, privacy: .public) routedCommand=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) targetID=\(target.id, privacy: .public) playing=\(target.isCurrentlyPlaying, privacy: .public)")
+        rememberTarget(target)
         let transportBackend = transportBackendName(command: command, target: target)
         trace("chooser_dispatch", command: command, target: target, transportBackend: transportBackend)
         let dispatchID = beginBoundedChooserDispatch(

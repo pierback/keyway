@@ -1,6 +1,6 @@
 # Keyway Verification Log
 
-Last updated: 2026-05-31
+Last updated: 2026-06-01
 
 ## Playback Routing Hardening Update (2026-05-31)
 
@@ -11,6 +11,7 @@ Last updated: 2026-05-31
   - `2df9e3c Broaden Helium JavaScript media targeting` / `good-media-routing-helium-dom-targeting`
   - `e7a2e51 Explain Apple Events automation failures` / `good-media-routing-tcc-recovery`
   - `eca5bdd Handle deep Helium media while preserving fast path` / `good-media-routing-helium-deep-playing`
+  - `3b621c8 Filter stale Helium rows and dismiss chooser on focus loss` / `good-media-routing-modal-focus-helium-filter`
 - Installed app path verified: `/Users/f.pieringer/Applications/Keyway.app`.
 - Hardware Play/Pause routing now requires `activeEventTap=cghid`; Command Center callbacks are route-shield-only and do not open the chooser.
 - Selected-row dispatch now records structured `transportBackend` values:
@@ -33,19 +34,19 @@ Last updated: 2026-05-31
   - `scripts/probe_playback_routing_suite`
   - `scripts/probe_display_brightness_passthrough`
   - `scripts/verify_shortcut_event_parser_semantics`
-  - `KEYWAY_PROBE_ROUTING_SUITE_TARGETS=1 scripts/probe_playback_routing_suite`
+  - `KEYWAY_PROBE_ROUTING_SUITE_TARGETS=1 scripts/probe_playback_routing_suite` (Spotify/Helium selected-row probes run only when those filtered targets are visible)
   - `scripts/hitl_helium_playback_toggle_check`
   - `KEYWAY_APP="$HOME/Applications/Keyway.app" scripts/smoke_transport_routing_confirmation`
   - `KEYWAY_TRANSPORT_UI_SMOKE=1 scripts/regression_gate`
 - Live Helium HITL passed with `beforePlayingCount=1`, `afterPlayingCount=0`, selected target `net.imput.helium:776:desktop`, and backend `helium_javascript`.
 - Transport routing smoke now covers focused-target Previous/Next only; Play/Pause is chooser-first and is covered by chooser/HITL probes.
 - Observed selected-row backend latency in probes:
-  - Spotify AppleEvent helper result: `1ms`
-  - Helium JavaScript helper result: `68ms`
+  - Spotify AppleEvent helper result: `0ms`
+  - Helium JavaScript helper result: `17ms`
 - Display brightness keys were verified as pass-through after removing the mistaken `keyCode=2` Play/Pause mapping; `keyCode=2` is brightness-up, not Play/Pause.
-- Media chooser rows now use deterministic order: playing rows first, then app name, title, and id. Ordering no longer depends on MediaRemote freshness timestamps, active-route churn, or helper array order.
+- Media chooser rows now use deterministic order: playing rows first, then the most recently selected/routed target, then app name, title, and id. Stopped recent targets never jump above currently playing rows; ordering no longer depends on MediaRemote freshness timestamps, active-route churn, or helper array order.
 - Helium chooser rows are now gated by active-tab JavaScript media availability, so stale MediaRemote Helium rows and desktop fallback rows are removed when Helium has no playable active-tab media.
-- The chooser now dismisses without dispatch when Keyway loses focus or another app is activated; this is covered by `scripts/probe_playback_chooser_focus_dismiss`.
+- The chooser now dismisses without dispatch when Keyway loses focus or another app is activated; this is covered by `scripts/probe_playback_chooser_focus_dismiss`, which focuses a different foreground app to avoid no-op activation when Finder is already frontmost.
 - `scripts/acceptance_preflight` remains environment-blocked, not Keyway-routing-blocked:
   - `sonos-handoff-port: Spotify has no active playback`
   - App identity, installed helper, MediaRemote snapshot, cghid event-tap readiness, Command Center route shield readiness, config import, Sonos `Port` discovery, and legacy-file integrity passed before that block.

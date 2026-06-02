@@ -82,33 +82,41 @@ SWIFT
 
 select_chooser_row() {
   if [[ -n "$selection_index" ]]; then
-    osascript -e '
-on run argv
-  set numberKeyCodes to {18, 19, 20, 21, 23, 22, 26, 28, 25}
-  set targetIndex to (item 1 of argv as integer) + 1
-  tell application id "com.fpieringer.Keyway" to activate
-  delay 0.05
-  tell application "System Events"
-    key code (item targetIndex of numberKeyCodes)
-  end tell
-end run
-' "$selection_index" >/dev/null
+    swift - "$selection_index" <<'SWIFT'
+import AppKit
+import ApplicationServices
+
+let numberKeyCodes: [CGKeyCode] = [18, 19, 20, 21, 23, 22, 26, 28, 25]
+let index = Int(CommandLine.arguments[1])!
+NSRunningApplication.runningApplications(withBundleIdentifier: "com.fpieringer.Keyway").first!.activate(options: [])
+usleep(80_000)
+let keyCode = numberKeyCodes[index]
+CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true)!.post(tap: .cghidEventTap)
+usleep(20_000)
+CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: false)!.post(tap: .cghidEventTap)
+SWIFT
     return
   fi
 
-  osascript -e '
-on run argv
-  tell application id "com.fpieringer.Keyway" to activate
-  delay 0.05
-  tell application "System Events"
-    repeat (item 1 of argv as integer) times
-      key code 125
-      delay 0.03
-    end repeat
-    key code 36
-  end tell
-end run
-' "$selection_down_count" >/dev/null
+  swift - "$selection_down_count" <<'SWIFT'
+import AppKit
+import ApplicationServices
+
+func postKey(_ keyCode: CGKeyCode) {
+    CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true)!.post(tap: .cghidEventTap)
+    usleep(20_000)
+    CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: false)!.post(tap: .cghidEventTap)
+}
+
+let downCount = Int(CommandLine.arguments[1])!
+NSRunningApplication.runningApplications(withBundleIdentifier: "com.fpieringer.Keyway").first!.activate(options: [])
+usleep(80_000)
+for _ in 0..<downCount {
+    postKey(125)
+    usleep(30_000)
+}
+postKey(36)
+SWIFT
 }
 
 close_chooser() {

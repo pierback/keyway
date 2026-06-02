@@ -95,8 +95,29 @@ PY
   return 1
 }
 
-activate_finder() {
-  osascript -e 'tell application "Finder" to activate' >/dev/null
+activate_other_app() {
+  osascript <<'APPLESCRIPT' >/dev/null
+  tell application "System Events"
+    set currentBundle to ""
+    repeat with appProcess in application processes
+      if frontmost of appProcess is true then
+        set currentBundle to bundle identifier of appProcess
+        exit repeat
+      end if
+    end repeat
+
+    repeat with appProcess in application processes
+      set bundleID to bundle identifier of appProcess
+      if bundleID is not "" and bundleID is not currentBundle and bundleID is not "com.fpieringer.Keyway" and background only of appProcess is false then
+        set visible of appProcess to true
+        set frontmost of appProcess to true
+        return
+      end if
+    end repeat
+  end tell
+
+  tell application "Finder" to activate
+APPLESCRIPT
 }
 
 close_chooser() {
@@ -151,7 +172,8 @@ start_sequence="$(read_trace_sequence)"
 printf 'probe_playback_chooser_focus_dismiss: starting after trace sequence %s\n' "$start_sequence"
 post_physical_play_pause
 wait_for_event "$start_sequence" "chooser_show" || fail "timed out waiting for chooser_show"
-activate_finder
+sleep 0.35
+activate_other_app
 wait_for_event "$start_sequence" "chooser_dismissed" || fail "timed out waiting for chooser_dismissed"
 analyze_trace "$start_sequence"
 printf 'probe_playback_chooser_focus_dismiss=ok\n'

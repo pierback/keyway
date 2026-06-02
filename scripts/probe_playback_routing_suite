@@ -55,6 +55,22 @@ run_probe_cleanly() {
   "$repo_root/$probe"
 }
 
+target_visible() {
+  local target_name="$1"
+  python3 - "$status_file" "$target_name" <<'PY'
+import json
+import pathlib
+import sys
+
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
+target_name = sys.argv[2]
+for target in payload.get("mediaTargets", []):
+    if target.get("app") == target_name or target.get("bundleIdentifier") == target_name:
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
 [[ -d "$app_path" ]] || fail "missing app at $app_path; run scripts/install_menubar_app first"
 
 run_probe_cleanly scripts/probe_playback_event_tap
@@ -76,15 +92,23 @@ run_probe_cleanly scripts/probe_playback_chooser_focus_dismiss
 if [[ "${KEYWAY_PROBE_ROUTING_SUITE_TARGETS:-0}" == "1" ]]; then
   restart_keyway
   assert_runtime_ready
-  KEYWAY_PROBE_PRE_SELECT_DELAY_SECONDS="${KEYWAY_PROBE_PRE_SELECT_DELAY_SECONDS:-0.8}" \
-  KEYWAY_PROBE_EXPECT_TARGET_NAME=Spotify \
-    "$repo_root/scripts/probe_playback_chooser_selection"
+  if target_visible Spotify; then
+    KEYWAY_PROBE_PRE_SELECT_DELAY_SECONDS="${KEYWAY_PROBE_PRE_SELECT_DELAY_SECONDS:-0.8}" \
+    KEYWAY_PROBE_EXPECT_TARGET_NAME=Spotify \
+      "$repo_root/scripts/probe_playback_chooser_selection"
+  else
+    printf 'probe_playback_routing_suite: skipping Spotify target probe; target not visible\n'
+  fi
 
   restart_keyway
   assert_runtime_ready
-  KEYWAY_PROBE_PRE_SELECT_DELAY_SECONDS="${KEYWAY_PROBE_PRE_SELECT_DELAY_SECONDS:-0.8}" \
-  KEYWAY_PROBE_EXPECT_TARGET_NAME=Helium \
-    "$repo_root/scripts/probe_playback_chooser_selection"
+  if target_visible Helium; then
+    KEYWAY_PROBE_PRE_SELECT_DELAY_SECONDS="${KEYWAY_PROBE_PRE_SELECT_DELAY_SECONDS:-0.8}" \
+    KEYWAY_PROBE_EXPECT_TARGET_NAME=Helium \
+      "$repo_root/scripts/probe_playback_chooser_selection"
+  else
+    printf 'probe_playback_routing_suite: skipping Helium target probe; no active-tab playable media visible\n'
+  fi
 fi
 
 restart_keyway

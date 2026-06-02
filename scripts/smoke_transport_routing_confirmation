@@ -412,8 +412,26 @@ focus_target_for_routing() {
     record_visible_state_once "$bundle_id"
     hide_bundle "$bundle_id"
   done <"$TARGET_INFO_FILE"
-  open -b "$TARGET_BUNDLE"
-  sleep 0.6
+  osascript - "$TARGET_BUNDLE" <<'APPLESCRIPT' >/dev/null
+on run argv
+  set targetBundle to item 1 of argv
+  tell application id targetBundle to activate
+  delay 0.2
+  tell application "System Events"
+    repeat 8 times
+      repeat with appProcess in application processes
+        if bundle identifier of appProcess is targetBundle then
+          set visible of appProcess to true
+          set frontmost of appProcess to true
+          return
+        end if
+      end repeat
+      delay 0.15
+    end repeat
+  end tell
+end run
+APPLESCRIPT
+  sleep 0.8
 }
 
 ensure_target_ready_for_command() {
