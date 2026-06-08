@@ -121,15 +121,18 @@ final class MediaTransportActionController {
                 )
                 return
             }
-            logger.info("MediaTransport command_center_route_shield_only_ignored command=\(command.rawValue, privacy: .public)")
-            trace(
-                "input_ignored",
-                command: command,
-                source: source,
-                reason: "command_center_route_shield_only_ignored",
-                commandCenterMetadata: commandCenterMetadata
-            )
-            return
+            if MediaTransportCommandRules.isPlayFamily(command) {
+                logger.info("MediaTransport command_center_route_shield_only_ignored command=\(command.rawValue, privacy: .public)")
+                trace(
+                    "input_ignored",
+                    command: command,
+                    source: source,
+                    reason: "command_center_route_shield_only_ignored",
+                    commandCenterMetadata: commandCenterMetadata
+                )
+                return
+            }
+            commandCenterFilter.noteCommandCenterInput(command: command, metadata: commandCenterMetadata)
         case .userInterface:
             break
         }

@@ -92,6 +92,70 @@ default:
     expect(false, "NX_KEYTYPE_PLAY key-down did not route Play/Pause")
 }
 
+switch parser.outcome(type: systemDefined, event: mediaKeyEvent(keyCode: 17, state: 0x0A), isRepeating: false) {
+case .transportKeyDown(let command, let source, _):
+    expect(command == .next, "NX_KEYTYPE_NEXT key-down must route Next")
+    expect(source == "media_key", "NX_KEYTYPE_NEXT source should remain media_key")
+default:
+    expect(false, "NX_KEYTYPE_NEXT key-down did not route Next")
+}
+
+switch parser.outcome(type: systemDefined, event: mediaKeyEvent(keyCode: 17, state: 0x0B), isRepeating: false) {
+case .transportKeyUp(let command, let source, _):
+    expect(command == .next, "NX_KEYTYPE_NEXT key-up must route Next")
+    expect(source == "media_key", "NX_KEYTYPE_NEXT key-up source should remain media_key")
+default:
+    expect(false, "NX_KEYTYPE_NEXT key-up did not route Next")
+}
+
+switch parser.outcome(type: systemDefined, event: mediaKeyEvent(keyCode: 19, state: 0x0A), isRepeating: false) {
+case .transportKeyDown(let command, let source, _):
+    expect(command == .next, "NX_KEYTYPE_FAST key-down must route Next")
+    expect(source == "media_key", "NX_KEYTYPE_FAST source should remain media_key")
+default:
+    expect(false, "NX_KEYTYPE_FAST key-down did not route Next")
+}
+
+switch parser.outcome(type: systemDefined, event: mediaKeyEvent(keyCode: 19, state: 0x0B), isRepeating: false) {
+case .transportKeyUp(let command, let source, _):
+    expect(command == .next, "NX_KEYTYPE_FAST key-up must route Next")
+    expect(source == "media_key", "NX_KEYTYPE_FAST key-up source should remain media_key")
+default:
+    expect(false, "NX_KEYTYPE_FAST key-up did not route Next")
+}
+
+switch parser.outcome(type: systemDefined, event: mediaKeyEvent(keyCode: 18, state: 0x0A), isRepeating: false) {
+case .transportKeyDown(let command, let source, _):
+    expect(command == .previous, "NX_KEYTYPE_PREVIOUS key-down must route Previous")
+    expect(source == "media_key", "NX_KEYTYPE_PREVIOUS source should remain media_key")
+default:
+    expect(false, "NX_KEYTYPE_PREVIOUS key-down did not route Previous")
+}
+
+switch parser.outcome(type: systemDefined, event: mediaKeyEvent(keyCode: 18, state: 0x0B), isRepeating: false) {
+case .transportKeyUp(let command, let source, _):
+    expect(command == .previous, "NX_KEYTYPE_PREVIOUS key-up must route Previous")
+    expect(source == "media_key", "NX_KEYTYPE_PREVIOUS key-up source should remain media_key")
+default:
+    expect(false, "NX_KEYTYPE_PREVIOUS key-up did not route Previous")
+}
+
+switch parser.outcome(type: systemDefined, event: mediaKeyEvent(keyCode: 20, state: 0x0A), isRepeating: false) {
+case .transportKeyDown(let command, let source, _):
+    expect(command == .previous, "NX_KEYTYPE_REWIND key-down must route Previous")
+    expect(source == "media_key", "NX_KEYTYPE_REWIND source should remain media_key")
+default:
+    expect(false, "NX_KEYTYPE_REWIND key-down did not route Previous")
+}
+
+switch parser.outcome(type: systemDefined, event: mediaKeyEvent(keyCode: 20, state: 0x0B), isRepeating: false) {
+case .transportKeyUp(let command, let source, _):
+    expect(command == .previous, "NX_KEYTYPE_REWIND key-up must route Previous")
+    expect(source == "media_key", "NX_KEYTYPE_REWIND key-up source should remain media_key")
+default:
+    expect(false, "NX_KEYTYPE_REWIND key-up did not route Previous")
+}
+
 switch parser.outcome(type: systemDefined, event: mediaKeyEvent(keyCode: 0, state: 0x0A, shift: true), isRepeating: false) {
 case .volumeHoldStart(let direction, let source):
     expect(direction == .up, "Shift+sound-up must start volume-up hold")

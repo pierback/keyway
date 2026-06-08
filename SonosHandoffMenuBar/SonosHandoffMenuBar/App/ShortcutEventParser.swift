@@ -38,6 +38,8 @@ struct ShortcutEventParser {
     private let playPauseKeyCode = 16
     private let nextKeyCode = 17
     private let previousKeyCode = 18
+    private let fastForwardKeyCode = 19
+    private let rewindKeyCode = 20
     private let f7KeyCode: Int64 = 98
     private let f8KeyCode: Int64 = 100
     private let f9KeyCode: Int64 = 101
@@ -139,9 +141,9 @@ struct ShortcutEventParser {
         switch keyCode {
         case playPauseKeyCode:
             return .playPause
-        case nextKeyCode:
+        case nextKeyCode, fastForwardKeyCode:
             return .next
-        case previousKeyCode:
+        case previousKeyCode, rewindKeyCode:
             return .previous
         default:
             return nil
