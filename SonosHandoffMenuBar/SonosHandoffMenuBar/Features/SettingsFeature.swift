@@ -60,7 +60,8 @@ struct SettingsFeature: View {
         self.configImportService = configImportService
         self.authCoordinator = authCoordinator ?? SpotifyAuthCoordinator(
             tokenStore: tokenStore,
-            configStore: configStore
+            configStore: configStore,
+            browserOpener: { NSWorkspace.shared.open($0) }
         )
         _configImportReport = State(initialValue: initialConfigImportReport)
         _mediaRemoteController = ObservedObject(wrappedValue: mediaRemoteController)

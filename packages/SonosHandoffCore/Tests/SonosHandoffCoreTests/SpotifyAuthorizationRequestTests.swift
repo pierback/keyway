@@ -5,7 +5,7 @@ import Testing
 struct SpotifyAuthorizationRequestTests {
     @Test
     func buildsAuthorizationURLWithPKCEChallengeAndState() throws {
-        let request = try SpotifyAuthorizationRequest(
+        let request = SpotifyAuthorizationRequest(
             clientID: "client-id",
             redirectURI: URL(string: "http://127.0.0.1:43821/callback")!,
             state: "state-token",

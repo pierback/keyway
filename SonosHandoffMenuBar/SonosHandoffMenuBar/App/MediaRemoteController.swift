@@ -1,4 +1,3 @@
-import AppKit
 import Combine
 import Foundation
 import os
@@ -252,7 +251,7 @@ final class MediaRemoteController: ObservableObject {
                 }
                 snapshotRefreshTimeout?.cancel()
                 snapshotRefreshTimeout = nil
-                let visibleTargets = Self.targetsIncludingHeliumDesktop(
+                let visibleTargets = MediaDesktopTransportAdapter.targetsIncludingDesktopAutomationTargets(
                     snapshot.targets.filter { !Self.isIgnoredTarget($0) }
                 )
                 targets = visibleTargets
@@ -580,69 +579,6 @@ final class MediaRemoteController: ObservableObject {
     private static func isIgnoredTarget(_ target: MediaRemoteTarget) -> Bool {
         ignoredBundleIdentifiers.contains(target.bundleIdentifier)
             || ignoredBundleIdentifiers.contains(target.parentBundleIdentifier)
-    }
-
-    private static func targetsIncludingHeliumDesktop(_ targets: [MediaRemoteTarget]) -> [MediaRemoteTarget] {
-        let heliumAvailability = heliumActiveTabMediaAvailable()
-        if heliumAvailability == false {
-            return targets.filter { !isHeliumTarget($0) }
-        }
-        guard !targets.contains(where: isHeliumTarget),
-              heliumAvailability == true,
-              let app = NSRunningApplication.runningApplications(withBundleIdentifier: "net.imput.helium").first,
-              !app.isTerminated
-        else {
-            return targets
-        }
-
-        return targets + [MediaRemoteTarget(
-            id: "net.imput.helium:\(app.processIdentifier):desktop",
-            bundleIdentifier: "net.imput.helium",
-            parentBundleIdentifier: "",
-            displayName: app.localizedName ?? "Helium",
-            pid: Int(app.processIdentifier),
-            title: "Browser media",
-            artist: "",
-            album: "",
-            playbackRate: "",
-            mediaType: "desktop_automation",
-            artworkBase64: nil,
-            duration: nil,
-            elapsedTime: nil,
-            elapsedTimestamp: nil
-        )]
-    }
-
-    private static func isHeliumTarget(_ target: MediaRemoteTarget) -> Bool {
-        target.bundleIdentifier == "net.imput.helium" || target.parentBundleIdentifier == "net.imput.helium"
-    }
-
-    private static func heliumActiveTabMediaAvailable() -> Bool? {
-        guard NSRunningApplication.runningApplications(withBundleIdentifier: "net.imput.helium").contains(where: { !$0.isTerminated }) else {
-            return false
-        }
-        let script = NSAppleScript(source: heliumMediaAvailabilityAppleScriptSource())!
-        var error: NSDictionary?
-        let output = script.executeAndReturnError(&error).stringValue ?? ""
-        if error != nil {
-            return nil
-        }
-        if output == "media" {
-            return true
-        }
-        if output == "no_windows" || output == "no_media" {
-            return false
-        }
-        return nil
-    }
-
-    private static func heliumMediaAvailabilityAppleScriptSource() -> String {
-        #"""
-tell application id "net.imput.helium"
-    if (count of windows) = 0 then return "no_windows"
-    return execute active tab of front window javascript "(() => { const isReady = element => !element.ended && element.readyState > 0 && (Number.isFinite(element.duration) ? element.duration > 0 : true); const direct = Array.from(document.querySelectorAll('video,audio')).filter(isReady); if (direct.length > 0) return 'media'; const seen = new Set(); const roots = [document]; for (let index = 0; index < roots.length; index += 1) { const root = roots[index]; root.querySelectorAll('video,audio').forEach(element => { if (!seen.has(element)) seen.add(element); }); root.querySelectorAll('*').forEach(element => { if (element.shadowRoot) roots.push(element.shadowRoot); }); root.querySelectorAll('iframe,frame').forEach(frame => { const source = frame.getAttribute('src') || ''; const sameOrigin = source === '' || source.startsWith('about:') || new URL(frame.src || source, location.href).origin === location.origin; const sandbox = frame.getAttribute('sandbox'); const sandboxAllowsSameOrigin = sandbox === null || sandbox.split(/\\s+/).includes('allow-same-origin'); if (sameOrigin && sandboxAllowsSameOrigin && frame.contentDocument) roots.push(frame.contentDocument); }); } for (const element of seen) { if (isReady(element)) return 'media'; } return 'no_media'; })()"
-end tell
-"""#
     }
 
     private static func nilIfEmpty(_ value: String?) -> String? {

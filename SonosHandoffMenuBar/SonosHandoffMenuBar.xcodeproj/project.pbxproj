@@ -14,6 +14,7 @@
 		13028AF8B1C8BB0650D17D95 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D307152B03808A62EB7266FE /* Cocoa.framework */; };
 		19F708FF01E5F923D60F065A /* PlaybackVolumeActionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D59B0F1BF9280780C03B7619 /* PlaybackVolumeActionController.swift */; };
 		1A2B3C4D5E6F7001AABBCC02 /* MediaCommandCenterInterceptor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F7002AABBCC02 /* MediaCommandCenterInterceptor.swift */; };
+		1A2B3C4D5E6F7029AABBCC02 /* MediaDesktopTransportAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F7030AABBCC02 /* MediaDesktopTransportAdapter.swift */; };
 		1A2B3C4D5E6F7003AABBCC02 /* MediaPlayer.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F7004AABBCC02 /* MediaPlayer.framework */; };
 		1A2B3C4D5E6F7007AABBCC02 /* MediaRemoteEvents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F7008AABBCC02 /* MediaRemoteEvents.swift */; };
 		1A2B3C4D5E6F7015AABBCC02 /* MediaRouteStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F7016AABBCC02 /* MediaRouteStatus.swift */; };
@@ -69,6 +70,7 @@
 		1478147D31135D06020C164D /* MenuBarVolumeControl.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MenuBarVolumeControl.swift; sourceTree = "<group>"; };
 		15C783671014D021507047A3 /* MediaAudioControlController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaAudioControlController.swift; sourceTree = "<group>"; };
 		1A2B3C4D5E6F7002AABBCC02 /* MediaCommandCenterInterceptor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaCommandCenterInterceptor.swift; sourceTree = "<group>"; };
+		1A2B3C4D5E6F7030AABBCC02 /* MediaDesktopTransportAdapter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaDesktopTransportAdapter.swift; sourceTree = "<group>"; };
 		1A2B3C4D5E6F7004AABBCC02 /* MediaPlayer.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MediaPlayer.framework; path = System/Library/Frameworks/MediaPlayer.framework; sourceTree = SDKROOT; };
 		1A2B3C4D5E6F7008AABBCC02 /* MediaRemoteEvents.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaRemoteEvents.swift; sourceTree = "<group>"; };
 		1A2B3C4D5E6F7016AABBCC02 /* MediaRouteStatus.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaRouteStatus.swift; sourceTree = "<group>"; };
@@ -181,6 +183,7 @@
 				FC0D5DB43A551073F478E94D /* KeywayStatusItemController.swift */,
 				1A2B3C4D5E6F7014AABBCC02 /* MediaChooserSessionGuard.swift */,
 				1A2B3C4D5E6F7002AABBCC02 /* MediaCommandCenterInterceptor.swift */,
+				1A2B3C4D5E6F7030AABBCC02 /* MediaDesktopTransportAdapter.swift */,
 				15C783671014D021507047A3 /* MediaAudioControlController.swift */,
 				2FB9323E60979A503FC8FADC /* MediaRemoteController.swift */,
 				1A2B3C4D5E6F7008AABBCC02 /* MediaRemoteEvents.swift */,
@@ -357,6 +360,7 @@
 				90A23C369212BE19F860B96A /* KeywayStatusItemController.swift in Sources */,
 				1A2B3C4D5E6F7013AABBCC02 /* MediaChooserSessionGuard.swift in Sources */,
 				1A2B3C4D5E6F7001AABBCC02 /* MediaCommandCenterInterceptor.swift in Sources */,
+				1A2B3C4D5E6F7029AABBCC02 /* MediaDesktopTransportAdapter.swift in Sources */,
 				E16745AD62C97D891C7BA0A6 /* MediaAudioControlController.swift in Sources */,
 				53403B738B4DF3C4591D3FDB /* MediaRemoteController.swift in Sources */,
 				1A2B3C4D5E6F7007AABBCC02 /* MediaRemoteEvents.swift in Sources */,

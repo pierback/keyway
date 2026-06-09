@@ -1,3 +1,4 @@
+import AppKit
 import SonosHandoffCore
 
 struct AppEnvironment: @unchecked Sendable {
@@ -32,7 +33,11 @@ struct AppEnvironment: @unchecked Sendable {
         let configStore = ConfigStore()
         let tokenStore = KeychainTokenStore()
         let connectTokenStatusStore = ConnectTokenStatusStore()
-        let authCoordinator = SpotifyAuthCoordinator(tokenStore: tokenStore, configStore: configStore)
+        let authCoordinator = SpotifyAuthCoordinator(
+            tokenStore: tokenStore,
+            configStore: configStore,
+            browserOpener: { NSWorkspace.shared.open($0) }
+        )
         let accessibilityAutomator = SpotifyUIAutomator()
         let spotifyConnectService = SpotifyConnectHandoffService()
         let outputSelection = PlaybackOutputSelection()

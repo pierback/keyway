@@ -1,5 +1,3 @@
-import AppKit
-import ApplicationServices
 import Combine
 import Foundation
 import os
@@ -20,6 +18,7 @@ final class MediaTransportActionController {
     private let mediaRemoteController: MediaRemoteController
     private let overlayController: MediaTargetOverlayController
     private let commandCenterFilter: MediaTransportCommandCenterFilter
+    private let desktopTransport = MediaDesktopTransportAdapter()
     private let traceRecorder = MediaTransportTraceRecorder()
     private let chooserSession = MediaChooserSessionGuard()
     private let focusResolver = MediaTargetFocusResolver()
@@ -398,8 +397,7 @@ final class MediaTransportActionController {
         logger.info("MediaTransport dispatch command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) targetID=\(target.id, privacy: .public) reason=\(reason.rawValue, privacy: .public)")
         rememberTarget(target)
         let dispatchID = beginBoundedProgrammaticDispatch(command: command)
-        if usesSpotifyDesktopTransport(target: target) {
-            let result = submitSpotifyDesktopCommand(command: command, target: target)
+        if let result = desktopTransport.submit(command: command, target: target) {
             trace(result: result, transportBackend: result.backend)
             finishProgrammaticDispatch(
                 id: dispatchID,
@@ -407,19 +405,7 @@ final class MediaTransportActionController {
             )
             mediaRemoteController.refreshSnapshot()
             showCommandFailureIfNeeded(result: result, target: target)
-            logger.info("MediaTransport route command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) reason=\(reason.rawValue, privacy: .public) transport=spotify_desktop")
-            return
-        }
-        if usesHeliumDesktopTransport(target: target), command == .playPause {
-            let result = submitHeliumDesktopCommand(command: command, target: target)
-            trace(result: result, transportBackend: result.backend)
-            finishProgrammaticDispatch(
-                id: dispatchID,
-                fallback: false
-            )
-            mediaRemoteController.refreshSnapshot()
-            showCommandFailureIfNeeded(result: result, target: target)
-            logger.info("MediaTransport route command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) reason=\(reason.rawValue, privacy: .public) transport=helium_desktop")
+            logger.info("MediaTransport route command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) reason=\(reason.rawValue, privacy: .public) transport=\(result.backend ?? "desktop", privacy: .public)")
             return
         }
         let sent = mediaRemoteController.submit(command: command, targetID: target.id) { [weak self] result in
@@ -478,8 +464,7 @@ final class MediaTransportActionController {
         to target: MediaRemoteTarget,
         dispatchID: UUID
     ) {
-        if usesSpotifyDesktopTransport(target: target) {
-            let result = submitSpotifyDesktopCommand(command: command, target: target)
+        if let result = desktopTransport.submit(command: command, target: target) {
             trace(result: result, transportBackend: result.backend)
             finishChooserDispatch(
                 id: dispatchID,
@@ -487,19 +472,7 @@ final class MediaTransportActionController {
             )
             mediaRemoteController.refreshSnapshot()
             showCommandFailureIfNeeded(result: result, target: target)
-            logger.info("MediaTransport chooser command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) transport=spotify_desktop")
-            return
-        }
-        if usesHeliumDesktopTransport(target: target), command == .playPause {
-            let result = submitHeliumDesktopCommand(command: command, target: target)
-            trace(result: result, transportBackend: result.backend)
-            finishChooserDispatch(
-                id: dispatchID,
-                fallback: false
-            )
-            mediaRemoteController.refreshSnapshot()
-            showCommandFailureIfNeeded(result: result, target: target)
-            logger.info("MediaTransport chooser command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) transport=helium_desktop")
+            logger.info("MediaTransport chooser command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) transport=\(result.backend ?? "desktop", privacy: .public)")
             return
         }
         let sent = mediaRemoteController.submit(command: command, targetID: target.id) { [weak self] result in
@@ -531,7 +504,7 @@ final class MediaTransportActionController {
         guard command == .playPause else {
             return MediaTransportCommandRules.rowScopedCommand(command, for: target)
         }
-        if usesSpotifyDesktopTransport(target: target) || usesHeliumDesktopTransport(target: target) {
+        if desktopTransport.keepsPlayPauseToggle(for: target) {
             return .playPause
         }
         return MediaTransportCommandRules.rowScopedCommand(command, for: target)
@@ -540,152 +513,11 @@ final class MediaTransportActionController {
     private static let mediaRemotePlayerPathBackend = "mediaremote_player_path"
 
     private func transportBackendName(command: MediaRemoteTransportCommand, target: MediaRemoteTarget) -> String {
-        if usesSpotifyDesktopTransport(target: target) {
-            return "spotify_apple_event"
-        }
-        if usesHeliumDesktopTransport(target: target), command == .playPause {
-            return "helium_javascript"
-        }
-        return Self.mediaRemotePlayerPathBackend
+        desktopTransport.backendName(command: command, target: target) ?? Self.mediaRemotePlayerPathBackend
     }
 
     private func desktopTransportName(target: MediaRemoteTarget) -> String? {
-        if usesSpotifyDesktopTransport(target: target) {
-            return "spotify_apple_event"
-        }
-        if usesHeliumDesktopTransport(target: target) {
-            return "helium_javascript"
-        }
-        return nil
-    }
-
-    private func usesSpotifyDesktopTransport(target: MediaRemoteTarget) -> Bool {
-        target.bundleIdentifier == "com.spotify.client" || target.parentBundleIdentifier == "com.spotify.client"
-    }
-
-    private func usesHeliumDesktopTransport(target: MediaRemoteTarget) -> Bool {
-        target.bundleIdentifier == "net.imput.helium" || target.parentBundleIdentifier == "net.imput.helium"
-    }
-
-    private func submitSpotifyDesktopCommand(
-        command: MediaRemoteTransportCommand,
-        target: MediaRemoteTarget
-    ) -> MediaRemoteCommandResultEvent {
-        let eventID = Self.spotifyAppleEventID(command: command)
-        let status = Self.sendAppleEvent(
-            bundleIdentifier: "com.spotify.client",
-            eventClass: "spfy",
-            eventID: eventID
-        )
-        let ok = status == noErr
-        return MediaRemoteCommandResultEvent(
-            type: "commandResult",
-            requestID: UUID().uuidString,
-            targetID: target.id,
-            command: command.rawValue,
-            ok: ok,
-            message: ok ? "submitted Spotify AppleEvent command event=\(eventID)" : "Spotify AppleEvent failed status=\(status)",
-            backend: "spotify_apple_event"
-        )
-    }
-
-    private func submitHeliumDesktopCommand(
-        command: MediaRemoteTransportCommand,
-        target: MediaRemoteTarget
-    ) -> MediaRemoteCommandResultEvent {
-        let result = runHeliumJavaScriptToggle()
-        return MediaRemoteCommandResultEvent(
-            type: "commandResult",
-            requestID: UUID().uuidString,
-            targetID: target.id,
-            command: command.rawValue,
-            ok: result.ok,
-            message: result.ok ? "submitted Helium JavaScript command state=\(result.message)" : "Helium JavaScript failed: \(result.message)",
-            backend: "helium_javascript"
-        )
-    }
-
-    private func runHeliumJavaScriptToggle() -> (ok: Bool, message: String) {
-        let script = NSAppleScript(source: Self.heliumJavaScriptToggleAppleScriptSource())!
-        var error: NSDictionary?
-        let output = script.executeAndReturnError(&error).stringValue ?? ""
-        if let error {
-            return (false, String(describing: error))
-        }
-        return (output == "paused" || output == "playing" || output == "play_requested", output)
-    }
-
-    nonisolated private static func spotifyAppleEventID(command: MediaRemoteTransportCommand) -> String {
-        switch command {
-        case .play:
-            return "Play"
-        case .pause:
-            return "Paus"
-        case .playPause:
-            return "PlPs"
-        case .next:
-            return "Next"
-        case .previous:
-            return "Prev"
-        }
-    }
-
-    nonisolated private static func sendAppleEvent(
-        bundleIdentifier: String,
-        eventClass: String,
-        eventID: String
-    ) -> OSStatus {
-        var target = AEAddressDesc()
-        let targetStatus = bundleIdentifier.withCString { pointer in
-            AECreateDesc(
-                DescType(typeApplicationBundleID),
-                pointer,
-                bundleIdentifier.lengthOfBytes(using: .utf8),
-                &target
-            )
-        }
-        guard targetStatus == noErr else {
-            return OSStatus(targetStatus)
-        }
-        defer { AEDisposeDesc(&target) }
-
-        var event = AppleEvent()
-        let eventStatus = AECreateAppleEvent(
-            AEEventClass(fourCharCode(eventClass)),
-            AEEventID(fourCharCode(eventID)),
-            &target,
-            AEReturnID(kAutoGenerateReturnID),
-            AETransactionID(kAnyTransactionID),
-            &event
-        )
-        guard eventStatus == noErr else {
-            return OSStatus(eventStatus)
-        }
-        defer { AEDisposeDesc(&event) }
-
-        return AESendMessage(
-            &event,
-            nil,
-            AESendMode(kAENoReply | kAECanInteract | kAECanSwitchLayer),
-            kAEDefaultTimeout
-        )
-    }
-
-    nonisolated private static func fourCharCode(_ value: String) -> OSType {
-        var result: UInt32 = 0
-        for byte in value.utf8 {
-            result = (result << 8) + UInt32(byte)
-        }
-        return result
-    }
-
-    nonisolated private static func heliumJavaScriptToggleAppleScriptSource() -> String {
-        #"""
-tell application id "net.imput.helium"
-    if (count of windows) = 0 then return "no_windows"
-    return execute active tab of front window javascript "(() => { const isReady = element => !element.ended && element.readyState > 0 && (Number.isFinite(element.duration) ? element.duration > 0 : true); const isPlaying = element => !element.paused && !element.ended; const collectDeepMedia = () => { const media = []; const seen = new Set(); const roots = [document]; for (let index = 0; index < roots.length; index += 1) { const root = roots[index]; root.querySelectorAll('video,audio').forEach(element => { if (!seen.has(element)) { seen.add(element); media.push(element); } }); root.querySelectorAll('*').forEach(element => { if (element.shadowRoot) roots.push(element.shadowRoot); }); root.querySelectorAll('iframe,frame').forEach(frame => { const source = frame.getAttribute('src') || ''; const sameOrigin = source === '' || source.startsWith('about:') || new URL(frame.src || source, location.href).origin === location.origin; const sandbox = frame.getAttribute('sandbox'); const sandboxAllowsSameOrigin = sandbox === null || sandbox.split(/\\s+/).includes('allow-same-origin'); if (sameOrigin && sandboxAllowsSameOrigin && frame.contentDocument) roots.push(frame.contentDocument); }); } return media; }; const direct = Array.from(document.querySelectorAll('video,audio')).filter(isReady); const directPlaying = direct.filter(isPlaying); if (directPlaying.length > 0) { directPlaying.forEach(element => element.pause()); return 'paused'; } const deep = collectDeepMedia().filter(isReady); const deepPlaying = deep.filter(isPlaying); if (deepPlaying.length > 0) { deepPlaying.forEach(element => element.pause()); return 'paused'; } let playable = deep.length > 0 ? deep : direct; const visibleArea = element => { const rect = element.getBoundingClientRect(); const view = element.ownerDocument.defaultView || window; const width = Math.max(0, Math.min(rect.right, view.innerWidth) - Math.max(rect.left, 0)); const height = Math.max(0, Math.min(rect.bottom, view.innerHeight) - Math.max(rect.top, 0)); return width * height; }; playable.sort((left, right) => visibleArea(right) - visibleArea(left) || ((right.videoWidth || 1) * (right.videoHeight || 1)) - ((left.videoWidth || 1) * (left.videoHeight || 1)) || right.duration - left.duration); const target = playable[0]; if (!target) return 'no_media'; target.play(); return target.paused ? 'play_requested' : 'playing'; })()"
-end tell
-"""#
+        desktopTransport.backendName(for: target)
     }
 
     private func beginBoundedProgrammaticDispatch(command: MediaRemoteTransportCommand) -> UUID {

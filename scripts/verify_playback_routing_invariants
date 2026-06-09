@@ -13,6 +13,7 @@ event_tap="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutEventT
 command_filter="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportCommandCenterFilter.swift"
 chooser_guard="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaChooserSessionGuard.swift"
 command_rules="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportCommandRules.swift"
+desktop_adapter="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaDesktopTransportAdapter.swift"
 refresh_gate="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaRemoteSnapshotRefreshGate.swift"
 remote_controller="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaRemoteController.swift"
 remote_helper_process="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaRemoteHelperProcess.swift"
@@ -206,41 +207,50 @@ grep -q 'isPlayFamily(command)' "$transport" "$command_rules" \
 grep -q 'MediaTransportCommandRules.rowScopedCommand(command, for: target)' "$transport" \
   || fail "chooser Play/Pause must resolve normal targets from the selected row state, not a post-key refreshed target state"
 
-grep -q 'usesSpotifyDesktopTransport(target: target) || usesHeliumDesktopTransport(target: target)' "$transport" \
-  || fail "desktop chooser Play/Pause must use app-owned transports because MediaRemote playbackRate can be stale"
+grep -q 'desktopTransport.keepsPlayPauseToggle(for: target)' "$transport" \
+  || fail "desktop chooser Play/Pause must keep app-owned transport toggles because MediaRemote playbackRate can be stale"
 
-grep -q 'net.imput.helium' "$transport" \
+grep -q 'net.imput.helium' "$desktop_adapter" \
   || fail "Helium must have a selected-row desktop transport when MediaRemote player-path commands do not affect it"
 
-grep -q 'targetsIncludingHeliumDesktop' "$remote_controller" \
+grep -q 'com.spotify.client' "$desktop_adapter" \
+  || fail "Spotify must have a selected-row desktop transport when MediaRemote player-path commands are stale"
+
+grep -q 'targetsIncludingDesktopAutomationTargets' "$remote_controller" \
+  || fail "MediaRemoteController must delegate synthetic desktop target visibility to the desktop transport adapter"
+
+grep -q 'heliumActiveTabMediaAvailable' "$desktop_adapter" \
   || fail "Helium must remain visible as a chooser target when MediaRemote omits its browser media row"
 
-grep -q 'sendAppleEvent' "$transport" \
+grep -q 'sendAppleEvent' "$desktop_adapter" \
   || fail "Spotify desktop dispatch must use in-process Apple Events instead of spawning osascript"
 
-grep -q 'runHeliumJavaScriptToggle' "$transport" \
+grep -q 'runHeliumJavaScriptToggle' "$desktop_adapter" \
+  || fail "Helium desktop dispatch must use selected-row JavaScript toggling instead of MediaRemote playbackRate state"
+
+grep -q 'runHeliumJavaScriptToggle' "$desktop_adapter" \
   || fail "Helium desktop dispatch must execute tab JavaScript instead of using MediaRemote or keypress guesses"
 
-grep -q 'execute active tab of front window javascript' "$transport" \
+grep -q 'execute active tab of front window javascript' "$desktop_adapter" \
   || fail "Helium desktop dispatch must target browser media through Chromium scripting"
 
-grep -q 'shadowRoot' "$transport" \
+grep -q 'shadowRoot' "$desktop_adapter" \
   || fail "Helium desktop dispatch must inspect open shadow DOM media elements"
 
-grep -q 'contentDocument' "$transport" \
+grep -q 'contentDocument' "$desktop_adapter" \
   || fail "Helium desktop dispatch must inspect same-origin iframe media elements"
 
-grep -q 'const directPlaying = direct.filter(isPlaying)' "$transport" \
+grep -q 'const directPlaying = direct.filter(isPlaying)' "$desktop_adapter" \
   || fail "Helium desktop dispatch must keep the direct playing-media path fast before deep DOM traversal"
 
-grep -q 'const deepPlaying = deep.filter(isPlaying)' "$transport" \
+grep -q 'const deepPlaying = deep.filter(isPlaying)' "$desktop_adapter" \
   || fail "Helium desktop dispatch must pause playing media found in shadow DOM or same-origin frames"
 
-if grep -q '/usr/bin/osascript' "$transport"; then
+if grep -q '/usr/bin/osascript' "$transport" "$desktop_adapter"; then
   fail "selected-row desktop dispatch must not spawn osascript from the app hot path"
 fi
 
-if grep -q 'key code 49\|virtualKey: 49' "$transport"; then
+if grep -q 'key code 49\|virtualKey: 49' "$transport" "$desktop_adapter"; then
   fail "Helium selected-row dispatch must not simulate Space; focus-dependent browser keypresses are not target control"
 fi
 
@@ -253,7 +263,7 @@ grep -q 'transportBackendName(command: command, target: target)' "$transport" \
 grep -q 'transportBackend: result.backend' "$transport" \
   || fail "desktop helper results must preserve their selected transport backend"
 
-grep -q 'output == "paused" || output == "playing" || output == "play_requested"' "$transport" \
+grep -q 'output == "paused" || output == "playing" || output == "play_requested"' "$desktop_adapter" \
   || fail "Helium JavaScript dispatch must fail closed for no_media/no_windows states"
 
 grep -q 'selected_row_dispatch_route_shield_kept' "$transport" \
@@ -840,7 +850,7 @@ fi
 grep -q 'verify_shortcut_event_parser_semantics=ok' "$repo_root/scripts/verify_shortcut_event_parser_semantics" \
   || fail "event parser semantics must lock display brightness keys to pass-through"
 
-grep -q 'heliumActiveTabMediaAvailable' "$remote_controller" \
+grep -q 'heliumActiveTabMediaAvailable' "$desktop_adapter" \
   || fail "Helium chooser rows must be gated by active-tab playable media"
 
 grep -q 'probe_display_brightness_passthrough_stable' "$repo_root/scripts/probe_display_brightness_passthrough" \

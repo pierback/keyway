@@ -8,8 +8,8 @@ struct SpotifyAuthorizationRequest: Sendable {
     let redirectURI: URL
     let url: URL
 
-    init(clientID: String) throws {
-        try self.init(
+    init(clientID: String) {
+        self.init(
             clientID: clientID,
             redirectURI: SpotifyAuthCallbackServer.redirectURI,
             state: Self.randomURLSafeString(length: 32),
@@ -22,11 +22,11 @@ struct SpotifyAuthorizationRequest: Sendable {
         redirectURI: URL,
         state: String,
         codeVerifier: String
-    ) throws {
+    ) {
         self.state = state
         self.codeVerifier = codeVerifier
         self.redirectURI = redirectURI
-        self.url = try Self.authorizationURL(
+        self.url = Self.authorizationURL(
             clientID: clientID,
             redirectURI: redirectURI.absoluteString,
             state: state,
@@ -39,7 +39,7 @@ struct SpotifyAuthorizationRequest: Sendable {
         redirectURI: String,
         state: String,
         codeVerifier: String
-    ) throws -> URL {
+    ) -> URL {
         var components = URLComponents(url: SpotifyEndpoints.authorizeURL, resolvingAgainstBaseURL: false)
         components?.queryItems = [
             URLQueryItem(name: "response_type", value: "code"),
@@ -52,7 +52,7 @@ struct SpotifyAuthorizationRequest: Sendable {
         ]
 
         guard let url = components?.url else {
-            throw SpotifyAuthError.couldNotOpenBrowser
+            preconditionFailure("Spotify authorization URL components must produce a URL.")
         }
 
         return url
@@ -70,9 +70,7 @@ struct SpotifyAuthorizationRequest: Sendable {
         let alphabet = Array("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~")
         var randomBytes = [UInt8](repeating: 0, count: length)
         let status = SecRandomCopyBytes(kSecRandomDefault, length, &randomBytes)
-        guard status == errSecSuccess else {
-            return String((0 ..< length).map { _ in alphabet.randomElement()! })
-        }
+        precondition(status == errSecSuccess, "Spotify authorization request randomness must come from SecRandomCopyBytes.")
         return String(randomBytes.map { alphabet[Int($0) % alphabet.count] })
     }
 }

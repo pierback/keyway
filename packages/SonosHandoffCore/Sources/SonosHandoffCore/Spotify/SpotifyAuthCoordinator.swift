@@ -1,4 +1,3 @@
-import AppKit
 import Foundation
 
 public protocol SpotifyAuthCoordinating: Sendable {
@@ -55,7 +54,7 @@ public final class SpotifyAuthCoordinator: SpotifyAuthCoordinating, @unchecked S
         logger: Logger = Logger(),
         urlSession: URLSession = .shared,
         applicationSupportDirectory: URL = ConfigPaths.applicationSupportDirectory,
-        browserOpener: @escaping @Sendable (URL) -> Bool = { NSWorkspace.shared.open($0) }
+        browserOpener: @escaping @Sendable (URL) -> Bool
     ) {
         self.tokenStore = tokenStore
         self.configStore = configStore
@@ -71,7 +70,7 @@ public final class SpotifyAuthCoordinator: SpotifyAuthCoordinating, @unchecked S
             throw SpotifyAuthError.missingClientID
         }
 
-        let authorizationRequest = try SpotifyAuthorizationRequest(clientID: clientID)
+        let authorizationRequest = SpotifyAuthorizationRequest(clientID: clientID)
 
         let browserOpener = browserOpener
         try await SpotifyAuthCallbackServer.completeAuthorization(expectedState: authorizationRequest.state, completion: { authorizationCode, redirectURI in
@@ -95,14 +94,12 @@ public final class SpotifyAuthCoordinator: SpotifyAuthCoordinating, @unchecked S
                 expiresAt: tokenResponse.expiresAt
             ))
         }, openAuthorizationURL: { redirectURI in
-            guard let authorizationURL = try? SpotifyAuthorizationRequest.authorizationURL(
+            let authorizationURL = SpotifyAuthorizationRequest.authorizationURL(
                 clientID: clientID,
                 redirectURI: redirectURI.absoluteString,
                 state: authorizationRequest.state,
                 codeVerifier: authorizationRequest.codeVerifier
-            ) else {
-                return false
-            }
+            )
 
             return browserOpener(authorizationURL)
         })
