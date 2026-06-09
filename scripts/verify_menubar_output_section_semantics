@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+menu_section="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MenuBarOutputSection.swift"
+sync_controller="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/PlaybackSyncController.swift"
+group_edit_controller="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/PlaybackGroupEditController.swift"
+
+fail() {
+  printf 'verify_menubar_output_section_semantics: %s\n' "$*" >&2
+  exit 1
+}
+
+expect_contains() {
+  local path="$1"
+  local text="$2"
+  grep -Fq "$text" "$path" || fail "$path missing expected text: $text"
+}
+
+expect_absent() {
+  local path="$1"
+  local text="$2"
+  if grep -Fq "$text" "$path"; then
+    fail "$path still contains removed text: $text"
+  fi
+}
+
+expect_contains "$menu_section" "ForEach(playback.outputRows)"
+expect_absent "$menu_section" "playback.groupSuggestions"
+expect_absent "$menu_section" "acceptGroupSuggestion"
+expect_absent "$menu_section" "ignoreGroupSuggestion"
+
+expect_contains "$menu_section" "if loading || selected"
+expect_contains "$menu_section" "rowStatus(loading: loading, selected: selected)"
+expect_contains "$menu_section" "} else if let groupJoinRow {"
+expect_contains "$menu_section" "groupJoinButton(for: groupJoinRow, loading: grouping)"
+expect_contains "$menu_section" ".frame(width: Self.trailingControlSize * 2, height: Self.rowHeight)"
+
+expect_absent "$sync_controller" "var groupSuggestions"
+expect_absent "$sync_controller" "groupSuggestionCancellable"
+expect_absent "$sync_controller" "func acceptGroupSuggestion"
+expect_absent "$sync_controller" "func ignoreGroupSuggestion"
+
+expect_absent "$group_edit_controller" "private(set) var groupSuggestions"
+expect_absent "$group_edit_controller" "func setGroupSuggestions"
+expect_absent "$group_edit_controller" "func ignoreGroupSuggestion"
+
+printf 'verify_menubar_output_section_semantics=ok\n'

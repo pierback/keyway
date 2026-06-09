@@ -5,7 +5,6 @@ import SwiftUI
 struct MenuBarOutputSection: View {
     private static let accentColor = Color(nsColor: .controlAccentColor)
     private static let rowHeight: CGFloat = 28
-    private static let suggestionRowHeight: CGFloat = 30
     private static let iconSize: CGFloat = 20
     private static let trailingControlSize: CGFloat = 22
 
@@ -59,15 +58,16 @@ struct MenuBarOutputSection: View {
                 .animation(MenuBarMotion.modeSwitch, value: groupEditingActive)
                 .animation(MenuBarMotion.rowUpdate, value: playback.outputRows)
                 .animation(MenuBarMotion.rowUpdate, value: playback.groupEditRows)
-                .animation(MenuBarMotion.rowUpdate, value: playback.groupSuggestions)
 
             if let menuMessage = playback.menuMessage {
                 Text(menuMessage)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 14)
                     .padding(.top, 5)
+                    .padding(.bottom, 8)
                     .transition(MenuBarMotion.statusTransition)
             }
         }
@@ -106,11 +106,6 @@ struct MenuBarOutputSection: View {
         if playback.outputRows.isEmpty {
             emptyOutputRow
         } else {
-            ForEach(playback.groupSuggestions) { suggestion in
-                groupSuggestionRow(suggestion)
-                    .transition(MenuBarMotion.rowTransition)
-            }
-
             ForEach(playback.outputRows) { row in
                 outputRowStack(for: row)
                     .transition(MenuBarMotion.rowTransition)
@@ -207,8 +202,6 @@ struct MenuBarOutputSection: View {
                     rowTitle(row.displayName, subtitle: subtitle, dimmed: loading)
 
                     Spacer(minLength: 0)
-
-                    rowStatus(loading: loading, selected: selected)
                 }
                 .frame(maxWidth: .infinity, minHeight: Self.rowHeight, alignment: .leading)
                 .padding(.leading, 10)
@@ -222,7 +215,9 @@ struct MenuBarOutputSection: View {
             .accessibilityHint("Hands off Spotify playback to \(row.displayName)")
 
             HStack(spacing: 0) {
-                if let groupJoinRow {
+                if loading || selected {
+                    rowStatus(loading: loading, selected: selected)
+                } else if let groupJoinRow {
                     groupJoinButton(for: groupJoinRow, loading: grouping)
                 } else {
                     trailingControlPlaceholder()
@@ -362,80 +357,6 @@ struct MenuBarOutputSection: View {
         .accessibilityLabel(groupAccessibilityLabel(for: row))
     }
 
-    private func groupSuggestionRow(_ suggestion: PlaybackGroupSuggestion) -> some View {
-        let loading = suggestion.speaker.roomName == playback.groupLoadingRoomName
-
-        return HStack(spacing: 0) {
-            Button {
-                playback.acceptGroupSuggestion(id: suggestion.id)
-            } label: {
-                HStack(spacing: 13) {
-                    ZStack {
-                        Circle()
-                            .fill(Self.accentColor.opacity(0.18))
-
-                        Image(systemName: "hifispeaker.badge.plus")
-                            .font(.system(size: 12, weight: .regular))
-                            .symbolRenderingMode(.monochrome)
-                            .foregroundStyle(Self.accentColor.opacity(0.95))
-                    }
-                    .frame(width: Self.iconSize, height: Self.iconSize)
-
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text(suggestion.speaker.roomName)
-                            .font(.system(size: 13, weight: .regular))
-                            .foregroundStyle(Color.primary.opacity(0.9))
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-
-                        Text("Add to \(suggestion.groupDisplayName)")
-                            .font(.system(size: 11, weight: .regular))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
-
-                    Spacer(minLength: 0)
-                }
-                .frame(maxWidth: .infinity, minHeight: Self.suggestionRowHeight, alignment: .leading)
-                .padding(.leading, 12)
-            }
-            .buttonStyle(.plain)
-            .disabled(playback.groupLoadingRoomName != nil || playback.loadingRoomName != nil)
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("group-suggestion-\(suggestion.speaker.roomName)")
-            .accessibilityLabel("Add \(suggestion.speaker.roomName) to \(suggestion.groupDisplayName)")
-
-            if loading {
-                ProgressView()
-                    .controlSize(.small)
-                    .scaleEffect(0.56)
-                    .frame(width: 26, height: 26)
-            } else {
-                Button {
-                    playback.ignoreGroupSuggestion(id: suggestion.id)
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(Color.primary.opacity(0.48))
-                        .frame(width: 26, height: 26)
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .disabled(playback.groupLoadingRoomName != nil || playback.loadingRoomName != nil)
-                .accessibilityIdentifier("ignore-group-suggestion-\(suggestion.speaker.roomName)")
-                .accessibilityLabel("Ignore grouping suggestion for \(suggestion.speaker.roomName)")
-            }
-        }
-        .padding(.horizontal, 8)
-        .padding(.trailing, 2)
-        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .background {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.white.opacity(0.045))
-        }
-    }
-
     private func groupEditRow(for row: PlaybackGroupEditRow) -> some View {
         let loading = row.displayName == playback.groupLoadingRoomName
         let disabled = playback.groupLoadingRoomName != nil || playback.loadingRoomName != nil || !row.canToggle
@@ -495,7 +416,7 @@ struct MenuBarOutputSection: View {
                     .transition(MenuBarMotion.statusTransition)
             }
         }
-        .frame(width: Self.trailingControlSize, height: 18)
+        .frame(width: Self.trailingControlSize, height: Self.rowHeight)
     }
 
     @ViewBuilder
@@ -513,7 +434,7 @@ struct MenuBarOutputSection: View {
                     .transition(MenuBarMotion.statusTransition)
             }
         }
-        .frame(width: Self.trailingControlSize, height: 18)
+        .frame(width: Self.trailingControlSize, height: Self.rowHeight)
     }
 
     private func rowTitle(_ title: String, subtitle: String?, dimmed: Bool) -> some View {

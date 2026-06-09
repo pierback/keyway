@@ -11,19 +11,13 @@ final class PlaybackGroupEditController {
     private(set) var groupEditRows: [PlaybackGroupEditRow] = [] {
         didSet { notifyChange() }
     }
-    private(set) var groupSuggestions: [PlaybackGroupSuggestion] = [] {
-        didSet { notifyChange() }
-    }
 
     private let groupingInspectionResolver = SonosGroupingInspectionResolver()
     let groupMembershipChangePlanner = SonosGroupMembershipChangePlanner()
     private let groupSuggestionTracker = SonosGroupSuggestionTracker()
-    let groupSuggestionAcceptanceResolver = SonosGroupSuggestionAcceptanceResolver()
-    let groupSuggestionAcceptRefreshResolver = SonosGroupSuggestionAcceptRefreshResolver()
     let groupingEditor: any SonosGroupingEditing
     private let groupSuggestionStore: PlaybackGroupSuggestionStore
     let groupSuggestionPresenter: PlaybackGroupSuggestionPresenter
-    private let activePlaybackObserver: any SpotifyActivePlaybackObserving
     private let transferActions: PlaybackTransferActionController
     private let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "Shortcuts")
 
@@ -31,19 +25,12 @@ final class PlaybackGroupEditController {
         groupingEditor: any SonosGroupingEditing,
         groupSuggestionStore: PlaybackGroupSuggestionStore,
         groupSuggestionPresenter: PlaybackGroupSuggestionPresenter,
-        activePlaybackObserver: any SpotifyActivePlaybackObserving,
         transferActions: PlaybackTransferActionController
     ) {
         self.groupingEditor = groupingEditor
         self.groupSuggestionStore = groupSuggestionStore
         self.groupSuggestionPresenter = groupSuggestionPresenter
-        self.activePlaybackObserver = activePlaybackObserver
         self.transferActions = transferActions
-    }
-
-    func setGroupSuggestions(_ suggestions: [PlaybackGroupSuggestion]) {
-        guard groupSuggestions != suggestions else { return }
-        groupSuggestions = suggestions
     }
 
     func setGroupEditRows(_ rows: [PlaybackGroupEditRow]) {
@@ -81,12 +68,6 @@ final class PlaybackGroupEditController {
 
     func clearGroupSuggestions() {
         groupSuggestionPresenter.clearAll()
-    }
-
-    func ignoreGroupSuggestion(id: String) {
-        guard groupSuggestions.contains(where: { $0.matches(identifier: id) }) else { return }
-        groupSuggestionPresenter.clear(id: id)
-        logger.info("SonosHandoffGroupSuggestion result=ignored source=menu id=\(id, privacy: .public)")
     }
 
     struct GroupMembershipToggleResult {
