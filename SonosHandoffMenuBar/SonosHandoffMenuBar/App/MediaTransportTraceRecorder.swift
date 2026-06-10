@@ -93,6 +93,7 @@ final class MediaTransportTraceRecorder {
             "requestID": result.requestID ?? "",
             "targetID": result.targetID,
             "ok": result.ok,
+            "unsupported": result.unsupported,
             "message": result.message,
             "overlayVisible": overlayVisible,
             "chooserActive": chooserActive,

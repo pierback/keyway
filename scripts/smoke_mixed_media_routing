@@ -1,0 +1,565 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+iterations="${KEYWAY_MIXED_MEDIA_ROUTING_ITERATIONS:-100}"
+dry_run="${KEYWAY_MIXED_MEDIA_ROUTING_DRY_RUN:-0}"
+app_dir="${KEYWAY_APP:-$HOME/Applications/Keyway.app}"
+app_executable="$app_dir/Contents/MacOS/Keyway"
+workdir="$(mktemp -d)"
+server_pid=""
+browser_pid=""
+keyway_pid=""
+helium_window_id=""
+keyway_was_running=0
+
+cleanup() {
+  if [[ -n "$helium_window_id" ]]; then
+    osascript - "$helium_window_id" <<'APPLESCRIPT' >/dev/null 2>&1 || true
+on run argv
+    set smokeWindowID to item 1 of argv
+    tell application id "net.imput.helium"
+        close (first window whose id is smokeWindowID)
+    end tell
+end run
+APPLESCRIPT
+  fi
+  if [[ -n "$keyway_pid" ]]; then
+    kill "$keyway_pid" >/dev/null 2>&1 || true
+  fi
+  if [[ "$keyway_was_running" == "1" ]]; then
+    open "$app_dir" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$browser_pid" ]]; then
+    kill "$browser_pid" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$server_pid" ]]; then
+    kill "$server_pid" >/dev/null 2>&1 || true
+  fi
+  rm -rf "$workdir"
+}
+trap cleanup EXIT
+
+fail() {
+  printf 'smoke_mixed_media_routing: %s\n' "$1" >&2
+  exit 1
+}
+
+case "$iterations" in
+  ''|*[!0-9]*)
+    fail "KEYWAY_MIXED_MEDIA_ROUTING_ITERATIONS must be a positive integer"
+    ;;
+esac
+
+if (( iterations < 1 )); then
+  fail "KEYWAY_MIXED_MEDIA_ROUTING_ITERATIONS must be at least 1"
+fi
+
+if [[ "$dry_run" == "1" ]]; then
+  printf 'smoke_mixed_media_routing_dry_run=ok\n'
+  exit 0
+fi
+
+[[ -x "$app_executable" ]] || fail "Keyway app is not installed at $app_dir; run scripts/install_menubar_app first"
+pgrep -x Spotify >/dev/null || fail "Spotify must be running before mixed media routing smoke"
+
+if ! pgrep -x Helium >/dev/null; then
+  open -g -a Helium
+fi
+for _ in {1..100}; do
+  pgrep -x Helium >/dev/null && break
+  sleep 0.05
+done
+pgrep -x Helium >/dev/null || fail "Helium must be running before mixed media routing smoke"
+
+extension_id="$(
+  python3 - "$repo_root/ChromiumExtension/manifest.json" <<'PY'
+import base64
+import hashlib
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as manifest_file:
+    public_key = json.load(manifest_file)["key"]
+
+digest = hashlib.sha256(base64.b64decode(public_key)).digest()[:16]
+print("".join(chr(ord("a") + (byte >> 4)) + chr(ord("a") + (byte & 15)) for byte in digest))
+PY
+)"
+
+browser_path="${KEYWAY_CHROMIUM_SMOKE_BROWSER_PATH:-}"
+if [[ -z "$browser_path" ]]; then
+  if [[ -x "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser" ]]; then
+    browser_path="/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"
+  elif [[ -x "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ]]; then
+    browser_path="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+  else
+    fail "Google Chrome or Brave Browser must be installed, or set KEYWAY_CHROMIUM_SMOKE_BROWSER_PATH"
+  fi
+fi
+
+playwright_module="$(
+  node --input-type=module -e "console.log(await import.meta.resolve('playwright'))" \
+    || fail "Playwright must be available to launch Chromium with extension support"
+)"
+
+"$repo_root/scripts/install_chromium_native_host" "$extension_id" >/dev/null
+
+cat >"$workdir/server.py" <<'PY'
+import http.server
+import math
+import pathlib
+import socketserver
+import struct
+import sys
+import wave
+
+root = pathlib.Path(sys.argv[1])
+port_file = pathlib.Path(sys.argv[2])
+
+def write_tone(path, frequency):
+    sample_rate = 44100
+    sample_count = sample_rate
+    with wave.open(str(path), "w") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
+        for index in range(sample_count):
+            value = int(1200 * math.sin(2 * math.pi * frequency * index / sample_rate))
+            wav.writeframesraw(struct.pack("<h", value))
+
+write_tone(root / "chromium-a.wav", 440)
+write_tone(root / "chromium-b.wav", 660)
+write_tone(root / "helium.wav", 550)
+
+for page, title, media in [
+    ("chromium-a.html", "Keyway Chromium Mixed A", "chromium-a.wav"),
+    ("chromium-b.html", "Keyway Chromium Mixed B", "chromium-b.wav"),
+    ("helium.html", "Keyway Helium Mixed Media", "helium.wav"),
+]:
+    (root / page).write_text(f"""<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>{title}</title></head>
+<body>
+<audio id="media" controls preload="auto" autoplay muted loop src="/{media}"></audio>
+<script>media.volume = 0.5;</script>
+</body>
+</html>
+""", encoding="utf-8")
+
+class QuietHandler(http.server.SimpleHTTPRequestHandler):
+    def log_message(self, format, *args):
+        return
+
+socketserver.TCPServer.allow_reuse_address = True
+with socketserver.TCPServer(("127.0.0.1", 0), QuietHandler) as httpd:
+    pathlib.os.chdir(root)
+    port_file.write_text(str(httpd.server_address[1]), encoding="utf-8")
+    httpd.serve_forever()
+PY
+
+port_file="$workdir/port"
+python3 "$workdir/server.py" "$workdir" "$port_file" &
+server_pid="$!"
+
+for _ in {1..100}; do
+  [[ -s "$port_file" ]] && break
+  sleep 0.05
+done
+[[ -s "$port_file" ]] || fail "local mixed media smoke server did not start"
+port="$(cat "$port_file")"
+
+helium_window_id="$(
+  osascript - "http://127.0.0.1:$port/helium.html" <<'APPLESCRIPT'
+on run argv
+    set smokeURL to item 1 of argv
+    tell application id "net.imput.helium"
+        set smokeWindow to make new window
+        set URL of active tab of smokeWindow to smokeURL
+        return id of smokeWindow
+    end tell
+end run
+APPLESCRIPT
+)"
+
+cat >"$workdir/launch-browser.mjs" <<'JS'
+import fs from "node:fs/promises";
+
+const [playwrightModule, browserPath, userDataDir, extensionPath, readyFile, firstURL, secondURL] = process.argv.slice(2);
+console.error("importing playwright");
+const { chromium } = await import(playwrightModule);
+console.error("launching browser");
+const context = await chromium.launchPersistentContext(userDataDir, {
+  headless: false,
+  executablePath: browserPath,
+  ignoreDefaultArgs: ["--disable-extensions"],
+  args: [
+    `--load-extension=${extensionPath}`,
+    "--autoplay-policy=no-user-gesture-required",
+    "--no-first-run",
+    "--no-default-browser-check",
+  ],
+});
+
+console.error("opening first page");
+const first = await context.newPage();
+await first.goto(firstURL, { waitUntil: "domcontentloaded", timeout: 15000 });
+console.error("opening second page");
+const second = await context.newPage();
+await second.goto(secondURL, { waitUntil: "domcontentloaded", timeout: 15000 });
+console.error("writing ready marker");
+await fs.writeFile(readyFile, "ready", "utf8");
+
+const close = async () => {
+  await context.close();
+  process.exit(0);
+};
+
+process.on("SIGTERM", close);
+process.on("SIGINT", close);
+await new Promise(() => {});
+JS
+
+profile_dir="$workdir/profile"
+browser_ready_file="$workdir/browser-ready"
+browser_log_file="$workdir/browser.log"
+node "$workdir/launch-browser.mjs" \
+  "$playwright_module" \
+  "$browser_path" \
+  "$profile_dir" \
+  "$repo_root/ChromiumExtension" \
+  "$browser_ready_file" \
+  "http://127.0.0.1:$port/chromium-a.html" \
+  "http://127.0.0.1:$port/chromium-b.html" \
+  >"$browser_log_file" 2>&1 &
+browser_pid="$!"
+
+for _ in {1..600}; do
+  [[ -s "$browser_ready_file" ]] && break
+  sleep 0.05
+done
+if [[ ! -s "$browser_ready_file" ]]; then
+  if [[ -s "$browser_log_file" ]]; then
+    sed 's/^/chromium-smoke-browser: /' "$browser_log_file" >&2
+  fi
+  fail "Chromium smoke browser did not load both mixed media pages"
+fi
+
+if pgrep -f "$app_executable" >/dev/null; then
+  keyway_was_running=1
+  pkill -f "$app_executable"
+  for _ in {1..50}; do
+    ! pgrep -f "$app_executable" >/dev/null && break
+    sleep 0.1
+  done
+fi
+
+KEYWAY_MEDIA_ROUTING_PROBE=1 "$app_executable" >/dev/null 2>&1 &
+keyway_pid="$!"
+
+cat >"$workdir/MixedMediaRoutingSmoke.swift" <<'SWIFT'
+import Foundation
+
+let notificationObject = "com.fpieringer.Keyway"
+let probeRequestName = Notification.Name("com.fpieringer.Keyway.mediaRoutingProbe.request")
+let probeResponseName = Notification.Name("com.fpieringer.Keyway.mediaRoutingProbe.response")
+let traceName = Notification.Name("com.fpieringer.Keyway.mediaTransportTrace")
+let iterations = Int(CommandLine.arguments[1])!
+
+struct Target: Decodable {
+    let id: String
+    let bundleIdentifier: String
+    let parentBundleIdentifier: String
+    let displayName: String
+    let title: String
+}
+
+struct ProbeRequest: Encodable {
+    let requestID: String
+    let action: String
+    let targetID: String?
+    let command: String?
+}
+
+struct ProbeResponse: Decodable {
+    let requestID: String
+    let action: String
+    let ok: Bool
+    let message: String
+    let targetID: String?
+    let command: String?
+    let targets: [Target]?
+}
+
+struct TraceEvent {
+    let sequence: Int
+    let event: String
+    let command: String
+    let targetID: String
+    let ok: Bool
+    let unsupported: Bool
+    let backend: String
+    let receivedUptime: TimeInterval
+}
+
+final class State {
+    private let lock = NSLock()
+    private let decoder = JSONDecoder()
+    private var responses: [String: ProbeResponse] = [:]
+    private var traces: [TraceEvent] = []
+
+    func handleResponse(_ payload: String) {
+        let response = try! decoder.decode(ProbeResponse.self, from: Data(payload.utf8))
+        lock.lock()
+        responses[response.requestID] = response
+        lock.unlock()
+    }
+
+    func handleTrace(_ payload: String) {
+        let object = try! JSONSerialization.jsonObject(with: Data(payload.utf8)) as! [String: Any]
+        guard object["event"] as! String == "helper_command_result" else {
+            return
+        }
+        let trace = TraceEvent(
+            sequence: object["sequence"] as! Int,
+            event: object["event"] as! String,
+            command: object["command"] as! String,
+            targetID: object["targetID"] as! String,
+            ok: object["ok"] as! Bool,
+            unsupported: object["unsupported"] as! Bool,
+            backend: object["transportBackend"] as? String ?? "",
+            receivedUptime: ProcessInfo.processInfo.systemUptime
+        )
+        lock.lock()
+        traces.append(trace)
+        lock.unlock()
+    }
+
+    func response(requestID: String) -> ProbeResponse? {
+        lock.lock()
+        defer { lock.unlock() }
+        return responses[requestID]
+    }
+
+    func maxSequence() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return traces.map(\.sequence).max() ?? 0
+    }
+
+    func helperResults(after sequence: Int, command: String) -> [TraceEvent] {
+        lock.lock()
+        defer { lock.unlock() }
+        return traces
+            .filter { $0.sequence > sequence && $0.command == command }
+            .sorted { $0.sequence < $1.sequence }
+    }
+}
+
+func runLoop(until deadline: Date, condition: () -> Bool) -> Bool {
+    while Date() < deadline {
+        if condition() {
+            return true
+        }
+        RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.025))
+    }
+    return condition()
+}
+
+func percentile95(_ values: [Int]) -> Int {
+    let sorted = values.sorted()
+    let index = max(0, Int(ceil(Double(sorted.count) * 0.95)) - 1)
+    return sorted[index]
+}
+
+func postProbe(_ request: ProbeRequest) {
+    let data = try! JSONEncoder().encode(request)
+    DistributedNotificationCenter.default().postNotificationName(
+        probeRequestName,
+        object: notificationObject,
+        userInfo: ["payload": String(data: data, encoding: .utf8)!],
+        deliverImmediately: true
+    )
+}
+
+func snapshot(state: State) -> [Target]? {
+    let requestID = UUID().uuidString
+    postProbe(ProbeRequest(requestID: requestID, action: "snapshot", targetID: nil, command: nil))
+    guard runLoop(until: Date(timeIntervalSinceNow: 2), condition: { state.response(requestID: requestID) != nil }),
+          let response = state.response(requestID: requestID),
+          response.ok
+    else {
+        return nil
+    }
+    return response.targets
+}
+
+func route(
+    state: State,
+    target: Target,
+    command: String,
+    expectUnsupported: Bool,
+    expectedBackend: String,
+    latencies: inout [Int]
+) -> (success: Bool, wrongTarget: Bool, duplicate: Bool) {
+    let baseline = state.maxSequence()
+    let requestID = UUID().uuidString
+    let started = ProcessInfo.processInfo.systemUptime
+    postProbe(ProbeRequest(requestID: requestID, action: "route", targetID: target.id, command: command))
+
+    guard runLoop(until: Date(timeIntervalSinceNow: 2), condition: { state.response(requestID: requestID) != nil }),
+          let response = state.response(requestID: requestID),
+          response.ok
+    else {
+        return (false, false, false)
+    }
+
+    guard runLoop(until: Date(timeIntervalSinceNow: 3), condition: { !state.helperResults(after: baseline, command: command).isEmpty }),
+          let first = state.helperResults(after: baseline, command: command).first
+    else {
+        return (false, false, false)
+    }
+
+    latencies.append(Int(((first.receivedUptime - started) * 1000).rounded()))
+    RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.12))
+    let results = state.helperResults(after: baseline, command: command)
+    let wrongTarget = first.targetID != target.id
+    let duplicate = results.count > 1
+    let backendOK = first.backend == expectedBackend
+    let unsupportedOK = expectUnsupported
+        ? (!first.ok && first.unsupported)
+        : (first.ok && !first.unsupported)
+    return (unsupportedOK && !wrongTarget && !duplicate && backendOK, wrongTarget, duplicate)
+}
+
+func firstTarget(_ targets: [Target], bundleID: String) -> Target? {
+    targets.first { $0.bundleIdentifier == bundleID || $0.parentBundleIdentifier == bundleID }
+}
+
+func chromiumTarget(_ targets: [Target], title: String) -> Target? {
+    targets.first {
+        $0.bundleIdentifier == "com.fpieringer.keyway.chromium"
+            && ($0.title == title || $0.displayName.contains(title))
+    }
+}
+
+let state = State()
+let responseObserver = DistributedNotificationCenter.default().addObserver(
+    forName: probeResponseName,
+    object: notificationObject,
+    queue: .main
+) { notification in
+    state.handleResponse(notification.userInfo!["payload"] as! String)
+}
+let traceObserver = DistributedNotificationCenter.default().addObserver(
+    forName: traceName,
+    object: notificationObject,
+    queue: .main
+) { notification in
+    state.handleTrace(notification.userInfo!["payload"] as! String)
+}
+
+let discoveryStarted = ProcessInfo.processInfo.systemUptime
+var discovered: (spotify: Target, helium: Target, chromiumA: Target, chromiumB: Target)?
+let foundTargets = runLoop(until: Date(timeIntervalSinceNow: 20)) {
+    guard let targets = snapshot(state: state),
+          let spotify = firstTarget(targets, bundleID: "com.spotify.client"),
+          let helium = firstTarget(targets, bundleID: "net.imput.helium"),
+          let chromiumA = chromiumTarget(targets, title: "Keyway Chromium Mixed A"),
+          let chromiumB = chromiumTarget(targets, title: "Keyway Chromium Mixed B")
+    else {
+        return false
+    }
+    discovered = (spotify, helium, chromiumA, chromiumB)
+    return true
+}
+
+guard foundTargets, let targets = discovered else {
+    FileHandle.standardError.write(Data("smoke_mixed_media_routing: did not discover Spotify, Helium, and two Chromium targets through Keyway probe\n".utf8))
+    exit(1)
+}
+
+let discoveryMs = Int(((ProcessInfo.processInfo.systemUptime - discoveryStarted) * 1000).rounded())
+var latencies: [Int] = []
+var success = 0
+var failure = 0
+var wrongTarget = 0
+var duplicate = 0
+var unsupportedSuccess = 0
+var unsupportedFailure = 0
+
+let unsupportedChecks = [
+    (targets.helium, "next", "helium_javascript"),
+    (targets.helium, "previous", "helium_javascript"),
+    (targets.chromiumA, "next", "chromium_extension"),
+    (targets.chromiumB, "previous", "chromium_extension"),
+]
+
+for check in unsupportedChecks {
+    let result = route(
+        state: state,
+        target: check.0,
+        command: check.1,
+        expectUnsupported: true,
+        expectedBackend: check.2,
+        latencies: &latencies
+    )
+    if result.success {
+        unsupportedSuccess += 1
+    } else {
+        unsupportedFailure += 1
+    }
+    if result.wrongTarget { wrongTarget += 1 }
+    if result.duplicate { duplicate += 1 }
+}
+
+let supportedTargets = [
+    (targets.spotify, "playPause", "spotify_apple_event"),
+    (targets.helium, "playPause", "helium_javascript"),
+    (targets.chromiumA, "playPause", "chromium_extension"),
+    (targets.chromiumB, "playPause", "chromium_extension"),
+]
+
+for index in 0..<iterations {
+    let check = supportedTargets[index % supportedTargets.count]
+    let result = route(
+        state: state,
+        target: check.0,
+        command: check.1,
+        expectUnsupported: false,
+        expectedBackend: check.2,
+        latencies: &latencies
+    )
+    if result.success {
+        success += 1
+    } else {
+        failure += 1
+    }
+    if result.wrongTarget { wrongTarget += 1 }
+    if result.duplicate { duplicate += 1 }
+}
+
+DistributedNotificationCenter.default().removeObserver(responseObserver)
+DistributedNotificationCenter.default().removeObserver(traceObserver)
+
+let p95 = latencies.isEmpty ? 0 : percentile95(latencies)
+let requiredSuccess = Int(ceil(Double(iterations) * 0.98))
+
+print("mixed_media_routing_targets=spotify,helium,chromium-a,chromium-b")
+print("mixed_media_routing_total=\(iterations)")
+print("mixed_media_routing_success=\(success)")
+print("mixed_media_routing_failure=\(failure)")
+print("mixed_media_routing_wrong_target=\(wrongTarget)")
+print("mixed_media_routing_duplicate=\(duplicate)")
+print("mixed_media_routing_unsupported_success=\(unsupportedSuccess)")
+print("mixed_media_routing_unsupported_failure=\(unsupportedFailure)")
+print("mixed_media_routing_discovery_ms=\(discoveryMs)")
+print("mixed_media_routing_p95_ack_ms=\(p95)")
+
+if success < requiredSuccess || wrongTarget > 0 || duplicate > 0 || unsupportedFailure > 0 || p95 > 300 {
+    exit(1)
+}
+SWIFT
+
+swiftc "$workdir/MixedMediaRoutingSmoke.swift" -o "$workdir/mixed-media-routing-smoke"
+"$workdir/mixed-media-routing-smoke" "$iterations"

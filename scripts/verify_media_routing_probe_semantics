@@ -18,6 +18,13 @@ environment_path, status_path, app_path = sys.argv[1:4]
 environment = open(environment_path, encoding="utf-8").read()
 status = open(status_path, encoding="utf-8").read()
 app = open(app_path, encoding="utf-8").read()
+repo_root = environment_path.split("/SonosHandoffMenuBar/")[0]
+trace_recorder = open(
+    environment_path.replace("/Support/AppEnvironment.swift", "/App/MediaTransportTraceRecorder.swift"),
+    encoding="utf-8",
+).read()
+regression_gate = open(f"{repo_root}/scripts/regression_gate", encoding="utf-8").read()
+mixed_smoke = open(f"{repo_root}/scripts/smoke_mixed_media_routing", encoding="utf-8").read()
 
 def fail(message):
     print(f"verify_media_routing_probe_semantics: {message}", file=sys.stderr)
@@ -79,12 +86,44 @@ assert_order(
 )
 
 assert_order(
+    trace_recorder,
+    [
+        '"ok": result.ok',
+        '"unsupported": result.unsupported',
+        '"message": result.message',
+    ],
+    "helper result traces must preserve unsupported-vs-failed command state",
+)
+
+assert_order(
     app,
     [
         "environment.mediaRemoteController.start()",
         "environment.mediaRoutingProbeController.start()",
     ],
     "probe startup must happen after media target controllers start",
+)
+
+assert_order(
+    regression_gate,
+    [
+        'if [[ "${KEYWAY_MIXED_MEDIA_ROUTING_SMOKE:-0}" == "1" ]]; then',
+        'run "$ROOT_DIR/scripts/smoke_mixed_media_routing"',
+    ],
+    "mixed routing smoke must be available from the regression gate",
+)
+
+assert_order(
+    mixed_smoke,
+    [
+        "KEYWAY_MEDIA_ROUTING_PROBE=1",
+        "mixed_media_routing_total=",
+        "mixed_media_routing_wrong_target=",
+        "mixed_media_routing_duplicate=",
+        "mixed_media_routing_p95_ack_ms=",
+        "success < requiredSuccess || wrongTarget > 0 || duplicate > 0 || unsupportedFailure > 0 || p95 > 300",
+    ],
+    "mixed routing smoke must drive the probe and enforce the objective metrics",
 )
 
 print("verify_media_routing_probe_semantics=ok")

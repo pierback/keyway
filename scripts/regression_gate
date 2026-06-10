@@ -48,4 +48,8 @@ if [[ "${KEYWAY_CHROMIUM_EXTENSION_SMOKE:-0}" == "1" ]]; then
   run "$ROOT_DIR/scripts/smoke_chromium_extension_transport"
 fi
 
+if [[ "${KEYWAY_MIXED_MEDIA_ROUTING_SMOKE:-0}" == "1" ]]; then
+  run "$ROOT_DIR/scripts/smoke_mixed_media_routing"
+fi
+
 echo "regression_gate=ok"
