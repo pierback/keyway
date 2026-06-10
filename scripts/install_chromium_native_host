@@ -8,6 +8,8 @@ fi
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 host_name="com.fpieringer.keyway.chromium"
+app_dir="${KEYWAY_APP:-$HOME/Applications/Keyway.app}"
+bundled_host_path="$app_dir/Contents/Helpers/keyway-chromium-native-host"
 
 extension_id="${1:-}"
 if [[ -z "$extension_id" ]]; then
@@ -27,8 +29,12 @@ PY
   )"
 fi
 
-swift build --package-path "$repo_root/packages/SonosHandoffCore" --product keyway-chromium-native-host
-host_path="$repo_root/packages/SonosHandoffCore/.build/debug/keyway-chromium-native-host"
+if [[ -x "$bundled_host_path" ]]; then
+  host_path="$bundled_host_path"
+else
+  swift build --package-path "$repo_root/packages/SonosHandoffCore" --product keyway-chromium-native-host
+  host_path="$repo_root/packages/SonosHandoffCore/.build/debug/keyway-chromium-native-host"
+fi
 
 manifest="$(
   printf '{\n'
@@ -52,4 +58,4 @@ for native_host_dir in "${native_host_dirs[@]}"; do
   printf '%s' "$manifest" > "$native_host_dir/$host_name.json"
 done
 
-printf 'installed native messaging host %s for extension %s\n' "$host_name" "$extension_id"
+printf 'installed native messaging host %s for extension %s at %s\n' "$host_name" "$extension_id" "$host_path"

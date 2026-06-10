@@ -21,6 +21,7 @@ struct SettingsFeature: View {
     private let authCoordinator: SpotifyAuthCoordinating
     private let accessibilityAutomator: AccessibilityAutomating
     private let configImportService: ConfigImportService
+    private let chromiumNativeMessagingHostInstaller: ChromiumNativeMessagingHostInstaller
     @ObservedObject private var mediaRemoteController: MediaRemoteController
     @ObservedObject private var chromiumBrowserExtensionController: ChromiumBrowserExtensionController
 
@@ -43,6 +44,7 @@ struct SettingsFeature: View {
     @State private var notificationSettingsFallbackAvailable = false
     @State private var notificationMessage: String?
     @State private var configImportReport: ConfigImportReport?
+    @State private var chromiumBridgeMessage: String?
 
     init(
         configStore: ConfigStoring = ConfigStore(),
@@ -51,6 +53,7 @@ struct SettingsFeature: View {
         authCoordinator: SpotifyAuthCoordinating? = nil,
         accessibilityAutomator: AccessibilityAutomating = SpotifyUIAutomator(),
         configImportService: ConfigImportService = ConfigImportService(),
+        chromiumNativeMessagingHostInstaller: ChromiumNativeMessagingHostInstaller = ChromiumNativeMessagingHostInstaller(),
         initialConfigImportReport: ConfigImportReport? = nil,
         mediaRemoteController: MediaRemoteController = MediaRemoteController(),
         chromiumBrowserExtensionController: ChromiumBrowserExtensionController = ChromiumBrowserExtensionController()
@@ -60,6 +63,7 @@ struct SettingsFeature: View {
         self.connectTokenStatusStore = connectTokenStatusStore
         self.accessibilityAutomator = accessibilityAutomator
         self.configImportService = configImportService
+        self.chromiumNativeMessagingHostInstaller = chromiumNativeMessagingHostInstaller
         self.authCoordinator = authCoordinator ?? SpotifyAuthCoordinator(
             tokenStore: tokenStore,
             configStore: configStore,
@@ -216,6 +220,25 @@ struct SettingsFeature: View {
                 availableText: chromiumExtensionStatusText,
                 missingText: "Disconnected"
             )
+            HStack(alignment: .center, spacing: 8) {
+                StatusDot(available: chromiumBrowserExtensionController.connected, size: 7)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Chromium native bridge")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.primary.opacity(0.9))
+                    if let chromiumBridgeMessage {
+                        Text(chromiumBridgeMessage)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                }
+                Spacer()
+                Button("Repair Bridge") {
+                    installChromiumNativeBridge()
+                }
+                .controlSize(.small)
+            }
             Text("Routing policy: Focused Target, Pinned Target, Recent Target, chooser.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
@@ -792,6 +815,11 @@ struct SettingsFeature: View {
         Task {
             await reloadSpotifyAuthState()
         }
+    }
+
+    private func installChromiumNativeBridge() {
+        let state = try! chromiumNativeMessagingHostInstaller.install()
+        chromiumBridgeMessage = "Installed native host for \(state.manifestPaths.count) Chromium browsers."
     }
 
     private func reloadSpotifyAuthState() async {

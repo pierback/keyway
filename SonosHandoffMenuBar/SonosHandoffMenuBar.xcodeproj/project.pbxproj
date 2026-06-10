@@ -269,6 +269,7 @@
 				21AD37479BF96FCB0DEFED3E /* Frameworks */,
 				DC22E59ED29C2FB246ADA093 /* Resources */,
 				BB3204168C768B8E2827BD9C /* Build MediaRemote Helper */,
+				A21848B7E3C84D4AB38A96CE /* Build Chromium Native Host */,
 			);
 			buildRules = (
 			);
@@ -347,6 +348,27 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "set -euo pipefail\n\nHELPER_SRC=\"$SRCROOT/../MediaRemoteHelper\"\nHELPER_DEST=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/MediaRemoteHelper\"\n\nmkdir -p \"$HELPER_DEST\"\n/usr/bin/clang \\\n  -dynamiclib \\\n  -fobjc-arc \\\n  -fblocks \\\n  \"$HELPER_SRC/KeywayMediaRemoteShim.m\" \\\n  -framework Foundation \\\n  -o \"$HELPER_DEST/libkeyway_mediaremote.dylib\"\n\ncp \"$HELPER_SRC/keyway-mediaremote-helper.pl\" \"$HELPER_DEST/keyway-mediaremote-helper.pl\"\nchmod +x \"$HELPER_DEST/keyway-mediaremote-helper.pl\"\n";
+		};
+		A21848B7E3C84D4AB38A96CE /* Build Chromium Native Host */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/../packages/SonosHandoffCore/Sources/KeywayChromiumNativeHost/main.swift",
+				"$(SRCROOT)/../packages/SonosHandoffCore/Package.swift",
+			);
+			name = "Build Chromium Native Host";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/keyway-chromium-native-host",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -euo pipefail\n\nPACKAGE_DIR=\"$SRCROOT/../packages/SonosHandoffCore\"\nHELPER_DEST=\"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers\"\nSWIFT_CONFIGURATION=\"$(printf '%s' \"$CONFIGURATION\" | tr '[:upper:]' '[:lower:]')\"\n\ncase \"$SWIFT_CONFIGURATION\" in\n  debug|release) ;;\n  *) SWIFT_CONFIGURATION=debug ;;\nesac\n\nswift build \\\n  --package-path \"$PACKAGE_DIR\" \\\n  --product keyway-chromium-native-host \\\n  -c \"$SWIFT_CONFIGURATION\"\n\nmkdir -p \"$HELPER_DEST\"\ncp \"$PACKAGE_DIR/.build/$SWIFT_CONFIGURATION/keyway-chromium-native-host\" \"$HELPER_DEST/keyway-chromium-native-host\"\nchmod +x \"$HELPER_DEST/keyway-chromium-native-host\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

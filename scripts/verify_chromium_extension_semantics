@@ -247,3 +247,56 @@ function assertEqual(actual, expected, message) {
   assert(actual === expected, `${message}: expected ${expected}, got ${actual}`);
 }
 NODE
+
+python3 - "$repo_root" <<'PY'
+import pathlib
+import sys
+
+repo_root = pathlib.Path(sys.argv[1])
+transport = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionTransport.swift").read_text()
+environment = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/Support/AppEnvironment.swift").read_text()
+settings = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/Features/SettingsFeature.swift").read_text()
+project = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar.xcodeproj/project.pbxproj").read_text()
+installer = (repo_root / "scripts/install_chromium_native_host").read_text()
+readme = (repo_root / "ChromiumExtension/README.md").read_text()
+
+def expect(text, needle, message):
+    if needle not in text:
+        raise SystemExit(f"verify_chromium_extension_semantics: {message}")
+
+expect(
+    transport,
+    'static let extensionID = "gmdpkggbaohimgacbclndlfjghgcbael"',
+    "Swift app must register manifests for the stable unpacked extension ID",
+)
+expect(
+    transport,
+    'appendingPathComponent("Contents/Helpers/keyway-chromium-native-host")',
+    "Swift installer must point browser manifests at the bundled native host",
+)
+expect(
+    environment,
+    "_ = try! chromiumNativeMessagingHostInstaller.install()",
+    "app startup must install or repair Chromium native messaging manifests",
+)
+expect(
+    settings,
+    'Button("Repair Bridge")',
+    "Settings must expose a manual Chromium bridge repair action",
+)
+expect(
+    project,
+    "Build Chromium Native Host",
+    "Xcode build must bundle the Chromium native host",
+)
+expect(
+    installer,
+    'bundled_host_path="$app_dir/Contents/Helpers/keyway-chromium-native-host"',
+    "CLI installer must prefer the installed app helper",
+)
+expect(
+    readme,
+    "The app installs or repairs the native host manifest at launch",
+    "extension README must document app-owned native host registration",
+)
+PY

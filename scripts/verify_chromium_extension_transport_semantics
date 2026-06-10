@@ -94,6 +94,11 @@ struct Semantics {
             "Chromium targets must visibly include browser and tab title"
         )
         expectEqual(
+            ChromiumBrowserExtensionTransport.extensionID,
+            "gmdpkggbaohimgacbclndlfjghgcbael",
+            "Chromium native host manifests must use the stable extension ID"
+        )
+        expectEqual(
             ChromiumBrowserExtensionTransport.targetDisplayName(browser: "Chromium", pageTitle: ""),
             "Chromium",
             "Chromium targets without a tab title must keep the browser label"

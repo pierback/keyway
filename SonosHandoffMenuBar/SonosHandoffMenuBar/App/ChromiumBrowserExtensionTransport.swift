@@ -7,6 +7,7 @@ enum ChromiumBrowserExtensionTransport {
     static let mediaType = "chromium_extension"
     static let targetIDPrefix = "chromium-extension:"
     static let nativeMessagingHostName = "com.fpieringer.keyway.chromium"
+    static let extensionID = "gmdpkggbaohimgacbclndlfjghgcbael"
     static let snapshotNotificationName = Notification.Name("com.fpieringer.keyway.chromium.snapshot")
     static let commandResultNotificationName = Notification.Name("com.fpieringer.keyway.chromium.commandResult")
     static let commandNotificationName = Notification.Name("com.fpieringer.keyway.chromium.command")
@@ -70,6 +71,88 @@ enum ChromiumBrowserExtensionTransport {
             message: "Chromium extension is disconnected.",
             backend: backendName
         )
+    }
+}
+
+struct ChromiumNativeMessagingHostInstallState: Equatable {
+    let hostPath: String
+    let manifestPaths: [String]
+}
+
+struct ChromiumNativeMessagingHostInstaller {
+    private struct Manifest: Encodable {
+        let name: String
+        let description: String
+        let path: String
+        let type: String
+        let allowedOrigins: [String]
+
+        enum CodingKeys: String, CodingKey {
+            case name
+            case description
+            case path
+            case type
+            case allowedOrigins = "allowed_origins"
+        }
+    }
+
+    private let fileManager: FileManager
+    private let appBundleURL: URL
+
+    init(
+        appBundleURL: URL = Bundle.main.bundleURL,
+        fileManager: FileManager = .default
+    ) {
+        self.appBundleURL = appBundleURL
+        self.fileManager = fileManager
+    }
+
+    var nativeHostExecutableURL: URL {
+        appBundleURL.appendingPathComponent("Contents/Helpers/keyway-chromium-native-host")
+    }
+
+    func install() throws -> ChromiumNativeMessagingHostInstallState {
+        precondition(
+            fileManager.isExecutableFile(atPath: nativeHostExecutableURL.path),
+            "Bundled Chromium native host is missing or not executable at \(nativeHostExecutableURL.path)"
+        )
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        let data = try encoder.encode(Manifest(
+            name: ChromiumBrowserExtensionTransport.nativeMessagingHostName,
+            description: "Keyway Chromium media bridge",
+            path: nativeHostExecutableURL.path,
+            type: "stdio",
+            allowedOrigins: ["chrome-extension://\(ChromiumBrowserExtensionTransport.extensionID)/"]
+        ))
+
+        let manifestPaths = nativeHostDirectories.map {
+            $0.appendingPathComponent("\(ChromiumBrowserExtensionTransport.nativeMessagingHostName).json")
+        }
+
+        for manifestPath in manifestPaths {
+            try fileManager.createDirectory(
+                at: manifestPath.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try data.write(to: manifestPath, options: .atomic)
+        }
+
+        return ChromiumNativeMessagingHostInstallState(
+            hostPath: nativeHostExecutableURL.path,
+            manifestPaths: manifestPaths.map(\.path)
+        )
+    }
+
+    private var nativeHostDirectories: [URL] {
+        let home = fileManager.homeDirectoryForCurrentUser
+        return [
+            "Library/Application Support/Google/Chrome/NativeMessagingHosts",
+            "Library/Application Support/Chromium/NativeMessagingHosts",
+            "Library/Application Support/BraveSoftware/Brave-Browser/NativeMessagingHosts",
+            "Library/Application Support/Microsoft Edge/NativeMessagingHosts",
+        ].map { home.appendingPathComponent($0) }
     }
 }
 

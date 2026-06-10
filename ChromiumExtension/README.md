@@ -19,15 +19,17 @@ The browser backend supports `play`, `pause`, `playPause`, `mute`, and volume de
 
 ## Local Install
 
-1. Install the native host manifest:
+1. Open Keyway once. The app installs or repairs the native host manifest at launch, pointing Chrome-family browsers at the helper bundled in `Keyway.app/Contents/Helpers`.
+
+2. To repair it manually, run:
 
 ```bash
 scripts/install_chromium_native_host
 ```
 
-2. Open `chrome://extensions`, enable Developer Mode, and load this `ChromiumExtension` directory as an unpacked extension.
+3. Open `chrome://extensions`, enable Developer Mode, and load this `ChromiumExtension` directory as an unpacked extension.
 
-The script installs the host for Google Chrome, Chromium, Brave, and Microsoft Edge on macOS. It reads the extension ID from the manifest key; pass an explicit ID only when testing a different unpacked extension build.
+The app and script install the host for Google Chrome, Chromium, Brave, and Microsoft Edge on macOS. The script reads the extension ID from the manifest key; pass an explicit ID only when testing a different unpacked extension build. When `Keyway.app` is installed, the script points browser manifests at the bundled helper; otherwise it builds and registers the source-tree debug helper for local smoke testing.
 
 ## Smoke Test
 

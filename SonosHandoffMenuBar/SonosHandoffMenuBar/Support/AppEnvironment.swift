@@ -22,6 +22,7 @@ struct AppEnvironment: @unchecked Sendable {
     let transferSuggestionStore: PlaybackTransferSuggestionStore
     let transferSuggestionNotifier: PlaybackTransferSuggestionNotifier
     let transferSuggestionPresenter: PlaybackTransferSuggestionPresenter
+    let chromiumNativeMessagingHostInstaller: ChromiumNativeMessagingHostInstaller
     let chromiumBrowserExtensionController: ChromiumBrowserExtensionController
     let mediaRemoteController: MediaRemoteController
     let mediaAudioControlController: MediaAudioControlController
@@ -55,6 +56,8 @@ struct AppEnvironment: @unchecked Sendable {
             store: transferSuggestionStore,
             notifier: transferSuggestionNotifier
         )
+        let chromiumNativeMessagingHostInstaller = ChromiumNativeMessagingHostInstaller()
+        _ = try! chromiumNativeMessagingHostInstaller.install()
         let chromiumBrowserExtensionController = ChromiumBrowserExtensionController()
         let mediaRemoteController = MediaRemoteController(
             chromiumBrowserExtensionController: chromiumBrowserExtensionController
@@ -102,6 +105,7 @@ struct AppEnvironment: @unchecked Sendable {
             transferSuggestionStore: transferSuggestionStore,
             transferSuggestionNotifier: transferSuggestionNotifier,
             transferSuggestionPresenter: transferSuggestionPresenter,
+            chromiumNativeMessagingHostInstaller: chromiumNativeMessagingHostInstaller,
             chromiumBrowserExtensionController: chromiumBrowserExtensionController,
             mediaRemoteController: mediaRemoteController,
             mediaAudioControlController: mediaAudioControlController,

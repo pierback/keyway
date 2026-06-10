@@ -118,6 +118,7 @@ struct KeywayApp: App {
                 authCoordinator: environment.authCoordinator,
                 accessibilityAutomator: environment.accessibilityAutomator,
                 configImportService: environment.configImportService,
+                chromiumNativeMessagingHostInstaller: environment.chromiumNativeMessagingHostInstaller,
                 initialConfigImportReport: environment.configImportReport,
                 mediaRemoteController: environment.mediaRemoteController,
                 chromiumBrowserExtensionController: environment.chromiumBrowserExtensionController
