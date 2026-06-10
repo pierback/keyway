@@ -27,6 +27,7 @@ struct SpotifyAuthorizationRequestTests {
         #expect(queryItems["code_challenge_method"] == "S256")
         #expect(queryItems["code_challenge"] == SpotifyAuthorizationRequest.codeChallenge(for: "verifier"))
         #expect(queryItems["scope"] == SpotifyScopes.required.joined(separator: " "))
+        #expect(queryItems["show_dialog"] == "true")
     }
 
     @Test

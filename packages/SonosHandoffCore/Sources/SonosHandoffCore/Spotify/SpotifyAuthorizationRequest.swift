@@ -49,6 +49,7 @@ struct SpotifyAuthorizationRequest: Sendable {
             URLQueryItem(name: "code_challenge", value: codeChallenge(for: codeVerifier)),
             URLQueryItem(name: "state", value: state),
             URLQueryItem(name: "scope", value: SpotifyScopes.required.joined(separator: " ")),
+            URLQueryItem(name: "show_dialog", value: "true"),
         ]
 
         guard let url = components?.url else {
