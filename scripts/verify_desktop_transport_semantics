@@ -1,0 +1,182 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+workdir="$(mktemp -d)"
+trap 'rm -rf "$workdir"' EXIT
+
+cp \
+  "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaDesktopTransportAdapter.swift" \
+  "$workdir/MediaDesktopTransportAdapter.swift"
+
+cat >"$workdir/Stubs.swift" <<'SWIFT'
+import AppKit
+import Foundation
+
+enum MediaRemoteTransportCommand: String, Equatable {
+    case play
+    case pause
+    case playPause
+    case next
+    case previous
+
+    var displayName: String {
+        switch self {
+        case .play:
+            return "Play"
+        case .pause:
+            return "Pause"
+        case .playPause:
+            return "Play/Pause"
+        case .next:
+            return "Next"
+        case .previous:
+            return "Previous"
+        }
+    }
+}
+
+struct MediaRemoteTarget: Equatable, Identifiable {
+    let id: String
+    let bundleIdentifier: String
+    let parentBundleIdentifier: String
+    let displayName: String
+    let pid: Int
+    let title: String
+    let artist: String
+    let album: String
+    let playbackRate: String
+    let mediaType: String?
+    let artworkBase64: String?
+    let duration: Double?
+    let elapsedTime: Double?
+    let elapsedTimestamp: Double?
+}
+
+struct MediaRemoteCommandResultEvent: Equatable {
+    let type: String
+    let requestID: String?
+    let targetID: String
+    let command: String
+    let ok: Bool
+    let message: String
+    let backend: String?
+    let unsupported: Bool
+
+    init(
+        type: String,
+        requestID: String?,
+        targetID: String,
+        command: String,
+        ok: Bool,
+        message: String,
+        backend: String?,
+        unsupported: Bool = false
+    ) {
+        self.type = type
+        self.requestID = requestID
+        self.targetID = targetID
+        self.command = command
+        self.ok = ok
+        self.message = message
+        self.backend = backend
+        self.unsupported = unsupported
+    }
+}
+SWIFT
+
+cat >"$workdir/Semantics.swift" <<'SWIFT'
+import Foundation
+
+@main
+struct Semantics {
+    @MainActor
+    static func main() {
+        let adapter = MediaDesktopTransportAdapter()
+        let helium = target(
+            id: "net.imput.helium:123:desktop",
+            bundleIdentifier: "net.imput.helium",
+            parentBundleIdentifier: ""
+        )
+        let spotify = target(
+            id: "com.spotify.client:123",
+            bundleIdentifier: "com.spotify.client",
+            parentBundleIdentifier: ""
+        )
+        let other = target(
+            id: "com.example.other:123",
+            bundleIdentifier: "com.example.other",
+            parentBundleIdentifier: ""
+        )
+
+        expectEqual(
+            adapter.backendName(command: .next, target: helium),
+            MediaDesktopTransportBackend.heliumJavaScript.rawValue,
+            "Helium next must still be owned by the Helium backend"
+        )
+        expectEqual(
+            adapter.backendName(command: .previous, target: helium),
+            MediaDesktopTransportBackend.heliumJavaScript.rawValue,
+            "Helium previous must still be owned by the Helium backend"
+        )
+
+        let next = adapter.submit(command: .next, target: helium)
+        expectEqual(next?.ok, false, "Helium next must not report success")
+        expectEqual(next?.unsupported, true, "Helium next must be marked unsupported")
+        expectEqual(next?.backend, MediaDesktopTransportBackend.heliumJavaScript.rawValue, "Helium next must report the Helium backend")
+
+        let previous = adapter.submit(command: .previous, target: helium)
+        expectEqual(previous?.ok, false, "Helium previous must not report success")
+        expectEqual(previous?.unsupported, true, "Helium previous must be marked unsupported")
+        expectEqual(previous?.backend, MediaDesktopTransportBackend.heliumJavaScript.rawValue, "Helium previous must report the Helium backend")
+
+        expectEqual(
+            adapter.backendName(command: .next, target: spotify),
+            MediaDesktopTransportBackend.spotifyAppleEvent.rawValue,
+            "Spotify next must be owned by Spotify AppleEvents"
+        )
+        expectEqual(adapter.backendName(command: .next, target: other), nil, "Unknown targets must not claim a desktop backend")
+        expectEqual(adapter.submit(command: .next, target: other), nil, "Unknown targets must remain unhandled by the desktop adapter")
+
+        print("verify_desktop_transport_semantics=ok")
+    }
+
+    private static func target(id: String, bundleIdentifier: String, parentBundleIdentifier: String) -> MediaRemoteTarget {
+        MediaRemoteTarget(
+            id: id,
+            bundleIdentifier: bundleIdentifier,
+            parentBundleIdentifier: parentBundleIdentifier,
+            displayName: bundleIdentifier,
+            pid: 123,
+            title: "",
+            artist: "",
+            album: "",
+            playbackRate: "1",
+            mediaType: nil,
+            artworkBase64: nil,
+            duration: nil,
+            elapsedTime: nil,
+            elapsedTimestamp: nil
+        )
+    }
+
+    private static func expectEqual<T: Equatable>(_ actual: T, _ expected: T, _ message: String) {
+        guard actual == expected else {
+            fail("\(message): expected \(String(describing: expected)), got \(String(describing: actual))")
+        }
+    }
+
+    private static func fail(_ message: String) -> Never {
+        FileHandle.standardError.write(Data("verify_desktop_transport_semantics: \(message)\n".utf8))
+        exit(1)
+    }
+}
+SWIFT
+
+swiftc \
+  "$workdir/Stubs.swift" \
+  "$workdir/MediaDesktopTransportAdapter.swift" \
+  "$workdir/Semantics.swift" \
+  -o "$workdir/verify_desktop_transport_semantics"
+
+"$workdir/verify_desktop_transport_semantics"

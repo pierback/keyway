@@ -1,0 +1,339 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+iterations="${KEYWAY_SPOTIFY_APPLEEVENT_ITERATIONS:-100}"
+commands_csv="${KEYWAY_SPOTIFY_APPLEEVENT_COMMANDS:-play,pause,playPause,next,previous}"
+dry_run="${KEYWAY_SPOTIFY_APPLEEVENT_DRY_RUN:-0}"
+rebound_check="${KEYWAY_SPOTIFY_APPLEEVENT_REBOUND_CHECK:-0}"
+rebound_iterations="${KEYWAY_SPOTIFY_APPLEEVENT_REBOUND_ITERATIONS:-100}"
+background_check="${KEYWAY_SPOTIFY_APPLEEVENT_BACKGROUND_CHECK:-0}"
+workdir="$(mktemp -d)"
+trap 'rm -rf "$workdir"' EXIT
+
+fail() {
+  printf 'smoke_spotify_appleevent_transport: %s\n' "$1" >&2
+  exit 1
+}
+
+case "$iterations" in
+  ''|*[!0-9]*)
+    fail "KEYWAY_SPOTIFY_APPLEEVENT_ITERATIONS must be a positive integer"
+    ;;
+esac
+
+if (( iterations < 1 )); then
+  fail "KEYWAY_SPOTIFY_APPLEEVENT_ITERATIONS must be at least 1"
+fi
+
+case "$rebound_iterations" in
+  ''|*[!0-9]*)
+    fail "KEYWAY_SPOTIFY_APPLEEVENT_REBOUND_ITERATIONS must be a positive integer"
+    ;;
+esac
+
+if (( rebound_iterations < 1 )); then
+  fail "KEYWAY_SPOTIFY_APPLEEVENT_REBOUND_ITERATIONS must be at least 1"
+fi
+
+if [[ "$dry_run" != "1" ]] && ! pgrep -x Spotify >/dev/null; then
+  fail "Spotify must be running before AppleEvent smoke"
+fi
+
+IFS=',' read -r -a commands <<<"$commands_csv"
+if (( ${#commands[@]} == 0 )); then
+  fail "KEYWAY_SPOTIFY_APPLEEVENT_COMMANDS must list at least one command"
+fi
+
+cat >"$workdir/SpotifyAppleEventSmoke.swift" <<'SWIFT'
+import ApplicationServices
+import Foundation
+
+let arguments = Array(CommandLine.arguments.dropFirst())
+precondition(arguments.count >= 3, "Usage: SpotifyAppleEventSmoke <rebound-check> <rebound-iterations> <background-check> [commands...]")
+let reboundCheck = arguments[0] == "1"
+let reboundIterations = Int(arguments[1])!
+let backgroundCheck = arguments[2] == "1"
+let commands = Array(arguments.dropFirst(3))
+precondition(!commands.isEmpty, "At least one Spotify command is required.")
+
+let eventIDs: [String: String] = [
+    "play": "Play",
+    "pause": "Paus",
+    "playPause": "PlPs",
+    "next": "Next",
+    "previous": "Prev",
+]
+
+let started = ProcessInfo.processInfo.systemUptime
+var failures: [(String, OSStatus)] = []
+var elapsedMilliseconds: [Double] = []
+
+for command in commands {
+    let eventID = eventIDs[command]!
+    let before = ProcessInfo.processInfo.systemUptime
+    let status = sendAppleEvent(
+        bundleIdentifier: "com.spotify.client",
+        eventClass: "spfy",
+        eventID: eventID
+    )
+    let elapsed = (ProcessInfo.processInfo.systemUptime - before) * 1000
+    elapsedMilliseconds.append(elapsed)
+    if status != noErr {
+        failures.append((command, status))
+    }
+}
+
+let sorted = elapsedMilliseconds.sorted()
+let p95Index = min(sorted.count - 1, Int((Double(sorted.count) * 0.95).rounded(.up)) - 1)
+let p95 = sorted[p95Index]
+let totalElapsed = (ProcessInfo.processInfo.systemUptime - started) * 1000
+var reboundFailures = 0
+var duplicateRebounds = 0
+var backgroundFailures = 0
+
+if reboundCheck {
+    let result = runPlayPauseReboundCheck(iterations: reboundIterations)
+    reboundFailures = result.failures
+    duplicateRebounds = result.duplicates
+}
+
+if backgroundCheck {
+    backgroundFailures = runBackgroundForegroundCheck()
+}
+
+print("spotify_appleevent_smoke_total=\(commands.count)")
+print("spotify_appleevent_smoke_success=\(commands.count - failures.count)")
+print("spotify_appleevent_smoke_failure=\(failures.count)")
+print("spotify_appleevent_smoke_p95_ms=\(Int(p95.rounded()))")
+print("spotify_appleevent_smoke_elapsed_ms=\(Int(totalElapsed.rounded()))")
+print("spotify_appleevent_rebound_check_enabled=\(reboundCheck ? 1 : 0)")
+if reboundCheck {
+    print("spotify_appleevent_rebound_total=\(reboundIterations)")
+    print("spotify_appleevent_rebound_failure=\(reboundFailures)")
+    print("spotify_appleevent_duplicate_rebound=\(duplicateRebounds)")
+}
+print("spotify_appleevent_background_check_enabled=\(backgroundCheck ? 1 : 0)")
+if backgroundCheck {
+    print("spotify_appleevent_background_foreground_failure=\(backgroundFailures)")
+}
+
+for failure in failures {
+    print("spotify_appleevent_smoke_failure_detail command=\(failure.0) status=\(failure.1)")
+}
+
+let smokeExitCode: Int32 = failures.isEmpty && reboundFailures == 0 && backgroundFailures == 0 ? 0 : 1
+
+private func runPlayPauseReboundCheck(iterations: Int) -> (failures: Int, duplicates: Int) {
+    var failures = 0
+    var duplicates = 0
+    var pauseStatus = sendAppleEvent(
+        bundleIdentifier: "com.spotify.client",
+        eventClass: "spfy",
+        eventID: eventIDs["pause"]!
+    )
+    if pauseStatus != noErr {
+        print("spotify_appleevent_rebound_failure_detail command=pause status=\(pauseStatus)")
+        return (1, 0)
+    }
+    guard waitForStableSpotifyState("paused", stableFor: 0.75, timeout: 5) else {
+        print("spotify_appleevent_rebound_failure_detail reason=initial_stable_pause_state state=\(spotifyPlayerState())")
+        return (1, 0)
+    }
+
+    for index in 1...iterations {
+        let beforeState = spotifyPlayerState()
+        let expectedState = beforeState == "playing" ? "paused" : "playing"
+        let status = sendAppleEvent(
+            bundleIdentifier: "com.spotify.client",
+            eventClass: "spfy",
+            eventID: eventIDs["playPause"]!
+        )
+        if status != noErr {
+            failures += 1
+            print("spotify_appleevent_rebound_failure_detail iteration=\(index) status=\(status)")
+            continue
+        }
+        guard waitForSpotifyState(expectedState, timeout: 1) else {
+            let afterState = spotifyPlayerState()
+            failures += 1
+            if afterState == beforeState {
+                duplicates += 1
+            }
+            print("spotify_appleevent_rebound_failure_detail iteration=\(index) before=\(beforeState) expected=\(expectedState) after=\(afterState)")
+            continue
+        }
+        Thread.sleep(forTimeInterval: 0.35)
+        let afterState = spotifyPlayerState()
+        if afterState == expectedState {
+            continue
+        }
+        failures += 1
+        if afterState == beforeState {
+            duplicates += 1
+        }
+        print("spotify_appleevent_rebound_failure_detail iteration=\(index) before=\(beforeState) expected=\(expectedState) after=\(afterState)")
+    }
+    pauseStatus = sendAppleEvent(
+        bundleIdentifier: "com.spotify.client",
+        eventClass: "spfy",
+        eventID: eventIDs["pause"]!
+    )
+    if pauseStatus != noErr {
+        failures += 1
+        print("spotify_appleevent_rebound_failure_detail command=restore_pause status=\(pauseStatus)")
+    }
+    return (failures, duplicates)
+}
+
+private func runBackgroundForegroundCheck() -> Int {
+    var failures = 0
+    _ = runAppleScript(#"tell application id "com.spotify.client" to activate"#)
+    Thread.sleep(forTimeInterval: 0.5)
+    var status = sendAppleEvent(
+        bundleIdentifier: "com.spotify.client",
+        eventClass: "spfy",
+        eventID: eventIDs["pause"]!
+    )
+    if status != noErr || !waitForSpotifyState("paused", timeout: 3) {
+        print("spotify_appleevent_background_failure_detail phase=foreground_pause status=\(status) state=\(spotifyPlayerState())")
+        failures += 1
+    }
+
+    _ = runAppleScript(#"tell application id "com.apple.finder" to activate"#)
+    Thread.sleep(forTimeInterval: 0.5)
+    status = sendAppleEvent(
+        bundleIdentifier: "com.spotify.client",
+        eventClass: "spfy",
+        eventID: eventIDs["playPause"]!
+    )
+    if status != noErr || !waitForSpotifyState("playing", timeout: 3) {
+        print("spotify_appleevent_background_failure_detail phase=background_play status=\(status) state=\(spotifyPlayerState())")
+        failures += 1
+    }
+
+    _ = runAppleScript(#"tell application id "com.spotify.client" to activate"#)
+    Thread.sleep(forTimeInterval: 0.5)
+    status = sendAppleEvent(
+        bundleIdentifier: "com.spotify.client",
+        eventClass: "spfy",
+        eventID: eventIDs["playPause"]!
+    )
+    if status != noErr || !waitForSpotifyState("paused", timeout: 3) {
+        print("spotify_appleevent_background_failure_detail phase=foreground_pause_toggle status=\(status) state=\(spotifyPlayerState())")
+        failures += 1
+    }
+    return failures
+}
+
+private func waitForSpotifyState(_ expected: String, timeout: TimeInterval) -> Bool {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+        if spotifyPlayerState() == expected {
+            return true
+        }
+        Thread.sleep(forTimeInterval: 0.05)
+    }
+    return spotifyPlayerState() == expected
+}
+
+private func waitForStableSpotifyState(_ expected: String, stableFor: TimeInterval, timeout: TimeInterval) -> Bool {
+    let deadline = Date().addingTimeInterval(timeout)
+    var stableStartedAt: Date?
+    while Date() < deadline {
+        if spotifyPlayerState() == expected {
+            if stableStartedAt == nil {
+                stableStartedAt = Date()
+            }
+            if Date().timeIntervalSince(stableStartedAt!) >= stableFor {
+                return true
+            }
+        } else {
+            stableStartedAt = nil
+        }
+        Thread.sleep(forTimeInterval: 0.05)
+    }
+    return false
+}
+
+private func spotifyPlayerState() -> String {
+    runAppleScript(#"tell application id "com.spotify.client" to player state as string"#)
+}
+
+private func runAppleScript(_ source: String) -> String {
+    let script = NSAppleScript(source: source)!
+    var error: NSDictionary?
+    let descriptor = script.executeAndReturnError(&error)
+    if let error {
+        return "applescript_error:\(error)"
+    }
+    return descriptor.stringValue ?? ""
+}
+
+exit(smokeExitCode)
+
+private func sendAppleEvent(
+    bundleIdentifier: String,
+    eventClass: String,
+    eventID: String
+) -> OSStatus {
+    var target = AEAddressDesc()
+    let targetStatus = bundleIdentifier.withCString { pointer in
+        AECreateDesc(
+            DescType(typeApplicationBundleID),
+            pointer,
+            bundleIdentifier.lengthOfBytes(using: .utf8),
+            &target
+        )
+    }
+    guard targetStatus == noErr else {
+        return OSStatus(targetStatus)
+    }
+    defer { AEDisposeDesc(&target) }
+
+    var event = AppleEvent()
+    let eventStatus = AECreateAppleEvent(
+        AEEventClass(fourCharCode(eventClass)),
+        AEEventID(fourCharCode(eventID)),
+        &target,
+        AEReturnID(kAutoGenerateReturnID),
+        AETransactionID(kAnyTransactionID),
+        &event
+    )
+    guard eventStatus == noErr else {
+        return OSStatus(eventStatus)
+    }
+    defer { AEDisposeDesc(&event) }
+
+    return AESendMessage(
+        &event,
+        nil,
+        AESendMode(kAENoReply | kAECanInteract | kAECanSwitchLayer),
+        kAEDefaultTimeout
+    )
+}
+
+private func fourCharCode(_ value: String) -> OSType {
+    let bytes = Array(value.utf8)
+    precondition(bytes.count == 4, "AppleEvent codes must be exactly four bytes.")
+    var result: UInt32 = 0
+    for byte in bytes {
+        result = (result << 8) + UInt32(byte)
+    }
+    return result
+}
+SWIFT
+
+swiftc "$workdir/SpotifyAppleEventSmoke.swift" -o "$workdir/spotify-appleevent-smoke"
+
+if [[ "$dry_run" == "1" ]]; then
+  printf 'smoke_spotify_appleevent_transport_dry_run=ok\n'
+  exit 0
+fi
+
+expanded_commands=()
+for index in $(seq 1 "$iterations"); do
+  command_index=$(( (index - 1) % ${#commands[@]} ))
+  expanded_commands+=("${commands[$command_index]}")
+done
+
+"$workdir/spotify-appleevent-smoke" "$rebound_check" "$rebound_iterations" "$background_check" "${expanded_commands[@]}"

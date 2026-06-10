@@ -18,9 +18,12 @@ final class MediaRemoteController: ObservableObject {
     @Published private(set) var isRefreshingSnapshot = false
 
     private let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "MediaRemote")
+    private let chromiumBrowserExtensionController: ChromiumBrowserExtensionController
     private let decoder = JSONDecoder()
     private lazy var snapshotHelper = MediaRemoteHelperProcess(role: .snapshot, logger: logger)
     private lazy var commandHelper = MediaRemoteHelperProcess(role: .command, logger: logger)
+    private var chromiumTargetsSubscription: AnyCancellable?
+    private var mediaRemoteTargets: [MediaRemoteTarget] = []
     private var refreshTimer: Timer?
     private var recoveryTimer: Timer?
     private var notificationDebounce: Task<Void, Never>?
@@ -44,7 +47,19 @@ final class MediaRemoteController: ObservableObject {
     }
 
     var canRouteCommands: Bool {
-        health.state == .running && snapshotHelper.isRunning && commandHelper.isRunning
+        (health.state == .running && snapshotHelper.isRunning && commandHelper.isRunning)
+            || chromiumBrowserExtensionController.hasRoutableTargets
+    }
+
+    init(chromiumBrowserExtensionController: ChromiumBrowserExtensionController = ChromiumBrowserExtensionController()) {
+        self.chromiumBrowserExtensionController = chromiumBrowserExtensionController
+        chromiumTargetsSubscription = chromiumBrowserExtensionController.$targets
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.mergeVisibleTargets()
+                }
+            }
     }
 
     func hasFreshSnapshot(maxAge: TimeInterval) -> Bool {
@@ -251,9 +266,10 @@ final class MediaRemoteController: ObservableObject {
                 }
                 snapshotRefreshTimeout?.cancel()
                 snapshotRefreshTimeout = nil
-                let visibleTargets = MediaDesktopTransportAdapter.targetsIncludingDesktopAutomationTargets(
+                mediaRemoteTargets = MediaDesktopTransportAdapter.targetsIncludingDesktopAutomationTargets(
                     snapshot.targets.filter { !Self.isIgnoredTarget($0) }
                 )
+                let visibleTargets = chromiumBrowserExtensionController.targetsIncludingBrowserExtensionTargets(mediaRemoteTargets)
                 targets = visibleTargets
                 activeTargetID = visibleTargets.contains { $0.id == snapshot.activeTargetID }
                     ? Self.nilIfEmpty(snapshot.activeTargetID)
@@ -334,6 +350,27 @@ final class MediaRemoteController: ObservableObject {
         pendingRefreshRequested = false
         logger.info("MediaRemoteHelper refresh_followup reason=coalesced")
         refreshSnapshot()
+    }
+
+    private func mergeVisibleTargets() {
+        let visibleTargets = chromiumBrowserExtensionController.targetsIncludingBrowserExtensionTargets(mediaRemoteTargets)
+        targets = visibleTargets
+        if let activeTargetID, !visibleTargets.contains(where: { $0.id == activeTargetID }) {
+            self.activeTargetID = nil
+        }
+        ShortcutRuntimeStatus.shared.updateMediaTargets(
+            visibleTargets,
+            activeTargetID: activeTargetID,
+            rawTargetCount: mediaRemoteTargets.count,
+            rawActiveTargetID: activeTargetID
+        )
+        health = MediaRemoteHelperHealth(
+            state: health.state,
+            message: health.message,
+            pid: health.pid,
+            lastSnapshotAt: health.lastSnapshotAt,
+            targetCount: visibleTargets.count
+        )
     }
 
     private func armSnapshotRefreshTimeout(requestID: String) {

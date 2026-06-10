@@ -42,6 +42,50 @@ struct MediaRemoteCommandResultEvent: Decodable {
     let ok: Bool
     let message: String
     let backend: String?
+    let unsupported: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case requestID
+        case targetID
+        case command
+        case ok
+        case message
+        case backend
+        case unsupported
+    }
+
+    init(
+        type: String,
+        requestID: String?,
+        targetID: String,
+        command: String,
+        ok: Bool,
+        message: String,
+        backend: String?,
+        unsupported: Bool = false
+    ) {
+        self.type = type
+        self.requestID = requestID
+        self.targetID = targetID
+        self.command = command
+        self.ok = ok
+        self.message = message
+        self.backend = backend
+        self.unsupported = unsupported
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        type = try container.decode(String.self, forKey: .type)
+        requestID = try container.decodeIfPresent(String.self, forKey: .requestID)
+        targetID = try container.decode(String.self, forKey: .targetID)
+        command = try container.decode(String.self, forKey: .command)
+        ok = try container.decode(Bool.self, forKey: .ok)
+        message = try container.decode(String.self, forKey: .message)
+        backend = try container.decodeIfPresent(String.self, forKey: .backend)
+        unsupported = try container.decodeIfPresent(Bool.self, forKey: .unsupported) ?? false
+    }
 }
 
 struct MediaRemoteClientCacheEvent: Decodable {

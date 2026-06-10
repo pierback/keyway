@@ -1,0 +1,209 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+workdir="$(mktemp -d)"
+trap 'rm -rf "$workdir"' EXIT
+
+cp \
+  "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionTransport.swift" \
+  "$workdir/ChromiumBrowserExtensionTransport.swift"
+
+cat >"$workdir/Stubs.swift" <<'SWIFT'
+import Foundation
+
+enum AppIdentity {
+    static let loggerSubsystem = "com.fpieringer.Keyway.tests"
+}
+
+enum MediaRemoteTransportCommand: String, Equatable {
+    case play
+    case pause
+    case playPause
+    case next
+    case previous
+
+    var displayName: String {
+        switch self {
+        case .play:
+            return "Play"
+        case .pause:
+            return "Pause"
+        case .playPause:
+            return "Play/Pause"
+        case .next:
+            return "Next"
+        case .previous:
+            return "Previous"
+        }
+    }
+}
+
+struct MediaRemoteTarget: Equatable, Identifiable {
+    let id: String
+    let bundleIdentifier: String
+    let parentBundleIdentifier: String
+    let displayName: String
+    let pid: Int
+    let title: String
+    let artist: String
+    let album: String
+    let playbackRate: String
+    let mediaType: String?
+    let artworkBase64: String?
+    let duration: Double?
+    let elapsedTime: Double?
+    let elapsedTimestamp: Double?
+}
+
+struct MediaRemoteCommandResultEvent: Decodable {
+    let type: String
+    let requestID: String?
+    let targetID: String
+    let command: String
+    let ok: Bool
+    let message: String
+    let backend: String?
+    var unsupported: Bool = false
+}
+SWIFT
+
+cat >"$workdir/Semantics.swift" <<'SWIFT'
+import Foundation
+
+@main
+struct Semantics {
+    @MainActor
+    static func main() {
+        let target = chromiumTarget(
+            id: "chromium-extension:chromium:11:22:0:media-1",
+            title: "Video A"
+        )
+        let second = chromiumTarget(
+            id: "chromium-extension:chromium:11:23:0:media-1",
+            title: "Video B"
+        )
+
+        expectTrue(
+            ChromiumBrowserExtensionTransport.isTarget(target),
+            "Chromium extension targets must be recognized by exact target identity"
+        )
+        expectEqual(
+            ChromiumBrowserExtensionTransport.targetDisplayName(browser: "Chromium", pageTitle: "Video A"),
+            "Chromium - Video A",
+            "Chromium targets must visibly include browser and tab title"
+        )
+        expectEqual(
+            ChromiumBrowserExtensionTransport.targetDisplayName(browser: "Chromium", pageTitle: ""),
+            "Chromium",
+            "Chromium targets without a tab title must keep the browser label"
+        )
+        expectTrue(
+            ChromiumBrowserExtensionTransport.supports(command: .playPause, target: target),
+            "Chromium extension targets must support Play/Pause"
+        )
+        expectFalse(
+            ChromiumBrowserExtensionTransport.supports(command: .next, target: target),
+            "Chromium extension targets must not claim generic Next support"
+        )
+        expectFalse(
+            ChromiumBrowserExtensionTransport.supports(command: .previous, target: target),
+            "Chromium extension targets must not claim generic Previous support"
+        )
+
+        let unsupported = ChromiumBrowserExtensionTransport.unsupportedResult(command: .next, target: target)
+        expectFalse(unsupported.ok, "Unsupported commands must not report success")
+        expectTrue(unsupported.unsupported, "Unsupported commands must be marked unsupported")
+        expectEqual(unsupported.backend, ChromiumBrowserExtensionTransport.backendName, "Unsupported result must name the Chromium backend")
+
+        let controller = ChromiumBrowserExtensionController()
+        controller.markConnected(targets: [target, second])
+        let merged = controller.targetsIncludingBrowserExtensionTargets([target])
+        expectEqual(
+            merged.map(\.id),
+            [target.id, second.id],
+            "Merging browser extension targets must preserve exact tab targets without duplicating IDs"
+        )
+
+        var unsupportedCallbackResult: MediaRemoteCommandResultEvent?
+        let unsupportedHandled = controller.submit(command: .next, target: target) { result in
+            unsupportedCallbackResult = result
+        }
+        expectEqual(unsupportedHandled, true, "Unsupported Chromium commands must be handled by the Chromium backend")
+        expectEqual(unsupportedCallbackResult?.unsupported, true, "Unsupported Chromium commands must report through the command-result callback")
+        expectEqual(unsupportedCallbackResult?.ok, false, "Unsupported Chromium commands must not report callback success")
+
+        expectEqual(ChromiumBrowserAudioCommand.mute.rawValue, "mute", "Chromium mute must use the extension mute command")
+        expectEqual(ChromiumBrowserAudioCommand.mute.volumeDelta, nil, "Chromium mute must not send a volume delta")
+        expectEqual(ChromiumBrowserAudioCommand.volumeDelta(0.05).rawValue, "volumeDelta", "Chromium volume must use the extension volumeDelta command")
+        expectEqual(ChromiumBrowserAudioCommand.volumeDelta(0.05).volumeDelta, 0.05, "Chromium volume must preserve the requested delta")
+
+        let disconnectedController = ChromiumBrowserExtensionController()
+        var disconnectedAudioResult: MediaRemoteCommandResultEvent?
+        let disconnectedAudioHandled = disconnectedController.submit(audioCommand: .mute, target: target) { result in
+            disconnectedAudioResult = result
+        }
+        expectEqual(disconnectedAudioHandled, true, "Disconnected Chromium audio commands must be handled by the Chromium backend")
+        expectEqual(disconnectedAudioResult?.ok, false, "Disconnected Chromium audio commands must not report success")
+        expectEqual(disconnectedAudioResult?.command, "mute", "Disconnected Chromium audio commands must preserve the command name")
+
+        let connectedAudioHandled = controller.submit(audioCommand: .volumeDelta(0.05), target: target) { _ in }
+        expectEqual(connectedAudioHandled, true, "Connected Chromium audio commands must route through the Chromium backend")
+
+        print("verify_chromium_extension_transport_semantics=ok")
+    }
+
+    private static func chromiumTarget(id: String, title: String) -> MediaRemoteTarget {
+        MediaRemoteTarget(
+            id: id,
+            bundleIdentifier: ChromiumBrowserExtensionTransport.nativeMessagingHostName,
+            parentBundleIdentifier: "",
+            displayName: ChromiumBrowserExtensionTransport.targetDisplayName(
+                browser: "Chromium",
+                pageTitle: title
+            ),
+            pid: 0,
+            title: title,
+            artist: "",
+            album: "",
+            playbackRate: "1",
+            mediaType: ChromiumBrowserExtensionTransport.mediaType,
+            artworkBase64: nil,
+            duration: 100,
+            elapsedTime: 10,
+            elapsedTimestamp: 0
+        )
+    }
+
+    private static func expectTrue(_ actual: Bool, _ message: String) {
+        guard actual else {
+            fail(message)
+        }
+    }
+
+    private static func expectFalse(_ actual: Bool, _ message: String) {
+        guard !actual else {
+            fail(message)
+        }
+    }
+
+    private static func expectEqual<T: Equatable>(_ actual: T, _ expected: T, _ message: String) {
+        guard actual == expected else {
+            fail("\(message): expected \(expected), got \(actual)")
+        }
+    }
+
+    private static func fail(_ message: String) -> Never {
+        FileHandle.standardError.write(Data("verify_chromium_extension_transport_semantics: \(message)\n".utf8))
+        exit(1)
+    }
+}
+SWIFT
+
+swiftc \
+  "$workdir/Stubs.swift" \
+  "$workdir/ChromiumBrowserExtensionTransport.swift" \
+  "$workdir/Semantics.swift" \
+  -o "$workdir/verify_chromium_extension_transport_semantics"
+
+"$workdir/verify_chromium_extension_transport_semantics"

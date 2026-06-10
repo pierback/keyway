@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -gt 1 ]]; then
+  printf 'usage: %s [chromium-extension-id]\n' "$0" >&2
+  exit 64
+fi
+
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+host_name="com.fpieringer.keyway.chromium"
+
+extension_id="${1:-}"
+if [[ -z "$extension_id" ]]; then
+  extension_id="$(
+    python3 - "$repo_root/ChromiumExtension/manifest.json" <<'PY'
+import base64
+import hashlib
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as manifest_file:
+    public_key = json.load(manifest_file)["key"]
+
+digest = hashlib.sha256(base64.b64decode(public_key)).digest()[:16]
+print("".join(chr(ord("a") + (byte >> 4)) + chr(ord("a") + (byte & 15)) for byte in digest))
+PY
+  )"
+fi
+
+swift build --package-path "$repo_root/packages/SonosHandoffCore" --product keyway-chromium-native-host
+host_path="$repo_root/packages/SonosHandoffCore/.build/debug/keyway-chromium-native-host"
+
+manifest="$(
+  printf '{\n'
+  printf '  "name": "%s",\n' "$host_name"
+  printf '  "description": "Keyway Chromium media bridge",\n'
+  printf '  "path": "%s",\n' "$host_path"
+  printf '  "type": "stdio",\n'
+  printf '  "allowed_origins": ["chrome-extension://%s/"]\n' "$extension_id"
+  printf '}\n'
+)"
+
+native_host_dirs=(
+  "$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts"
+  "$HOME/Library/Application Support/Chromium/NativeMessagingHosts"
+  "$HOME/Library/Application Support/BraveSoftware/Brave-Browser/NativeMessagingHosts"
+  "$HOME/Library/Application Support/Microsoft Edge/NativeMessagingHosts"
+)
+
+for native_host_dir in "${native_host_dirs[@]}"; do
+  mkdir -p "$native_host_dir"
+  printf '%s' "$manifest" > "$native_host_dir/$host_name.json"
+done
+
+printf 'installed native messaging host %s for extension %s\n' "$host_name" "$extension_id"

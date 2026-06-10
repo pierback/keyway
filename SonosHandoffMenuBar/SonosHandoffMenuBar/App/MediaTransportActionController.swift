@@ -19,6 +19,7 @@ final class MediaTransportActionController {
     private let overlayController: MediaTargetOverlayController
     private let commandCenterFilter: MediaTransportCommandCenterFilter
     private let desktopTransport = MediaDesktopTransportAdapter()
+    private let chromiumBrowserExtensionController: ChromiumBrowserExtensionController
     private let traceRecorder = MediaTransportTraceRecorder()
     private let chooserSession = MediaChooserSessionGuard()
     private let focusResolver = MediaTargetFocusResolver()
@@ -29,10 +30,12 @@ final class MediaTransportActionController {
 
     init(
         mediaRemoteController: MediaRemoteController,
-        overlayController: MediaTargetOverlayController
+        overlayController: MediaTargetOverlayController,
+        chromiumBrowserExtensionController: ChromiumBrowserExtensionController = ChromiumBrowserExtensionController()
     ) {
         self.mediaRemoteController = mediaRemoteController
         self.overlayController = overlayController
+        self.chromiumBrowserExtensionController = chromiumBrowserExtensionController
         self.commandCenterFilter = MediaTransportCommandCenterFilter(
             mediaKeyShadowInterval: Self.commandCenterMediaKeyShadowInterval,
             commandCenterInputShadowInterval: Self.commandCenterInputShadowInterval,
@@ -439,6 +442,26 @@ final class MediaTransportActionController {
             logger.info("MediaTransport route command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) reason=\(reason.rawValue, privacy: .public) transport=\(result.backend ?? "desktop", privacy: .public)")
             return
         }
+        if let sent = chromiumBrowserExtensionController.submit(command: command, target: target, onResult: { [weak self] result in
+            self?.trace(result: result, transportBackend: result.backend)
+            self?.finishProgrammaticDispatch(
+                id: dispatchID,
+                fallback: false
+            )
+            self?.showCommandFailureIfNeeded(result: result, target: target)
+        }) {
+            guard sent else {
+                finishProgrammaticDispatch(id: dispatchID, fallback: true)
+                StatusHUD.shared.finish(
+                    title: "Media Command Failed",
+                    message: "Keyway could not reach \(target.appName).",
+                    dismissAfter: 2.2
+                )
+                return
+            }
+            logger.info("MediaTransport route command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) reason=\(reason.rawValue, privacy: .public) transport=chromium_extension")
+            return
+        }
         let sent = mediaRemoteController.submit(command: command, targetID: target.id) { [weak self] result in
             self?.trace(result: result, transportBackend: Self.mediaRemotePlayerPathBackend)
             self?.finishProgrammaticDispatch(
@@ -506,6 +529,26 @@ final class MediaTransportActionController {
             logger.info("MediaTransport chooser command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) transport=\(result.backend ?? "desktop", privacy: .public)")
             return
         }
+        if let sent = chromiumBrowserExtensionController.submit(command: command, target: target, onResult: { [weak self] result in
+            self?.trace(result: result, transportBackend: result.backend)
+            self?.finishChooserDispatch(
+                id: dispatchID,
+                fallback: false
+            )
+            self?.showCommandFailureIfNeeded(result: result, target: target)
+        }) {
+            guard sent else {
+                finishChooserDispatch(id: dispatchID, fallback: true)
+                StatusHUD.shared.finish(
+                    title: "Media Command Failed",
+                    message: "Keyway could not reach \(target.appName).",
+                    dismissAfter: 2.2
+                )
+                return
+            }
+            logger.info("MediaTransport chooser command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) transport=chromium_extension")
+            return
+        }
         let sent = mediaRemoteController.submit(command: command, targetID: target.id) { [weak self] result in
             self?.trace(result: result, transportBackend: Self.mediaRemotePlayerPathBackend)
             self?.finishChooserDispatch(
@@ -544,11 +587,14 @@ final class MediaTransportActionController {
     private static let mediaRemotePlayerPathBackend = "mediaremote_player_path"
 
     private func transportBackendName(command: MediaRemoteTransportCommand, target: MediaRemoteTarget) -> String {
-        desktopTransport.backendName(command: command, target: target) ?? Self.mediaRemotePlayerPathBackend
+        desktopTransport.backendName(command: command, target: target)
+            ?? chromiumBrowserExtensionController.backendName(command: command, target: target)
+            ?? Self.mediaRemotePlayerPathBackend
     }
 
     private func desktopTransportName(target: MediaRemoteTarget) -> String? {
         desktopTransport.backendName(for: target)
+            ?? chromiumBrowserExtensionController.backendName(for: target)
     }
 
     private func beginBoundedProgrammaticDispatch(command: MediaRemoteTransportCommand) -> UUID {
@@ -658,6 +704,14 @@ final class MediaTransportActionController {
         }
 
         logger.error("MediaTransport async_route_failed command=\(result.command, privacy: .public) target=\(target.appName, privacy: .public) targetID=\(result.targetID, privacy: .public) message=\(result.message, privacy: .public)")
+        if result.unsupported {
+            StatusHUD.shared.finish(
+                title: "Command Unsupported",
+                message: result.message,
+                dismissAfter: 2.2
+            )
+            return
+        }
         StatusHUD.shared.finish(
             title: "Media Command Failed",
             message: result.message.contains("-1743")

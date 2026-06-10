@@ -13,6 +13,9 @@ run swift test --package-path "$PACKAGE_DIR"
 run "$ROOT_DIR/scripts/verify_shortcut_event_parser_semantics"
 run "$ROOT_DIR/scripts/verify_menubar_output_section_semantics"
 run "$ROOT_DIR/scripts/verify_settings_feature_semantics"
+run "$ROOT_DIR/scripts/verify_desktop_transport_semantics"
+run "$ROOT_DIR/scripts/verify_chromium_extension_transport_semantics"
+run "$ROOT_DIR/scripts/verify_chromium_extension_semantics"
 run git -C "$ROOT_DIR" diff --check
 run "$ROOT_DIR/scripts/install_menubar_app"
 
@@ -29,6 +32,18 @@ fi
 
 if [[ "${KEYWAY_TRANSPORT_UI_SMOKE:-0}" == "1" ]]; then
   run "$ROOT_DIR/scripts/smoke_transport_routing_confirmation"
+fi
+
+if [[ "${KEYWAY_SPOTIFY_APPLEEVENT_SMOKE:-0}" == "1" ]]; then
+  run "$ROOT_DIR/scripts/smoke_spotify_appleevent_transport"
+fi
+
+if [[ "${KEYWAY_HELIUM_JAVASCRIPT_SMOKE:-0}" == "1" ]]; then
+  run "$ROOT_DIR/scripts/smoke_helium_javascript_transport"
+fi
+
+if [[ "${KEYWAY_CHROMIUM_EXTENSION_SMOKE:-0}" == "1" ]]; then
+  run "$ROOT_DIR/scripts/smoke_chromium_extension_transport"
 fi
 
 echo "regression_gate=ok"

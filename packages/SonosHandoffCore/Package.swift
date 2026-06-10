@@ -20,6 +20,10 @@ let package = Package(
             name: "sonos-handoff-safe-grouping-check",
             targets: ["SonosHandoffSafeGroupingCheck"]
         ),
+        .executable(
+            name: "keyway-chromium-native-host",
+            targets: ["KeywayChromiumNativeHost"]
+        ),
     ],
     targets: [
         .target(
@@ -32,6 +36,9 @@ let package = Package(
         .executableTarget(
             name: "SonosHandoffSafeGroupingCheck",
             dependencies: ["SonosHandoffCore"]
+        ),
+        .executableTarget(
+            name: "KeywayChromiumNativeHost"
         ),
         .testTarget(
             name: "SonosHandoffCoreTests",

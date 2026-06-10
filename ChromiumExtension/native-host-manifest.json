@@ -1,0 +1,9 @@
+{
+  "name": "com.fpieringer.keyway.chromium",
+  "description": "Keyway Chromium media bridge",
+  "path": "__KEYWAY_CHROMIUM_NATIVE_HOST_PATH__",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://__KEYWAY_CHROMIUM_EXTENSION_ID__/"
+  ]
+}

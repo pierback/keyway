@@ -8,6 +8,8 @@ struct MediaTargetOverlayView: View {
     let onSonosVolume: (MediaAudioVolumeDirection) -> Void
     let onSonosMute: () -> Void
     let onSpotifyVolume: (MediaAudioVolumeDirection) -> Void
+    let onBrowserVolume: (MediaAudioVolumeDirection) -> Void
+    let onBrowserMute: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -229,9 +231,29 @@ struct MediaTargetOverlayView: View {
                 control: model.audioSnapshot.browser,
                 systemImage: "globe",
                 trailing: {
-                    Text("Disabled")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.secondary)
+                    HStack(spacing: 6) {
+                        iconButton(
+                            "speaker.wave.1.fill",
+                            identifier: "mediaTargetOverlay.browserVolumeDown",
+                            enabled: model.audioSnapshot.browser.isEnabled
+                        ) {
+                            onBrowserVolume(.down)
+                        }
+                        iconButton(
+                            "speaker.slash.fill",
+                            identifier: "mediaTargetOverlay.browserMute",
+                            enabled: model.audioSnapshot.browser.isEnabled
+                        ) {
+                            onBrowserMute()
+                        }
+                        iconButton(
+                            "speaker.wave.3.fill",
+                            identifier: "mediaTargetOverlay.browserVolumeUp",
+                            enabled: model.audioSnapshot.browser.isEnabled
+                        ) {
+                            onBrowserVolume(.up)
+                        }
+                    }
                 }
             )
         }

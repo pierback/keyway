@@ -22,6 +22,7 @@ struct SettingsFeature: View {
     private let accessibilityAutomator: AccessibilityAutomating
     private let configImportService: ConfigImportService
     @ObservedObject private var mediaRemoteController: MediaRemoteController
+    @ObservedObject private var chromiumBrowserExtensionController: ChromiumBrowserExtensionController
 
     @State private var spotifyClientID = ""
     @State private var isSpotifyAuthenticated = false
@@ -51,7 +52,8 @@ struct SettingsFeature: View {
         accessibilityAutomator: AccessibilityAutomating = SpotifyUIAutomator(),
         configImportService: ConfigImportService = ConfigImportService(),
         initialConfigImportReport: ConfigImportReport? = nil,
-        mediaRemoteController: MediaRemoteController = MediaRemoteController()
+        mediaRemoteController: MediaRemoteController = MediaRemoteController(),
+        chromiumBrowserExtensionController: ChromiumBrowserExtensionController = ChromiumBrowserExtensionController()
     ) {
         self.configStore = configStore
         self.tokenStore = tokenStore
@@ -65,6 +67,7 @@ struct SettingsFeature: View {
         )
         _configImportReport = State(initialValue: initialConfigImportReport)
         _mediaRemoteController = ObservedObject(wrappedValue: mediaRemoteController)
+        _chromiumBrowserExtensionController = ObservedObject(wrappedValue: chromiumBrowserExtensionController)
     }
 
     @State private var selectedSection: String = "General"
@@ -207,6 +210,12 @@ struct SettingsFeature: View {
                 availableText: "Play/Pause, Next, Previous",
                 missingText: "Accessibility required"
             )
+            serviceStatusRow(
+                title: "Chromium extension",
+                available: chromiumBrowserExtensionController.connected,
+                availableText: chromiumExtensionStatusText,
+                missingText: "Disconnected"
+            )
             Text("Routing policy: Focused Target, Pinned Target, Recent Target, chooser.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
@@ -233,7 +242,7 @@ struct SettingsFeature: View {
             VStack(alignment: .leading, spacing: 7) {
                 serviceStatusRow(title: "Sonos", available: true, availableText: "Volume and mute", missingText: "")
                 serviceStatusRow(title: "Spotify", available: webAPITokenAvailable, availableText: "Active Device Volume", missingText: "Sign in required")
-                serviceStatusRow(title: "Browser", available: false, availableText: "", missingText: "Volume disabled without browser extension")
+                serviceStatusRow(title: "Browser", available: chromiumBrowserExtensionController.connected, availableText: chromiumBrowserAudioStatusText, missingText: "Extension disconnected")
             }
         }
     }
@@ -511,6 +520,7 @@ struct SettingsFeature: View {
                     }
                     settingsDiagnosticRow(title: "spotify keychain", detail: keychainStatusText(configImportReport.keychainStatus))
                     settingsDiagnosticRow(title: "media targets", detail: "\(mediaRemoteController.targets.count)")
+                    settingsDiagnosticRow(title: "chromium targets", detail: "\(chromiumBrowserExtensionController.targets.count)")
                 } else {
                     Text("No diagnostics recorded yet.")
                         .font(.system(size: 12))
@@ -670,6 +680,15 @@ struct SettingsFeature: View {
             return "pid=\(pid) targets=\(targetCount) snapshot=\(lastSnapshotAt.formatted(date: .omitted, time: .standard))"
         }
         return "pid=\(pid) targets=\(targetCount) snapshot=none"
+    }
+
+    private var chromiumExtensionStatusText: String {
+        let count = chromiumBrowserExtensionController.targets.count
+        return "\(count) media target\(count == 1 ? "" : "s")"
+    }
+
+    private var chromiumBrowserAudioStatusText: String {
+        chromiumBrowserExtensionController.targets.isEmpty ? "Connected, no media" : "Mute and volume"
     }
 
     private var notificationsEnabled: Bool {

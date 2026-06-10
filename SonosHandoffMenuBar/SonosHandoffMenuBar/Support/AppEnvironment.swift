@@ -22,6 +22,7 @@ struct AppEnvironment: @unchecked Sendable {
     let transferSuggestionStore: PlaybackTransferSuggestionStore
     let transferSuggestionNotifier: PlaybackTransferSuggestionNotifier
     let transferSuggestionPresenter: PlaybackTransferSuggestionPresenter
+    let chromiumBrowserExtensionController: ChromiumBrowserExtensionController
     let mediaRemoteController: MediaRemoteController
     let mediaAudioControlController: MediaAudioControlController
     let mediaTargetOverlayController: MediaTargetOverlayController
@@ -53,18 +54,23 @@ struct AppEnvironment: @unchecked Sendable {
             store: transferSuggestionStore,
             notifier: transferSuggestionNotifier
         )
-        let mediaRemoteController = MediaRemoteController()
+        let chromiumBrowserExtensionController = ChromiumBrowserExtensionController()
+        let mediaRemoteController = MediaRemoteController(
+            chromiumBrowserExtensionController: chromiumBrowserExtensionController
+        )
         let mediaAudioControlController = MediaAudioControlController(
             volumeService: spotifyConnectService,
             outputSelection: outputSelection,
-            activePlaybackObserver: spotifyConnectService
+            activePlaybackObserver: spotifyConnectService,
+            chromiumBrowserExtensionController: chromiumBrowserExtensionController
         )
         let mediaTargetOverlayController = MediaTargetOverlayController(
             audioController: mediaAudioControlController
         )
         let mediaTransportActionController = MediaTransportActionController(
             mediaRemoteController: mediaRemoteController,
-            overlayController: mediaTargetOverlayController
+            overlayController: mediaTargetOverlayController,
+            chromiumBrowserExtensionController: chromiumBrowserExtensionController
         )
         let outputDirectory = PlaybackOutputDirectory(
             groupingStateReader: spotifyConnectService
@@ -91,6 +97,7 @@ struct AppEnvironment: @unchecked Sendable {
             transferSuggestionStore: transferSuggestionStore,
             transferSuggestionNotifier: transferSuggestionNotifier,
             transferSuggestionPresenter: transferSuggestionPresenter,
+            chromiumBrowserExtensionController: chromiumBrowserExtensionController,
             mediaRemoteController: mediaRemoteController,
             mediaAudioControlController: mediaAudioControlController,
             mediaTargetOverlayController: mediaTargetOverlayController,

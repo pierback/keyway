@@ -20,7 +20,7 @@ final class MediaDesktopTransportAdapter {
         command: MediaRemoteTransportCommand,
         target: MediaRemoteTarget
     ) -> String? {
-        backend(command: command, target: target)?.rawValue
+        backend(for: target)?.rawValue
     }
 
     func keepsPlayPauseToggle(for target: MediaRemoteTarget) -> Bool {
@@ -31,7 +31,7 @@ final class MediaDesktopTransportAdapter {
         command: MediaRemoteTransportCommand,
         target: MediaRemoteTarget
     ) -> MediaRemoteCommandResultEvent? {
-        guard let backend = backend(command: command, target: target) else {
+        guard let backend = backend(for: target) else {
             return nil
         }
 
@@ -39,6 +39,18 @@ final class MediaDesktopTransportAdapter {
         case .spotifyAppleEvent:
             return submitSpotifyCommand(command: command, target: target)
         case .heliumJavaScript:
+            guard Self.isHeliumSupported(command) else {
+                return MediaRemoteCommandResultEvent(
+                    type: "commandResult",
+                    requestID: UUID().uuidString,
+                    targetID: target.id,
+                    command: command.rawValue,
+                    ok: false,
+                    message: "Helium does not support \(command.displayName).",
+                    backend: MediaDesktopTransportBackend.heliumJavaScript.rawValue,
+                    unsupported: true
+                )
+            }
             return submitHeliumCommand(command: command, target: target)
         }
     }
@@ -82,27 +94,6 @@ final class MediaDesktopTransportAdapter {
             return .heliumJavaScript
         }
         return nil
-    }
-
-    private func backend(
-        command: MediaRemoteTransportCommand,
-        target: MediaRemoteTarget
-    ) -> MediaDesktopTransportBackend? {
-        guard let backend = backend(for: target) else {
-            return nil
-        }
-
-        switch backend {
-        case .spotifyAppleEvent:
-            return .spotifyAppleEvent
-        case .heliumJavaScript:
-            switch command {
-            case .play, .pause, .playPause:
-                return .heliumJavaScript
-            case .next, .previous:
-                return nil
-            }
-        }
     }
 
     private func submitSpotifyCommand(
@@ -149,6 +140,15 @@ final class MediaDesktopTransportAdapter {
 
     private static func isHeliumTarget(_ target: MediaRemoteTarget) -> Bool {
         target.bundleIdentifier == heliumBundleIdentifier || target.parentBundleIdentifier == heliumBundleIdentifier
+    }
+
+    private static func isHeliumSupported(_ command: MediaRemoteTransportCommand) -> Bool {
+        switch command {
+        case .play, .pause, .playPause:
+            return true
+        case .next, .previous:
+            return false
+        }
     }
 
     private static func heliumActiveTabMediaAvailable() -> Bool? {

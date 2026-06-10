@@ -1,0 +1,249 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+node --check "$repo_root/ChromiumExtension/service_worker.js" >/dev/null
+node --check "$repo_root/ChromiumExtension/content_script.js" >/dev/null
+
+node - "$repo_root/ChromiumExtension/service_worker.js" <<'NODE'
+const fs = require("fs");
+const vm = require("vm");
+
+const serviceWorkerPath = process.argv[2];
+const code = fs.readFileSync(serviceWorkerPath, "utf8");
+const postedMessages = [];
+const intervals = [];
+const timeouts = [];
+const clearedIntervals = [];
+const tabMessages = [];
+let disconnectListener = null;
+let nativeMessageListener = null;
+let runtimeMessageListener = null;
+let tabRemovedListener = null;
+let tabUpdatedListener = null;
+let mediaStateResponse = null;
+
+const context = {
+  console,
+  navigator: {
+    userAgent: "Mozilla/5.0 Chrome/126.0.0.0 Safari/537.36",
+  },
+  setInterval(callback, delay) {
+    intervals.push({ callback, delay });
+    return `interval-${intervals.length}`;
+  },
+  clearInterval(id) {
+    clearedIntervals.push(id);
+  },
+  setTimeout(callback, delay) {
+    timeouts.push({ callback, delay });
+    return `timeout-${timeouts.length}`;
+  },
+  chrome: {
+    runtime: {
+      id: "extensionid",
+      connectNative(name) {
+        assertEqual(name, "com.fpieringer.keyway.chromium", "native host name");
+        return {
+          postMessage(message) {
+            postedMessages.push(message);
+          },
+          onMessage: {
+            addListener(listener) {
+              nativeMessageListener = listener;
+            },
+          },
+          onDisconnect: {
+            addListener(listener) {
+              disconnectListener = listener;
+            },
+          },
+        };
+      },
+      onMessage: {
+        addListener(listener) {
+          runtimeMessageListener = listener;
+        },
+      },
+    },
+    tabs: {
+      onRemoved: {
+        addListener(listener) {
+          tabRemovedListener = listener;
+        },
+      },
+      onUpdated: {
+        addListener(listener) {
+          tabUpdatedListener = listener;
+        },
+      },
+      sendMessage(tabId, message, options, callback) {
+        tabMessages.push({ tabId, message, options });
+        callback({ ok: true, message: "ack" });
+      },
+    },
+  },
+};
+
+vm.runInNewContext(code, context, { filename: serviceWorkerPath });
+
+(async () => {
+  assert(postedMessages.some(message => message.type === "hello"), "service worker must announce hello to native host");
+  assert(postedMessages.some(message => message.type === "snapshot"), "service worker must publish a snapshot immediately");
+  assertEqual(intervals.length, 1, "service worker must start one heartbeat interval");
+  assertEqual(intervals[0].delay, 1000, "service worker heartbeat interval");
+
+  intervals[0].callback();
+  assert(
+    postedMessages.filter(message => message.type === "snapshot").length >= 2,
+    "heartbeat must publish recurring snapshots"
+  );
+
+  assert(typeof runtimeMessageListener === "function", "service worker must register runtime message listener");
+  const keepsChannelOpen = runtimeMessageListener(
+    {
+      type: "keywayMediaState",
+      mediaId: "media-1",
+      title: "Song",
+      artist: "Artist",
+      playing: true,
+      muted: false,
+      volume: 0.5,
+      duration: 120,
+      elapsedTime: 10,
+    },
+    {
+      tab: {
+        id: 22,
+        windowId: 11,
+        url: "https://example.test/video",
+        title: "Example Video",
+      },
+      frameId: 0,
+    },
+    response => {
+      mediaStateResponse = response;
+    }
+  );
+  assertEqual(keepsChannelOpen, true, "media state messages must keep the async response channel open");
+  await Promise.resolve();
+  assertEqual(mediaStateResponse?.ok, true, "media state response");
+  const snapshot = postedMessages.filter(message => message.type === "snapshot").at(-1);
+  assertEqual(snapshot.targets.length, 1, "media state must publish one browser target");
+  assertEqual(
+    snapshot.targets[0].id,
+    "chromium-extension:chrome-extensionid:11:22:0:media-1",
+    "target id must include browser and runtime identity"
+  );
+  assertEqual(snapshot.targets[0].browser, "Chrome", "target browser label");
+
+  runtimeMessageListener(
+    {
+      type: "keywayMediaState",
+      mediaId: "media-2",
+      title: "Second Song",
+      artist: "Second Artist",
+      playing: false,
+      muted: false,
+      volume: 0.75,
+      duration: 180,
+      elapsedTime: 20,
+    },
+    {
+      tab: {
+        id: 23,
+        windowId: 11,
+        url: "https://example.test/second-video",
+        title: "Second Example Video",
+      },
+      frameId: 0,
+    },
+    () => {}
+  );
+  await Promise.resolve();
+  const twoTargetSnapshot = postedMessages.filter(message => message.type === "snapshot").at(-1);
+  assertEqual(twoTargetSnapshot.targets.length, 2, "two media tabs must publish two exact browser targets");
+  assertEqual(
+    twoTargetSnapshot.targets[1].id,
+    "chromium-extension:chrome-extensionid:11:23:0:media-2",
+    "second target id must preserve its own tab identity"
+  );
+
+  assert(typeof nativeMessageListener === "function", "service worker must register native command listener");
+  nativeMessageListener({
+    type: "command",
+    requestID: "command-1",
+    targetID: twoTargetSnapshot.targets[1].id,
+    tabId: 23,
+    frameId: 0,
+    mediaId: "media-2",
+    command: "playPause",
+  });
+  assertEqual(tabMessages.length, 1, "native command must dispatch to exactly one browser tab");
+  assertEqual(tabMessages[0].tabId, 23, "native command must dispatch to the requested tab");
+  assertEqual(tabMessages[0].options.frameId, 0, "native command must dispatch to the requested frame");
+  assertEqual(tabMessages[0].message.mediaId, "media-2", "native command must dispatch to the requested media element");
+  assertEqual(tabMessages[0].message.command, "playPause", "native command must preserve the command");
+  const commandResult = postedMessages.filter(message => message.type === "commandResult").at(-1);
+  assertEqual(commandResult.targetID, twoTargetSnapshot.targets[1].id, "command result must preserve exact target id");
+  assertEqual(commandResult.ok, true, "command result must preserve content-script acknowledgement");
+
+  assert(typeof tabUpdatedListener === "function", "service worker must register tab update listener");
+  tabUpdatedListener(22, { status: "loading" });
+  const afterNavigationSnapshot = postedMessages.filter(message => message.type === "snapshot").at(-1);
+  assertEqual(afterNavigationSnapshot.targets.length, 1, "tab navigation must clear only the stale tab target");
+  assertEqual(afterNavigationSnapshot.targets[0].tabId, 23, "tab navigation must keep other tab targets");
+
+  runtimeMessageListener(
+    {
+      type: "keywayMediaState",
+      mediaId: "media-2",
+      title: "Second Song",
+      artist: "Artist",
+      playing: true,
+      muted: false,
+      volume: 0.5,
+      duration: 120,
+      elapsedTime: 10,
+    },
+    {
+      tab: {
+        id: 23,
+        windowId: 11,
+        url: "https://example.test/second-video",
+        title: "Second Example Video",
+      },
+      frameId: 0,
+    },
+    () => {}
+  );
+  await Promise.resolve();
+  assertEqual(postedMessages.filter(message => message.type === "snapshot").at(-1).targets.length, 1, "second media state fixture");
+  assert(typeof tabRemovedListener === "function", "service worker must register tab removed listener");
+  tabRemovedListener(23);
+  const afterRemovalSnapshot = postedMessages.filter(message => message.type === "snapshot").at(-1);
+  assertEqual(afterRemovalSnapshot.targets.length, 0, "tab removal must clear browser targets");
+
+  assert(typeof disconnectListener === "function", "service worker must register native disconnect listener");
+  disconnectListener();
+  assertEqual(clearedIntervals[0], "interval-1", "service worker must clear heartbeat on disconnect");
+  assertEqual(timeouts[0].delay, 1000, "service worker reconnect delay");
+
+  console.log("verify_chromium_extension_semantics=ok");
+})().catch(error => {
+  console.error(error);
+  process.exit(1);
+});
+
+function assert(condition, message) {
+  if (!condition) {
+    console.error(`verify_chromium_extension_semantics: ${message}`);
+    process.exit(1);
+  }
+}
+
+function assertEqual(actual, expected, message) {
+  assert(actual === expected, `${message}: expected ${expected}, got ${actual}`);
+}
+NODE

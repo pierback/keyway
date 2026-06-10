@@ -46,6 +46,7 @@ final class MediaAudioControlController {
     private let volumeService: any SpeakerVolumeAdjusting
     private let outputSelection: PlaybackOutputSelection
     private let activePlaybackObserver: any SpotifyActivePlaybackObserving
+    private let chromiumBrowserExtensionController: ChromiumBrowserExtensionController
     private let volumeCommands: SpeakerVolumeCommandQueue
     private let outputPreferenceResolver = SonosOutputPreferenceResolver()
 
@@ -53,11 +54,13 @@ final class MediaAudioControlController {
         volumeService: any SpeakerVolumeAdjusting,
         outputSelection: PlaybackOutputSelection,
         activePlaybackObserver: any SpotifyActivePlaybackObserving,
+        chromiumBrowserExtensionController: ChromiumBrowserExtensionController = ChromiumBrowserExtensionController(),
         volumeCommands: SpeakerVolumeCommandQueue = .shared
     ) {
         self.volumeService = volumeService
         self.outputSelection = outputSelection
         self.activePlaybackObserver = activePlaybackObserver
+        self.chromiumBrowserExtensionController = chromiumBrowserExtensionController
         self.volumeCommands = volumeCommands
     }
 
@@ -158,6 +161,53 @@ final class MediaAudioControlController {
         }
     }
 
+    func adjustBrowserVolume(direction: MediaAudioVolumeDirection, target: MediaRemoteTarget) {
+        submitBrowserAudioCommand(
+            .volumeDelta(Double(direction.delta) / 100),
+            target: target
+        )
+    }
+
+    func toggleBrowserMute(target: MediaRemoteTarget) {
+        submitBrowserAudioCommand(.mute, target: target)
+    }
+
+    private func submitBrowserAudioCommand(
+        _ command: ChromiumBrowserAudioCommand,
+        target: MediaRemoteTarget
+    ) {
+        guard let sent = chromiumBrowserExtensionController.submit(audioCommand: command, target: target, onResult: { result in
+            if result.ok {
+                StatusHUD.shared.finish(
+                    title: "\(target.appName) \(command.displayName)",
+                    message: result.message,
+                    dismissAfter: 1.6
+                )
+            } else {
+                StatusHUD.shared.finish(
+                    title: result.unsupported ? "Browser Command Unsupported" : "Browser Command Failed",
+                    message: result.message,
+                    dismissAfter: 2.2
+                )
+            }
+        }) else {
+            StatusHUD.shared.finish(
+                title: "Browser Command Unsupported",
+                message: "\(target.appName) is not a Chromium extension target.",
+                dismissAfter: 2.2
+            )
+            return
+        }
+
+        if !sent {
+            StatusHUD.shared.finish(
+                title: "Browser Command Failed",
+                message: "Keyway could not reach \(target.appName).",
+                dismissAfter: 2.2
+            )
+        }
+    }
+
     private func sonosPresentation() async -> MediaAudioControlPresentation {
         guard let target = sonosVolumeTarget() else {
             return .disabled(title: "Sonos", detail: "No selected Sonos output")
@@ -204,11 +254,23 @@ final class MediaAudioControlController {
     }
 
     private func browserPresentation(for target: MediaRemoteTarget?) -> MediaAudioControlPresentation {
-        guard target?.isBrowserLike == true else {
+        guard let target, target.isBrowserLike else {
             return .disabled(title: "Browser", detail: "Select a browser media target")
         }
+        guard ChromiumBrowserExtensionTransport.isTarget(target) else {
+            return .disabled(title: "Browser", detail: "Select a Chromium extension target")
+        }
+        guard chromiumBrowserExtensionController.connected else {
+            return .disabled(title: "Browser", detail: "Extension disconnected")
+        }
 
-        return .disabled(title: "Browser", detail: "Volume disabled without browser extension")
+        return MediaAudioControlPresentation(
+            title: "Browser",
+            detail: target.detailText,
+            volume: nil,
+            muted: nil,
+            isEnabled: true
+        )
     }
 
     private func sonosVolumeTarget() -> (roomName: String, scope: PlaybackVolumeScope)? {

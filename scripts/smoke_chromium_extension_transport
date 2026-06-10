@@ -1,0 +1,444 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+iterations="${KEYWAY_CHROMIUM_EXTENSION_ITERATIONS:-100}"
+dry_run="${KEYWAY_CHROMIUM_EXTENSION_DRY_RUN:-0}"
+workdir="$(mktemp -d)"
+server_pid=""
+browser_pid=""
+
+cleanup() {
+  if [[ -n "$browser_pid" ]]; then
+    kill "$browser_pid" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$server_pid" ]]; then
+    kill "$server_pid" >/dev/null 2>&1 || true
+  fi
+  rm -rf "$workdir"
+}
+trap cleanup EXIT
+
+fail() {
+  printf 'smoke_chromium_extension_transport: %s\n' "$1" >&2
+  exit 1
+}
+
+case "$iterations" in
+  ''|*[!0-9]*)
+    fail "KEYWAY_CHROMIUM_EXTENSION_ITERATIONS must be a positive integer"
+    ;;
+esac
+
+if (( iterations < 1 )); then
+  fail "KEYWAY_CHROMIUM_EXTENSION_ITERATIONS must be at least 1"
+fi
+
+extension_id="$(
+  python3 - "$repo_root/ChromiumExtension/manifest.json" <<'PY'
+import base64
+import hashlib
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as manifest_file:
+    public_key = json.load(manifest_file)["key"]
+
+digest = hashlib.sha256(base64.b64decode(public_key)).digest()[:16]
+print("".join(chr(ord("a") + (byte >> 4)) + chr(ord("a") + (byte & 15)) for byte in digest))
+PY
+)"
+
+if [[ "$dry_run" == "1" ]]; then
+  printf 'chromium_extension_id=%s\n' "$extension_id"
+  printf 'smoke_chromium_extension_transport_dry_run=ok\n'
+  exit 0
+fi
+
+browser_path="${KEYWAY_CHROMIUM_SMOKE_BROWSER_PATH:-}"
+if [[ -z "$browser_path" ]]; then
+  if [[ -x "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser" ]]; then
+    browser_path="/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"
+  elif [[ -x "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ]]; then
+    browser_path="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+  else
+    fail "Google Chrome or Brave Browser must be installed, or set KEYWAY_CHROMIUM_SMOKE_BROWSER_PATH"
+  fi
+fi
+
+playwright_module="$(
+  node --input-type=module -e "console.log(await import.meta.resolve('playwright'))" \
+    || fail "Playwright must be available to launch Chromium with extension support"
+)"
+
+"$repo_root/scripts/install_chromium_native_host" "$extension_id" >/dev/null
+
+cat >"$workdir/server.py" <<'PY'
+import http.server
+import math
+import pathlib
+import socketserver
+import struct
+import sys
+import wave
+
+root = pathlib.Path(sys.argv[1])
+port_file = pathlib.Path(sys.argv[2])
+
+def write_tone(path, frequency):
+    sample_rate = 44100
+    sample_count = sample_rate
+    with wave.open(str(path), "w") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
+        for index in range(sample_count):
+            value = int(24000 * math.sin(2 * math.pi * frequency * index / sample_rate))
+            wav.writeframesraw(struct.pack("<h", value))
+
+write_tone(root / "tone-a.wav", 440)
+write_tone(root / "tone-b.wav", 660)
+
+(root / "a.html").write_text("""<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Keyway Chromium Smoke A</title></head>
+<body>
+<audio id="media" controls preload="auto" src="/tone-a.wav"></audio>
+<script>media.volume = 0.4;</script>
+</body>
+</html>
+""", encoding="utf-8")
+
+(root / "b.html").write_text("""<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Keyway Chromium Smoke B</title></head>
+<body>
+<audio id="media" controls preload="auto" src="/tone-b.wav"></audio>
+<script>media.volume = 0.6;</script>
+</body>
+</html>
+""", encoding="utf-8")
+
+class QuietHandler(http.server.SimpleHTTPRequestHandler):
+    def log_message(self, format, *args):
+        return
+
+socketserver.TCPServer.allow_reuse_address = True
+with socketserver.TCPServer(("127.0.0.1", 0), QuietHandler) as httpd:
+    pathlib.os.chdir(root)
+    port_file.write_text(str(httpd.server_address[1]), encoding="utf-8")
+    httpd.serve_forever()
+PY
+
+port_file="$workdir/port"
+python3 "$workdir/server.py" "$workdir" "$port_file" &
+server_pid="$!"
+
+for _ in {1..100}; do
+  if [[ -s "$port_file" ]]; then
+    break
+  fi
+  sleep 0.05
+done
+
+if [[ ! -s "$port_file" ]]; then
+  fail "local smoke server did not start"
+fi
+
+port="$(cat "$port_file")"
+profile_dir="$workdir/profile"
+mkdir -p "$profile_dir"
+
+cat >"$workdir/launch-browser.mjs" <<'JS'
+import fs from "node:fs/promises";
+
+const [playwrightModule, browserPath, userDataDir, extensionPath, readyFile, firstURL, secondURL] = process.argv.slice(2);
+const { chromium } = await import(playwrightModule);
+const context = await chromium.launchPersistentContext(userDataDir, {
+  headless: false,
+  executablePath: browserPath,
+  ignoreDefaultArgs: ["--disable-extensions"],
+  args: [
+    `--load-extension=${extensionPath}`,
+    "--no-first-run",
+    "--no-default-browser-check",
+  ],
+});
+
+const first = await context.newPage();
+await first.goto(firstURL);
+const second = await context.newPage();
+await second.goto(secondURL);
+await fs.writeFile(readyFile, "ready", "utf8");
+
+const close = async () => {
+  await context.close();
+  process.exit(0);
+};
+
+process.on("SIGTERM", close);
+process.on("SIGINT", close);
+await new Promise(() => {});
+JS
+
+browser_ready_file="$workdir/browser-ready"
+node "$workdir/launch-browser.mjs" \
+  "$playwright_module" \
+  "$browser_path" \
+  "$profile_dir" \
+  "$repo_root/ChromiumExtension" \
+  "$browser_ready_file" \
+  "http://127.0.0.1:$port/a.html" \
+  "http://127.0.0.1:$port/b.html" \
+  >/dev/null 2>&1 &
+browser_pid="$!"
+
+for _ in {1..200}; do
+  if [[ -s "$browser_ready_file" ]]; then
+    break
+  fi
+  sleep 0.05
+done
+
+if [[ ! -s "$browser_ready_file" ]]; then
+  fail "Chromium smoke browser did not load both test pages"
+fi
+
+cat >"$workdir/ChromiumExtensionLiveSmoke.swift" <<'SWIFT'
+import Foundation
+
+let hostName = "com.fpieringer.keyway.chromium"
+let snapshotNotificationName = Notification.Name("com.fpieringer.keyway.chromium.snapshot")
+let commandResultNotificationName = Notification.Name("com.fpieringer.keyway.chromium.commandResult")
+let commandNotificationName = Notification.Name("com.fpieringer.keyway.chromium.command")
+let iterations = Int(CommandLine.arguments[1])!
+
+struct Snapshot: Decodable {
+    let targets: [Target]
+}
+
+struct Target: Decodable {
+    let id: String
+    let browser: String
+    let tabId: Int
+    let frameId: Int
+    let mediaId: String
+    let pageTitle: String
+    let muted: Bool
+}
+
+struct CommandResult: Decodable {
+    let requestID: String?
+    let targetID: String
+    let command: String
+    let ok: Bool
+    let unsupported: Bool?
+    let message: String
+}
+
+struct CommandPayload: Encodable {
+    let type: String
+    let requestID: String
+    let targetID: String
+    let tabId: Int
+    let frameId: Int
+    let mediaId: String
+    let command: String
+    let volumeDelta: Double?
+}
+
+final class State {
+    private let decoder = JSONDecoder()
+    private let lock = NSLock()
+    private(set) var targetsByTitle: [String: Target] = [:]
+    private(set) var targetsByID: [String: Target] = [:]
+    private var resultsByRequestID: [String: CommandResult] = [:]
+
+    func handleSnapshot(_ payload: String) {
+        let snapshot = try! decoder.decode(Snapshot.self, from: Data(payload.utf8))
+        lock.lock()
+        for target in snapshot.targets where target.pageTitle.hasPrefix("Keyway Chromium Smoke ") {
+            targetsByTitle[target.pageTitle] = target
+            targetsByID[target.id] = target
+        }
+        lock.unlock()
+    }
+
+    func handleCommandResult(_ payload: String) {
+        let result = try! decoder.decode(CommandResult.self, from: Data(payload.utf8))
+        guard let requestID = result.requestID else {
+            preconditionFailure("Chromium command result must include requestID.")
+        }
+        lock.lock()
+        resultsByRequestID[requestID] = result
+        lock.unlock()
+    }
+
+    func smokeTargets() -> (Target, Target)? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let first = targetsByTitle["Keyway Chromium Smoke A"],
+              let second = targetsByTitle["Keyway Chromium Smoke B"]
+        else {
+            return nil
+        }
+        return (first, second)
+    }
+
+    func target(id: String) -> Target? {
+        lock.lock()
+        defer { lock.unlock() }
+        return targetsByID[id]
+    }
+
+    func result(requestID: String) -> CommandResult? {
+        lock.lock()
+        defer { lock.unlock() }
+        return resultsByRequestID[requestID]
+    }
+}
+
+func runLoop(until deadline: Date, condition: () -> Bool) -> Bool {
+    while Date() < deadline {
+        if condition() {
+            return true
+        }
+        RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.025))
+    }
+    return condition()
+}
+
+func percentile95(_ values: [Int]) -> Int {
+    let sorted = values.sorted()
+    let index = max(0, Int(ceil(Double(sorted.count) * 0.95)) - 1)
+    return sorted[index]
+}
+
+func postCommand(target: Target, requestID: String) {
+    let payload = CommandPayload(
+        type: "command",
+        requestID: requestID,
+        targetID: target.id,
+        tabId: target.tabId,
+        frameId: target.frameId,
+        mediaId: target.mediaId,
+        command: "mute",
+        volumeDelta: nil
+    )
+    let data = try! JSONEncoder().encode(payload)
+    DistributedNotificationCenter.default().postNotificationName(
+        commandNotificationName,
+        object: hostName,
+        userInfo: ["payload": String(data: data, encoding: .utf8)!],
+        deliverImmediately: true
+    )
+}
+
+let state = State()
+let snapshotObserver = DistributedNotificationCenter.default().addObserver(
+    forName: snapshotNotificationName,
+    object: hostName,
+    queue: .main
+) { notification in
+    guard let payload = notification.userInfo?["payload"] as? String else {
+        preconditionFailure("Chromium snapshot notifications must include payload.")
+    }
+    state.handleSnapshot(payload)
+}
+let resultObserver = DistributedNotificationCenter.default().addObserver(
+    forName: commandResultNotificationName,
+    object: hostName,
+    queue: .main
+) { notification in
+    guard let payload = notification.userInfo?["payload"] as? String else {
+        preconditionFailure("Chromium result notifications must include payload.")
+    }
+    state.handleCommandResult(payload)
+}
+
+let discoveryStarted = ProcessInfo.processInfo.systemUptime
+guard runLoop(until: Date(timeIntervalSinceNow: 10), condition: { state.smokeTargets() != nil }),
+      let initialTargets = state.smokeTargets()
+else {
+    FileHandle.standardError.write(Data("smoke_chromium_extension_transport: did not discover both Chromium smoke targets\n".utf8))
+    exit(1)
+}
+let discoveryMs = Int(((ProcessInfo.processInfo.systemUptime - discoveryStarted) * 1000).rounded())
+
+var expectedMuted = [
+    initialTargets.0.id: initialTargets.0.muted,
+    initialTargets.1.id: initialTargets.1.muted,
+]
+var ackLatencies: [Int] = []
+var success = 0
+var failure = 0
+var wrongTarget = 0
+var duplicate = 0
+
+for iteration in 0..<iterations {
+    let currentTargets = state.smokeTargets()!
+    let target = iteration.isMultiple(of: 2) ? currentTargets.0 : currentTargets.1
+    let other = iteration.isMultiple(of: 2) ? currentTargets.1 : currentTargets.0
+    expectedMuted[target.id] = !(expectedMuted[target.id]!)
+    let expectedOtherMuted = expectedMuted[other.id]!
+    let requestID = UUID().uuidString
+    let started = ProcessInfo.processInfo.systemUptime
+    postCommand(target: target, requestID: requestID)
+
+    guard runLoop(until: Date(timeIntervalSinceNow: 2), condition: { state.result(requestID: requestID) != nil }),
+          let result = state.result(requestID: requestID)
+    else {
+        failure += 1
+        FileHandle.standardError.write(Data("smoke_chromium_extension_transport_failure iteration=\(iteration + 1) timeout target=\(target.id)\n".utf8))
+        continue
+    }
+    let ackMs = Int(((ProcessInfo.processInfo.systemUptime - started) * 1000).rounded())
+    ackLatencies.append(ackMs)
+
+    if !result.ok || result.unsupported == true || result.targetID != target.id || result.command != "mute" {
+        failure += 1
+        if result.targetID != target.id {
+            wrongTarget += 1
+        }
+        FileHandle.standardError.write(Data("smoke_chromium_extension_transport_failure iteration=\(iteration + 1) result=\(result)\n".utf8))
+        continue
+    }
+
+    let observedExpectedState = runLoop(until: Date(timeIntervalSinceNow: 2)) {
+        state.target(id: target.id)?.muted == expectedMuted[target.id]
+            && state.target(id: other.id)?.muted == expectedOtherMuted
+    }
+
+    if observedExpectedState {
+        success += 1
+    } else {
+        failure += 1
+        if state.target(id: other.id)?.muted != expectedOtherMuted {
+            wrongTarget += 1
+        }
+        if state.target(id: target.id)?.muted == expectedMuted[target.id]
+            && state.target(id: other.id)?.muted != expectedOtherMuted {
+            duplicate += 1
+        }
+        FileHandle.standardError.write(Data("smoke_chromium_extension_transport_failure iteration=\(iteration + 1) target_state=\(String(describing: state.target(id: target.id))) other_state=\(String(describing: state.target(id: other.id)))\n".utf8))
+    }
+}
+
+DistributedNotificationCenter.default().removeObserver(snapshotObserver)
+DistributedNotificationCenter.default().removeObserver(resultObserver)
+
+print("chromium_extension_smoke_total=\(iterations)")
+print("chromium_extension_smoke_success=\(success)")
+print("chromium_extension_smoke_failure=\(failure)")
+print("chromium_extension_smoke_wrong_target=\(wrongTarget)")
+print("chromium_extension_smoke_duplicate=\(duplicate)")
+print("chromium_extension_smoke_discovery_ms=\(discoveryMs)")
+print("chromium_extension_smoke_p95_ack_ms=\(ackLatencies.isEmpty ? 0 : percentile95(ackLatencies))")
+
+if failure > 0 {
+    exit(1)
+}
+SWIFT
+
+swiftc "$workdir/ChromiumExtensionLiveSmoke.swift" -o "$workdir/chromium-extension-live-smoke"
+"$workdir/chromium-extension-live-smoke" "$iterations"

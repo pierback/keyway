@@ -33,6 +33,9 @@ struct KeywayApp: App {
             playbackBackgroundSync.start()
         }
         Task { @MainActor in
+            environment.chromiumBrowserExtensionController.start()
+        }
+        Task { @MainActor in
             environment.mediaRemoteController.start()
         }
     }
@@ -113,7 +116,8 @@ struct KeywayApp: App {
                 accessibilityAutomator: environment.accessibilityAutomator,
                 configImportService: environment.configImportService,
                 initialConfigImportReport: environment.configImportReport,
-                mediaRemoteController: environment.mediaRemoteController
+                mediaRemoteController: environment.mediaRemoteController,
+                chromiumBrowserExtensionController: environment.chromiumBrowserExtensionController
             )
                 .frame(width: SettingsFeature.preferredWindowSize.width)
                 .frame(minHeight: SettingsFeature.preferredWindowSize.height)

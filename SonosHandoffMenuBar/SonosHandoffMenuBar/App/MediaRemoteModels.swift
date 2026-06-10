@@ -177,6 +177,10 @@ struct MediaRemoteTarget: Codable, Equatable, Identifiable, Sendable {
     }
 
     var isBrowserLike: Bool {
+        if ChromiumBrowserExtensionTransport.isTarget(self) {
+            return true
+        }
+
         let identities = [bundleIdentifier, parentBundleIdentifier].map { $0.lowercased() }
         return identities.contains { identity in
             identity.contains("safari")

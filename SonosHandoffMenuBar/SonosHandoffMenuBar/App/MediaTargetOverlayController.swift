@@ -175,6 +175,24 @@ final class MediaTargetOverlayController {
             onSpotifyVolume: { [weak self] direction in
                 self?.audioController.adjustSpotifyVolume(direction: direction)
                 self?.refreshAudioSnapshot(delay: 0.35)
+            },
+            onBrowserVolume: { [weak self] direction in
+                guard let self,
+                      let target = self.model.selectedTarget
+                else {
+                    return
+                }
+                self.audioController.adjustBrowserVolume(direction: direction, target: target)
+                self.refreshAudioSnapshot(delay: 0.35)
+            },
+            onBrowserMute: { [weak self] in
+                guard let self,
+                      let target = self.model.selectedTarget
+                else {
+                    return
+                }
+                self.audioController.toggleBrowserMute(target: target)
+                self.refreshAudioSnapshot(delay: 0.35)
             }
         ))
         self.panel = panel
@@ -255,11 +273,7 @@ final class MediaTargetOverlayController {
         if target.isSpotify {
             audioController.adjustSpotifyVolume(direction: direction)
         } else if target.isBrowserLike {
-            StatusHUD.shared.finish(
-                title: "Browser Volume Disabled",
-                message: "Keyway does not install a browser extension.",
-                dismissAfter: 2.2
-            )
+            audioController.adjustBrowserVolume(direction: direction, target: target)
         } else {
             StatusHUD.shared.finish(
                 title: "Volume Unsupported",
