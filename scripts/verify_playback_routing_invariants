@@ -22,6 +22,7 @@ app_environment="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/Support/AppE
 info_plist="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/Resources/Info.plist"
 runtime_status="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutRuntimeStatus.swift"
 runtime_reporter="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutRuntimeReporter.swift"
+project_file="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar.xcodeproj/project.pbxproj"
 
 fail() {
   printf 'verify_playback_routing_invariants: %s\n' "$1" >&2
@@ -30,6 +31,79 @@ fail() {
 
 grep -q 'commandCenterMetadata: commandCenterMetadata' "$transport" \
   || fail "Play/Pause routing must show the cached chooser immediately with input metadata"
+
+grep -q 'runHeliumJavaScriptCommand(command: command)' "$desktop_adapter" \
+  || fail "Helium transport must pass explicit play/pause/playPause commands into JavaScript instead of always toggling"
+
+grep -q "command === 'pause'" "$desktop_adapter" \
+  || fail "Helium pause must be an idempotent pause command, not a playback toggle"
+
+grep -q "command === 'play'" "$desktop_adapter" \
+  || fail "Helium play must be an idempotent play command, not a playback toggle"
+
+python3 - "$project_file" <<'PY'
+import pathlib
+import re
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+phase = text[text.index("Build MediaRemote Helper"): text.index("/* End PBXShellScriptBuildPhase section */")]
+if "shellPath = /bin/bash;" not in phase:
+    raise SystemExit("verify_playback_routing_invariants: MediaRemote helper build phase must use bash for architecture arrays")
+match = re.search(r'shellScript = "(.*)";', phase)
+if not match:
+    raise SystemExit("verify_playback_routing_invariants: MediaRemote helper build phase script is missing")
+script = bytes(match.group(1), "utf-8").decode("unicode_escape")
+for required in (
+    'TARGET_ARCHS="${ARCHS:?ARCHS must be set}"',
+    "for ARCH in $TARGET_ARCHS; do",
+    '-arch "$ARCH"',
+    'libkeyway_mediaremote.$ARCH.dylib',
+    '/usr/bin/xcrun lipo -create "${ARCH_OUTPUTS[@]}" -output "$HELPER_LIB"',
+):
+    if required not in script:
+        raise SystemExit(f"verify_playback_routing_invariants: MediaRemote helper dylib must be built for every target architecture: {required}")
+PY
+
+python3 - "$transport" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+route_body = text[
+    text.index("    private func route("):
+    text.index("    func showChooser(command:", text.index("    private func route("))
+]
+if "routeFromCache(\n            command: command,\n            source: source,\n            metadata: metadata,\n            commandCenterMetadata: commandCenterMetadata\n        )" not in route_body:
+    raise SystemExit("verify_playback_routing_invariants: cache routing must preserve source metadata for ambiguous target chooser dispatch")
+cache_body = text[text.index("private func routeFromCache"):text.index("    private func route(\n        command: MediaRemoteTransportCommand,\n        targets:")]
+for required in (
+    "source: MediaTransportRouteSource",
+    "metadata: MediaTransportInputMetadata?",
+    "commandCenterMetadata: MediaCommandCenterInputMetadata?",
+    "metadata: metadata",
+    "commandCenterMetadata: commandCenterMetadata",
+):
+    if required not in cache_body:
+        raise SystemExit(f"verify_playback_routing_invariants: routeFromCache must thread chooser input metadata: {required}")
+targets_route = text[text.index("    private func route(\n        command: MediaRemoteTransportCommand,\n        targets:"):text.index("    private func showChooserOverlay")]
+if "showChooserOverlay(" not in targets_route:
+    raise SystemExit("verify_playback_routing_invariants: ambiguous cache routing must open the chooser")
+for required in (
+    "source: source",
+    "metadata: metadata",
+    "commandCenterMetadata: commandCenterMetadata",
+):
+    if required not in targets_route:
+        raise SystemExit(f"verify_playback_routing_invariants: ambiguous cache routing must pass chooser metadata: {required}")
+automatic_body = text[text.index("private func automaticTarget"):text.index("    private func send(command:")]
+if "$0.id == recentTargetID" not in automatic_body or ".recent" not in automatic_body:
+    raise SystemExit("verify_playback_routing_invariants: remembered targets must route the exact selected row automatically before falling back to chooser")
+PY
+
+if grep -q 'guard !self.chooserSession.isActive else { return }' "$transport"; then
+  fail "visible active choosers must receive refreshed MediaRemote targets"
+fi
 
 if grep -q 'cgSessionEventTap\|case session' "$event_tap"; then
   fail "Play/Pause interception must fail closed instead of falling back to a non-cghid event tap"
@@ -225,11 +299,14 @@ grep -q 'heliumActiveTabMediaAvailable' "$desktop_adapter" \
 grep -q 'sendAppleEvent' "$desktop_adapter" \
   || fail "Spotify desktop dispatch must use in-process Apple Events instead of spawning osascript"
 
-grep -q 'runHeliumJavaScriptToggle' "$desktop_adapter" \
-  || fail "Helium desktop dispatch must use selected-row JavaScript toggling instead of MediaRemote playbackRate state"
+grep -q 'runHeliumJavaScriptCommand(command: command)' "$desktop_adapter" \
+  || fail "Helium desktop dispatch must use command-aware JavaScript instead of MediaRemote playbackRate state"
 
-grep -q 'runHeliumJavaScriptToggle' "$desktop_adapter" \
+grep -q 'runHeliumJavaScriptCommand(command: command)' "$desktop_adapter" \
   || fail "Helium desktop dispatch must execute tab JavaScript instead of using MediaRemote or keypress guesses"
+
+grep -q 'case .play, .pause, .playPause:' "$desktop_adapter" \
+  || fail "Helium direct play and pause controls must use the JavaScript backend, not synthetic MediaRemote target IDs"
 
 grep -q 'execute active tab of front window javascript' "$desktop_adapter" \
   || fail "Helium desktop dispatch must target browser media through Chromium scripting"
@@ -278,9 +355,6 @@ fi
 
 grep -q 'MediaChooserSessionGuard' "$transport" \
   || fail "active chooser state must be owned by the testable session guard"
-
-grep -q 'guard !self.chooserSession.isActive else { return }' "$transport" \
-  || fail "pending chooser rows must not be mutated by snapshot refreshes before the user chooses"
 
 grep -q 'let id = UUID()' "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaChooserSessionGuard.swift" \
   || fail "each chooser presentation must create a unique session id"
@@ -588,12 +662,12 @@ if "remainingMatches: Self.programmaticCommandCenterEchoMatchBudget" not in begi
     raise SystemExit("verify_playback_routing_invariants: programmatic command-center echo suppression must be callback-count bounded")
 if "remainingMatches: nil" in begin_programmatic:
     raise SystemExit("verify_playback_routing_invariants: programmatic command-center echo suppression must not consume unlimited callbacks")
-if "inFlightProgrammaticCommandCenterEchoes = [" not in begin_programmatic:
-    raise SystemExit("verify_playback_routing_invariants: metadata-backed dispatches must replace stale command-center echo guards")
+if "inFlightProgrammaticCommandCenterEchoes.append(" not in begin_programmatic:
+    raise SystemExit("verify_playback_routing_invariants: overlapping dispatches must preserve in-flight command-center echo guards")
 if "commandCenterMetadata: nil" not in begin_programmatic:
     raise SystemExit("verify_playback_routing_invariants: programmatic command-center echo suppression must cover fresh-timestamp OS rebounds")
-if "inFlightProgrammaticMediaKeyEchoes = [" not in begin_programmatic:
-    raise SystemExit("verify_playback_routing_invariants: new dispatches must suppress generated non-HID media-key echoes")
+if "inFlightProgrammaticMediaKeyEchoes.append(" not in begin_programmatic:
+    raise SystemExit("verify_playback_routing_invariants: overlapping dispatches must preserve generated non-HID media-key echo guards")
 if "inFlightChooserMediaKeyRebounds = []" not in begin_programmatic:
     raise SystemExit("verify_playback_routing_invariants: automatic dispatches must clear stale chooser media-key rebounds")
 if "extendChooserEchoSuppression" in text:
@@ -1225,7 +1299,7 @@ if "candidates.count == 1" not in matcher:
         raise SystemExit("verify_playback_routing_invariants: visible chooser refresh must not keep stale rows that disappeared from the current snapshot")
 PY
 
-grep -q 'routeFromCache(command: command)' "$transport" \
+grep -q 'routeFromCache(' "$transport" \
   || fail "transport commands must route from the current cache without waiting for a snapshot"
 
 if grep -q 'hasFreshSnapshot(maxAge: 1.5)' "$status_item"; then
@@ -1247,11 +1321,11 @@ if grep -Eq 'selectedTargetID|selectedTargetIdentity|pinnedTarget|markRecentTarg
   fail "transport routing must not use selected or pinned hidden state"
 fi
 
-grep -q 'private var recentTargetIdentity' "$transport" \
-  || fail "chooser order must remember the last selected target identity for stable repeated sessions"
+grep -q 'private var recentTargetID' "$transport" \
+  || fail "chooser order must remember the last selected target ID for stable repeated sessions"
 
 grep -q 'rememberTarget(target)' "$transport" \
-  || fail "chooser and automatic dispatch must update the recent target identity"
+  || fail "chooser and automatic dispatch must update the recent target ID"
 
 if grep -q 'lastChooserRequest' "$transport"; then
   fail "transport routing must not use unstructured chooser debounce state"

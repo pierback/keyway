@@ -24,6 +24,8 @@ enum MediaTransportCommandRules {
             return .focused
         case .current:
             return .auto
+        case .recent:
+            return .auto
         case .chooser:
             return .chooser
         }
@@ -37,8 +39,8 @@ enum MediaTransportCommandRules {
             if lhs.isCurrentlyPlaying != rhs.isCurrentlyPlaying {
                 return lhs.isCurrentlyPlaying
             }
-            let lhsPreferred = lhs.matchesRoutingIdentity(preferredTargetID)
-            let rhsPreferred = rhs.matchesRoutingIdentity(preferredTargetID)
+            let lhsPreferred = lhs.id == preferredTargetID
+            let rhsPreferred = rhs.id == preferredTargetID
             if lhsPreferred != rhsPreferred {
                 return lhsPreferred
             }

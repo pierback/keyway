@@ -59,6 +59,37 @@ struct ConfigImportServiceTests {
     }
 
     @Test
+    func importsTokenFilesWithSensitivePermissions() throws {
+        let root = try temporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+        let legacyDirectory = root.appendingPathComponent("legacy", isDirectory: true)
+        let keywayDirectory = root.appendingPathComponent("keyway", isDirectory: true)
+        try FileManager.default.createDirectory(at: legacyDirectory, withIntermediateDirectories: true)
+        for file in [ConfigImportFile.projectWebAPIToken, .spotifyDesktopConnectTokens] {
+            let sourceURL = legacyDirectory.appendingPathComponent(file.fileName)
+            try Data("token".utf8).write(to: sourceURL)
+            try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: sourceURL.path)
+        }
+
+        let service = ConfigImportService(
+            legacyApplicationSupportDirectory: legacyDirectory,
+            applicationSupportDirectory: keywayDirectory,
+            legacyTokenStore: MemoryTokenStore(refreshToken: nil),
+            keywayTokenStore: MemoryTokenStore(refreshToken: nil)
+        )
+
+        let report = service.importLegacyState()
+
+        for file in [ConfigImportFile.projectWebAPIToken, .spotifyDesktopConnectTokens] {
+            let destinationURL = keywayDirectory.appendingPathComponent(file.fileName)
+            #expect(report.fileResults.first { $0.file == file }?.status == .copied)
+            #expect(try Self.permissions(at: destinationURL) == 0o600)
+        }
+    }
+
+    @Test
     func copiesLegacyKeychainTokenWhenKeywayTokenIsMissing() throws {
         let root = try temporaryDirectory()
         defer {
@@ -108,6 +139,11 @@ struct ConfigImportServiceTests {
             .appendingPathComponent("keyway-config-import-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
+    }
+
+    private static func permissions(at url: URL) throws -> Int? {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        return attributes[.posixPermissions] as? Int
     }
 }
 

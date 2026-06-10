@@ -20,90 +20,161 @@ enum SpotifyAuthCallbackServer {
         let params = NWParameters.tcp
         params.requiredInterfaceType = .loopback
 
-        guard let (listener, listenerRedirectURI) = listener(using: params)
-        else {
-            throw SpotifyAuthError.callbackListenerFailed
-        }
-
         return try await withCheckedThrowingContinuation { continuation in
             let queue = DispatchQueue(label: "keyway.spotify-auth")
-            let resolver = SpotifyAuthCallbackResolver(
+            let session = SpotifyAuthCallbackListenerSession(
                 expectedState: expectedState,
-                redirectURI: listenerRedirectURI,
+                params: params,
+                queue: queue,
                 continuation: continuation,
-                completion: completion
+                completion: completion,
+                openAuthorizationURL: openAuthorizationURL
             )
-            let browser = OneShotBrowserOpener {
-                openAuthorizationURL(listenerRedirectURI)
-            }
-
-            listener.stateUpdateHandler = { state in
-                switch state {
-                case .ready:
-                    guard let didOpen = browser.openOnce() else {
-                        return
-                    }
-                    guard didOpen else {
-                        resolver.finish(with: .failure(SpotifyAuthError.couldNotOpenBrowser))
-                        listener.cancel()
-                        return
-                    }
-                case .failed:
-                    resolver.finish(with: .failure(SpotifyAuthError.callbackListenerFailed))
-                    listener.cancel()
-                default:
-                    break
-                }
-            }
-
-            listener.newConnectionHandler = { connection in
-                resolver.handle(connection: connection, listener: listener)
-            }
-
-            listener.start(queue: queue)
-            queue.asyncAfter(deadline: .now() + .seconds(timeoutSeconds)) {
-                resolver.finish(with: .failure(SpotifyAuthError.callbackTimedOut))
-                listener.cancel()
-            }
+            session.start()
         }
-    }
-
-    private static func listener(using params: NWParameters) -> (NWListener, URL)? {
-        for candidatePort in ports {
-            guard let nwPort = NWEndpoint.Port(rawValue: candidatePort),
-                  let listener = try? NWListener(using: params, on: nwPort),
-                  let redirectURI = URL(string: "http://\(host):\(candidatePort)\(path)")
-            else {
-                continue
-            }
-            return (listener, redirectURI)
-        }
-
-        return nil
     }
 }
 
-private final class OneShotBrowserOpener: @unchecked Sendable {
-    private let opener: @Sendable () -> Bool
-    private let lock = NSLock()
-    private var didOpen = false
+private final class SpotifyAuthCallbackListenerSession: @unchecked Sendable {
+    private let expectedState: String
+    private let params: NWParameters
+    private let queue: DispatchQueue
+    private let continuation: CheckedContinuation<Void, Error>
+    private let completion: @Sendable (String, URL) async throws -> Void
+    private let openAuthorizationURL: @Sendable (URL) -> Bool
+    private var nextPortIndex = 0
+    private var browserOpened = false
+    private var didFinish = false
+    private var listener: NWListener?
+    private var resolver: SpotifyAuthCallbackResolver?
 
-    init(_ opener: @escaping @Sendable () -> Bool) {
-        self.opener = opener
+    init(
+        expectedState: String,
+        params: NWParameters,
+        queue: DispatchQueue,
+        continuation: CheckedContinuation<Void, Error>,
+        completion: @escaping @Sendable (String, URL) async throws -> Void,
+        openAuthorizationURL: @escaping @Sendable (URL) -> Bool
+    ) {
+        self.expectedState = expectedState
+        self.params = params
+        self.queue = queue
+        self.continuation = continuation
+        self.completion = completion
+        self.openAuthorizationURL = openAuthorizationURL
     }
 
-    func openOnce() -> Bool? {
-        lock.lock()
-        defer {
-            lock.unlock()
+    func start() {
+        queue.asyncAfter(deadline: .now() + .seconds(SpotifyAuthCallbackServer.timeoutSeconds)) {
+            self.finish(with: .failure(SpotifyAuthError.callbackTimedOut))
+        }
+        startNextListener()
+    }
+
+    private func startNextListener() {
+        guard nextPortIndex < SpotifyAuthCallbackServer.ports.count else {
+            finish(with: .failure(SpotifyAuthError.callbackListenerFailed))
+            return
         }
 
-        guard !didOpen else {
-            return nil
+        let candidatePort = SpotifyAuthCallbackServer.ports[nextPortIndex]
+        nextPortIndex += 1
+        let nwPort = NWEndpoint.Port(rawValue: candidatePort)!
+        let redirectURI = URL(
+            string: "http://\(SpotifyAuthCallbackServer.host):\(candidatePort)\(SpotifyAuthCallbackServer.path)"
+        )!
+
+        let listener: NWListener
+        do {
+            listener = try NWListener(using: params, on: nwPort)
+        } catch {
+            startNextListener()
+            return
         }
 
-        didOpen = true
-        return opener()
+        let resolver = SpotifyAuthCallbackResolver(
+            expectedState: expectedState,
+            redirectURI: redirectURI,
+            continuation: continuation,
+            completion: completion
+        )
+        self.listener = listener
+        self.resolver = resolver
+
+        listener.stateUpdateHandler = { [self, weak listener] state in
+            guard let listener else {
+                return
+            }
+            handle(state: state, listener: listener, redirectURI: redirectURI)
+        }
+
+        listener.newConnectionHandler = { [self, weak listener] connection in
+            guard let listener,
+                  let currentListener = self.listener,
+                  listener === currentListener,
+                  let resolver = self.resolver
+            else {
+                connection.cancel()
+                return
+            }
+            resolver.handle(connection: connection, listener: listener)
+        }
+
+        listener.start(queue: queue)
+    }
+
+    private func handle(state: NWListener.State, listener: NWListener, redirectURI: URL) {
+        guard let currentListener = self.listener, listener === currentListener else {
+            return
+        }
+
+        switch state {
+        case .ready:
+            guard !browserOpened else {
+                return
+            }
+            browserOpened = true
+            guard openAuthorizationURL(redirectURI) else {
+                finish(with: .failure(SpotifyAuthError.couldNotOpenBrowser))
+                return
+            }
+        case .failed:
+            guard browserOpened else {
+                clearCurrentListener()
+                startNextListener()
+                return
+            }
+            finish(with: .failure(SpotifyAuthError.callbackListenerFailed))
+        default:
+            break
+        }
+    }
+
+    private func finish(with result: Result<Void, Error>) {
+        guard !didFinish else {
+            return
+        }
+        didFinish = true
+        let resolver = resolver
+        clearCurrentListener()
+        guard let resolver else {
+            switch result {
+            case .success:
+                continuation.resume()
+            case .failure(let error):
+                continuation.resume(throwing: error)
+            }
+            return
+        }
+        resolver.finish(with: result)
+    }
+
+    private func clearCurrentListener() {
+        listener?.stateUpdateHandler = nil
+        listener?.newConnectionHandler = nil
+        listener?.cancel()
+        listener = nil
+        resolver = nil
     }
 }
 

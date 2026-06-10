@@ -24,6 +24,7 @@ enum MediaTransportRoutingReason {
     case single
     case focused
     case current
+    case recent
     case chooser
 }
 
@@ -66,6 +67,11 @@ struct CommandRuleSemantics {
             MediaTransportCommandRules.rowScopedCommand(.next, for: target(id: "playing", playing: true)),
             .next,
             "Non-Play/Pause row dispatch must keep the requested command"
+        )
+        expectEqual(
+            MediaTransportCommandRules.statusKind(for: .recent),
+            .auto,
+            "Remembered-target automatic routing must remain an automatic status"
         )
 
         let newerSpotify = target(id: "spotify", name: "Spotify", playing: true, freshness: 300)

@@ -307,7 +307,7 @@ struct SettingsFeature: View {
                                 }
 
                             Button("Save") {
-                                saveSpotifyClientID(showMessage: true)
+                                _ = saveSpotifyClientID(showMessage: true)
                             }
                             .controlSize(.small)
                             .disabled(isSigningIn)
@@ -849,12 +849,12 @@ struct SettingsFeature: View {
 
     private static let spotifyClientIDPattern = /^[0-9a-f]{32}$/
 
-    private func saveSpotifyClientID(showMessage: Bool) {
+    private func saveSpotifyClientID(showMessage: Bool) -> Bool {
         let trimmedClientID = spotifyClientID.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if let id = trimmedClientID.nilIfEmpty, id.wholeMatch(of: Self.spotifyClientIDPattern) == nil {
             authMessage = "Invalid Client ID format. Expected 32 hex characters."
-            return
+            return false
         }
 
         do {
@@ -863,7 +863,7 @@ struct SettingsFeature: View {
                 if showMessage {
                     authMessage = "Spotify Client ID unchanged."
                 }
-                return
+                return true
             }
 
             try configStore.save(
@@ -875,13 +875,17 @@ struct SettingsFeature: View {
             if showMessage {
                 authMessage = trimmedClientID.isEmpty ? "Removed Spotify Client ID." : "Saved Spotify Client ID."
             }
+            return true
         } catch {
             authMessage = "Could not save Spotify Client ID."
+            return false
         }
     }
 
     private func startSpotifySignIn() {
-        saveSpotifyClientID(showMessage: false)
+        guard saveSpotifyClientID(showMessage: false) else {
+            return
+        }
         authMessage = nil
         isSigningIn = true
         let authCoordinator = self.authCoordinator

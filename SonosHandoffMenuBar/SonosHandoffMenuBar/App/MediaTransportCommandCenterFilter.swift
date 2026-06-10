@@ -113,24 +113,20 @@ final class MediaTransportCommandCenterFilter {
         let now = Date()
         let commandCenterExpiresAt = now.addingTimeInterval(programmaticCommandCenterEchoWindow)
         let mediaKeyExpiresAt = now.addingTimeInterval(programmaticGeneratedMediaKeyCallbackWindow)
-        inFlightProgrammaticCommandCenterEchoes = [
-            TimedCommand(
-                command: command,
-                metadata: nil,
-                commandCenterMetadata: nil,
-                expiresAt: commandCenterExpiresAt,
-                remainingMatches: Self.programmaticCommandCenterEchoMatchBudget
-            )
-        ]
-        inFlightProgrammaticMediaKeyEchoes = [
-            TimedCommand(
-                command: command,
-                metadata: nil,
-                commandCenterMetadata: nil,
-                expiresAt: mediaKeyExpiresAt,
-                remainingMatches: Self.programmaticCommandCenterEchoMatchBudget
-            )
-        ]
+        inFlightProgrammaticCommandCenterEchoes.append(TimedCommand(
+            command: command,
+            metadata: nil,
+            commandCenterMetadata: nil,
+            expiresAt: commandCenterExpiresAt,
+            remainingMatches: Self.programmaticCommandCenterEchoMatchBudget
+        ))
+        inFlightProgrammaticMediaKeyEchoes.append(TimedCommand(
+            command: command,
+            metadata: nil,
+            commandCenterMetadata: nil,
+            expiresAt: mediaKeyExpiresAt,
+            remainingMatches: Self.programmaticCommandCenterEchoMatchBudget
+        ))
         inFlightChooserMediaKeyRebounds = []
         inFlightChooserTargetedMediaKeyEchoes = []
         mediaKeyShadow = nil

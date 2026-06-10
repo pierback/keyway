@@ -22,7 +22,7 @@ final class MediaTransportActionController {
     private let traceRecorder = MediaTransportTraceRecorder()
     private let chooserSession = MediaChooserSessionGuard()
     private let focusResolver = MediaTargetFocusResolver()
-    private var recentTargetIdentity: String?
+    private var recentTargetID: String?
     var relaxRouteShield: ((String) -> Void)?
     private var targetSubscription: AnyCancellable?
     private var programmaticDispatches: [UUID: MediaTransportPendingDispatchEcho] = [:]
@@ -46,7 +46,6 @@ final class MediaTransportActionController {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] newTargets in
                 guard let self else { return }
-                guard !self.chooserSession.isActive else { return }
                 let sorted = self.sortedTargets(newTargets)
                 self.overlayController.updateTargetsIfVisible(
                     targets: sorted,
@@ -161,7 +160,12 @@ final class MediaTransportActionController {
             metadata: metadata,
             commandCenterMetadata: commandCenterMetadata
         )
-        routeFromCache(command: command)
+        routeFromCache(
+            command: command,
+            source: source,
+            metadata: metadata,
+            commandCenterMetadata: commandCenterMetadata
+        )
     }
 
     func showChooser(command: MediaRemoteTransportCommand = .playPause) {
@@ -257,7 +261,12 @@ final class MediaTransportActionController {
         )
     }
 
-    private func routeFromCache(command: MediaRemoteTransportCommand) {
+    private func routeFromCache(
+        command: MediaRemoteTransportCommand,
+        source: MediaTransportRouteSource,
+        metadata: MediaTransportInputMetadata?,
+        commandCenterMetadata: MediaCommandCenterInputMetadata?
+    ) {
         let targets = sortedTargets(mediaRemoteController.targets)
         guard !targets.isEmpty, mediaRemoteController.canRouteCommands else {
             mediaRemoteController.refreshSnapshot()
@@ -270,16 +279,34 @@ final class MediaTransportActionController {
         }
 
         mediaRemoteController.refreshSnapshot()
-        route(command: command, targets: targets)
+        route(
+            command: command,
+            targets: targets,
+            source: source,
+            metadata: metadata,
+            commandCenterMetadata: commandCenterMetadata
+        )
     }
 
-    private func route(command: MediaRemoteTransportCommand, targets: [MediaRemoteTarget]) {
+    private func route(
+        command: MediaRemoteTransportCommand,
+        targets: [MediaRemoteTarget],
+        source: MediaTransportRouteSource,
+        metadata: MediaTransportInputMetadata?,
+        commandCenterMetadata: MediaCommandCenterInputMetadata?
+    ) {
         if let decision = automaticTarget(from: targets) {
             send(command: command, to: decision.target, reason: decision.reason)
             return
         }
 
-        showChooserOverlay(command: command, targets: targets)
+        showChooserOverlay(
+            command: command,
+            targets: targets,
+            source: source,
+            metadata: metadata,
+            commandCenterMetadata: commandCenterMetadata
+        )
     }
 
     private func showChooserOverlay(
@@ -367,12 +394,12 @@ final class MediaTransportActionController {
     private func sortedTargets(_ targets: [MediaRemoteTarget]) -> [MediaRemoteTarget] {
         MediaTransportCommandRules.sortedTargets(
             targets,
-            preferredTargetID: recentTargetIdentity
+            preferredTargetID: recentTargetID
         )
     }
 
     private func rememberTarget(_ target: MediaRemoteTarget) {
-        recentTargetIdentity = target.routingIdentity
+        recentTargetID = target.id
     }
 
     private func automaticTarget(from targets: [MediaRemoteTarget]) -> (target: MediaRemoteTarget, reason: MediaTransportRoutingReason)? {
@@ -388,6 +415,10 @@ final class MediaTransportActionController {
 
         if playingTargets.count == 1, let playingTarget = playingTargets.first {
             return (playingTarget, .current)
+        }
+
+        if let recentTarget = targets.first(where: { $0.id == recentTargetID }) {
+            return (recentTarget, .recent)
         }
 
         return nil

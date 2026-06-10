@@ -154,7 +154,13 @@ struct ShortcutEventParser {
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags
 
+        let shiftFunctionChord = flags.contains(.maskSecondaryFn) && flags.contains(.maskShift)
+
         if let command = transportFunctionKeyCommand(for: keyCode) {
+            guard shiftFunctionChord else {
+                return .passThrough
+            }
+
             let metadata = transportInputMetadata(from: event)
             if type == keyDownEventType {
                 return .transportKeyDown(command: command, source: "function_key", metadata: metadata)
@@ -173,7 +179,7 @@ struct ShortcutEventParser {
             return .volumeHoldStop(source: "function_key")
         }
 
-        guard flags.contains(.maskSecondaryFn), flags.contains(.maskShift) else {
+        guard shiftFunctionChord else {
             return .passThrough
         }
 

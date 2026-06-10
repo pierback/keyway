@@ -80,6 +80,64 @@ struct FilterSemantics {
             .programmaticEcho,
             "programmatic dispatch must suppress immediate Command Center rebounds even when macOS gives them fresh metadata"
         )
+        let overlappingDispatchFilter = MediaTransportCommandCenterFilter(
+            mediaKeyShadowInterval: 0.15,
+            commandCenterInputShadowInterval: 0.15,
+            programmaticCommandCenterEchoWindow: 0.25,
+            programmaticGeneratedMediaKeyCallbackWindow: 0.25,
+            physicalMediaKeyReboundWindow: 0.15,
+            chooserTargetedMediaKeyEchoWindow: 0.75
+        )
+        overlappingDispatchFilter.beginProgrammaticDispatch(command: .next)
+        overlappingDispatchFilter.beginProgrammaticDispatch(command: .previous)
+        expectEqual(
+            overlappingDispatchFilter.ignoreReasonForCommandCenter(command: .next),
+            .programmaticEcho,
+            "overlapping dispatches must preserve the first Command Center echo window"
+        )
+        expectEqual(
+            overlappingDispatchFilter.ignoreReasonForCommandCenter(command: .previous),
+            .programmaticEcho,
+            "overlapping dispatches must preserve the second Command Center echo window"
+        )
+        let overlappingMediaKeyEchoFilter = MediaTransportCommandCenterFilter(
+            mediaKeyShadowInterval: 0.15,
+            commandCenterInputShadowInterval: 0.15,
+            programmaticCommandCenterEchoWindow: 0.25,
+            programmaticGeneratedMediaKeyCallbackWindow: 0.25,
+            physicalMediaKeyReboundWindow: 0.15,
+            chooserTargetedMediaKeyEchoWindow: 0.75
+        )
+        overlappingMediaKeyEchoFilter.beginProgrammaticDispatch(command: .next)
+        overlappingMediaKeyEchoFilter.beginProgrammaticDispatch(command: .previous)
+        expectEqual(
+            overlappingMediaKeyEchoFilter.ignoreReasonForMediaKey(
+                command: .next,
+                metadata: MediaTransportInputMetadata(
+                    sourceUnixProcessID: 123,
+                    sourceStateID: 0,
+                    sourceUserData: 0,
+                    targetUnixProcessID: 456,
+                    eventTimestamp: 200
+                )
+            ),
+            .programmaticMediaKeyEcho,
+            "overlapping dispatches must preserve the first generated media-key echo window"
+        )
+        expectEqual(
+            overlappingMediaKeyEchoFilter.ignoreReasonForMediaKey(
+                command: .previous,
+                metadata: MediaTransportInputMetadata(
+                    sourceUnixProcessID: 123,
+                    sourceStateID: 0,
+                    sourceUserData: 0,
+                    targetUnixProcessID: 456,
+                    eventTimestamp: 201
+                )
+            ),
+            .programmaticMediaKeyEcho,
+            "overlapping dispatches must preserve the second generated media-key echo window"
+        )
         filter.beginProgrammaticDispatch(command: .playPause)
         expectNil(
             filter.ignoreReasonForMediaKey(command: .playPause),

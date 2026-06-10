@@ -43,15 +43,20 @@ final class StatusHUD {
     }
 
     func showMutePending(roomName: String) {
+        guard !suppressVolumeNotifications else {
+            clearPendingStatusNotification()
+            return
+        }
+
         deliver(title: roomName, message: "Toggling mute...", identifier: Self.pendingStatusIdentifier)
     }
 
     func showMute(roomName: String, muted: Bool, dismissAfter seconds: TimeInterval = 3.0) {
+        clearPendingStatusNotification()
         guard !suppressVolumeNotifications else {
             return
         }
 
-        clearPendingStatusNotification()
         deliver(
             title: roomName,
             message: muted ? "Muted" : "Unmuted",

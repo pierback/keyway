@@ -12,6 +12,7 @@ run() {
 run swift test --package-path "$PACKAGE_DIR"
 run "$ROOT_DIR/scripts/verify_shortcut_event_parser_semantics"
 run "$ROOT_DIR/scripts/verify_menubar_output_section_semantics"
+run "$ROOT_DIR/scripts/verify_settings_feature_semantics"
 run git -C "$ROOT_DIR" diff --check
 run "$ROOT_DIR/scripts/install_menubar_app"
 

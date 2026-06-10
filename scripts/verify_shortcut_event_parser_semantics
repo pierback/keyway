@@ -61,6 +61,22 @@ func mediaKeyEvent(keyCode: Int, state: Int, shift: Bool = false) -> CGEvent {
     return event
 }
 
+func functionKeyEvent(keyCode: CGKeyCode, keyDown: Bool, shiftFunctionChord: Bool = false) -> CGEvent {
+    guard let event = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: keyDown) else {
+        fatalError("failed to create function key event")
+    }
+
+    if shiftFunctionChord {
+        event.flags = [.maskSecondaryFn, .maskShift]
+    }
+
+    event.setIntegerValueField(.eventSourceUnixProcessID, value: 0)
+    event.setIntegerValueField(.eventSourceStateID, value: 1)
+    event.setIntegerValueField(.eventSourceUserData, value: 0)
+    event.setIntegerValueField(.eventTargetUnixProcessID, value: 0)
+    return event
+}
+
 func expect(_ condition: Bool, _ message: String) {
     if !condition {
         fputs("verify_shortcut_event_parser_semantics: \(message)\n", stderr)
@@ -70,6 +86,31 @@ func expect(_ condition: Bool, _ message: String) {
 
 let parser = ShortcutEventParser()
 let systemDefined = CGEventType(rawValue: 14)!
+
+expect(
+    parser.outcome(type: .keyDown, event: functionKeyEvent(keyCode: 100, keyDown: true), isRepeating: false) == .passThrough,
+    "plain F8 key-down must pass through instead of being swallowed as Play/Pause"
+)
+expect(
+    parser.outcome(type: .keyUp, event: functionKeyEvent(keyCode: 100, keyDown: false), isRepeating: false) == .passThrough,
+    "plain F8 key-up must pass through instead of being swallowed as Play/Pause"
+)
+
+switch parser.outcome(type: .keyDown, event: functionKeyEvent(keyCode: 100, keyDown: true, shiftFunctionChord: true), isRepeating: false) {
+case .transportKeyDown(let command, let source, _):
+    expect(command == .playPause, "Shift+Fn+F8 key-down must route Play/Pause")
+    expect(source == "function_key", "Shift+Fn+F8 source should remain function_key")
+default:
+    expect(false, "Shift+Fn+F8 key-down did not route Play/Pause")
+}
+
+switch parser.outcome(type: .keyUp, event: functionKeyEvent(keyCode: 101, keyDown: false, shiftFunctionChord: true), isRepeating: false) {
+case .transportKeyUp(let command, let source, _):
+    expect(command == .next, "Shift+Fn+F9 key-up must route Next")
+    expect(source == "function_key", "Shift+Fn+F9 source should remain function_key")
+default:
+    expect(false, "Shift+Fn+F9 key-up did not route Next")
+}
 
 expect(
     parser.outcome(type: systemDefined, event: mediaKeyEvent(keyCode: 2, state: 0x0A), isRepeating: false) == .passThrough,

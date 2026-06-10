@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+settings="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/Features/SettingsFeature.swift"
+
+fail() {
+  printf 'verify_settings_feature_semantics: %s\n' "$*" >&2
+  exit 1
+}
+
+grep -q 'private func saveSpotifyClientID(showMessage: Bool) -> Bool' "$settings" \
+  || fail "Spotify Client ID saving must report validation/persistence failure to callers"
+
+grep -q 'return false' "$settings" \
+  || fail "Spotify Client ID validation and persistence failures must stop dependent flows"
+
+python3 - "$settings" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+start = text.index("    private func startSpotifySignIn()")
+end = text.index("    private func signOutSpotify()", start)
+body = text[start:end]
+required = """guard saveSpotifyClientID(showMessage: false) else {
+            return
+        }"""
+if required not in body:
+    raise SystemExit("verify_settings_feature_semantics: Spotify sign-in must stop when Client ID validation fails")
+if body.index(required) > body.index("authCoordinator.login()"):
+    raise SystemExit("verify_settings_feature_semantics: Spotify sign-in must validate the Client ID before login")
+PY
+
+printf 'verify_settings_feature_semantics=ok\n'

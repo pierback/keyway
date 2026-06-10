@@ -1,7 +1,7 @@
 # Keyway Sneaky QA Behavior Findings
 
-**Date:** 2026-05-21  
-**Scope:** Menu bar popover behavior, Settings/modal opening paths, Sonos output tile controls, and async state changes that can shift hit targets.  
+**Date:** 2026-05-21
+**Scope:** Menu bar popover behavior, Settings/modal opening paths, Sonos output tile controls, and async state changes that can shift hit targets.
 **Method:** Static behavioral QA over the current working tree. I used `ast-grep` for repository-wide Swift searches per project instructions, inspected the screenshot at `/Users/f.pieringer/Library/Caches/clipimg/objects/a190ec2530b3850d19a2ba34bf2697293472e9a0302914813f23dcd6dbfbb230.png`, then read the targeted AppKit/SwiftUI files directly. I did not get a deterministic runtime reproduction of the intermittent click because the menu bar app needs interactive focus/state timing.
 
 ## Summary
@@ -30,7 +30,7 @@ Applied on 2026-05-21:
 
 ### BQA-1 — Output header click can be stolen by transient Spotify auth Settings CTA
 
-**Severity:** High  
+**Severity:** High
 **Files:** `SonosHandoffMenuBar/SonosHandoffMenuBar/App/MenuBarOutputSection.swift:31`, `SonosHandoffMenuBar/SonosHandoffMenuBar/App/MenuBarOutputSection.swift:69`, `SonosHandoffMenuBar/SonosHandoffMenuBar/App/PlaybackSyncController.swift:965`
 
 The screenshot location maps to the `toggle-group-editing` button:
@@ -53,7 +53,7 @@ That control only toggles grouping mode. The same `MenuBarOutputSection`, howeve
 
 ### BQA-2 — Outside-click dismissal forwards the same click to underlying UI
 
-**Severity:** High  
+**Severity:** High
 **File:** `SonosHandoffMenuBar/SonosHandoffMenuBar/App/KeywayStatusItemController.swift:244`
 
 The local outside-click monitor closes the popover but returns the event:
@@ -73,7 +73,7 @@ popoverLocalDismissMonitor = NSEvent.addLocalMonitorForEvents(matching: eventMas
 
 ### BQA-3 — Settings opening is asynchronous and unguarded
 
-**Severity:** Medium  
+**Severity:** Medium
 **File:** `SonosHandoffMenuBar/SonosHandoffMenuBar/App/KeywayStatusItemController.swift:140`
 
 `openSettings` closes the popover, schedules work on the next main-queue turn, sends `showSettingsWindow:`, then activates the app. There is no "settings open in progress" guard or debounce.
@@ -86,7 +86,7 @@ popoverLocalDismissMonitor = NSEvent.addLocalMonitorForEvents(matching: eventMas
 
 ### BQA-4 — Diagnostics opens Settings, so two distinct menu actions do the same modal thing
 
-**Severity:** Medium  
+**Severity:** Medium
 **File:** `SonosHandoffMenuBar/SonosHandoffMenuBar/App/KeywayStatusItemController.swift:149`
 
 `openDiagnostics()` currently calls `openSettings()`. In both the status item utility menu and popover menu, "Diagnostics" looks distinct from "Settings..." but opens the same Settings window.
@@ -99,7 +99,7 @@ popoverLocalDismissMonitor = NSEvent.addLocalMonitorForEvents(matching: eventMas
 
 ### BQA-5 — Popover state persists across closes, shifting the meaning of the same click
 
-**Severity:** Medium  
+**Severity:** Medium
 **Files:** `SonosHandoffMenuBar/SonosHandoffMenuBar/App/MenuBarOutputSection.swift:16`, `SonosHandoffMenuBar/SonosHandoffMenuBar/App/KeywayStatusItemController.swift:331`
 
 The popover is a retained `NSPopover` with a retained SwiftUI root. Local UI state such as `forceGroupEditing` and `showSpeakersList` is `@State`, and there is no reset on disappear.
@@ -112,7 +112,7 @@ The popover is a retained `NSPopover` with a retained SwiftUI root. Local UI sta
 
 ### BQA-6 — Reopening the popover spawns uncancelled refresh/auth work
 
-**Severity:** Medium  
+**Severity:** Medium
 **File:** `SonosHandoffMenuBar/SonosHandoffMenuBar/App/PlaybackSyncController.swift:157`
 
 `appear()` starts a new untracked `Task` every time the popover appears. It runs cached output application, background refresh, active Spotify sync, and output refresh. The task is not cancelled when the popover disappears.
@@ -125,7 +125,7 @@ The popover is a retained `NSPopover` with a retained SwiftUI root. Local UI sta
 
 ### BQA-7 — Small trailing controls sit beside full-row buttons with fragile hit boundaries
 
-**Severity:** Medium  
+**Severity:** Medium
 **File:** `SonosHandoffMenuBar/SonosHandoffMenuBar/App/MenuBarOutputSection.swift:212`
 
 Output rows combine a wide transfer `Button` with adjacent small buttons for group join and mixer toggle. The trailing controls are only 22 px wide and sit inside an animated row stack.
@@ -138,7 +138,7 @@ Output rows combine a wide transfer `Button` with adjacent small buttons for gro
 
 ### BQA-8 — Empty/offline state still exposes mode controls that lead to dead ends
 
-**Severity:** Low  
+**Severity:** Low
 **Files:** `SonosHandoffMenuBar/SonosHandoffMenuBar/App/MenuBarOutputSection.swift:31`, `SonosHandoffMenuBar/SonosHandoffMenuBar/App/MenuBarOutputSection.swift:133`
 
 When no Sonos speakers are found, the Output section still shows the grouping-mode checklist button. Clicking it changes the header to "Group" and shows "No active Sonos group." That is technically consistent, but it is not actionable and creates another way for the same screenshot area to mutate unexpectedly.
@@ -151,7 +151,7 @@ When no Sonos speakers are found, the Output section still shows the grouping-mo
 
 ### BQA-9 — Auth message and auth CTA duplicate the same state in different vertical slots
 
-**Severity:** Low  
+**Severity:** Low
 **Files:** `SonosHandoffMenuBar/SonosHandoffMenuBar/App/MenuBarOutputSection.swift:59`, `SonosHandoffMenuBar/SonosHandoffMenuBar/App/MenuBarOutputSection.swift:69`
 
 When auth is required, `PlaybackSyncController` sets both `menuMessage` and `spotifyAuthRequired`. The UI can render both a text message and a Settings-opening CTA. These are outside the row `ScrollView`, so they can push the lower part of the tile while rows remain capped at 118 px.

@@ -1,7 +1,7 @@
 # Keyway Sneaky QA Edge Case Report
 
-**Date:** 2026-05-21  
-**Scope:** Static QA pass over current working tree, focused on ways a user can make routing, helper IPC, and overlay state behave incorrectly.  
+**Date:** 2026-05-21
+**Scope:** Static QA pass over current working tree, focused on ways a user can make routing, helper IPC, and overlay state behave incorrectly.
 **Method:** Used `ast-grep` for repository-wide code search per project instructions, then read targeted files directly. No runtime or real-device smoke tests were executed for this report.
 
 ## Summary
@@ -30,7 +30,7 @@ Applied on 2026-05-21:
 
 ### SQA-1 — Stale targets survive helper failure and can produce false route success
 
-**Severity:** High  
+**Severity:** High
 **Files:** `SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaRemoteController.swift:228`, `SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportActionController.swift:277`
 
 When the MediaRemote helper exits, `handleTermination` clears `process` and `inputPipe`, then calls `markFailed`, but it leaves `targets` and `activeTargetID` intact. `MediaTransportActionController.route` only checks `mediaRemoteController.targets`, not helper health. A later Play/Pause key can choose a stale target, call `send`, hit `inputPipe == nil`, and still show `Play/Pause -> Spotify` as routed.
@@ -43,7 +43,7 @@ When the MediaRemote helper exits, `handleTermination` clears `process` and `inp
 
 ### SQA-2 — Focused paused media can lose to a single background playing target
 
-**Severity:** High  
+**Severity:** High
 **File:** `SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportActionController.swift:235`
 
 The domain model says focused target should win before pinned/recent fallback. The current implementation returns the only playing target before checking focus:
@@ -63,7 +63,7 @@ if playingTargets.count == 1, let playingTarget = playingTargets.first {
 
 ### SQA-3 — Pin/recent/selected identity cannot distinguish multiple sessions from the same app
 
-**Severity:** High  
+**Severity:** High
 **Files:** `SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTargetPreferenceStore.swift:30`, `SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportActionController.swift:288`
 
 Pinned, recent, and in-memory selected targets store `target.routingIdentity`, which is usually a bundle identifier. For browsers and wrapper apps, two distinct MediaRemote clients can share the same bundle or parent bundle.
@@ -76,7 +76,7 @@ Pinned, recent, and in-memory selected targets store `target.routingIdentity`, w
 
 ### SQA-4 — Helper command matching also falls back to bundle identity, so duplicate clients are vulnerable
 
-**Severity:** Medium  
+**Severity:** Medium
 **File:** `MediaRemoteHelper/KeywayMediaRemoteShim.m:189`
 
 `KeywayClientMatchesTarget` matches `targetID` against exact client ID, bundle ID, or parent bundle ID. The app currently sends exact `target.id`, but the fallback means any future caller or degraded persisted identity can target the first client with that bundle.
@@ -89,7 +89,7 @@ Pinned, recent, and in-memory selected targets store `target.routingIdentity`, w
 
 ### SQA-5 — Fixed 180 ms snapshot grace period can drop or misroute first commands
 
-**Severity:** Medium  
+**Severity:** Medium
 **File:** `SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportActionController.swift:88`
 
 When no targets are currently cached, `route` asks the helper for a snapshot and waits a fixed 180 ms before checking again. The helper snapshot path can wait up to 5 seconds. A cold helper, slow MediaRemote response, or app just starting playback can easily exceed 180 ms.
@@ -102,7 +102,7 @@ When no targets are currently cached, `route` asks the helper for a snapshot and
 
 ### SQA-6 — Helper stdout buffering is unbounded for a malformed or newline-free response
 
-**Severity:** Medium  
+**Severity:** Medium
 **File:** `SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaRemoteController.swift:167`
 
 `handleOutput` appends all helper stdout to `outputBuffer` and only drains it when a newline appears. There is no maximum line size, no recovery if a newline never arrives, and no reset on parse errors.
@@ -115,7 +115,7 @@ When no targets are currently cached, `route` asks the helper for a snapshot and
 
 ### SQA-7 — Expanded overlay mouse click still routes instead of selecting
 
-**Severity:** Low  
+**Severity:** Low
 **File:** `SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTargetOverlayController.swift:386`
 
 Keyboard behavior changes in expanded mode: number keys select rows without dispatching. Mouse behavior does not change: each row is a `Button` whose action calls `onChoose(target)`, while selection is only a simultaneous gesture.
@@ -128,7 +128,7 @@ Keyboard behavior changes in expanded mode: number keys select rows without disp
 
 ### SQA-8 — Async audio snapshots can apply to the wrong selected target
 
-**Severity:** Low  
+**Severity:** Low
 **File:** `SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTargetOverlayController.swift:237`
 
 `refreshAudioSnapshot` captures `selectedTarget`, starts an async task, and always assigns the result to `model.audioSnapshot` when it completes. Rapid selection changes or delayed volume refreshes can let an older task overwrite newer UI state.
@@ -141,7 +141,7 @@ Keyboard behavior changes in expanded mode: number keys select rows without disp
 
 ### SQA-9 — Source-app playback changes are only eventually consistent
 
-**Severity:** Medium  
+**Severity:** Medium
 **Files:** `SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaRemoteController.swift:144`, `SonosHandoffMenuBar/SonosHandoffMenuBar/App/KeywayStatusItemController.swift:108`, `SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportActionController.swift:88`
 
 Keyway starts a MediaRemote helper at launch and refreshes snapshots every 5 seconds. It also requests a refresh when the menu opens, the overlay opens, or a transport key is pressed. There does not appear to be a MediaRemote notification subscription that pushes source-app playback changes into Keyway immediately.
@@ -154,7 +154,7 @@ Keyway starts a MediaRemote helper at launch and refreshes snapshots every 5 sec
 
 ### SQA-10 — Menu bar Now Playing card can show old metadata after source app changes
 
-**Severity:** Low  
+**Severity:** Low
 **Files:** `SonosHandoffMenuBar/SonosHandoffMenuBar/App/KeywayStatusItemController.swift:314`, `SonosHandoffMenuBar/SonosHandoffMenuBar/App/KeywayStatusItemController.swift:461`
 
 The menu bar card derives its title, artist, progress, and active row from the cached `mediaRemoteController.targets`. Opening the popover requests a snapshot, but the UI can render the previous cache first. If the source app changed track, paused, or stopped just before opening Keyway, the first visible state can be wrong until the helper responds.
@@ -167,7 +167,7 @@ The menu bar card derives its title, artist, progress, and active row from the c
 
 ### SQA-11 — Source-app stop/quit does not immediately clear route preferences
 
-**Severity:** Medium  
+**Severity:** Medium
 **Files:** `SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTargetPreferenceStore.swift:41`, `SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportActionController.swift:248`
 
 Recent and pinned target identities survive source-app stop/quit because they are persisted by routing identity. That is useful when the same app returns, but it can combine badly with stale snapshots and same-bundle matching. If a browser tab stops exposing MediaRemote and another tab with the same browser identity appears, Keyway can treat it as the same recent/pinned target.

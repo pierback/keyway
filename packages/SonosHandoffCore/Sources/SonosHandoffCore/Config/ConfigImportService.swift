@@ -145,7 +145,15 @@ public struct ConfigImportService: @unchecked Sendable {
                 at: destinationURL.deletingLastPathComponent(),
                 withIntermediateDirectories: true
             )
-            try fileManager.copyItem(at: sourceURL, to: destinationURL)
+            switch file {
+            case .appConfig:
+                try fileManager.copyItem(at: sourceURL, to: destinationURL)
+            case .projectWebAPIToken, .spotifyDesktopConnectTokens:
+                try ProjectWebAPITokenStore.writeSensitiveFileData(
+                    ProjectWebAPITokenStore.sensitiveFileData(at: sourceURL),
+                    to: destinationURL
+                )
+            }
             return ConfigImportFileResult(
                 file: file,
                 sourceURL: sourceURL,
