@@ -11,9 +11,11 @@ browser_pid=""
 cleanup() {
   if [[ -n "$browser_pid" ]]; then
     kill "$browser_pid" >/dev/null 2>&1 || true
+    wait "$browser_pid" >/dev/null 2>&1 || true
   fi
   if [[ -n "$server_pid" ]]; then
     kill "$server_pid" >/dev/null 2>&1 || true
+    wait "$server_pid" >/dev/null 2>&1 || true
   fi
   rm -rf "$workdir"
 }
