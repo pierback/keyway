@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+controller="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportActionController.swift"
+
+ast-grep --pattern 'private func automaticTarget($$$) -> $$$ { $$$ }' "$controller" >/dev/null
+ast-grep --pattern 'private func showCommandFailureIfNeeded($$$) { $$$ }' "$controller" >/dev/null
+ast-grep --pattern 'private func transportBackendName($$$) -> $$$ { $$$ }' "$controller" >/dev/null
+
+python3 - "$controller" <<'PY'
+import sys
+
+source_path = sys.argv[1]
+source = open(source_path, encoding="utf-8").read()
+
+def fail(message):
+    print(f"verify_mixed_media_routing_semantics: {message}", file=sys.stderr)
+    sys.exit(1)
+
+def index(needle):
+    position = source.find(needle)
+    if position < 0:
+        fail(f"missing {needle!r}")
+    return position
+
+def function_body(signature_suffix):
+    signature = f"private func {signature_suffix}"
+    start = index(signature)
+    brace = source.find("{", start)
+    if brace < 0:
+        fail(f"missing body for {name}")
+    depth = 0
+    for offset in range(brace, len(source)):
+        char = source[offset]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return source[brace + 1:offset]
+    fail(f"unterminated body for {name}")
+
+def assert_contains(haystack, needle, message):
+    if needle not in haystack:
+        fail(message)
+
+def assert_order(haystack, needles, message):
+    positions = []
+    for needle in needles:
+        position = haystack.find(needle)
+        if position < 0:
+            fail(f"{message}: missing {needle!r}")
+        positions.append(position)
+    if positions != sorted(positions):
+        fail(message)
+
+route_input = function_body("route(\n        command:")
+assert_order(
+    route_input,
+    [
+        "if MediaTransportCommandRules.isPlayFamily(command)",
+        "showChooserImmediately(",
+        "routeFromCache(",
+    ],
+    "play-family commands must open the chooser before cache routing can guess"
+)
+
+route_targets = function_body("route(\n        command: MediaRemoteTransportCommand,\n        targets:")
+assert_order(
+    route_targets,
+    [
+        "if let decision = automaticTarget(from: targets)",
+        "send(command: command, to: decision.target, reason: decision.reason)",
+        "showChooserOverlay(",
+    ],
+    "ambiguous multi-target routing must fall through to the chooser"
+)
+
+automatic_target = function_body("automaticTarget")
+assert_order(
+    automatic_target,
+    [
+        "targets.count == 1",
+        "focusResolver.focusedTarget(in: targets)",
+        "playingTargets.count == 1",
+        "recentTargetID",
+        "return nil",
+    ],
+    "automatic target selection must require a deterministic single/focused/playing/recent target"
+)
+
+send = function_body("send(command:")
+assert_order(
+    send,
+    [
+        "desktopTransport.submit(command: command, target: target)",
+        "chromiumBrowserExtensionController.submit(command: command, target: target",
+        "mediaRemoteController.submit(command: command, targetID: target.id)",
+    ],
+    "programmatic dispatch must prefer desktop adapters, then Chromium extension, then MediaRemote"
+)
+
+chooser_send = function_body("sendFromChooser")
+assert_order(
+    chooser_send,
+    [
+        "desktopTransport.submit(command: command, target: target)",
+        "chromiumBrowserExtensionController.submit(command: command, target: target",
+        "mediaRemoteController.submit(command: command, targetID: target.id)",
+    ],
+    "chooser dispatch must prefer desktop adapters, then Chromium extension, then MediaRemote"
+)
+
+failure = function_body("showCommandFailureIfNeeded")
+assert_order(
+    failure,
+    [
+        "if result.unsupported",
+        'title: "Command Unsupported"',
+        'title: "Media Command Failed"',
+    ],
+    "unsupported command results must be shown as unsupported rather than generic failures"
+)
+
+backend = function_body("transportBackendName")
+assert_order(
+    backend,
+    [
+        "desktopTransport.backendName(command: command, target: target)",
+        "chromiumBrowserExtensionController.backendName(command: command, target: target)",
+        "Self.mediaRemotePlayerPathBackend",
+    ],
+    "backend names must follow the same desktop/Chromium/MediaRemote priority as dispatch"
+)
+
+chooser_scoped = function_body("chooserScopedCommand")
+assert_contains(
+    chooser_scoped,
+    "desktopTransport.keepsPlayPauseToggle(for: target)",
+    "chooser-scoped playPause must preserve desktop adapter toggles for Spotify and Helium"
+)
+
+print("verify_mixed_media_routing_semantics=ok")
+PY
