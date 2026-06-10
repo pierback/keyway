@@ -18,6 +18,7 @@ run "$ROOT_DIR/scripts/verify_chromium_extension_transport_semantics"
 run "$ROOT_DIR/scripts/verify_chromium_extension_semantics"
 run "$ROOT_DIR/scripts/verify_mixed_media_routing_semantics"
 run "$ROOT_DIR/scripts/verify_media_routing_probe_semantics"
+run bash -n "$ROOT_DIR/scripts/smoke_spotify_webapi_transport" "$ROOT_DIR/scripts/diagnose_spotify_playback_readiness"
 run git -C "$ROOT_DIR" diff --check
 run "$ROOT_DIR/scripts/install_menubar_app"
 

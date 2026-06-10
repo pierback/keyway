@@ -6,15 +6,22 @@ repo_root="$(cd "$script_dir/.." && pwd)"
 commands_csv="${KEYWAY_SPOTIFY_WEBAPI_COMMANDS:-pause,play}"
 dry_run="${KEYWAY_SPOTIFY_WEBAPI_DRY_RUN:-0}"
 prime="${KEYWAY_SPOTIFY_WEBAPI_PRIME:-1}"
+desktop_prime="${KEYWAY_SPOTIFY_WEBAPI_DESKTOP_PRIME:-1}"
+desktop_prime_volume="${KEYWAY_SPOTIFY_WEBAPI_DESKTOP_PRIME_VOLUME:-20}"
 prime_uri="${KEYWAY_SPOTIFY_WEBAPI_PRIME_URI:-spotify:track:3n3Ppam7vgaVa1iaRUc9Lp}"
 prime_device_name="${KEYWAY_SPOTIFY_WEBAPI_PRIME_DEVICE_NAME:-}"
 prime_device_type="${KEYWAY_SPOTIFY_WEBAPI_PRIME_DEVICE_TYPE:-Computer}"
 cli=(swift run --package-path "$repo_root/packages/SonosHandoffCore" sonos-handoff-port)
 restore_play=0
+restore_spotify_volume=""
+last_playback_state_output=""
 
 cleanup() {
   if [[ "$restore_play" == "1" ]]; then
     "${cli[@]}" playback-command play >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$restore_spotify_volume" ]]; then
+    osascript -e "tell application id \"com.spotify.client\" to set sound volume to $restore_spotify_volume" >/dev/null 2>&1 || true
   fi
 }
 trap cleanup EXIT
@@ -44,19 +51,72 @@ for command in "${commands[@]}"; do
   esac
 done
 
+case "$desktop_prime_volume" in
+  ''|*[!0-9]*)
+    fail "KEYWAY_SPOTIFY_WEBAPI_DESKTOP_PRIME_VOLUME must be an integer from 0 to 100"
+    ;;
+esac
+
+if (( desktop_prime_volume > 100 )); then
+  fail "KEYWAY_SPOTIFY_WEBAPI_DESKTOP_PRIME_VOLUME must be an integer from 0 to 100"
+fi
+
+playing_state_matches_once() {
+  local expected="$1"
+  if last_playback_state_output="$("${cli[@]}" playback-status 2>&1)"; then
+    if grep -q "^spotify_playing=$expected$" <<<"$last_playback_state_output"; then
+      return 0
+    fi
+  fi
+  return 1
+}
+
 wait_for_playing_state() {
   local expected="$1"
-  local state_output
   for _ in {1..20}; do
-    if state_output="$("${cli[@]}" playback-status 2>&1)"; then
-      if grep -q "^spotify_playing=$expected$" <<<"$state_output"; then
-        return 0
-      fi
+    playing_state_matches_once "$expected" && return 0
+    sleep 0.5
+  done
+
+  printf '%s\n' "$last_playback_state_output" >&2
+  return 1
+}
+
+desktop_prime_playback() {
+  [[ "$desktop_prime" == "1" ]] || return 1
+
+  if ! pgrep -x Spotify >/dev/null; then
+    open -g -a Spotify >/dev/null || return 1
+    for _ in {1..40}; do
+      pgrep -x Spotify >/dev/null && break
+      sleep 0.25
+    done
+  fi
+
+  pgrep -x Spotify >/dev/null || return 1
+
+  if [[ -z "$restore_spotify_volume" ]]; then
+    restore_spotify_volume="$(osascript -e 'tell application id "com.spotify.client" to sound volume as integer' 2>/dev/null || printf '')"
+  fi
+
+  osascript -e "tell application id \"com.spotify.client\" to set sound volume to $desktop_prime_volume" >/dev/null || return 1
+  osascript - "$prime_uri" <<'APPLESCRIPT' >/dev/null || return 1
+on run argv
+  tell application id "com.spotify.client"
+    play track (item 1 of argv)
+  end tell
+end run
+APPLESCRIPT
+
+  for _ in {1..20}; do
+    if playing_state_matches_once true; then
+      printf 'spotify_webapi_desktop_prime=ok\n'
+      restore_play=1
+      return 0
     fi
     sleep 0.5
   done
 
-  printf '%s\n' "$state_output" >&2
   return 1
 }
 
@@ -77,18 +137,22 @@ if (( current_status_code != 0 )) || ! grep -q '^playback-status=ok$' <<<"$curre
   [[ -n "$prime_device_type" ]] && prime_args+=(--spotify-device-type "$prime_device_type")
 
   if ! prime_output="$("${cli[@]}" "${prime_args[@]}" 2>&1)"; then
-    printf '%s\n' "$current_status" >&2
-    printf '%s\n' "$prime_output" >&2
-    "$script_dir/diagnose_spotify_playback_readiness" >&2
-    fail "Spotify must expose an unrestricted playback device before Web API transport smoke"
+    printf 'spotify_webapi_desktop_prime=attempted\n' >&2
+    if ! desktop_prime_playback; then
+      printf '%s\n' "$current_status" >&2
+      printf '%s\n' "$prime_output" >&2
+      "$script_dir/diagnose_spotify_playback_readiness" >&2
+      fail "Spotify must expose an unrestricted playback device or accept local desktop URI priming before Web API transport smoke"
+    fi
+  elif ! wait_for_playing_state true; then
+    if ! desktop_prime_playback; then
+      printf '%s\n' "$prime_output" >&2
+      "$script_dir/diagnose_spotify_playback_readiness" >&2
+      fail "Spotify playback did not become active after priming"
+    fi
+  else
+    restore_play=1
   fi
-
-  if ! wait_for_playing_state true; then
-    printf '%s\n' "$prime_output" >&2
-    "$script_dir/diagnose_spotify_playback_readiness" >&2
-    fail "Spotify playback did not become active after priming"
-  fi
-  restore_play=1
 fi
 
 success=0
