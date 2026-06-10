@@ -74,6 +74,7 @@ struct AppEnvironment: @unchecked Sendable {
         let mediaTransportActionController = MediaTransportActionController(
             mediaRemoteController: mediaRemoteController,
             overlayController: mediaTargetOverlayController,
+            spotifyPlaybackController: spotifyConnectService,
             chromiumBrowserExtensionController: chromiumBrowserExtensionController
         )
         let mediaRoutingProbeController = MediaRoutingProbeController(

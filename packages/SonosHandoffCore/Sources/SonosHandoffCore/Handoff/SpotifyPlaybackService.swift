@@ -16,8 +16,24 @@ final class SpotifyPlaybackService: @unchecked Sendable {
         try await bridge.activePlaybackDeviceStatus()
     }
 
+    func availablePlaybackDevices() async throws -> [SpotifyAvailablePlaybackDevice] {
+        try await bridge.availablePlaybackDevices()
+    }
+
+    func startActivePlayback(spotifyURI: String?, deviceName: String?, deviceType: String?) async throws {
+        try await bridge.startPlayback(
+            spotifyURI: spotifyURI,
+            deviceName: deviceName,
+            deviceType: deviceType
+        )
+    }
+
     func setActivePlaybackDeviceVolume(_ volume: Int) async throws -> Int {
         try await bridge.setActivePlaybackDeviceVolume(volume)
+    }
+
+    func sendActivePlaybackCommand(_ command: SpotifyPlaybackCommand) async throws {
+        try await bridge.sendPlaybackCommand(command)
     }
 
     func verifyActiveDevice(named roomName: String) async throws -> ConnectPlayerState {

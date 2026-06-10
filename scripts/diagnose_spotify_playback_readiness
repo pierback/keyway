@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cli=(swift run --package-path "$repo_root/packages/SonosHandoffCore" sonos-handoff-port)
+
+print_kv() {
+  printf 'spotify_readiness_%s=%s\n' "$1" "$2"
+}
+
+print_command_output() {
+  local prefix="$1"
+  local output="$2"
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && printf 'spotify_readiness_%s_%s\n' "$prefix" "$line"
+  done <<<"$output"
+}
+
+if pgrep -x Spotify >/dev/null; then
+  print_kv "app_running" "1"
+else
+  print_kv "app_running" "0"
+fi
+
+if apple_state="$(osascript -e 'tell application id "com.spotify.client" to player state as string' 2>&1)"; then
+  print_kv "applescript_state" "$apple_state"
+else
+  print_kv "applescript_state_error" "$apple_state"
+fi
+
+if apple_track="$(osascript -e 'tell application id "com.spotify.client" to name of current track' 2>&1)"; then
+  print_kv "applescript_track" "$apple_track"
+else
+  print_kv "applescript_track_error" "$apple_track"
+fi
+
+if web_status="$("${cli[@]}" playback-status 2>&1)"; then
+  print_command_output "webapi_status" "$web_status"
+else
+  print_command_output "webapi_status_error" "$web_status"
+fi
+
+if devices="$("${cli[@]}" playback-devices 2>&1)"; then
+  print_command_output "webapi_devices" "$devices"
+else
+  print_command_output "webapi_devices_error" "$devices"
+fi
+
+print_kv "diagnostic" "ok"

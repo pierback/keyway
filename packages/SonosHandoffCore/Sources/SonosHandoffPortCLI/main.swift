@@ -199,6 +199,25 @@ do {
         let state = try await currentSpotifyPlaybackState()
         printSpotifyState(state)
         print("playback-status=ok")
+    case "playback-devices":
+        let devices = try await SpotifyConnectHandoffService().availablePlaybackDevices()
+        print("spotify_devices_count=\(devices.count)")
+        for device in devices {
+            print("spotify_device name=\(device.name) type=\(device.type) active=\(device.isActive) restricted=\(device.isRestricted)")
+        }
+        print("playback-devices=ok")
+    case "playback-start":
+        try await SpotifyConnectHandoffService().startActivePlayback(
+            spotifyURI: optionValue("--spotify-uri"),
+            deviceName: optionValue("--spotify-device-name"),
+            deviceType: optionValue("--spotify-device-type")
+        )
+        print("playback-start=ok")
+    case "playback-command":
+        let playbackCommand = try spotifyPlaybackCommandArgument()
+        try await SpotifyConnectHandoffService().sendActivePlaybackCommand(playbackCommand)
+        print("spotify_playback_command=\(playbackCommand.rawValue)")
+        print("playback-command=ok")
     case "sonos-status":
         let target = try await resolvedCommandTarget(needsSpotifyMetadata: false)
         let currentURI = try await currentMediaURI(on: target)
@@ -874,6 +893,17 @@ func desiredVolume() throws -> Int {
     return volume
 }
 
+func spotifyPlaybackCommandArgument() throws -> SpotifyPlaybackCommand {
+    guard let rawCommand = positionalArgument(at: 0),
+          let command = SpotifyPlaybackCommand(rawValue: rawCommand),
+          command != .playPause
+    else {
+        throw CLIError.commandFailed("playback-command requires play, pause, next, or previous")
+    }
+
+    return command
+}
+
 func positionalArgumentsAfterCommand() -> [String] {
     let values = commandLineValuesExcludingOptions()
     guard let first = values.first, isCommand(first) else {
@@ -884,7 +914,7 @@ func positionalArgumentsAfterCommand() -> [String] {
 }
 
 func commandLineValuesExcludingOptions() -> [String] {
-    let optionsWithValues = Set(["--login-id", "--step", "--volume"])
+    let optionsWithValues = Set(["--login-id", "--step", "--volume", "--spotify-uri", "--spotify-device-name", "--spotify-device-type"])
     var values: [String] = []
     var shouldSkipNext = false
 
@@ -920,6 +950,9 @@ func printUsage() {
         Usage:
           sonos-handoff-port [handoff] [room] [--login-id LOGIN_ID]
           sonos-handoff-port playback-status
+          sonos-handoff-port playback-devices
+          sonos-handoff-port playback-start [--spotify-uri URI] [--spotify-device-name NAME] [--spotify-device-type TYPE]
+          sonos-handoff-port playback-command play|pause|next|previous
           sonos-handoff-port sonos-status [room]
           sonos-handoff-port volume-status [room]
           sonos-handoff-port volume-up [room] [--step 5...25]
@@ -934,7 +967,7 @@ func printUsage() {
 }
 
 func validateOptions() throws {
-    let optionsWithValues = Set(["--login-id", "--step", "--volume"])
+    let optionsWithValues = Set(["--login-id", "--step", "--volume", "--spotify-uri", "--spotify-device-name", "--spotify-device-type"])
     let flags = Set(["--help", "-h"])
     let arguments = Array(CommandLine.arguments.dropFirst())
     var shouldSkipNext = false
@@ -965,7 +998,7 @@ func validateOptions() throws {
 
 func isCommand(_ value: String) -> Bool {
     switch value {
-    case "handoff", "playback-status", "sonos-status", "volume-up", "volume-down", "volume-set", "volume-status", "volume-mute", "volume-mute-on", "volume-mute-off", "volume-zero-muted":
+    case "handoff", "playback-status", "playback-devices", "playback-start", "playback-command", "sonos-status", "volume-up", "volume-down", "volume-set", "volume-status", "volume-mute", "volume-mute-on", "volume-mute-off", "volume-zero-muted":
         return true
     default:
         return false

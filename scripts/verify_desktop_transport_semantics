@@ -51,6 +51,7 @@ struct MediaRemoteTarget: Equatable, Identifiable {
     let duration: Double?
     let elapsedTime: Double?
     let elapsedTimestamp: Double?
+    let supportedCommands: [MediaRemoteTransportCommand]?
 }
 
 struct MediaRemoteCommandResultEvent: Equatable {
@@ -156,7 +157,8 @@ struct Semantics {
             artworkBase64: nil,
             duration: nil,
             elapsedTime: nil,
-            elapsedTimestamp: nil
+            elapsedTimestamp: nil,
+            supportedCommands: nil
         )
     }
 
@@ -180,3 +182,47 @@ swiftc \
   -o "$workdir/verify_desktop_transport_semantics"
 
 "$workdir/verify_desktop_transport_semantics"
+
+python3 - "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaDesktopTransportAdapter.swift" <<'PY'
+import sys
+
+source = open(sys.argv[1], encoding="utf-8").read()
+
+def fail(message):
+    print(f"verify_desktop_transport_semantics: {message}", file=sys.stderr)
+    sys.exit(1)
+
+def index(needle):
+    position = source.find(needle)
+    if position < 0:
+        fail(f"missing {needle!r}")
+    return position
+
+def assert_order(needles, message):
+    positions = [index(needle) for needle in needles]
+    if positions != sorted(positions):
+        fail(message)
+
+assert_order(
+    [
+        "let beforeStatus = Self.spotifyPlaybackStatus()",
+        "beforeStatus.error == nil",
+        "Spotify has no current desktop track",
+        "Self.sendAppleEvent(",
+        "Self.expectedSpotifyState(command: command, beforeState: beforeState)",
+        "!Self.waitForSpotifyState(expectedState)",
+    ],
+    "Spotify AppleEvent transport must preflight desktop track state before sending and verify observable state changes",
+)
+
+for needle in [
+    'tell application id "com.spotify.client"',
+    'name of current track',
+    'case .play:',
+    'case .pause:',
+    'case .playPause:',
+    'case .next, .previous:',
+]:
+    if needle not in source:
+        fail("Spotify AppleEvent transport must model play/pause/playPause verification while leaving next/previous as submit-only")
+PY

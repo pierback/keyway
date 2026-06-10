@@ -82,7 +82,8 @@ final class MediaDesktopTransportAdapter {
             artworkBase64: nil,
             duration: nil,
             elapsedTime: nil,
-            elapsedTimestamp: nil
+            elapsedTimestamp: nil,
+            supportedCommands: nil
         )]
     }
 
@@ -100,6 +101,36 @@ final class MediaDesktopTransportAdapter {
         command: MediaRemoteTransportCommand,
         target: MediaRemoteTarget
     ) -> MediaRemoteCommandResultEvent {
+        let beforeStatus = Self.spotifyPlaybackStatus()
+        guard beforeStatus.error == nil else {
+            return MediaRemoteCommandResultEvent(
+                type: "commandResult",
+                requestID: UUID().uuidString,
+                targetID: target.id,
+                command: command.rawValue,
+                ok: false,
+                message: "Spotify AppleScript status failed: \(beforeStatus.error ?? "unknown")",
+                backend: MediaDesktopTransportBackend.spotifyAppleEvent.rawValue,
+                unsupported: true
+            )
+        }
+        guard let beforeState = beforeStatus.state,
+              let beforeTrack = beforeStatus.track,
+              !beforeTrack.isEmpty,
+              beforeState == "playing" || beforeState == "paused"
+        else {
+            return MediaRemoteCommandResultEvent(
+                type: "commandResult",
+                requestID: UUID().uuidString,
+                targetID: target.id,
+                command: command.rawValue,
+                ok: false,
+                message: "Spotify has no current desktop track; state=\(beforeStatus.state ?? "unknown").",
+                backend: MediaDesktopTransportBackend.spotifyAppleEvent.rawValue,
+                unsupported: true
+            )
+        }
+
         let eventID = Self.spotifyAppleEventID(command: command)
         let status = Self.sendAppleEvent(
             bundleIdentifier: Self.spotifyBundleIdentifier,
@@ -107,6 +138,20 @@ final class MediaDesktopTransportAdapter {
             eventID: eventID
         )
         let ok = status == noErr
+        if ok, let expectedState = Self.expectedSpotifyState(command: command, beforeState: beforeState),
+           !Self.waitForSpotifyState(expectedState) {
+            let afterStatus = Self.spotifyPlaybackStatus()
+            return MediaRemoteCommandResultEvent(
+                type: "commandResult",
+                requestID: UUID().uuidString,
+                targetID: target.id,
+                command: command.rawValue,
+                ok: false,
+                message: "Spotify AppleEvent did not reach \(expectedState); state=\(afterStatus.state ?? "unknown").",
+                backend: MediaDesktopTransportBackend.spotifyAppleEvent.rawValue
+            )
+        }
+
         return MediaRemoteCommandResultEvent(
             type: "commandResult",
             requestID: UUID().uuidString,
@@ -204,6 +249,42 @@ final class MediaDesktopTransportAdapter {
         }
     }
 
+    private static func expectedSpotifyState(command: MediaRemoteTransportCommand, beforeState: String) -> String? {
+        switch command {
+        case .play:
+            return "playing"
+        case .pause:
+            return "paused"
+        case .playPause:
+            return beforeState == "playing" ? "paused" : "playing"
+        case .next, .previous:
+            return nil
+        }
+    }
+
+    private static func waitForSpotifyState(_ expectedState: String) -> Bool {
+        let deadline = Date().addingTimeInterval(1.5)
+        while Date() < deadline {
+            if spotifyPlaybackStatus().state == expectedState {
+                return true
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        return false
+    }
+
+    private static func spotifyPlaybackStatus() -> (state: String?, track: String?, error: String?) {
+        let script = appleScript(source: spotifyPlaybackStatusAppleScriptSource())
+        var error: NSDictionary?
+        let output = script.executeAndReturnError(&error).stringValue ?? ""
+        if let error {
+            return (nil, nil, String(describing: error))
+        }
+
+        let lines = output.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        return (lines.first, lines.dropFirst().first, nil)
+    }
+
     private static func sendAppleEvent(
         bundleIdentifier: String,
         eventClass: String,
@@ -253,6 +334,18 @@ final class MediaDesktopTransportAdapter {
             result = (result << 8) + UInt32(byte)
         }
         return result
+    }
+
+    private static func spotifyPlaybackStatusAppleScriptSource() -> String {
+        #"""
+        tell application id "com.spotify.client"
+            set playbackState to player state as string
+            if playbackState is "stopped" then
+                return playbackState
+            end if
+            return playbackState & linefeed & (name of current track)
+        end tell
+        """#
     }
 
     private static func heliumMediaAvailabilityAppleScriptSource() -> String {

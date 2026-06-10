@@ -25,6 +25,25 @@ trace_recorder = open(
 ).read()
 regression_gate = open(f"{repo_root}/scripts/regression_gate", encoding="utf-8").read()
 mixed_smoke = open(f"{repo_root}/scripts/smoke_mixed_media_routing", encoding="utf-8").read()
+spotify_smoke = open(f"{repo_root}/scripts/smoke_spotify_appleevent_transport", encoding="utf-8").read()
+spotify_webapi_smoke = open(f"{repo_root}/scripts/smoke_spotify_webapi_transport", encoding="utf-8").read()
+spotify_diagnostic = open(f"{repo_root}/scripts/diagnose_spotify_playback_readiness", encoding="utf-8").read()
+port_cli = open(
+    f"{repo_root}/packages/SonosHandoffCore/Sources/SonosHandoffPortCLI/main.swift",
+    encoding="utf-8",
+).read()
+core_interfaces = open(
+    f"{repo_root}/packages/SonosHandoffCore/Sources/SonosHandoffCore/Handoff/SonosHandoffInterfaces.swift",
+    encoding="utf-8",
+).read()
+spotify_bridge = open(
+    f"{repo_root}/packages/SonosHandoffCore/Sources/SonosHandoffCore/Handoff/SpotifyConnectBridge.swift",
+    encoding="utf-8",
+).read()
+spotify_service = open(
+    f"{repo_root}/packages/SonosHandoffCore/Sources/SonosHandoffCore/Handoff/SpotifyConnectHandoffService.swift",
+    encoding="utf-8",
+).read()
 
 def fail(message):
     print(f"verify_media_routing_probe_semantics: {message}", file=sys.stderr)
@@ -125,6 +144,170 @@ assert_order(
     ],
     "mixed routing smoke must drive the probe and enforce the objective metrics",
 )
+
+if "Spotify must have a current playing or paused track before mixed media routing smoke" not in mixed_smoke:
+    fail("mixed routing smoke must fail fast when Spotify has no current track")
+
+assert_order(
+    regression_gate,
+    [
+        'if [[ "${KEYWAY_SPOTIFY_CURRENT_TRACK_SMOKE:-0}" == "1" ]]; then',
+        "KEYWAY_SPOTIFY_APPLEEVENT_REQUIRE_CURRENT_TRACK=1",
+        'KEYWAY_SPOTIFY_APPLEEVENT_PRIME_CURRENT_TRACK="${KEYWAY_SPOTIFY_CURRENT_TRACK_PRIME:-0}"',
+        'KEYWAY_SPOTIFY_APPLEEVENT_PRIME_URI="${KEYWAY_SPOTIFY_CURRENT_TRACK_PRIME_URI:-spotify:track:3n3Ppam7vgaVa1iaRUc9Lp}"',
+        'KEYWAY_SPOTIFY_APPLEEVENT_PRIME_DEVICE_NAME="${KEYWAY_SPOTIFY_CURRENT_TRACK_PRIME_DEVICE_NAME:-}"',
+        'KEYWAY_SPOTIFY_APPLEEVENT_PRIME_DEVICE_TYPE="${KEYWAY_SPOTIFY_CURRENT_TRACK_PRIME_DEVICE_TYPE:-Computer}"',
+        "KEYWAY_SPOTIFY_APPLEEVENT_REBOUND_CHECK=1",
+        "KEYWAY_SPOTIFY_APPLEEVENT_BACKGROUND_CHECK=1",
+        '    "$ROOT_DIR/scripts/smoke_spotify_appleevent_transport"',
+    ],
+    "current-track Spotify smoke must be available from the regression gate",
+)
+
+assert_order(
+    spotify_smoke,
+    [
+        'require_current_track="${KEYWAY_SPOTIFY_APPLEEVENT_REQUIRE_CURRENT_TRACK:-0}"',
+        'prime_current_track="${KEYWAY_SPOTIFY_APPLEEVENT_PRIME_CURRENT_TRACK:-0}"',
+        'prime_device_name="${KEYWAY_SPOTIFY_APPLEEVENT_PRIME_DEVICE_NAME:-}"',
+        'prime_device_type="${KEYWAY_SPOTIFY_APPLEEVENT_PRIME_DEVICE_TYPE:-Computer}"',
+        'sonos-handoff-port playback-start',
+        '--spotify-device-name "$prime_device_name"',
+        '--spotify-device-type "$prime_device_type"',
+        'diagnose_spotify_playback_readiness',
+        'Spotify playback priming failed',
+        'name of current track',
+        'player state as string',
+        'Spotify playback priming did not produce a current playing or paused track',
+        'Spotify must be playing or paused before current-track AppleEvent smoke',
+    ],
+    "Spotify AppleEvent smoke must optionally prime playback and fail fast before stateful checks when Spotify has no current track",
+)
+
+assert_order(
+    regression_gate,
+    [
+        'if [[ "${KEYWAY_SPOTIFY_WEBAPI_SMOKE:-0}" == "1" ]]; then',
+        'run "$ROOT_DIR/scripts/smoke_spotify_webapi_transport"',
+    ],
+    "Spotify Web API transport smoke must be available from the regression gate",
+)
+
+assert_order(
+    port_cli,
+    [
+        'case "playback-command":',
+        "spotifyPlaybackCommandArgument()",
+        "SpotifyConnectHandoffService().sendActivePlaybackCommand(playbackCommand)",
+        'print("playback-command=ok")',
+    ],
+    "port CLI must expose direct Spotify Web API playback commands through the shared core service",
+)
+
+for needle in [
+    "public enum SpotifyPlaybackCommand",
+    'case play',
+    'case pause',
+    'case playPause',
+    'case next',
+    'case previous',
+]:
+    if needle not in core_interfaces:
+        fail("core Spotify Web API command surface must include play, pause, playPause, next, and previous")
+
+assert_order(
+    core_interfaces,
+    [
+        "func activePlaybackDeviceStatus() async throws -> SpotifyPlaybackDeviceStatus?",
+        "func setActivePlaybackDeviceVolume(_ volume: Int) async throws -> Int",
+        "func sendActivePlaybackCommand(_ command: SpotifyPlaybackCommand) async throws",
+    ],
+    "Spotify active playback protocol must expose command control beside status and volume"
+)
+
+assert_order(
+    spotify_service,
+    [
+        "public func sendActivePlaybackCommand(_ command: SpotifyPlaybackCommand) async throws",
+        "runtime.sendActivePlaybackCommand(command)",
+    ],
+    "public Spotify service must expose active playback commands to the app"
+)
+
+send_playback_start = spotify_bridge.find("func sendPlaybackCommand(_ command: SpotifyPlaybackCommand) async throws")
+send_playback_end = spotify_bridge.find("@discardableResult", send_playback_start)
+if send_playback_start < 0 or send_playback_end < 0:
+    fail("Spotify bridge must define sendPlaybackCommand before volume mirror helpers")
+send_playback = spotify_bridge[send_playback_start:send_playback_end]
+
+assert_order(
+    send_playback,
+    [
+        "func sendPlaybackCommand(_ command: SpotifyPlaybackCommand) async throws",
+        "case .playPause:",
+        "currentPlayerStateWithAuthRetry(accessToken: accessToken)",
+        "sendPlaybackCommand(state.isPlaying ? .pause : .play, accessToken: accessToken)",
+        "case .play, .pause, .next, .previous:",
+        "sendPlaybackCommand(command, accessToken: accessToken)",
+    ],
+    "Spotify bridge must resolve playPause from active playback state and send direct commands for play/pause/next/previous"
+)
+
+send_http_start = spotify_bridge.find("private func sendPlaybackCommand(_ command: SpotifyPlaybackCommand, accessToken: String) async throws")
+send_http_end = spotify_bridge.find("private func activeDeviceWaiter()", send_http_start)
+if send_http_start < 0 or send_http_end < 0:
+    fail("Spotify bridge must define private playback command HTTP sender")
+send_http = spotify_bridge[send_http_start:send_http_end]
+
+assert_order(
+    send_http,
+    [
+        '"https://api.spotify.com/v1/me/player/\\(command.spotifyEndpointPath)"',
+        "request.httpMethod = command.spotifyHTTPMethod",
+        "projectAccessTokenProvider.refreshAccessTokenAfterAuthFailure()",
+        "body.isEmpty ? \"Spotify playback \\(command.rawValue) failed",
+    ],
+    "Spotify bridge must own playback command endpoints, HTTP methods, token refresh, and response-body failures"
+)
+
+assert_order(
+    spotify_webapi_smoke,
+    [
+        'commands_csv="${KEYWAY_SPOTIFY_WEBAPI_COMMANDS:-pause,play}"',
+        'play|pause|next|previous',
+        'playback-status',
+        'playback-command "$command"',
+        'spotify_webapi_smoke_total=',
+        'spotify_webapi_smoke_failure=',
+    ],
+    "Spotify Web API smoke must validate active playback commands and report structured results",
+)
+
+for needle in [
+    'wait_for_playing_state false',
+    'wait_for_playing_state true',
+    'diagnose_spotify_playback_readiness',
+]:
+    if needle not in spotify_webapi_smoke:
+        fail("Spotify Web API smoke must validate play/pause state changes and diagnose failures")
+
+assert_order(
+    spotify_diagnostic,
+    [
+        'spotify_readiness_%s=%s',
+        'spotify_readiness_%s_%s',
+    ],
+    "Spotify readiness diagnostic must use structured key/value output",
+)
+
+for needle in [
+    'tell application id "com.spotify.client" to player state as string',
+    'tell application id "com.spotify.client" to name of current track',
+    'playback-status',
+    'playback-devices',
+]:
+    if needle not in spotify_diagnostic:
+        fail("Spotify readiness diagnostic must report local AppleScript, Web API status, and Web API devices")
 
 print("verify_media_routing_probe_semantics=ok")
 PY

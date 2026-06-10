@@ -5,6 +5,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 node --check "$repo_root/ChromiumExtension/service_worker.js" >/dev/null
 node --check "$repo_root/ChromiumExtension/content_script.js" >/dev/null
+bash -n "$repo_root/scripts/setup_chromium_extension" >/dev/null
+bash -n "$repo_root/scripts/smoke_helium_chromium_extension_transport" >/dev/null
 
 node - "$repo_root/ChromiumExtension/service_worker.js" <<'NODE'
 const fs = require("fs");
@@ -88,6 +90,11 @@ const context = {
 
 vm.runInNewContext(code, context, { filename: serviceWorkerPath });
 
+assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Arc/1.0 Chrome/126.0.0.0").key, "arc", "Arc user agent must preserve browser family");
+assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Edg/126.0.0.0 Chrome/126.0.0.0").key, "edge", "Edge user agent must preserve browser family");
+assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Vivaldi/6.8 Chrome/126.0.0.0").key, "vivaldi", "Vivaldi user agent must preserve browser family");
+assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.0.0.0").key, "helium", "Helium user agent must preserve browser family");
+
 (async () => {
   assert(postedMessages.some(message => message.type === "hello"), "service worker must announce hello to native host");
   assert(postedMessages.some(message => message.type === "snapshot"), "service worker must publish a snapshot immediately");
@@ -112,6 +119,7 @@ vm.runInNewContext(code, context, { filename: serviceWorkerPath });
       volume: 0.5,
       duration: 120,
       elapsedTime: 10,
+      supportedCommands: ["play", "pause", "playPause", "next"],
     },
     {
       tab: {
@@ -137,6 +145,7 @@ vm.runInNewContext(code, context, { filename: serviceWorkerPath });
     "target id must include browser and runtime identity"
   );
   assertEqual(snapshot.targets[0].browser, "Chrome", "target browser label");
+  assertEqual(snapshot.targets[0].supportedCommands.join(","), "play,pause,playPause,next", "media state must preserve page-supported commands");
 
   runtimeMessageListener(
     {
@@ -254,11 +263,17 @@ import sys
 
 repo_root = pathlib.Path(sys.argv[1])
 transport = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionTransport.swift").read_text()
+models = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaRemoteModels.swift").read_text()
+action_controller = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportActionController.swift").read_text()
 environment = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/Support/AppEnvironment.swift").read_text()
 settings = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/Features/SettingsFeature.swift").read_text()
 project = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar.xcodeproj/project.pbxproj").read_text()
 installer = (repo_root / "scripts/install_chromium_native_host").read_text()
 readme = (repo_root / "ChromiumExtension/README.md").read_text()
+generator = (repo_root / "scripts/generate_xcode_projects.rb").read_text()
+setup = (repo_root / "scripts/setup_chromium_extension").read_text()
+helium_smoke = (repo_root / "scripts/smoke_helium_chromium_extension_transport").read_text()
+regression_gate = (repo_root / "scripts/regression_gate").read_text()
 
 def expect(text, needle, message):
     if needle not in text:
@@ -271,8 +286,38 @@ expect(
 )
 expect(
     transport,
+    "static func browserFamily(target: MediaRemoteTarget) -> String?",
+    "Chromium extension targets must expose their browser family for safe legacy fallback",
+)
+expect(
+    transport,
     'appendingPathComponent("Contents/Helpers/keyway-chromium-native-host")',
     "Swift installer must point browser manifests at the bundled native host",
+)
+expect(
+    models,
+    "var isChromiumBrowserLike: Bool",
+    "media targets must identify Chromium-like legacy browser targets separately from Safari and Firefox",
+)
+expect(
+    action_controller,
+    "preferredChromiumExtensionTarget(command: command, from: targets)",
+    "automatic routing must prefer a single playing Chromium extension target",
+)
+expect(
+    action_controller,
+    "automaticRoutingTargets(command: command, from: targets)",
+    "automatic routing must drop unsupported Chromium extension targets when legacy Chromium fallback exists",
+)
+expect(
+    action_controller,
+    "legacyChromiumFallbackTarget(for: target)",
+    "Chromium extension command failures must attempt a safe legacy Chromium fallback",
+)
+expect(
+    action_controller,
+    '"chromium_extension_fallback"',
+    "Chromium extension fallback must be traced distinctly",
 )
 expect(
     environment,
@@ -285,9 +330,54 @@ expect(
     "Settings must expose a manual Chromium bridge repair action",
 )
 expect(
+    settings,
+    'Button("Reveal Extension")',
+    "Settings must expose the bundled Chromium extension folder",
+)
+expect(
+    settings,
+    'Button("Open Extensions")',
+    "Settings must expose the browser extension manager",
+)
+expect(
+    settings,
+    'URL(string: "chrome://extensions")!',
+    "Settings must open the Chromium extension manager directly",
+)
+expect(
+    settings,
+    'activateFileViewerSelecting([extensionURL])',
+    "Settings must reveal the exact bundled extension directory",
+)
+expect(
+    settings,
+    'appendingPathComponent("ChromiumExtension", isDirectory: true)',
+    "Settings must reveal the bundled Chromium extension resource",
+)
+expect(
     project,
     "Build Chromium Native Host",
     "Xcode build must bundle the Chromium native host",
+)
+expect(
+    project,
+    "Copy Chromium Extension",
+    "Xcode build must bundle the Chromium extension",
+)
+expect(
+    project,
+    "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/ChromiumExtension/manifest.json",
+    "Xcode build must copy the extension manifest into app resources",
+)
+expect(
+    generator,
+    "def add_chromium_native_host_build_phase(target)",
+    "project generator must preserve the Chromium native host build phase",
+)
+expect(
+    generator,
+    "def add_chromium_extension_copy_phase(target)",
+    "project generator must preserve the Chromium extension copy phase",
 )
 expect(
     installer,
@@ -295,8 +385,95 @@ expect(
     "CLI installer must prefer the installed app helper",
 )
 expect(
+    setup,
+    'scripts/install_chromium_native_host',
+    "extension setup script must install or repair native host manifests",
+)
+expect(
+    setup,
+    'open -R "$extension_manifest"',
+    "extension setup script must reveal the extension manifest",
+)
+expect(
+    setup,
+    'extensions_url="chrome://extensions"',
+    "extension setup script must open the Chromium extension manager",
+)
+expect(
+    helium_smoke,
+    "KEYWAY_CHROMIUM_SMOKE_BROWSER_PATH",
+    "Helium extension smoke must reuse the Chromium extension transport smoke against Helium",
+)
+expect(
+    helium_smoke,
+    'restart_existing="${KEYWAY_HELIUM_SMOKE_RESTART:-0}"',
+    "Helium extension smoke must require explicit opt-in before restarting a running Helium app",
+)
+expect(
+    helium_smoke,
+    "Helium is already running; set KEYWAY_HELIUM_SMOKE_RESTART=1",
+    "Helium extension smoke must fail clearly instead of reusing a live Helium profile",
+)
+expect(
+    helium_smoke,
+    "trap restore_helium EXIT",
+    "Helium extension smoke must restore Helium after an isolated restart smoke",
+)
+expect(
+    helium_smoke,
+    "/Applications/Helium.app/Contents/MacOS/Helium",
+    "Helium extension smoke must target the default Helium executable",
+)
+expect(
+    regression_gate,
+    "KEYWAY_HELIUM_CHROMIUM_EXTENSION_SMOKE",
+    "regression gate must expose the Helium Chromium extension smoke",
+)
+expect(
+    transport,
+    "Library/Application Support/net.imput.helium/NativeMessagingHosts",
+    "Swift installer must register Helium's Chromium native messaging host directory",
+)
+expect(
+    installer,
+    "Library/Application Support/net.imput.helium/NativeMessagingHosts",
+    "CLI installer must register Helium's Chromium native messaging host directory",
+)
+for browser_name, host_dir in [
+    ("Arc", "Library/Application Support/Arc/User Data/NativeMessagingHosts"),
+    ("Chrome Canary", "Library/Application Support/Google/Chrome Canary/NativeMessagingHosts"),
+    ("Vivaldi", "Library/Application Support/Vivaldi/NativeMessagingHosts"),
+    ("Opera", "Library/Application Support/com.operasoftware.Opera/NativeMessagingHosts"),
+    ("Opera GX", "Library/Application Support/com.operasoftware.OperaGX/NativeMessagingHosts"),
+]:
+    expect(
+        transport,
+        host_dir,
+        f"Swift installer must register {browser_name}'s Chromium native messaging host directory",
+    )
+    expect(
+        installer,
+        host_dir,
+        f"CLI installer must register {browser_name}'s Chromium native messaging host directory",
+    )
+expect(
     readme,
-    "The app installs or repairs the native host manifest at launch",
-    "extension README must document app-owned native host registration",
+    "Arc, Google Chrome, Chrome Canary, Chromium, Brave channels, Microsoft Edge channels, Vivaldi, Opera, Opera GX, and Helium",
+    "extension README must document the common Chromium-family native host registration scope",
+)
+expect(
+    readme,
+    'scripts/setup_chromium_extension "/Applications/Helium.app"',
+    "extension README must document the Helium setup script path",
+)
+expect(
+    readme,
+    "scripts/smoke_helium_chromium_extension_transport",
+    "extension README must document the Helium extension smoke",
+)
+expect(
+    readme,
+    "Keyway.app/Contents/Resources/ChromiumExtension",
+    "extension README must document the bundled extension resource path",
 )
 PY

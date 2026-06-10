@@ -30,6 +30,21 @@ if required not in body:
     raise SystemExit("verify_settings_feature_semantics: Spotify sign-in must stop when Client ID validation fails")
 if body.index(required) > body.index("authCoordinator.login()"):
     raise SystemExit("verify_settings_feature_semantics: Spotify sign-in must validate the Client ID before login")
+
+if 'private let heliumBundleIdentifier = "net.imput.helium"' not in text:
+    raise SystemExit("verify_settings_feature_semantics: Chromium extension setup must know Helium's bundle identifier")
+
+start = text.index("    private func openChromiumExtensionsPage()")
+end = text.index("\n    private func reloadSpotifyAuthState()", start)
+body = text[start:end]
+for required in (
+    "NSWorkspace.shared.urlForApplication(withBundleIdentifier: heliumBundleIdentifier)",
+    "withApplicationAt: heliumURL",
+    'chromiumBridgeMessage = "Opened Helium extension settings."',
+    "NSWorkspace.shared.open(chromiumExtensionsURL)",
+):
+    if required not in body:
+        raise SystemExit(f"verify_settings_feature_semantics: Chromium extension setup must prefer opening Helium extensions: {required}")
 PY
 
 printf 'verify_settings_feature_semantics=ok\n'

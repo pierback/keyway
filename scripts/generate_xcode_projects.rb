@@ -69,6 +69,64 @@ def add_mediaremote_helper_build_phase(target)
   ]
 end
 
+def add_chromium_native_host_build_phase(target)
+  phase = target.new_shell_script_build_phase('Build Chromium Native Host')
+  phase.shell_script = <<~SH
+    set -euo pipefail
+
+    PACKAGE_DIR="$SRCROOT/../packages/SonosHandoffCore"
+    HELPER_DEST="$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers"
+    SWIFT_CONFIGURATION="$(printf '%s' "$CONFIGURATION" | tr '[:upper:]' '[:lower:]')"
+
+    case "$SWIFT_CONFIGURATION" in
+      debug|release) ;;
+      *) SWIFT_CONFIGURATION=debug ;;
+    esac
+
+    swift build \\
+      --package-path "$PACKAGE_DIR" \\
+      --product keyway-chromium-native-host \\
+      -c "$SWIFT_CONFIGURATION"
+
+    mkdir -p "$HELPER_DEST"
+    cp "$PACKAGE_DIR/.build/$SWIFT_CONFIGURATION/keyway-chromium-native-host" "$HELPER_DEST/keyway-chromium-native-host"
+    chmod +x "$HELPER_DEST/keyway-chromium-native-host"
+  SH
+  phase.input_paths = [
+    '$(SRCROOT)/../packages/SonosHandoffCore/Sources/KeywayChromiumNativeHost/main.swift',
+    '$(SRCROOT)/../packages/SonosHandoffCore/Package.swift',
+  ]
+  phase.output_paths = [
+    '$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/keyway-chromium-native-host',
+  ]
+end
+
+def add_chromium_extension_copy_phase(target)
+  phase = target.new_shell_script_build_phase('Copy Chromium Extension')
+  phase.shell_script = <<~SH
+    set -euo pipefail
+
+    EXT_SRC="$SRCROOT/../ChromiumExtension"
+    EXT_DEST="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/ChromiumExtension"
+
+    rm -rf "$EXT_DEST"
+    mkdir -p "$EXT_DEST"
+    cp -R "$EXT_SRC/." "$EXT_DEST/"
+  SH
+  phase.input_paths = [
+    '$(SRCROOT)/../ChromiumExtension/manifest.json',
+    '$(SRCROOT)/../ChromiumExtension/service_worker.js',
+    '$(SRCROOT)/../ChromiumExtension/content_script.js',
+    '$(SRCROOT)/../ChromiumExtension/native-host-manifest.json',
+  ]
+  phase.output_paths = [
+    '$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/ChromiumExtension/manifest.json',
+    '$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/ChromiumExtension/service_worker.js',
+    '$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/ChromiumExtension/content_script.js',
+    '$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/ChromiumExtension/native-host-manifest.json',
+  ]
+end
+
 def normalize_system_framework_refs(project, framework_name)
   project.files.each do |file|
     next unless file.display_name == framework_name
@@ -134,6 +192,8 @@ def build_menu_bar_project
   ])
   resources_group.new_file('Info.plist')
   add_mediaremote_helper_build_phase(target)
+  add_chromium_native_host_build_phase(target)
+  add_chromium_extension_copy_phase(target)
 
   add_local_package_dependency(project, target, '../packages/SonosHandoffCore', 'SonosHandoffCore')
 

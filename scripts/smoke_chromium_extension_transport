@@ -103,8 +103,27 @@ write_tone(root / "tone-b.wav", 660)
 <html>
 <head><meta charset="utf-8"><title>Keyway Chromium Smoke A</title></head>
 <body>
+<button id="previous" aria-label="Previous track">Previous</button>
+<button id="next" aria-label="Next track">Next</button>
 <audio id="media" controls preload="auto" autoplay muted loop src="/tone-a.wav"></audio>
-<script>media.volume = 0.4;</script>
+<script>
+const tracks = [
+  { title: "Keyway Chromium Smoke A Track 1", src: "/tone-a.wav" },
+  { title: "Keyway Chromium Smoke A Track 2", src: "/tone-b.wav" },
+];
+let trackIndex = 0;
+function setTrack(index) {
+  trackIndex = (index + tracks.length) % tracks.length;
+  media.src = tracks[trackIndex].src;
+  media.currentTime = 0;
+  navigator.mediaSession.metadata = new MediaMetadata({ title: tracks[trackIndex].title, artist: "Keyway" });
+  media.play();
+}
+media.volume = 0.4;
+next.addEventListener("click", () => setTrack(trackIndex + 1));
+previous.addEventListener("click", () => setTrack(trackIndex - 1));
+setTrack(0);
+</script>
 </body>
 </html>
 """, encoding="utf-8")
@@ -113,8 +132,27 @@ write_tone(root / "tone-b.wav", 660)
 <html>
 <head><meta charset="utf-8"><title>Keyway Chromium Smoke B</title></head>
 <body>
+<button id="previous" aria-label="Previous track">Previous</button>
+<button id="next" aria-label="Next track">Next</button>
 <audio id="media" controls preload="auto" autoplay muted loop src="/tone-b.wav"></audio>
-<script>media.volume = 0.6;</script>
+<script>
+const tracks = [
+  { title: "Keyway Chromium Smoke B Track 1", src: "/tone-b.wav" },
+  { title: "Keyway Chromium Smoke B Track 2", src: "/tone-a.wav" },
+];
+let trackIndex = 0;
+function setTrack(index) {
+  trackIndex = (index + tracks.length) % tracks.length;
+  media.src = tracks[trackIndex].src;
+  media.currentTime = 0;
+  navigator.mediaSession.metadata = new MediaMetadata({ title: tracks[trackIndex].title, artist: "Keyway" });
+  media.play();
+}
+media.volume = 0.6;
+next.addEventListener("click", () => setTrack(trackIndex + 1));
+previous.addEventListener("click", () => setTrack(trackIndex - 1));
+setTrack(0);
+</script>
 </body>
 </html>
 """, encoding="utf-8")
@@ -183,6 +221,7 @@ await new Promise(() => {});
 JS
 
 browser_ready_file="$workdir/browser-ready"
+browser_log_file="$workdir/browser.log"
 node "$workdir/launch-browser.mjs" \
   "$playwright_module" \
   "$browser_path" \
@@ -191,7 +230,7 @@ node "$workdir/launch-browser.mjs" \
   "$browser_ready_file" \
   "http://127.0.0.1:$port/a.html" \
   "http://127.0.0.1:$port/b.html" \
-  >/dev/null 2>&1 &
+  >"$browser_log_file" 2>&1 &
 browser_pid="$!"
 
 for _ in {1..200}; do
@@ -202,6 +241,9 @@ for _ in {1..200}; do
 done
 
 if [[ ! -s "$browser_ready_file" ]]; then
+  if [[ -s "$browser_log_file" ]]; then
+    sed 's/^/chromium-smoke-browser: /' "$browser_log_file" >&2
+  fi
   fail "Chromium smoke browser did not load both test pages"
 fi
 
@@ -225,9 +267,11 @@ struct Target: Decodable {
     let frameId: Int
     let mediaId: String
     let pageTitle: String
+    let title: String
     let playing: Bool
     let muted: Bool
     let volume: Double?
+    let supportedCommands: [String]
 }
 
 struct CommandResult: Decodable {
@@ -362,6 +406,17 @@ func approximatelyEqual(_ lhs: Double?, _ rhs: Double, tolerance: Double = 0.02)
     return abs(lhs - rhs) <= tolerance
 }
 
+func currentSmokeTarget(state: State, pageTitle: String) -> Target? {
+    let targets = state.smokeTargets()
+    if pageTitle == "Keyway Chromium Smoke A" {
+        return targets?.0
+    }
+    if pageTitle == "Keyway Chromium Smoke B" {
+        return targets?.1
+    }
+    return nil
+}
+
 let state = State()
 let snapshotObserver = DistributedNotificationCenter.default().addObserver(
     forName: snapshotNotificationName,
@@ -415,10 +470,15 @@ if !initiallyPlaying {
     FileHandle.standardError.write(Data("smoke_chromium_extension_transport_failure command_surface=autoplay target_state=\(String(describing: state.smokeTargets()))\n".utf8))
 }
 
-if let commandTargets = state.smokeTargets(), commandSurfaceFailure == 0 {
+    if let commandTargets = state.smokeTargets(), commandSurfaceFailure == 0 {
     let target = commandTargets.0
     let other = commandTargets.1
     let otherVolume = other.volume
+    let otherTitle = other.title
+    if !target.supportedCommands.contains("next") || !target.supportedCommands.contains("previous") {
+        commandSurfaceFailure += 1
+        FileHandle.standardError.write(Data("smoke_chromium_extension_transport_failure command_surface=track_controls supported_commands=\(target.supportedCommands)\n".utf8))
+    }
 
     for check in [
         ("pause", false, nil as Double?),
@@ -478,6 +538,36 @@ if let commandTargets = state.smokeTargets(), commandSurfaceFailure == 0 {
     } else {
         commandSurfaceFailure += 1
         FileHandle.standardError.write(Data("smoke_chromium_extension_transport_failure command_surface=volumeDelta missing starting volume\n".utf8))
+    }
+
+    for check in [
+        ("next", "Keyway Chromium Smoke A Track 2"),
+        ("previous", "Keyway Chromium Smoke A Track 1"),
+    ] {
+        guard let current = currentSmokeTarget(state: state, pageTitle: target.pageTitle),
+              let result = runCommand(state: state, target: current, command: check.0, ackLatencies: &ackLatencies),
+              result.ok,
+              result.unsupported != true,
+              result.targetID == current.id
+        else {
+            commandSurfaceFailure += 1
+            FileHandle.standardError.write(Data("smoke_chromium_extension_transport_failure command_surface=\(check.0) result_missing_or_failed\n".utf8))
+            continue
+        }
+
+        let observed = runLoop(until: Date(timeIntervalSinceNow: 2)) {
+            currentSmokeTarget(state: state, pageTitle: target.pageTitle)?.title == check.1
+                && state.target(id: other.id)?.title == otherTitle
+        }
+        if observed {
+            commandSurfaceSuccess += 1
+        } else {
+            commandSurfaceFailure += 1
+            if state.target(id: other.id)?.title != otherTitle {
+                wrongTarget += 1
+            }
+            FileHandle.standardError.write(Data("smoke_chromium_extension_transport_failure command_surface=\(check.0) target_state=\(String(describing: currentSmokeTarget(state: state, pageTitle: target.pageTitle))) other_state=\(String(describing: state.target(id: other.id)))\n".utf8))
+        }
     }
 }
 

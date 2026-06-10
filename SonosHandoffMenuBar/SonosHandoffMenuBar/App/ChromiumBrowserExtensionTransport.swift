@@ -16,6 +16,19 @@ enum ChromiumBrowserExtensionTransport {
         target.mediaType == mediaType || target.id.hasPrefix(targetIDPrefix)
     }
 
+    static func browserFamily(target: MediaRemoteTarget) -> String? {
+        guard isTarget(target) else {
+            return nil
+        }
+        let parts = target.id.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
+        guard parts.count >= 2 else {
+            return nil
+        }
+        return parts[1].split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false).first.map {
+            String($0).lowercased()
+        }
+    }
+
     static func targetDisplayName(browser: String, pageTitle: String) -> String {
         let trimmedBrowser = browser.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedPageTitle = pageTitle.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -38,7 +51,7 @@ enum ChromiumBrowserExtensionTransport {
         case .play, .pause, .playPause:
             return true
         case .next, .previous:
-            return false
+            return target.supportedCommands?.contains(command) == true
         }
     }
 
@@ -148,10 +161,22 @@ struct ChromiumNativeMessagingHostInstaller {
     private var nativeHostDirectories: [URL] {
         let home = fileManager.homeDirectoryForCurrentUser
         return [
+            "Library/Application Support/Arc/User Data/NativeMessagingHosts",
             "Library/Application Support/Google/Chrome/NativeMessagingHosts",
+            "Library/Application Support/Google/Chrome Canary/NativeMessagingHosts",
             "Library/Application Support/Chromium/NativeMessagingHosts",
             "Library/Application Support/BraveSoftware/Brave-Browser/NativeMessagingHosts",
+            "Library/Application Support/BraveSoftware/Brave-Browser-Beta/NativeMessagingHosts",
+            "Library/Application Support/BraveSoftware/Brave-Browser-Dev/NativeMessagingHosts",
+            "Library/Application Support/BraveSoftware/Brave-Browser-Nightly/NativeMessagingHosts",
             "Library/Application Support/Microsoft Edge/NativeMessagingHosts",
+            "Library/Application Support/Microsoft Edge Beta/NativeMessagingHosts",
+            "Library/Application Support/Microsoft Edge Dev/NativeMessagingHosts",
+            "Library/Application Support/Microsoft Edge Canary/NativeMessagingHosts",
+            "Library/Application Support/Vivaldi/NativeMessagingHosts",
+            "Library/Application Support/com.operasoftware.Opera/NativeMessagingHosts",
+            "Library/Application Support/com.operasoftware.OperaGX/NativeMessagingHosts",
+            "Library/Application Support/net.imput.helium/NativeMessagingHosts",
         ].map { home.appendingPathComponent($0) }
     }
 }
@@ -495,6 +520,7 @@ private struct ChromiumBrowserExtensionTargetPayload: Decodable {
     let playing: Bool
     let duration: Double?
     let elapsedTime: Double?
+    let supportedCommands: [String]
 
     var mediaRemoteTarget: MediaRemoteTarget {
         MediaRemoteTarget(
@@ -514,7 +540,8 @@ private struct ChromiumBrowserExtensionTargetPayload: Decodable {
             artworkBase64: nil,
             duration: duration,
             elapsedTime: elapsedTime,
-            elapsedTimestamp: Date().timeIntervalSince1970
+            elapsedTimestamp: Date().timeIntervalSince1970,
+            supportedCommands: supportedCommands.compactMap(MediaRemoteTransportCommand.init(rawValue:))
         )
     }
 }

@@ -47,10 +47,22 @@ manifest="$(
 )"
 
 native_host_dirs=(
+  "$HOME/Library/Application Support/Arc/User Data/NativeMessagingHosts"
   "$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts"
+  "$HOME/Library/Application Support/Google/Chrome Canary/NativeMessagingHosts"
   "$HOME/Library/Application Support/Chromium/NativeMessagingHosts"
   "$HOME/Library/Application Support/BraveSoftware/Brave-Browser/NativeMessagingHosts"
+  "$HOME/Library/Application Support/BraveSoftware/Brave-Browser-Beta/NativeMessagingHosts"
+  "$HOME/Library/Application Support/BraveSoftware/Brave-Browser-Dev/NativeMessagingHosts"
+  "$HOME/Library/Application Support/BraveSoftware/Brave-Browser-Nightly/NativeMessagingHosts"
   "$HOME/Library/Application Support/Microsoft Edge/NativeMessagingHosts"
+  "$HOME/Library/Application Support/Microsoft Edge Beta/NativeMessagingHosts"
+  "$HOME/Library/Application Support/Microsoft Edge Dev/NativeMessagingHosts"
+  "$HOME/Library/Application Support/Microsoft Edge Canary/NativeMessagingHosts"
+  "$HOME/Library/Application Support/Vivaldi/NativeMessagingHosts"
+  "$HOME/Library/Application Support/com.operasoftware.Opera/NativeMessagingHosts"
+  "$HOME/Library/Application Support/com.operasoftware.OperaGX/NativeMessagingHosts"
+  "$HOME/Library/Application Support/net.imput.helium/NativeMessagingHosts"
 )
 
 for native_host_dir in "${native_host_dirs[@]}"; do

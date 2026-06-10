@@ -55,6 +55,7 @@ struct MediaRemoteTarget: Codable, Equatable, Identifiable, Sendable {
     let duration: Double?
     let elapsedTime: Double?
     let elapsedTimestamp: Double?
+    let supportedCommands: [MediaRemoteTransportCommand]?
 
     var appName: String {
         if !displayName.isEmpty {
@@ -190,6 +191,24 @@ struct MediaRemoteTarget: Codable, Equatable, Identifiable, Sendable {
                 || identity.contains("arc")
                 || identity.contains("helium")
                 || identity.contains("browser")
+        }
+    }
+
+    var isChromiumBrowserLike: Bool {
+        if ChromiumBrowserExtensionTransport.isTarget(self) {
+            return true
+        }
+
+        let identities = [bundleIdentifier, parentBundleIdentifier, displayName].map { $0.lowercased() }
+        return identities.contains { identity in
+            identity.contains("chrome")
+                || identity.contains("chromium")
+                || identity.contains("brave")
+                || identity.contains("edge")
+                || identity.contains("arc")
+                || identity.contains("helium")
+                || identity.contains("opera")
+                || identity.contains("vivaldi")
         }
     }
 

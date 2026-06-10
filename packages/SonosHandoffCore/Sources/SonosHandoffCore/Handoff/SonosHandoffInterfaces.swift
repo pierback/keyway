@@ -57,7 +57,18 @@ public enum RoomHandoffVerificationMode: Equatable, Sendable {
 
 public protocol SpotifyActivePlaybackObserving: Sendable {
     func activePlaybackDeviceStatus() async throws -> SpotifyPlaybackDeviceStatus?
+    func availablePlaybackDevices() async throws -> [SpotifyAvailablePlaybackDevice]
+    func startActivePlayback(spotifyURI: String?, deviceName: String?, deviceType: String?) async throws
     func setActivePlaybackDeviceVolume(_ volume: Int) async throws -> Int
+    func sendActivePlaybackCommand(_ command: SpotifyPlaybackCommand) async throws
+}
+
+public enum SpotifyPlaybackCommand: String, Equatable, Sendable {
+    case play
+    case pause
+    case playPause
+    case next
+    case previous
 }
 
 public struct SonosSpeaker: Identifiable, Equatable, Sendable {
@@ -180,6 +191,20 @@ public struct SpotifyPlaybackDeviceStatus: Equatable, Sendable {
         self.deviceName = deviceName
         self.isPlaying = isPlaying
         self.volumePercent = volumePercent
+    }
+}
+
+public struct SpotifyAvailablePlaybackDevice: Equatable, Sendable {
+    public let name: String
+    public let type: String
+    public let isActive: Bool
+    public let isRestricted: Bool
+
+    public init(name: String, type: String, isActive: Bool, isRestricted: Bool) {
+        self.name = name
+        self.type = type
+        self.isActive = isActive
+        self.isRestricted = isRestricted
     }
 }
 

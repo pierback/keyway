@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/.." && pwd)"
+commands_csv="${KEYWAY_SPOTIFY_WEBAPI_COMMANDS:-pause,play}"
+dry_run="${KEYWAY_SPOTIFY_WEBAPI_DRY_RUN:-0}"
+prime="${KEYWAY_SPOTIFY_WEBAPI_PRIME:-1}"
+prime_uri="${KEYWAY_SPOTIFY_WEBAPI_PRIME_URI:-spotify:track:3n3Ppam7vgaVa1iaRUc9Lp}"
+prime_device_name="${KEYWAY_SPOTIFY_WEBAPI_PRIME_DEVICE_NAME:-}"
+prime_device_type="${KEYWAY_SPOTIFY_WEBAPI_PRIME_DEVICE_TYPE:-Computer}"
+cli=(swift run --package-path "$repo_root/packages/SonosHandoffCore" sonos-handoff-port)
+restore_play=0
+
+cleanup() {
+  if [[ "$restore_play" == "1" ]]; then
+    "${cli[@]}" playback-command play >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT
+
+fail() {
+  printf 'smoke_spotify_webapi_transport: %s\n' "$1" >&2
+  exit 1
+}
+
+if [[ "$dry_run" == "1" ]]; then
+  printf 'spotify_webapi_smoke_dry_run=ok\n'
+  exit 0
+fi
+
+IFS=',' read -r -a commands <<<"$commands_csv"
+if (( ${#commands[@]} == 0 )); then
+  fail "KEYWAY_SPOTIFY_WEBAPI_COMMANDS must list at least one command"
+fi
+
+for command in "${commands[@]}"; do
+  case "$command" in
+    play|pause|next|previous)
+      ;;
+    *)
+      fail "Unsupported Spotify Web API command: $command"
+      ;;
+  esac
+done
+
+wait_for_playing_state() {
+  local expected="$1"
+  local state_output
+  for _ in {1..20}; do
+    if state_output="$("${cli[@]}" playback-status 2>&1)"; then
+      if grep -q "^spotify_playing=$expected$" <<<"$state_output"; then
+        return 0
+      fi
+    fi
+    sleep 0.5
+  done
+
+  printf '%s\n' "$state_output" >&2
+  return 1
+}
+
+if current_status="$("${cli[@]}" playback-status 2>&1)"; then
+  current_status_code=0
+else
+  current_status_code=$?
+fi
+
+if (( current_status_code != 0 )) || ! grep -q '^playback-status=ok$' <<<"$current_status"; then
+  if [[ "$prime" != "1" ]]; then
+    printf '%s\n' "$current_status" >&2
+    fail "Spotify playback status did not finish cleanly"
+  fi
+
+  prime_args=(playback-start --spotify-uri "$prime_uri")
+  [[ -n "$prime_device_name" ]] && prime_args+=(--spotify-device-name "$prime_device_name")
+  [[ -n "$prime_device_type" ]] && prime_args+=(--spotify-device-type "$prime_device_type")
+
+  if ! prime_output="$("${cli[@]}" "${prime_args[@]}" 2>&1)"; then
+    printf '%s\n' "$current_status" >&2
+    printf '%s\n' "$prime_output" >&2
+    "$script_dir/diagnose_spotify_playback_readiness" >&2
+    fail "Spotify must expose an unrestricted playback device before Web API transport smoke"
+  fi
+
+  if ! wait_for_playing_state true; then
+    printf '%s\n' "$prime_output" >&2
+    "$script_dir/diagnose_spotify_playback_readiness" >&2
+    fail "Spotify playback did not become active after priming"
+  fi
+  restore_play=1
+fi
+
+success=0
+failure=0
+started_at_ms="$(perl -MTime::HiRes=time -e 'printf "%.0f", time() * 1000')"
+elapsed_ms=()
+
+for command in "${commands[@]}"; do
+  command_started_at_ms="$(perl -MTime::HiRes=time -e 'printf "%.0f", time() * 1000')"
+  if command_output="$("${cli[@]}" playback-command "$command" 2>&1)"; then
+    command_finished_at_ms="$(perl -MTime::HiRes=time -e 'printf "%.0f", time() * 1000')"
+    elapsed_ms+=("$((command_finished_at_ms - command_started_at_ms))")
+    case "$command" in
+      pause)
+        restore_play=1
+        if wait_for_playing_state false; then
+          success=$((success + 1))
+        else
+          failure=$((failure + 1))
+          printf 'spotify_webapi_smoke_failure_detail command=%s reason=state_not_paused\n' "$command"
+        fi
+        ;;
+      play)
+        restore_play=0
+        if wait_for_playing_state true; then
+          success=$((success + 1))
+        else
+          failure=$((failure + 1))
+          printf 'spotify_webapi_smoke_failure_detail command=%s reason=state_not_playing\n' "$command"
+        fi
+        ;;
+      next|previous)
+        success=$((success + 1))
+        ;;
+    esac
+  else
+    failure=$((failure + 1))
+    printf '%s\n' "$command_output" >&2
+    printf 'spotify_webapi_smoke_failure_detail command=%s reason=command_failed\n' "$command"
+  fi
+done
+
+total_elapsed_ms="$(($(perl -MTime::HiRes=time -e 'printf "%.0f", time() * 1000') - started_at_ms))"
+p95_ms=0
+if (( ${#elapsed_ms[@]} > 0 )); then
+  p95_ms="$(
+    printf '%s\n' "${elapsed_ms[@]}" | sort -n | awk '
+      { values[NR] = $1 }
+      END {
+        index = int((NR * 95 + 99) / 100)
+        if (index < 1) { index = 1 }
+        if (index > NR) { index = NR }
+        print values[index]
+      }
+    '
+  )"
+fi
+
+printf 'spotify_webapi_smoke_total=%s\n' "${#commands[@]}"
+printf 'spotify_webapi_smoke_success=%s\n' "$success"
+printf 'spotify_webapi_smoke_failure=%s\n' "$failure"
+printf 'spotify_webapi_smoke_p95_ms=%s\n' "$p95_ms"
+printf 'spotify_webapi_smoke_elapsed_ms=%s\n' "$total_elapsed_ms"
+
+if (( failure > 0 )); then
+  "$script_dir/diagnose_spotify_playback_readiness" >&2
+  exit 1
+fi

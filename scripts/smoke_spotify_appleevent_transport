@@ -7,6 +7,13 @@ dry_run="${KEYWAY_SPOTIFY_APPLEEVENT_DRY_RUN:-0}"
 rebound_check="${KEYWAY_SPOTIFY_APPLEEVENT_REBOUND_CHECK:-0}"
 rebound_iterations="${KEYWAY_SPOTIFY_APPLEEVENT_REBOUND_ITERATIONS:-100}"
 background_check="${KEYWAY_SPOTIFY_APPLEEVENT_BACKGROUND_CHECK:-0}"
+require_current_track="${KEYWAY_SPOTIFY_APPLEEVENT_REQUIRE_CURRENT_TRACK:-0}"
+prime_current_track="${KEYWAY_SPOTIFY_APPLEEVENT_PRIME_CURRENT_TRACK:-0}"
+prime_uri="${KEYWAY_SPOTIFY_APPLEEVENT_PRIME_URI:-spotify:track:3n3Ppam7vgaVa1iaRUc9Lp}"
+prime_device_name="${KEYWAY_SPOTIFY_APPLEEVENT_PRIME_DEVICE_NAME:-}"
+prime_device_type="${KEYWAY_SPOTIFY_APPLEEVENT_PRIME_DEVICE_TYPE:-Computer}"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/.." && pwd)"
 workdir="$(mktemp -d)"
 trap 'rm -rf "$workdir"' EXIT
 
@@ -37,6 +44,62 @@ fi
 
 if [[ "$dry_run" != "1" ]] && ! pgrep -x Spotify >/dev/null; then
   fail "Spotify must be running before AppleEvent smoke"
+fi
+
+if [[ "$dry_run" != "1" && "$prime_current_track" == "1" ]]; then
+  prime_args=(
+    swift run --package-path "$repo_root/packages/SonosHandoffCore" sonos-handoff-port playback-start
+  )
+  if [[ -n "$prime_uri" ]]; then
+    prime_args+=(--spotify-uri "$prime_uri")
+  fi
+  if [[ -n "$prime_device_name" ]]; then
+    prime_args+=(--spotify-device-name "$prime_device_name")
+  fi
+  if [[ -n "$prime_device_type" ]]; then
+    prime_args+=(--spotify-device-type "$prime_device_type")
+  fi
+  if ! prime_output="$("${prime_args[@]}" 2>&1)"; then
+    printf '%s\n' "$prime_output" >&2
+    "$script_dir/diagnose_spotify_playback_readiness" >&2
+    fail "Spotify playback priming failed"
+  fi
+
+  primed_current_track=""
+  primed_player_state=""
+  for _ in {1..20}; do
+    if primed_current_track="$(osascript -e 'tell application id "com.spotify.client" to name of current track' 2>/dev/null)" \
+      && primed_player_state="$(osascript -e 'tell application id "com.spotify.client" to player state as string' 2>/dev/null)"; then
+      case "$primed_player_state" in
+        playing|paused)
+          break
+          ;;
+      esac
+    fi
+    sleep 0.5
+  done
+
+  case "$primed_player_state" in
+    playing|paused)
+      ;;
+    *)
+      fail "Spotify playback priming did not produce a current playing or paused track; state=${primed_player_state:-unknown} track=${primed_current_track:-none}"
+      ;;
+  esac
+fi
+
+if [[ "$dry_run" != "1" && "$require_current_track" == "1" ]]; then
+  if ! current_track="$(osascript -e 'tell application id "com.spotify.client" to name of current track' 2>/dev/null)"; then
+    fail "Spotify must have a current playing or paused track before current-track AppleEvent smoke"
+  fi
+  player_state="$(osascript -e 'tell application id "com.spotify.client" to player state as string')"
+  case "$player_state" in
+    playing|paused)
+      ;;
+    *)
+      fail "Spotify must be playing or paused before current-track AppleEvent smoke; state=$player_state track=$current_track"
+      ;;
+  esac
 fi
 
 IFS=',' read -r -a commands <<<"$commands_csv"

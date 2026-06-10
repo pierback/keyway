@@ -14,6 +14,8 @@ struct SettingsFeature: View {
     private static let panelCornerRadius: CGFloat = 12
     private let accessibilitySettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
     private let notificationSettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.notifications")!
+    private let chromiumExtensionsURL = URL(string: "chrome://extensions")!
+    private let heliumBundleIdentifier = "net.imput.helium"
     private let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "Settings")
     private let configStore: ConfigStoring
     private let tokenStore: TokenStoring
@@ -236,6 +238,14 @@ struct SettingsFeature: View {
                 Spacer()
                 Button("Repair Bridge") {
                     installChromiumNativeBridge()
+                }
+                .controlSize(.small)
+                Button("Reveal Extension") {
+                    revealChromiumExtension()
+                }
+                .controlSize(.small)
+                Button("Open Extensions") {
+                    openChromiumExtensionsPage()
                 }
                 .controlSize(.small)
             }
@@ -820,6 +830,31 @@ struct SettingsFeature: View {
     private func installChromiumNativeBridge() {
         let state = try! chromiumNativeMessagingHostInstaller.install()
         chromiumBridgeMessage = "Installed native host for \(state.manifestPaths.count) Chromium browsers."
+    }
+
+    private func revealChromiumExtension() {
+        let extensionURL = Bundle.main.resourceURL!
+            .appendingPathComponent("ChromiumExtension", isDirectory: true)
+        precondition(
+            FileManager.default.fileExists(atPath: extensionURL.appendingPathComponent("manifest.json").path),
+            "Bundled Chromium extension is missing at \(extensionURL.path)"
+        )
+        NSWorkspace.shared.activateFileViewerSelecting([extensionURL])
+        chromiumBridgeMessage = "Revealed bundled Chromium extension folder."
+    }
+
+    private func openChromiumExtensionsPage() {
+        if let heliumURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: heliumBundleIdentifier) {
+            NSWorkspace.shared.open(
+                [chromiumExtensionsURL],
+                withApplicationAt: heliumURL,
+                configuration: NSWorkspace.OpenConfiguration()
+            )
+            chromiumBridgeMessage = "Opened Helium extension settings."
+            return
+        }
+        NSWorkspace.shared.open(chromiumExtensionsURL)
+        chromiumBridgeMessage = "Opened Chromium extension settings."
     }
 
     private func reloadSpotifyAuthState() async {

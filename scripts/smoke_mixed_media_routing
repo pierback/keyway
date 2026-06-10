@@ -63,6 +63,26 @@ fi
 [[ -x "$app_executable" ]] || fail "Keyway app is not installed at $app_dir; run scripts/install_menubar_app first"
 pgrep -x Spotify >/dev/null || fail "Spotify must be running before mixed media routing smoke"
 
+spotify_readiness="$(
+  osascript <<'APPLESCRIPT'
+tell application id "com.spotify.client"
+    set playbackState to player state as string
+    if playbackState is "stopped" then
+        return playbackState & linefeed
+    end if
+    return playbackState & linefeed & (name of current track)
+end tell
+APPLESCRIPT
+)"
+spotify_state="${spotify_readiness%%$'\n'*}"
+spotify_track=""
+if [[ "$spotify_readiness" == *$'\n'* ]]; then
+  spotify_track="${spotify_readiness#*$'\n'}"
+fi
+if [[ "$spotify_state" == "stopped" || -z "$spotify_track" ]]; then
+  fail "Spotify must have a current playing or paused track before mixed media routing smoke; state=$spotify_state"
+fi
+
 if ! pgrep -x Helium >/dev/null; then
   open -g -a Helium
 fi
@@ -141,8 +161,26 @@ for page, title, media in [
 <html>
 <head><meta charset="utf-8"><title>{title}</title></head>
 <body>
+<button id="previous" aria-label="Previous track">Previous</button>
+<button id="next" aria-label="Next track">Next</button>
 <audio id="media" controls preload="auto" autoplay muted loop src="/{media}"></audio>
-<script>media.volume = 0.5;</script>
+<script>
+const tracks = [
+  {{ title: "{title} Track 1", src: "/{media}" }},
+  {{ title: "{title} Track 2", src: "/chromium-b.wav" }},
+];
+let trackIndex = 0;
+function setTrack(index) {{
+  trackIndex = (index + tracks.length) % tracks.length;
+  media.src = tracks[trackIndex].src;
+  navigator.mediaSession.metadata = new MediaMetadata({{ title: tracks[trackIndex].title, artist: "Keyway" }});
+  media.play();
+}}
+media.volume = 0.5;
+next.addEventListener("click", () => setTrack(trackIndex + 1));
+previous.addEventListener("click", () => setTrack(trackIndex - 1));
+setTrack(0);
+</script>
 </body>
 </html>
 """, encoding="utf-8")
@@ -461,9 +499,13 @@ let traceObserver = DistributedNotificationCenter.default().addObserver(
 
 let discoveryStarted = ProcessInfo.processInfo.systemUptime
 var discovered: (spotify: Target, helium: Target, chromiumA: Target, chromiumB: Target)?
+var lastTargets: [Target] = []
 let foundTargets = runLoop(until: Date(timeIntervalSinceNow: 20)) {
-    guard let targets = snapshot(state: state),
-          let spotify = firstTarget(targets, bundleID: "com.spotify.client"),
+    guard let targets = snapshot(state: state) else {
+        return false
+    }
+    lastTargets = targets
+    guard let spotify = firstTarget(targets, bundleID: "com.spotify.client"),
           let helium = firstTarget(targets, bundleID: "net.imput.helium"),
           let chromiumA = chromiumTarget(targets, title: "Keyway Chromium Mixed A"),
           let chromiumB = chromiumTarget(targets, title: "Keyway Chromium Mixed B")
@@ -476,6 +518,9 @@ let foundTargets = runLoop(until: Date(timeIntervalSinceNow: 20)) {
 
 guard foundTargets, let targets = discovered else {
     FileHandle.standardError.write(Data("smoke_mixed_media_routing: did not discover Spotify, Helium, and two Chromium targets through Keyway probe\n".utf8))
+    for target in lastTargets {
+        FileHandle.standardError.write(Data("smoke_mixed_media_routing_target id=\(target.id) bundle=\(target.bundleIdentifier) parent=\(target.parentBundleIdentifier) display=\(target.displayName) title=\(target.title)\n".utf8))
+    }
     exit(1)
 }
 
@@ -491,8 +536,6 @@ var unsupportedFailure = 0
 let unsupportedChecks = [
     (targets.helium, "next", "helium_javascript"),
     (targets.helium, "previous", "helium_javascript"),
-    (targets.chromiumA, "next", "chromium_extension"),
-    (targets.chromiumB, "previous", "chromium_extension"),
 ]
 
 for check in unsupportedChecks {
@@ -518,6 +561,8 @@ let supportedTargets = [
     (targets.helium, "playPause", "helium_javascript"),
     (targets.chromiumA, "playPause", "chromium_extension"),
     (targets.chromiumB, "playPause", "chromium_extension"),
+    (targets.chromiumA, "next", "chromium_extension"),
+    (targets.chromiumB, "previous", "chromium_extension"),
 ]
 
 for index in 0..<iterations {

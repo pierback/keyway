@@ -54,6 +54,7 @@ struct MediaRemoteTarget: Equatable, Identifiable {
     let duration: Double?
     let elapsedTime: Double?
     let elapsedTimestamp: Double?
+    let supportedCommands: [MediaRemoteTransportCommand]?
 }
 
 struct MediaRemoteCommandResultEvent: Decodable {
@@ -83,6 +84,11 @@ struct Semantics {
             id: "chromium-extension:chromium:11:23:0:media-1",
             title: "Video B"
         )
+        let unsupportedTrackTarget = chromiumTarget(
+            id: "chromium-extension:chromium:11:24:0:media-1",
+            title: "Video C",
+            supportedCommands: [.play, .pause, .playPause]
+        )
 
         expectTrue(
             ChromiumBrowserExtensionTransport.isTarget(target),
@@ -99,6 +105,11 @@ struct Semantics {
             "Chromium native host manifests must use the stable extension ID"
         )
         expectEqual(
+            ChromiumBrowserExtensionTransport.browserFamily(target: target),
+            "chromium",
+            "Chromium extension targets must expose the browser family from their target ID"
+        )
+        expectEqual(
             ChromiumBrowserExtensionTransport.targetDisplayName(browser: "Chromium", pageTitle: ""),
             "Chromium",
             "Chromium targets without a tab title must keep the browser label"
@@ -107,16 +118,24 @@ struct Semantics {
             ChromiumBrowserExtensionTransport.supports(command: .playPause, target: target),
             "Chromium extension targets must support Play/Pause"
         )
-        expectFalse(
+        expectTrue(
             ChromiumBrowserExtensionTransport.supports(command: .next, target: target),
-            "Chromium extension targets must not claim generic Next support"
+            "Chromium extension targets must support Next when the page advertises it"
+        )
+        expectTrue(
+            ChromiumBrowserExtensionTransport.supports(command: .previous, target: target),
+            "Chromium extension targets must support Previous when the page advertises it"
         )
         expectFalse(
-            ChromiumBrowserExtensionTransport.supports(command: .previous, target: target),
-            "Chromium extension targets must not claim generic Previous support"
+            ChromiumBrowserExtensionTransport.supports(command: .next, target: unsupportedTrackTarget),
+            "Chromium extension targets must not support Next when the page does not advertise it"
+        )
+        expectFalse(
+            ChromiumBrowserExtensionTransport.supports(command: .previous, target: unsupportedTrackTarget),
+            "Chromium extension targets must not support Previous when the page does not advertise it"
         )
 
-        let unsupported = ChromiumBrowserExtensionTransport.unsupportedResult(command: .next, target: target)
+        let unsupported = ChromiumBrowserExtensionTransport.unsupportedResult(command: .next, target: unsupportedTrackTarget)
         expectFalse(unsupported.ok, "Unsupported commands must not report success")
         expectTrue(unsupported.unsupported, "Unsupported commands must be marked unsupported")
         expectEqual(unsupported.backend, ChromiumBrowserExtensionTransport.backendName, "Unsupported result must name the Chromium backend")
@@ -131,7 +150,7 @@ struct Semantics {
         )
 
         var unsupportedCallbackResult: MediaRemoteCommandResultEvent?
-        let unsupportedHandled = controller.submit(command: .next, target: target) { result in
+        let unsupportedHandled = controller.submit(command: .next, target: unsupportedTrackTarget) { result in
             unsupportedCallbackResult = result
         }
         expectEqual(unsupportedHandled, true, "Unsupported Chromium commands must be handled by the Chromium backend")
@@ -158,7 +177,11 @@ struct Semantics {
         print("verify_chromium_extension_transport_semantics=ok")
     }
 
-    private static func chromiumTarget(id: String, title: String) -> MediaRemoteTarget {
+    private static func chromiumTarget(
+        id: String,
+        title: String,
+        supportedCommands: [MediaRemoteTransportCommand]? = [.play, .pause, .playPause, .next, .previous]
+    ) -> MediaRemoteTarget {
         MediaRemoteTarget(
             id: id,
             bundleIdentifier: ChromiumBrowserExtensionTransport.nativeMessagingHostName,
@@ -176,7 +199,8 @@ struct Semantics {
             artworkBase64: nil,
             duration: 100,
             elapsedTime: 10,
-            elapsedTimestamp: 0
+            elapsedTimestamp: 0,
+            supportedCommands: supportedCommands
         )
     }
 

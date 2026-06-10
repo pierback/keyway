@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -gt 1 ]]; then
+  printf 'usage: %s [Chromium.app|browser-name|browser-executable]\n' "$0" >&2
+  exit 64
+fi
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+extension_dir="$repo_root/ChromiumExtension"
+extension_manifest="$extension_dir/manifest.json"
+extensions_url="chrome://extensions"
+browser_app="${1:-}"
+
+if [[ ! -f "$extension_manifest" ]]; then
+  printf 'setup_chromium_extension: missing extension manifest at %s\n' "$extension_manifest" >&2
+  exit 66
+fi
+
+if [[ -n "$browser_app" && -x "$browser_app" && "$browser_app" != *.app ]]; then
+  candidate="$browser_app"
+  while [[ "$candidate" != "/" ]]; do
+    candidate="$(dirname "$candidate")"
+    if [[ "$candidate" == *.app ]]; then
+      browser_app="$candidate"
+      break
+    fi
+  done
+fi
+
+"$repo_root/scripts/install_chromium_native_host" >/dev/null
+open -R "$extension_manifest"
+
+if [[ -n "$browser_app" ]]; then
+  open -a "$browser_app" "$extensions_url"
+  printf 'browser_app=%s\n' "$browser_app"
+  printf 'extensions_url=%s\n' "$extensions_url"
+else
+  printf 'extensions_url=%s\n' "$extensions_url"
+fi
+
+printf 'extension_dir=%s\n' "$extension_dir"
+printf 'native_host=installed\n'
+printf 'load_unpacked_path=%s\n' "$extension_dir"

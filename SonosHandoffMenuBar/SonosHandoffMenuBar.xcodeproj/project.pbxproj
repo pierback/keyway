@@ -270,6 +270,7 @@
 				DC22E59ED29C2FB246ADA093 /* Resources */,
 				BB3204168C768B8E2827BD9C /* Build MediaRemote Helper */,
 				A21848B7E3C84D4AB38A96CE /* Build Chromium Native Host */,
+				C0DEC0DE0011223344556677 /* Copy Chromium Extension */,
 			);
 			buildRules = (
 			);
@@ -369,6 +370,32 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "set -euo pipefail\n\nPACKAGE_DIR=\"$SRCROOT/../packages/SonosHandoffCore\"\nHELPER_DEST=\"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers\"\nSWIFT_CONFIGURATION=\"$(printf '%s' \"$CONFIGURATION\" | tr '[:upper:]' '[:lower:]')\"\n\ncase \"$SWIFT_CONFIGURATION\" in\n  debug|release) ;;\n  *) SWIFT_CONFIGURATION=debug ;;\nesac\n\nswift build \\\n  --package-path \"$PACKAGE_DIR\" \\\n  --product keyway-chromium-native-host \\\n  -c \"$SWIFT_CONFIGURATION\"\n\nmkdir -p \"$HELPER_DEST\"\ncp \"$PACKAGE_DIR/.build/$SWIFT_CONFIGURATION/keyway-chromium-native-host\" \"$HELPER_DEST/keyway-chromium-native-host\"\nchmod +x \"$HELPER_DEST/keyway-chromium-native-host\"\n";
+		};
+		C0DEC0DE0011223344556677 /* Copy Chromium Extension */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/../ChromiumExtension/manifest.json",
+				"$(SRCROOT)/../ChromiumExtension/service_worker.js",
+				"$(SRCROOT)/../ChromiumExtension/content_script.js",
+				"$(SRCROOT)/../ChromiumExtension/native-host-manifest.json",
+			);
+			name = "Copy Chromium Extension";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/ChromiumExtension/manifest.json",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/ChromiumExtension/service_worker.js",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/ChromiumExtension/content_script.js",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/ChromiumExtension/native-host-manifest.json",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -euo pipefail\n\nEXT_SRC=\"$SRCROOT/../ChromiumExtension\"\nEXT_DEST=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/ChromiumExtension\"\n\nrm -rf \"$EXT_DEST\"\nmkdir -p \"$EXT_DEST\"\ncp -R \"$EXT_SRC/.\" \"$EXT_DEST/\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

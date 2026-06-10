@@ -80,8 +80,11 @@ function runtimeScopedBrowserInfo(info) {
 }
 
 function browserInfoFromUserAgent(userAgent) {
+  if (userAgent.includes("Arc/")) return { key: "arc", name: "Arc" };
   if (userAgent.includes("Edg/")) return { key: "edge", name: "Microsoft Edge" };
   if (userAgent.includes("OPR/") || userAgent.includes("Opera/")) return { key: "opera", name: "Opera" };
+  if (userAgent.includes("Vivaldi/")) return { key: "vivaldi", name: "Vivaldi" };
+  if (userAgent.includes("Helium/")) return { key: "helium", name: "Helium" };
   if (userAgent.includes("Chromium/")) return { key: "chromium", name: "Chromium" };
   if (userAgent.includes("Chrome/")) return { key: "chrome", name: "Chrome" };
   return { key: "chromium", name: "Chromium" };
@@ -167,7 +170,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         volume: Number.isFinite(message.volume) ? message.volume : null,
         duration: Number.isFinite(message.duration) ? message.duration : null,
         elapsedTime: Number.isFinite(message.elapsedTime) ? message.elapsedTime : null,
-        supportedCommands: ["play", "pause", "playPause", "mute", "volumeDelta"],
+        supportedCommands: Array.isArray(message.supportedCommands)
+          ? message.supportedCommands
+          : ["play", "pause", "playPause", "mute", "volumeDelta"],
         updatedAt: Date.now(),
       };
       targets.set(state.id, state);

@@ -1,5 +1,24 @@
 const keywayMedia = new WeakMap();
 let nextMediaIndex = 1;
+const baseSupportedCommands = ["play", "pause", "playPause", "mute", "volumeDelta"];
+const trackControlSelectors = {
+  next: [
+    '[data-testid="control-button-skip-forward"]',
+    '[aria-label="Next"]',
+    '[aria-label="Next track"]',
+    '[title="Next"]',
+    '[title="Next track"]',
+    ".ytp-next-button",
+  ],
+  previous: [
+    '[data-testid="control-button-skip-back"]',
+    '[aria-label="Previous"]',
+    '[aria-label="Previous track"]',
+    '[title="Previous"]',
+    '[title="Previous track"]',
+    ".ytp-prev-button",
+  ],
+};
 
 function mediaIdFor(element) {
   const existing = keywayMedia.get(element);
@@ -13,6 +32,28 @@ function mediaIdFor(element) {
 
 function mediaElements() {
   return Array.from(document.querySelectorAll("video,audio"));
+}
+
+function isClickable(element) {
+  if (!element || element.disabled || element.getAttribute("aria-disabled") === "true") return false;
+  const rect = element.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0;
+}
+
+function trackControl(command) {
+  const selectors = trackControlSelectors[command] || [];
+  for (const selector of selectors) {
+    const element = document.querySelector(selector);
+    if (isClickable(element)) return element;
+  }
+  return null;
+}
+
+function supportedCommands() {
+  const commands = baseSupportedCommands.slice();
+  if (trackControl("next")) commands.push("next");
+  if (trackControl("previous")) commands.push("previous");
+  return commands;
 }
 
 function isUsableMedia(element) {
@@ -35,6 +76,7 @@ function publishElement(element) {
     volume: element.volume,
     duration: element.duration,
     elapsedTime: element.currentTime,
+    supportedCommands: supportedCommands(),
   });
 }
 
@@ -77,6 +119,15 @@ function applyCommand(message) {
   if (message.command === "volumeDelta") {
     element.volume = Math.max(0, Math.min(1, element.volume + message.volumeDelta));
     return Promise.resolve({ ok: true, message: `volume ${Math.round(element.volume * 100)}` });
+  }
+
+  if (message.command === "next" || message.command === "previous") {
+    const control = trackControl(message.command);
+    if (!control) {
+      return Promise.resolve({ ok: false, unsupported: true, message: `${message.command} is unsupported for this Chromium page.` });
+    }
+    control.click();
+    return Promise.resolve({ ok: true, message: message.command });
   }
 
   return Promise.resolve({ ok: false, unsupported: true, message: `${message.command} is unsupported for this Chromium media element.` });
