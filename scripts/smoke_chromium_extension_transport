@@ -93,7 +93,7 @@ def write_tone(path, frequency):
         wav.setsampwidth(2)
         wav.setframerate(sample_rate)
         for index in range(sample_count):
-            value = int(24000 * math.sin(2 * math.pi * frequency * index / sample_rate))
+            value = int(1200 * math.sin(2 * math.pi * frequency * index / sample_rate))
             wav.writeframesraw(struct.pack("<h", value))
 
 write_tone(root / "tone-a.wav", 440)
@@ -103,7 +103,7 @@ write_tone(root / "tone-b.wav", 660)
 <html>
 <head><meta charset="utf-8"><title>Keyway Chromium Smoke A</title></head>
 <body>
-<audio id="media" controls preload="auto" src="/tone-a.wav"></audio>
+<audio id="media" controls preload="auto" autoplay muted loop src="/tone-a.wav"></audio>
 <script>media.volume = 0.4;</script>
 </body>
 </html>
@@ -113,7 +113,7 @@ write_tone(root / "tone-b.wav", 660)
 <html>
 <head><meta charset="utf-8"><title>Keyway Chromium Smoke B</title></head>
 <body>
-<audio id="media" controls preload="auto" src="/tone-b.wav"></audio>
+<audio id="media" controls preload="auto" autoplay muted loop src="/tone-b.wav"></audio>
 <script>media.volume = 0.6;</script>
 </body>
 </html>
@@ -160,6 +160,7 @@ const context = await chromium.launchPersistentContext(userDataDir, {
   ignoreDefaultArgs: ["--disable-extensions"],
   args: [
     `--load-extension=${extensionPath}`,
+    "--autoplay-policy=no-user-gesture-required",
     "--no-first-run",
     "--no-default-browser-check",
   ],
@@ -224,7 +225,9 @@ struct Target: Decodable {
     let frameId: Int
     let mediaId: String
     let pageTitle: String
+    let playing: Bool
     let muted: Bool
+    let volume: Double?
 }
 
 struct CommandResult: Decodable {
@@ -314,7 +317,7 @@ func percentile95(_ values: [Int]) -> Int {
     return sorted[index]
 }
 
-func postCommand(target: Target, requestID: String) {
+func postCommand(target: Target, requestID: String, command: String, volumeDelta: Double? = nil) {
     let payload = CommandPayload(
         type: "command",
         requestID: requestID,
@@ -322,8 +325,8 @@ func postCommand(target: Target, requestID: String) {
         tabId: target.tabId,
         frameId: target.frameId,
         mediaId: target.mediaId,
-        command: "mute",
-        volumeDelta: nil
+        command: command,
+        volumeDelta: volumeDelta
     )
     let data = try! JSONEncoder().encode(payload)
     DistributedNotificationCenter.default().postNotificationName(
@@ -332,6 +335,31 @@ func postCommand(target: Target, requestID: String) {
         userInfo: ["payload": String(data: data, encoding: .utf8)!],
         deliverImmediately: true
     )
+}
+
+func runCommand(
+    state: State,
+    target: Target,
+    command: String,
+    volumeDelta: Double? = nil,
+    ackLatencies: inout [Int]
+) -> CommandResult? {
+    let requestID = UUID().uuidString
+    let started = ProcessInfo.processInfo.systemUptime
+    postCommand(target: target, requestID: requestID, command: command, volumeDelta: volumeDelta)
+    guard runLoop(until: Date(timeIntervalSinceNow: 2), condition: { state.result(requestID: requestID) != nil }),
+          let result = state.result(requestID: requestID)
+    else {
+        return nil
+    }
+    ackLatencies.append(Int(((ProcessInfo.processInfo.systemUptime - started) * 1000).rounded()))
+    precondition(result.command == command, "Chromium command result must echo the requested command.")
+    return result
+}
+
+func approximatelyEqual(_ lhs: Double?, _ rhs: Double, tolerance: Double = 0.02) -> Bool {
+    guard let lhs else { return false }
+    return abs(lhs - rhs) <= tolerance
 }
 
 let state = State()
@@ -370,20 +398,99 @@ var expectedMuted = [
     initialTargets.1.id: initialTargets.1.muted,
 ]
 var ackLatencies: [Int] = []
+var commandSurfaceSuccess = 0
+var commandSurfaceFailure = 0
 var success = 0
 var failure = 0
 var wrongTarget = 0
 var duplicate = 0
 
+let initiallyPlaying = runLoop(until: Date(timeIntervalSinceNow: 2)) {
+    guard let targets = state.smokeTargets() else { return false }
+    return targets.0.playing && targets.1.playing
+}
+
+if !initiallyPlaying {
+    commandSurfaceFailure += 1
+    FileHandle.standardError.write(Data("smoke_chromium_extension_transport_failure command_surface=autoplay target_state=\(String(describing: state.smokeTargets()))\n".utf8))
+}
+
+if let commandTargets = state.smokeTargets(), commandSurfaceFailure == 0 {
+    let target = commandTargets.0
+    let other = commandTargets.1
+    let otherVolume = other.volume
+
+    for check in [
+        ("pause", false, nil as Double?),
+        ("play", true, nil),
+        ("playPause", false, nil),
+        ("playPause", true, nil),
+    ] {
+        guard let current = state.target(id: target.id),
+              let result = runCommand(state: state, target: current, command: check.0, ackLatencies: &ackLatencies),
+              result.ok,
+              result.unsupported != true,
+              result.targetID == target.id
+        else {
+            commandSurfaceFailure += 1
+            FileHandle.standardError.write(Data("smoke_chromium_extension_transport_failure command_surface=\(check.0) result_missing_or_failed\n".utf8))
+            continue
+        }
+
+        let observed = runLoop(until: Date(timeIntervalSinceNow: 2)) {
+            state.target(id: target.id)?.playing == check.1
+                && state.target(id: other.id)?.playing == true
+        }
+        if observed {
+            commandSurfaceSuccess += 1
+        } else {
+            commandSurfaceFailure += 1
+            if state.target(id: other.id)?.playing != true {
+                wrongTarget += 1
+            }
+            FileHandle.standardError.write(Data("smoke_chromium_extension_transport_failure command_surface=\(check.0) target_state=\(String(describing: state.target(id: target.id))) other_state=\(String(describing: state.target(id: other.id)))\n".utf8))
+        }
+    }
+
+    if let current = state.target(id: target.id), let startingVolume = current.volume {
+        let expectedVolume = min(1, startingVolume + 0.2)
+        if let result = runCommand(state: state, target: current, command: "volumeDelta", volumeDelta: 0.2, ackLatencies: &ackLatencies),
+           result.ok,
+           result.unsupported != true,
+           result.targetID == target.id {
+            let observed = runLoop(until: Date(timeIntervalSinceNow: 2)) {
+                approximatelyEqual(state.target(id: target.id)?.volume, expectedVolume)
+                    && approximatelyEqual(state.target(id: other.id)?.volume, otherVolume ?? 0)
+            }
+            if observed {
+                commandSurfaceSuccess += 1
+            } else {
+                commandSurfaceFailure += 1
+                if !approximatelyEqual(state.target(id: other.id)?.volume, otherVolume ?? 0) {
+                    wrongTarget += 1
+                }
+                FileHandle.standardError.write(Data("smoke_chromium_extension_transport_failure command_surface=volumeDelta target_state=\(String(describing: state.target(id: target.id))) other_state=\(String(describing: state.target(id: other.id)))\n".utf8))
+            }
+        } else {
+            commandSurfaceFailure += 1
+            FileHandle.standardError.write(Data("smoke_chromium_extension_transport_failure command_surface=volumeDelta result_missing_or_failed\n".utf8))
+        }
+    } else {
+        commandSurfaceFailure += 1
+        FileHandle.standardError.write(Data("smoke_chromium_extension_transport_failure command_surface=volumeDelta missing starting volume\n".utf8))
+    }
+}
+
 for iteration in 0..<iterations {
     let currentTargets = state.smokeTargets()!
     let target = iteration.isMultiple(of: 2) ? currentTargets.0 : currentTargets.1
     let other = iteration.isMultiple(of: 2) ? currentTargets.1 : currentTargets.0
-    expectedMuted[target.id] = !(expectedMuted[target.id]!)
+    let previousTargetMuted = expectedMuted[target.id]!
+    expectedMuted[target.id] = !previousTargetMuted
     let expectedOtherMuted = expectedMuted[other.id]!
     let requestID = UUID().uuidString
     let started = ProcessInfo.processInfo.systemUptime
-    postCommand(target: target, requestID: requestID)
+    postCommand(target: target, requestID: requestID, command: "mute")
 
     guard runLoop(until: Date(timeIntervalSinceNow: 2), condition: { state.result(requestID: requestID) != nil }),
           let result = state.result(requestID: requestID)
@@ -413,11 +520,12 @@ for iteration in 0..<iterations {
         success += 1
     } else {
         failure += 1
-        if state.target(id: other.id)?.muted != expectedOtherMuted {
+        let targetMuted = state.target(id: target.id)?.muted
+        let otherMuted = state.target(id: other.id)?.muted
+        if otherMuted != expectedOtherMuted {
             wrongTarget += 1
         }
-        if state.target(id: target.id)?.muted == expectedMuted[target.id]
-            && state.target(id: other.id)?.muted != expectedOtherMuted {
+        if targetMuted == previousTargetMuted && otherMuted == expectedOtherMuted {
             duplicate += 1
         }
         FileHandle.standardError.write(Data("smoke_chromium_extension_transport_failure iteration=\(iteration + 1) target_state=\(String(describing: state.target(id: target.id))) other_state=\(String(describing: state.target(id: other.id)))\n".utf8))
@@ -428,6 +536,8 @@ DistributedNotificationCenter.default().removeObserver(snapshotObserver)
 DistributedNotificationCenter.default().removeObserver(resultObserver)
 
 print("chromium_extension_smoke_total=\(iterations)")
+print("chromium_extension_command_surface_success=\(commandSurfaceSuccess)")
+print("chromium_extension_command_surface_failure=\(commandSurfaceFailure)")
 print("chromium_extension_smoke_success=\(success)")
 print("chromium_extension_smoke_failure=\(failure)")
 print("chromium_extension_smoke_wrong_target=\(wrongTarget)")
@@ -435,7 +545,7 @@ print("chromium_extension_smoke_duplicate=\(duplicate)")
 print("chromium_extension_smoke_discovery_ms=\(discoveryMs)")
 print("chromium_extension_smoke_p95_ack_ms=\(ackLatencies.isEmpty ? 0 : percentile95(ackLatencies))")
 
-if failure > 0 {
+if commandSurfaceFailure > 0 || failure > 0 {
     exit(1)
 }
 SWIFT
