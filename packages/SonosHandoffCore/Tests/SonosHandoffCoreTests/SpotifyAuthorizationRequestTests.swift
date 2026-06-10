@@ -37,4 +37,13 @@ struct SpotifyAuthorizationRequestTests {
 
         #expect(challenge == "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM")
     }
+
+    @Test
+    func requiredScopesIncludePlaybackControlAndAccountProduct() {
+        #expect(SpotifyScopes.required == [
+            SpotifyScopes.playbackRead,
+            SpotifyScopes.playbackModify,
+            SpotifyScopes.userReadPrivate,
+        ])
+    }
 }

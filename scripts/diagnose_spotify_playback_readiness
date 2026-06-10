@@ -3,6 +3,9 @@ set -u
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cli=(swift run --package-path "$repo_root/packages/SonosHandoffCore" sonos-handoff-port)
+token_path="$HOME/Library/Application Support/keyway/project-webapi-token.json"
+account_body_file="$(mktemp)"
+trap 'rm -f "$account_body_file"' EXIT
 
 print_kv() {
   printf 'spotify_readiness_%s=%s\n' "$1" "$2"
@@ -38,6 +41,80 @@ if web_status="$("${cli[@]}" playback-status 2>&1)"; then
   print_command_output "webapi_status" "$web_status"
 else
   print_command_output "webapi_status_error" "$web_status"
+fi
+
+if [[ -f "$token_path" ]]; then
+  print_kv "webapi_token_file" "1"
+  if token_metadata="$(python3 - "$token_path" <<'PY' 2>&1
+import json
+import sys
+import time
+
+with open(sys.argv[1], encoding="utf-8") as token_file:
+    token = json.load(token_file)
+
+now = int(time.time())
+expires_at = token.get("expires_at")
+access_token = token.get("access_token", "").strip()
+refresh_token = token.get("refresh_token", "").strip()
+client_id = token.get("client_id", "").strip()
+
+print(f"access_token_present={1 if access_token else 0}")
+print(f"refresh_token_present={1 if refresh_token else 0}")
+print(f"client_id_present={1 if client_id else 0}")
+print(f"expires_at_present={1 if expires_at else 0}")
+if expires_at:
+    print(f"expires_in_seconds={int(expires_at) - now}")
+PY
+)"; then
+    print_command_output "webapi_token" "$token_metadata"
+  else
+    print_command_output "webapi_token_error" "$token_metadata"
+  fi
+
+  if account_status="$(python3 - "$token_path" "$account_body_file" <<'PY' | curl --silent --show-error --config - 2>&1
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as token_file:
+    token = json.load(token_file)
+
+print('url = "https://api.spotify.com/v1/me"')
+print(f'header = "Authorization: Bearer {token["access_token"]}"')
+print(f'output = "{sys.argv[2]}"')
+print('write-out = "%{http_code}"')
+PY
+)"; then
+    print_kv "webapi_account_http_status" "$account_status"
+    if account_summary="$(python3 - "$account_status" "$account_body_file" <<'PY' 2>&1
+import json
+import sys
+
+status = sys.argv[1]
+with open(sys.argv[2], encoding="utf-8") as account_file:
+    body = json.load(account_file)
+
+if status == "200":
+    product = body.get("product")
+    print(f"product={product or 'missing'}")
+    print(f"product_present={1 if product else 0}")
+    print(f"type={body.get('type', 'missing')}")
+    print(f"country_present={1 if body.get('country') else 0}")
+else:
+    error = body.get("error", {})
+    print(f"error_status={error.get('status', status)}")
+    print(f"error_message={error.get('message', 'missing')}")
+PY
+)"; then
+      print_command_output "webapi_account" "$account_summary"
+    else
+      print_command_output "webapi_account_error" "$account_summary"
+    fi
+  else
+    print_command_output "webapi_account_error" "$account_status"
+  fi
+else
+  print_kv "webapi_token_file" "0"
 fi
 
 if devices="$("${cli[@]}" playback-devices 2>&1)"; then
