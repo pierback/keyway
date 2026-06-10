@@ -81,6 +81,8 @@ public final class SpotifyAuthCoordinator: SpotifyAuthCoordinating, @unchecked S
                 codeVerifier: authorizationRequest.codeVerifier
             )
 
+            try await self.validateAccountProduct(accessToken: tokenResponse.accessToken)
+
             do {
                 try self.tokenStore.saveRefreshToken(tokenResponse.refreshToken)
             } catch {
@@ -150,6 +152,23 @@ public final class SpotifyAuthCoordinator: SpotifyAuthCoordinating, @unchecked S
         )
     }
 
+    private func validateAccountProduct(accessToken: String) async throws {
+        var request = URLRequest(url: URL(string: "https://api.spotify.com/v1/me")!)
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await urlSession.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw SpotifyAuthError.tokenExchangeFailed("Unexpected account response.")
+        }
+        guard 200 ..< 300 ~= httpResponse.statusCode else {
+            throw SpotifyAuthError.tokenExchangeFailed("Spotify account check returned HTTP \(httpResponse.statusCode).")
+        }
+
+        let profile = try JSONDecoder().decode(SpotifyAccountProfile.self, from: data)
+        guard profile.product?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+            throw SpotifyAuthError.tokenExchangeFailed("Spotify account product is unavailable. Sign in again to approve the required account scope.")
+        }
+    }
+
     private static func formEncodedBody(_ parameters: [String: String]) -> Data {
         let value = parameters.map { key, value in
             "\(urlEncode(key))=\(urlEncode(value))"
@@ -163,6 +182,10 @@ public final class SpotifyAuthCoordinator: SpotifyAuthCoordinating, @unchecked S
     private static func urlEncode(_ value: String) -> String {
         value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed.subtracting(CharacterSet(charactersIn: "+&="))) ?? value
     }
+}
+
+private struct SpotifyAccountProfile: Decodable {
+    let product: String?
 }
 
 private struct TokenExchangePayload: Decodable {

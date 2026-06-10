@@ -11,6 +11,7 @@ struct SpotifyAuthCoordinatorTests {
             .appendingPathComponent("sonos-handoff-auth-\(UUID().uuidString)", isDirectory: true)
         defer {
             try? FileManager.default.removeItem(at: applicationSupportDirectory)
+            SuccessfulSpotifyTokenURLProtocol.reset()
         }
 
         let callbackCapture = CallbackCapture()
@@ -43,6 +44,54 @@ struct SpotifyAuthCoordinatorTests {
 
         let callbackBody = await callbackCapture.waitForBody()
         #expect(callbackBody?.contains("Spotify sign-in completed.") == true)
+        #expect(SuccessfulSpotifyTokenURLProtocol.recordedRequests().count == 2)
+        let accountRequest = SuccessfulSpotifyTokenURLProtocol.recordedRequests().last
+        #expect(accountRequest?.url?.absoluteString == "https://api.spotify.com/v1/me")
+        #expect(accountRequest?.value(forHTTPHeaderField: "Authorization") == "Bearer access-token")
+    }
+
+    @Test
+    func loginRejectsTokenWithoutAccountProductBeforeSavingCredentials() async throws {
+        let applicationSupportDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sonos-handoff-auth-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: applicationSupportDirectory)
+            SuccessfulSpotifyTokenURLProtocol.reset()
+        }
+
+        SuccessfulSpotifyTokenURLProtocol.setAccountResponse(#"{"type":"user"}"#)
+        let tokenStore = RecordingTokenStore()
+        let callbackCapture = CallbackCapture()
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [SuccessfulSpotifyTokenURLProtocol.self]
+        let urlSession = URLSession(configuration: sessionConfiguration)
+
+        let coordinator = SpotifyAuthCoordinator(
+            tokenStore: tokenStore,
+            configStore: MockConfigStore(config: AppConfig(spotifyClientID: "client-id")),
+            urlSession: urlSession,
+            applicationSupportDirectory: applicationSupportDirectory,
+            browserOpener: { authorizationURL in
+                Task {
+                    await openSpotifyCallback(from: authorizationURL, callbackCapture: callbackCapture)
+                }
+                return true
+            }
+        )
+
+        let missingProductError = SpotifyAuthError.tokenExchangeFailed(
+            "Spotify account product is unavailable. Sign in again to approve the required account scope."
+        )
+        await #expect(throws: missingProductError) {
+            try await coordinator.login()
+        }
+
+        let tokenURL = applicationSupportDirectory.appendingPathComponent("project-webapi-token.json")
+        #expect(!FileManager.default.fileExists(atPath: tokenURL.path))
+        #expect(tokenStore.savedTokens().isEmpty)
+
+        let callbackBody = await callbackCapture.waitForBody()
+        #expect(callbackBody?.contains("Spotify sign-in failed while saving the token.") == true)
     }
 
     @Test
@@ -56,6 +105,7 @@ struct SpotifyAuthCoordinatorTests {
             .appendingPathComponent("sonos-handoff-auth-\(UUID().uuidString)", isDirectory: true)
         defer {
             try? FileManager.default.removeItem(at: applicationSupportDirectory)
+            SuccessfulSpotifyTokenURLProtocol.reset()
         }
 
         let callbackCapture = CallbackCapture()
@@ -94,6 +144,7 @@ struct SpotifyAuthCoordinatorTests {
             .appendingPathComponent("sonos-handoff-auth-\(UUID().uuidString)", isDirectory: true)
         defer {
             try? FileManager.default.removeItem(at: applicationSupportDirectory)
+            SuccessfulSpotifyTokenURLProtocol.reset()
         }
 
         let callbackCapture = CallbackCapture()
@@ -127,8 +178,23 @@ struct SpotifyAuthCoordinatorTests {
 }
 
 private final class SuccessfulSpotifyTokenURLProtocol: URLProtocol, @unchecked Sendable {
+    private static let recorder = SpotifyAuthRequestRecorder()
+
+    static func reset() {
+        recorder.reset()
+    }
+
+    static func setAccountResponse(_ body: String, statusCode: Int = 200) {
+        recorder.setAccountResponse(body, statusCode: statusCode)
+    }
+
+    static func recordedRequests() -> [URLRequest] {
+        recorder.recordedRequests()
+    }
+
     override class func canInit(with request: URLRequest) -> Bool {
         request.url == SpotifyEndpoints.tokenURL
+            || request.url?.absoluteString == "https://api.spotify.com/v1/me"
     }
 
     override class func canonicalRequest(for request: URLRequest) -> URLRequest {
@@ -136,10 +202,14 @@ private final class SuccessfulSpotifyTokenURLProtocol: URLProtocol, @unchecked S
     }
 
     override func startLoading() {
-        let body = Data(#"{"access_token":"access-token","refresh_token":"refresh-token"}"#.utf8)
+        Self.recorder.record(request)
+        let isAccountRequest = request.url?.absoluteString == "https://api.spotify.com/v1/me"
+        let body = Data((isAccountRequest
+            ? Self.recorder.accountResponse()
+            : #"{"access_token":"access-token","refresh_token":"refresh-token"}"#).utf8)
         let response = HTTPURLResponse(
             url: request.url!,
-            statusCode: 200,
+            statusCode: isAccountRequest ? Self.recorder.accountStatusCode() : 200,
             httpVersion: nil,
             headerFields: ["Content-Type": "application/json"]
         )!
@@ -150,6 +220,75 @@ private final class SuccessfulSpotifyTokenURLProtocol: URLProtocol, @unchecked S
     }
 
     override func stopLoading() {}
+}
+
+private final class SpotifyAuthRequestRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var requests: [URLRequest] = []
+    private var accountResponseBody = #"{"product":"premium","type":"user"}"#
+    private var accountResponseStatusCode = 200
+
+    func reset() {
+        lock.lock()
+        requests = []
+        accountResponseBody = #"{"product":"premium","type":"user"}"#
+        accountResponseStatusCode = 200
+        lock.unlock()
+    }
+
+    func setAccountResponse(_ body: String, statusCode: Int) {
+        lock.lock()
+        accountResponseBody = body
+        accountResponseStatusCode = statusCode
+        lock.unlock()
+    }
+
+    func record(_ request: URLRequest) {
+        lock.lock()
+        requests.append(request)
+        lock.unlock()
+    }
+
+    func recordedRequests() -> [URLRequest] {
+        lock.lock()
+        defer { lock.unlock() }
+        return requests
+    }
+
+    func accountResponse() -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        return accountResponseBody
+    }
+
+    func accountStatusCode() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return accountResponseStatusCode
+    }
+}
+
+private final class RecordingTokenStore: TokenStoring, @unchecked Sendable {
+    private let lock = NSLock()
+    private var tokens: [String] = []
+
+    func saveRefreshToken(_ token: String) throws {
+        lock.lock()
+        tokens.append(token)
+        lock.unlock()
+    }
+
+    func loadRefreshToken() throws -> String? {
+        nil
+    }
+
+    func deleteRefreshToken() throws {}
+
+    func savedTokens() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return tokens
+    }
 }
 
 private actor CallbackCapture {
