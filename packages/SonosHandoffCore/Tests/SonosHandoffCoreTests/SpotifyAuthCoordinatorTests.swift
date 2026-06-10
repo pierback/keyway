@@ -91,7 +91,7 @@ struct SpotifyAuthCoordinatorTests {
         #expect(tokenStore.savedTokens().isEmpty)
 
         let callbackBody = await callbackCapture.waitForBody()
-        #expect(callbackBody?.contains("Spotify sign-in failed while saving the token.") == true)
+        #expect(callbackBody?.contains("Spotify account product is unavailable.") == true)
     }
 
     @Test
@@ -173,7 +173,7 @@ struct SpotifyAuthCoordinatorTests {
         #expect(!FileManager.default.fileExists(atPath: tokenURL.path))
 
         let callbackBody = await callbackCapture.waitForBody()
-        #expect(callbackBody?.contains("Spotify sign-in failed while saving the token.") == true)
+        #expect(callbackBody?.contains("Could not save Spotify credentials securely.") == true)
     }
 }
 

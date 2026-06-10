@@ -261,7 +261,7 @@ private final class SpotifyAuthCallbackResolver: @unchecked Sendable {
                     self.sendResponse(
                         connection: connection,
                         listener: listener,
-                        body: "Spotify sign-in failed while saving the token. You can close this window and try again from Keyway.",
+                        body: "Spotify sign-in failed: \(error.localizedDescription) You can close this window and try again from Keyway.",
                         result: .failure(error)
                     )
                 }
