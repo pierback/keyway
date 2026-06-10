@@ -22,6 +22,7 @@ public protocol ConnectTokenStatusChecking: Sendable {
 
 public struct ConnectTokenStatusStore: ConnectTokenStatusChecking, @unchecked Sendable {
     private let applicationSupportDirectory: URL
+    private let urlSession: URLSession
     private let projectTokenStore: ProjectWebAPITokenStore
     private let projectAccessTokenProvider: SpotifyProjectAccessTokenProvider
 
@@ -30,6 +31,7 @@ public struct ConnectTokenStatusStore: ConnectTokenStatusChecking, @unchecked Se
         urlSession: URLSession = .shared
     ) {
         self.applicationSupportDirectory = applicationSupportDirectory
+        self.urlSession = urlSession
         self.projectTokenStore = ProjectWebAPITokenStore(applicationSupportDirectory: applicationSupportDirectory)
         self.projectAccessTokenProvider = SpotifyProjectAccessTokenProvider(
             applicationSupportDirectory: applicationSupportDirectory,
@@ -55,10 +57,11 @@ public struct ConnectTokenStatusStore: ConnectTokenStatusChecking, @unchecked Se
     public func validatedStatus() async -> ConnectTokenStatus {
         let desktopTokenAvailable = FileManager.default.fileExists(atPath: desktopTokenURL.path)
         do {
-            _ = try await projectAccessTokenProvider.accessToken()
+            let accessToken = try await projectAccessTokenProvider.accessToken()
+            let accountProductAvailable = try await accountProductAvailable(accessToken: accessToken)
             return ConnectTokenStatus(
                 desktopTokenAvailable: desktopTokenAvailable,
-                projectTokenAvailable: true
+                projectTokenAvailable: accountProductAvailable
             )
         } catch {
             return ConnectTokenStatus(
@@ -75,4 +78,19 @@ public struct ConnectTokenStatusStore: ConnectTokenStatusChecking, @unchecked Se
     private func hasCompleteProjectToken() -> Bool {
         projectTokenStore.hasCompleteToken()
     }
+
+    private func accountProductAvailable(accessToken: String) async throws -> Bool {
+        var request = URLRequest(url: URL(string: "https://api.spotify.com/v1/me")!)
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await urlSession.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
+            return false
+        }
+        let account = try JSONDecoder().decode(SpotifyAccountProfile.self, from: data)
+        return account.product?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    }
+}
+
+private struct SpotifyAccountProfile: Decodable {
+    let product: String?
 }

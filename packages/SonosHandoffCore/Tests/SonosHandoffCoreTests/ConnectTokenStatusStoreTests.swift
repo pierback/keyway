@@ -67,6 +67,9 @@ struct ConnectTokenStatusStoreTests {
         ConnectTokenStatusURLProtocol.setResponse(
             #"{"access_token":"validated-access-token","expires_in":3600}"#
         )
+        ConnectTokenStatusURLProtocol.setAccountResponse(
+            #"{"product":"premium","type":"user"}"#
+        )
         let store = ConnectTokenStatusStore(
             applicationSupportDirectory: directory,
             urlSession: Self.urlSession()
@@ -77,7 +80,39 @@ struct ConnectTokenStatusStoreTests {
 
         #expect(status.projectTokenAvailable == true)
         #expect(savedToken.accessToken == "validated-access-token")
+        #expect(ConnectTokenStatusURLProtocol.recordedRequests().count == 2)
+        #expect(ConnectTokenStatusURLProtocol.recordedRequests().last?.url?.absoluteString == "https://api.spotify.com/v1/me")
+        #expect(ConnectTokenStatusURLProtocol.recordedRequests().last?.value(forHTTPHeaderField: "Authorization") == "Bearer validated-access-token")
+    }
+
+    @Test
+    func validatedStatusRejectsProjectTokenWithoutAccountProduct() async throws {
+        let directory = try temporaryApplicationSupportDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+            ConnectTokenStatusURLProtocol.reset()
+        }
+
+        let tokenStore = ProjectWebAPITokenStore(applicationSupportDirectory: directory)
+        try tokenStore.save(ProjectWebAPIToken(
+            accessToken: "under-scoped-access-token",
+            refreshToken: "refresh-token",
+            clientID: "client-id",
+            expiresAt: Int(Date().timeIntervalSince1970) + 3600
+        ))
+        ConnectTokenStatusURLProtocol.setAccountResponse(
+            #"{"type":"user"}"#
+        )
+        let store = ConnectTokenStatusStore(
+            applicationSupportDirectory: directory,
+            urlSession: Self.urlSession()
+        )
+
+        let status = await store.validatedStatus()
+
+        #expect(status.projectTokenAvailable == false)
         #expect(ConnectTokenStatusURLProtocol.recordedRequests().count == 1)
+        #expect(ConnectTokenStatusURLProtocol.recordedRequests().first?.url?.absoluteString == "https://api.spotify.com/v1/me")
     }
 
     @Test
@@ -135,6 +170,10 @@ private final class ConnectTokenStatusURLProtocol: URLProtocol, @unchecked Senda
         recorder.setResponse(body, statusCode: statusCode)
     }
 
+    static func setAccountResponse(_ body: String, statusCode: Int = 200) {
+        recorder.setAccountResponse(body, statusCode: statusCode)
+    }
+
     static func recordedRequests() -> [URLRequest] {
         recorder.recordedRequests()
     }
@@ -149,14 +188,15 @@ private final class ConnectTokenStatusURLProtocol: URLProtocol, @unchecked Senda
 
     override func startLoading() {
         Self.recorder.record(request)
+        let isAccountRequest = request.url?.absoluteString == "https://api.spotify.com/v1/me"
         let response = HTTPURLResponse(
             url: request.url!,
-            statusCode: Self.recorder.statusCode(),
+            statusCode: isAccountRequest ? Self.recorder.accountStatusCode() : Self.recorder.statusCode(),
             httpVersion: nil,
             headerFields: ["Content-Type": "application/json"]
         )!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: Data(Self.recorder.response().utf8))
+        client?.urlProtocol(self, didLoad: Data((isAccountRequest ? Self.recorder.accountResponse() : Self.recorder.response()).utf8))
         client?.urlProtocolDidFinishLoading(self)
     }
 
@@ -168,12 +208,16 @@ private final class ConnectTokenStatusRequestRecorder: @unchecked Sendable {
     private var requests: [URLRequest] = []
     private var responseBody = #"{"access_token":"validated-access-token","expires_in":3600}"#
     private var responseStatusCode = 200
+    private var accountResponseBody = #"{"product":"premium","type":"user"}"#
+    private var accountResponseStatusCode = 200
 
     func reset() {
         lock.lock()
         requests = []
         responseBody = #"{"access_token":"validated-access-token","expires_in":3600}"#
         responseStatusCode = 200
+        accountResponseBody = #"{"product":"premium","type":"user"}"#
+        accountResponseStatusCode = 200
         lock.unlock()
     }
 
@@ -181,6 +225,13 @@ private final class ConnectTokenStatusRequestRecorder: @unchecked Sendable {
         lock.lock()
         responseBody = body
         responseStatusCode = statusCode
+        lock.unlock()
+    }
+
+    func setAccountResponse(_ body: String, statusCode: Int) {
+        lock.lock()
+        accountResponseBody = body
+        accountResponseStatusCode = statusCode
         lock.unlock()
     }
 
@@ -206,5 +257,17 @@ private final class ConnectTokenStatusRequestRecorder: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return responseStatusCode
+    }
+
+    func accountResponse() -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        return accountResponseBody
+    }
+
+    func accountStatusCode() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return accountResponseStatusCode
     }
 }
