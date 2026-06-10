@@ -38,6 +38,9 @@ struct KeywayApp: App {
         Task { @MainActor in
             environment.mediaRemoteController.start()
         }
+        Task { @MainActor in
+            environment.mediaRoutingProbeController.start()
+        }
     }
 
     @MainActor

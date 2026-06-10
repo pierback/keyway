@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+environment="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/Support/AppEnvironment.swift"
+status="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutRuntimeStatus.swift"
+app="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/SonosHandoffApp.swift"
+
+ast-grep --pattern 'final class MediaRoutingProbeController { $$$ }' "$environment" --lang swift >/dev/null
+ast-grep --pattern 'mediaTransportActionController.route(command: $COMMAND, to: $TARGET)' "$environment" --lang swift >/dev/null
+ast-grep --pattern 'environment.mediaRoutingProbeController.start()' "$app" --lang swift >/dev/null
+ast-grep --pattern 'DistributedNotificationCenter.default().postNotificationName($$$)' "$status" --lang swift >/dev/null
+
+python3 - "$environment" "$status" "$app" <<'PY'
+import sys
+
+environment_path, status_path, app_path = sys.argv[1:4]
+environment = open(environment_path, encoding="utf-8").read()
+status = open(status_path, encoding="utf-8").read()
+app = open(app_path, encoding="utf-8").read()
+
+def fail(message):
+    print(f"verify_media_routing_probe_semantics: {message}", file=sys.stderr)
+    sys.exit(1)
+
+def index(source, needle):
+    position = source.find(needle)
+    if position < 0:
+        fail(f"missing {needle!r}")
+    return position
+
+def assert_order(source, needles, message):
+    positions = [index(source, needle) for needle in needles]
+    if positions != sorted(positions):
+        fail(message)
+
+assert_order(
+    environment,
+    [
+        'private static let environmentFlag = "KEYWAY_MEDIA_ROUTING_PROBE"',
+        'ProcessInfo.processInfo.environment[Self.environmentFlag] == "1"',
+        'DistributedNotificationCenter.default().addObserver(',
+        'forName: .keywayMediaRoutingProbeRequest',
+    ],
+    "routing probe must be explicitly enabled before it subscribes to requests",
+)
+
+assert_order(
+    environment,
+    [
+        "case .snapshot:",
+        "targets: mediaRemoteController.targets",
+        "case .route:",
+        "mediaRemoteController.targets.first(where: { $0.id == targetID })",
+        "mediaTransportActionController.route(command: command, to: target)",
+    ],
+    "routing probe must expose app-visible targets and route through the production controller",
+)
+
+assert_order(
+    environment,
+    [
+        "private func publish(_ response: MediaRoutingProbeResponse)",
+        "encoder.encode(response)",
+        ".keywayMediaRoutingProbeResponse",
+    ],
+    "routing probe responses must be structured JSON notifications",
+)
+
+assert_order(
+    status,
+    [
+        "if mediaTransportTrace.count > 240",
+        "JSONSerialization.data(withJSONObject: payload",
+        ".keywayMediaTransportTrace",
+        'userInfo: ["payload": json]',
+    ],
+    "media transport traces must be retained and published for mixed-routing audit",
+)
+
+assert_order(
+    app,
+    [
+        "environment.mediaRemoteController.start()",
+        "environment.mediaRoutingProbeController.start()",
+    ],
+    "probe startup must happen after media target controllers start",
+)
+
+print("verify_media_routing_probe_semantics=ok")
+PY

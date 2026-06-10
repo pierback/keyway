@@ -220,9 +220,17 @@ final class ShortcutRuntimeStatus {
         payload["monotonicMilliseconds"] = Int((ProcessInfo.processInfo.systemUptime * 1000).rounded())
         payload["at"] = Self.timestampFormatter.string(from: Date())
         mediaTransportTrace.append(payload)
-        if mediaTransportTrace.count > 40 {
-            mediaTransportTrace.removeFirst(mediaTransportTrace.count - 40)
+        if mediaTransportTrace.count > 240 {
+            mediaTransportTrace.removeFirst(mediaTransportTrace.count - 240)
         }
+        let data = try! JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+        let json = String(data: data, encoding: .utf8)!
+        DistributedNotificationCenter.default().postNotificationName(
+            .keywayMediaTransportTrace,
+            object: "com.fpieringer.Keyway",
+            userInfo: ["payload": json],
+            deliverImmediately: true
+        )
         scheduleTracePersistence()
     }
 
@@ -295,4 +303,7 @@ extension Notification.Name {
     static let sonosHandoffIgnoreTransferSuggestion = Notification.Name("com.fpieringer.Keyway.ignoreTransferSuggestion")
     static let sonosHandoffRefreshOutputs = Notification.Name("com.fpieringer.Keyway.refreshOutputs")
     static let sonosHandoffApplyCachedOutputs = Notification.Name("com.fpieringer.Keyway.applyCachedOutputs")
+    static let keywayMediaTransportTrace = Notification.Name("com.fpieringer.Keyway.mediaTransportTrace")
+    static let keywayMediaRoutingProbeRequest = Notification.Name("com.fpieringer.Keyway.mediaRoutingProbe.request")
+    static let keywayMediaRoutingProbeResponse = Notification.Name("com.fpieringer.Keyway.mediaRoutingProbe.response")
 }
