@@ -32,6 +32,9 @@ fail() {
 grep -q 'commandCenterMetadata: commandCenterMetadata' "$transport" \
   || fail "Play/Pause routing must show the cached chooser immediately with input metadata"
 
+grep -q 'command_center_play_family_route_shield_ignored' "$transport" \
+  || fail "Command Center play-family input must not open the chooser"
+
 grep -q 'runHeliumJavaScriptCommand(command: command)' "$desktop_adapter" \
   || fail "Helium transport must pass explicit play/pause/playPause commands into JavaScript instead of always toggling"
 
@@ -551,19 +554,26 @@ route_body = text[route_start:route_end]
 command_center_start = route_body.index("        case .commandCenter:")
 command_center_end = route_body.index("        case .userInterface:", command_center_start)
 command_center_body = route_body[command_center_start:command_center_end]
-if "MediaTransportCommandRules.isPlayFamily(command)" not in command_center_body:
-    raise SystemExit("verify_playback_routing_invariants: Command Center play-family inputs must stay shield-only")
-if "command_center_route_shield_only_ignored" not in command_center_body:
-    raise SystemExit("verify_playback_routing_invariants: Command Center play-family shield drops must stay traceable")
-if command_center_body.index("MediaTransportCommandRules.isPlayFamily(command)") > command_center_body.index("command_center_route_shield_only_ignored"):
-    raise SystemExit("verify_playback_routing_invariants: Command Center route shield must only drop play-family inputs after echo filtering")
 if "commandCenterFilter.noteCommandCenterInput(command: command, metadata: commandCenterMetadata)" not in command_center_body:
-    raise SystemExit("verify_playback_routing_invariants: routed Command Center next/previous inputs must arm duplicate shadow state")
-tail = command_center_body[
-    command_center_body.index("commandCenterFilter.noteCommandCenterInput(command: command, metadata: commandCenterMetadata)") :
-]
-if "return" in tail:
-    raise SystemExit("verify_playback_routing_invariants: accepted Command Center next/previous inputs must reach cache routing")
+    raise SystemExit("verify_playback_routing_invariants: routed Command Center inputs must arm duplicate shadow state")
+note_index = command_center_body.index("commandCenterFilter.noteCommandCenterInput(command: command, metadata: commandCenterMetadata)")
+play_family = "if MediaTransportCommandRules.isPlayFamily(command)"
+if play_family not in command_center_body:
+    raise SystemExit("verify_playback_routing_invariants: accepted Command Center play-family inputs must be route-shielded before chooser routing")
+play_family_index = command_center_body.index(play_family)
+if play_family_index < note_index:
+    raise SystemExit("verify_playback_routing_invariants: Command Center play-family shield must arm duplicate shadow state before returning")
+reason = "command_center_play_family_route_shield_ignored"
+if reason not in command_center_body:
+    raise SystemExit("verify_playback_routing_invariants: Command Center play-family shield must be visible in traces")
+shield_tail = command_center_body[command_center_body.index(reason):]
+if "return" not in shield_tail:
+    raise SystemExit("verify_playback_routing_invariants: Command Center play-family input must return before shared chooser routing")
+shared_route_tail = route_body[command_center_end:]
+if "if MediaTransportCommandRules.isPlayFamily(command)" not in shared_route_tail:
+    raise SystemExit("verify_playback_routing_invariants: physical media-key and UI play-family inputs must use shared chooser-first routing")
+if shared_route_tail.index("if MediaTransportCommandRules.isPlayFamily(command)") > shared_route_tail.index("routeFromCache("):
+    raise SystemExit("verify_playback_routing_invariants: physical media-key and UI play-family chooser routing must run before cache routing")
 PY
 
 grep -q 'noteGeneratedMediaKeyIgnored(command: command, metadata: metadata)' "$hotkeys" \

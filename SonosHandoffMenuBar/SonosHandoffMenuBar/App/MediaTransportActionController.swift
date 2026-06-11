@@ -125,18 +125,18 @@ final class MediaTransportActionController {
                 )
                 return
             }
+            commandCenterFilter.noteCommandCenterInput(command: command, metadata: commandCenterMetadata)
             if MediaTransportCommandRules.isPlayFamily(command) {
-                logger.info("MediaTransport command_center_route_shield_only_ignored command=\(command.rawValue, privacy: .public)")
+                logger.info("MediaTransport command_center_play_family_route_shield_ignored command=\(command.rawValue, privacy: .public)")
                 trace(
                     "input_ignored",
                     command: command,
                     source: source,
-                    reason: "command_center_route_shield_only_ignored",
+                    reason: "command_center_play_family_route_shield_ignored",
                     commandCenterMetadata: commandCenterMetadata
                 )
                 return
             }
-            commandCenterFilter.noteCommandCenterInput(command: command, metadata: commandCenterMetadata)
         case .userInterface:
             break
         }
@@ -420,12 +420,12 @@ final class MediaTransportActionController {
 
         let playingTargets = targets.filter(\.isCurrentlyPlaying)
 
-        if let focusedTarget = focusResolver.focusedTarget(in: targets) {
-            return (focusedTarget, .focused)
-        }
-
         if playingTargets.count == 1, let playingTarget = playingTargets.first {
             return (playingTarget, .current)
+        }
+
+        if let focusedTarget = focusResolver.focusedTarget(in: targets) {
+            return (focusedTarget, .focused)
         }
 
         if let recentTarget = targets.first(where: { $0.id == recentTargetID }) {

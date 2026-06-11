@@ -84,12 +84,12 @@ assert_order(
         "preferredChromiumExtensionTarget(command: command, from: targets)",
         "automaticRoutingTargets(command: command, from: targets)",
         "targets.count == 1",
-        "focusResolver.focusedTarget(in: targets)",
         "playingTargets.count == 1",
+        "focusResolver.focusedTarget(in: targets)",
         "recentTargetID",
         "return nil",
     ],
-    "automatic target selection must require a deterministic single/focused/playing/recent target"
+    "automatic target selection must prefer a single playing target before focused/recent targets"
 )
 
 chromium_extension = function_body("preferredChromiumExtensionTarget")
