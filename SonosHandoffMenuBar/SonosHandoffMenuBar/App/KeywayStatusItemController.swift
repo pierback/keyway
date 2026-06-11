@@ -8,12 +8,9 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
     private let playback: PlaybackSyncController
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private lazy var popover: NSPopover = makePopover()
-    private var localStatusItemMonitor: Any?
-    private var globalStatusItemMonitor: Any?
     private var popoverLocalDismissMonitor: Any?
     private var popoverGlobalDismissMonitor: Any?
     private var appDeactivationObserver: NSObjectProtocol?
-    private var lastModifierChooserClickTime: TimeInterval = 0
     private var settingsOpenInProgress = false
 
     init(environment: AppEnvironment) {
@@ -36,7 +33,6 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
         button.action = #selector(handleStatusItemClick(_:))
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         button.toolTip = "Keyway"
-        startStatusItemModifierMonitor()
         startAppDeactivationObserver()
     }
 
@@ -51,55 +47,7 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
             return
         }
 
-        if modifiers.contains(.option) || modifiers.contains(.command) {
-            closePopover()
-            showCenteredChooserFromModifierClick()
-            return
-        }
-
         togglePopover(relativeTo: sender)
-    }
-
-    private func startStatusItemModifierMonitor() {
-        if localStatusItemMonitor == nil {
-            localStatusItemMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseUp) { [weak self] event in
-                self?.handleModifierMonitorEvent(event)
-                return event
-            }
-        }
-
-        if globalStatusItemMonitor == nil {
-            globalStatusItemMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseUp) { [weak self] event in
-                self?.handleModifierMonitorEvent(event)
-            }
-        }
-    }
-
-    private func handleModifierMonitorEvent(_ event: NSEvent) {
-        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        guard modifiers.contains(.option) || modifiers.contains(.command) else {
-            return
-        }
-        guard statusItemFrameContains(event) else {
-            return
-        }
-        closePopover()
-        showCenteredChooserFromModifierClick()
-    }
-
-    private func statusItemFrameContains(_ event: NSEvent) -> Bool {
-        guard let frame = statusItem.button?.window?.frame else {
-            return false
-        }
-
-        let screenPoint: NSPoint
-        if let window = event.window {
-            screenPoint = window.convertPoint(toScreen: event.locationInWindow)
-        } else {
-            screenPoint = event.locationInWindow
-        }
-
-        return frame.insetBy(dx: -4, dy: -4).contains(screenPoint)
     }
 
     private func togglePopover(relativeTo button: NSStatusBarButton) {
@@ -127,15 +75,6 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
 
     private func showCenteredChooser() {
         environment.mediaTransportActionController.showTargetChooser()
-    }
-
-    private func showCenteredChooserFromModifierClick() {
-        let now = ProcessInfo.processInfo.systemUptime
-        guard now - lastModifierChooserClickTime > 0.25 else {
-            return
-        }
-        lastModifierChooserClickTime = now
-        showCenteredChooser()
     }
 
     private func openSettings() {

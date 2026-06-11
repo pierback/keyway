@@ -21,10 +21,11 @@ final class MediaTransportActionController {
     private let desktopTransport = MediaDesktopTransportAdapter()
     private let spotifyPlaybackController: any SpotifyActivePlaybackObserving
     private let chromiumBrowserExtensionController: ChromiumBrowserExtensionController
+    private let sourceFocusActionController: SourceFocusActionController
+    private let targetSelectionMemory: MediaTargetSelectionMemory
     private let traceRecorder = MediaTransportTraceRecorder()
     private let chooserSession = MediaChooserSessionGuard()
     private let focusResolver = MediaTargetFocusResolver()
-    private var recentTargetID: String?
     var relaxRouteShield: ((String) -> Void)?
     private var targetSubscription: AnyCancellable?
     private var programmaticDispatches: [UUID: MediaTransportPendingDispatchEcho] = [:]
@@ -33,12 +34,16 @@ final class MediaTransportActionController {
         mediaRemoteController: MediaRemoteController,
         overlayController: MediaTargetOverlayController,
         spotifyPlaybackController: any SpotifyActivePlaybackObserving,
-        chromiumBrowserExtensionController: ChromiumBrowserExtensionController = ChromiumBrowserExtensionController()
+        chromiumBrowserExtensionController: ChromiumBrowserExtensionController = ChromiumBrowserExtensionController(),
+        sourceFocusActionController: SourceFocusActionController,
+        targetSelectionMemory: MediaTargetSelectionMemory
     ) {
         self.mediaRemoteController = mediaRemoteController
         self.overlayController = overlayController
         self.spotifyPlaybackController = spotifyPlaybackController
         self.chromiumBrowserExtensionController = chromiumBrowserExtensionController
+        self.sourceFocusActionController = sourceFocusActionController
+        self.targetSelectionMemory = targetSelectionMemory
         self.commandCenterFilter = MediaTransportCommandCenterFilter(
             mediaKeyShadowInterval: Self.commandCenterMediaKeyShadowInterval,
             commandCenterInputShadowInterval: Self.commandCenterInputShadowInterval,
@@ -386,6 +391,22 @@ final class MediaTransportActionController {
                     )
                 }
             },
+            onFocus: { [weak self] target in
+                guard let self else { return }
+                self.logger.info("MediaTransport chooser_focus target=\(target.appName, privacy: .public) targetID=\(target.id, privacy: .public)")
+                self.finishChooser(
+                    id: chooserID,
+                    selected: true
+                )
+                self.trace(
+                    "chooser_closed_for_focus",
+                    command: command,
+                    target: target,
+                    targetCount: self.mediaRemoteController.targets.count
+                )
+                self.relaxRouteShield?("chooser_focus")
+                self.sourceFocusActionController.focus(target: target)
+            },
             onDismiss: { [weak self] in
                 guard let self else { return }
                 let activeCommand = self.chooserSession.activeCommandRawValue(for: chooserID) ?? "stale"
@@ -400,12 +421,12 @@ final class MediaTransportActionController {
     private func sortedTargets(_ targets: [MediaRemoteTarget]) -> [MediaRemoteTarget] {
         MediaTransportCommandRules.sortedTargets(
             targets,
-            preferredTargetID: recentTargetID
+            preferredTargetID: targetSelectionMemory.recentTargetID
         )
     }
 
     private func rememberTarget(_ target: MediaRemoteTarget) {
-        recentTargetID = target.id
+        targetSelectionMemory.remember(target)
     }
 
     private func automaticTarget(command: MediaRemoteTransportCommand, from targets: [MediaRemoteTarget]) -> (target: MediaRemoteTarget, reason: MediaTransportRoutingReason)? {
@@ -428,7 +449,7 @@ final class MediaTransportActionController {
             return (focusedTarget, .focused)
         }
 
-        if let recentTarget = targets.first(where: { $0.id == recentTargetID }) {
+        if let recentTarget = targets.first(where: { $0.id == targetSelectionMemory.recentTargetID }) {
             return (recentTarget, .recent)
         }
 

@@ -86,7 +86,7 @@ assert_order(
         "targets.count == 1",
         "playingTargets.count == 1",
         "focusResolver.focusedTarget(in: targets)",
-        "recentTargetID",
+        "targetSelectionMemory.recentTargetID",
         "return nil",
     ],
     "automatic target selection must prefer a single playing target before focused/recent targets"

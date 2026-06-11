@@ -27,6 +27,7 @@ struct AppEnvironment: @unchecked Sendable {
     let mediaRemoteController: MediaRemoteController
     let mediaAudioControlController: MediaAudioControlController
     let mediaTargetOverlayController: MediaTargetOverlayController
+    let sourceFocusActionController: SourceFocusActionController
     let mediaTransportActionController: MediaTransportActionController
     let mediaRoutingProbeController: MediaRoutingProbeController
 
@@ -59,6 +60,7 @@ struct AppEnvironment: @unchecked Sendable {
         let chromiumNativeMessagingHostInstaller = ChromiumNativeMessagingHostInstaller()
         _ = try! chromiumNativeMessagingHostInstaller.install()
         let chromiumBrowserExtensionController = ChromiumBrowserExtensionController()
+        let targetSelectionMemory = MediaTargetSelectionMemory()
         let mediaRemoteController = MediaRemoteController(
             chromiumBrowserExtensionController: chromiumBrowserExtensionController
         )
@@ -71,11 +73,18 @@ struct AppEnvironment: @unchecked Sendable {
         let mediaTargetOverlayController = MediaTargetOverlayController(
             audioController: mediaAudioControlController
         )
+        let sourceFocusActionController = SourceFocusActionController(
+            mediaRemoteController: mediaRemoteController,
+            chromiumBrowserExtensionController: chromiumBrowserExtensionController,
+            targetSelectionMemory: targetSelectionMemory
+        )
         let mediaTransportActionController = MediaTransportActionController(
             mediaRemoteController: mediaRemoteController,
             overlayController: mediaTargetOverlayController,
             spotifyPlaybackController: spotifyConnectService,
-            chromiumBrowserExtensionController: chromiumBrowserExtensionController
+            chromiumBrowserExtensionController: chromiumBrowserExtensionController,
+            sourceFocusActionController: sourceFocusActionController,
+            targetSelectionMemory: targetSelectionMemory
         )
         let mediaRoutingProbeController = MediaRoutingProbeController(
             mediaRemoteController: mediaRemoteController,
@@ -111,6 +120,7 @@ struct AppEnvironment: @unchecked Sendable {
             mediaRemoteController: mediaRemoteController,
             mediaAudioControlController: mediaAudioControlController,
             mediaTargetOverlayController: mediaTargetOverlayController,
+            sourceFocusActionController: sourceFocusActionController,
             mediaTransportActionController: mediaTransportActionController,
             mediaRoutingProbeController: mediaRoutingProbeController
         )

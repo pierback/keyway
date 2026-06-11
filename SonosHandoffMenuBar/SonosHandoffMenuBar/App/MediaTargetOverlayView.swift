@@ -316,6 +316,7 @@ struct MediaTargetOverlayView: View {
         HStack(spacing: 8) {
             footerHint("↑↓", "Select")
             footerHint("Enter", "Route")
+            footerHint("⌘↵", "Focus")
             footerHint("Esc", "Close")
             footerHint("Tab", "Controls")
             footerHint("1-9", "Quick select")

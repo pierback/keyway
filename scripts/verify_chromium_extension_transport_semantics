@@ -67,6 +67,43 @@ struct MediaRemoteCommandResultEvent: Decodable {
     let backend: String?
     var unsupported: Bool = false
 }
+
+enum SourceFocusFailureReason: String, Codable {
+    case missingApplication = "missing_application"
+    case applicationActivationRejected = "application_activation_rejected"
+    case chromiumExtensionDisconnected = "chromium_extension_disconnected"
+    case chromiumExtensionTimedOut = "chromium_extension_timed_out"
+    case browserActivationFailed = "browser_activation_failed"
+    case browserTargetUnavailable = "browser_target_unavailable"
+}
+
+struct SourceFocusResult: Codable, Equatable {
+    let type: String
+    let requestID: String?
+    let targetID: String
+    let ok: Bool
+    let message: String
+    let backend: String?
+    let failureReason: SourceFocusFailureReason?
+
+    init(
+        type: String = "focusResult",
+        requestID: String?,
+        targetID: String,
+        ok: Bool,
+        message: String,
+        backend: String?,
+        failureReason: SourceFocusFailureReason? = nil
+    ) {
+        self.type = type
+        self.requestID = requestID
+        self.targetID = targetID
+        self.ok = ok
+        self.message = message
+        self.backend = backend
+        self.failureReason = failureReason
+    }
+}
 SWIFT
 
 cat >"$workdir/Semantics.swift" <<'SWIFT'
@@ -105,10 +142,21 @@ struct Semantics {
             "Chromium native host manifests must use the stable extension ID"
         )
         expectEqual(
+            ChromiumBrowserExtensionTransport.focusResultNotificationName.rawValue,
+            "com.fpieringer.keyway.chromium.focusResult",
+            "Chromium focus results must use a separate notification channel from media command results"
+        )
+        expectEqual(
             ChromiumBrowserExtensionTransport.browserFamily(target: target),
             "chromium",
             "Chromium extension targets must expose the browser family from their target ID"
         )
+        let targetAddress = ChromiumBrowserExtensionTargetAddress(targetID: target.id)
+        expectEqual(targetAddress.browserKey, "chromium", "Chromium target address must preserve selected browser runtime")
+        expectEqual(targetAddress.windowID, 11, "Chromium target address must preserve selected window ID")
+        expectEqual(targetAddress.tabID, 22, "Chromium target address must preserve selected tab ID")
+        expectEqual(targetAddress.frameID, 0, "Chromium target address must preserve selected frame ID")
+        expectEqual(targetAddress.mediaID, "media-1", "Chromium target address must preserve selected media ID")
         expectEqual(
             ChromiumBrowserExtensionTransport.targetDisplayName(browser: "Chromium", pageTitle: ""),
             "Chromium",
@@ -173,6 +221,18 @@ struct Semantics {
 
         let connectedAudioHandled = controller.submit(audioCommand: .volumeDelta(0.05), target: target) { _ in }
         expectEqual(connectedAudioHandled, true, "Connected Chromium audio commands must route through the Chromium backend")
+
+        var disconnectedFocusResult: SourceFocusResult?
+        let disconnectedFocusHandled = disconnectedController.focus(target: target) { result in
+            disconnectedFocusResult = result
+        }
+        expectEqual(disconnectedFocusHandled, true, "Disconnected Chromium focus must be handled by the Chromium backend")
+        expectEqual(disconnectedFocusResult?.ok, false, "Disconnected Chromium focus must not report success")
+        expectEqual(disconnectedFocusResult?.backend, ChromiumBrowserExtensionTransport.backendName, "Disconnected Chromium focus must name the Chromium backend")
+        expectEqual(disconnectedFocusResult?.failureReason, .chromiumExtensionDisconnected, "Disconnected Chromium focus must report a focus-specific failure reason")
+
+        let connectedFocusHandled = controller.focus(target: second) { _ in }
+        expectEqual(connectedFocusHandled, true, "Connected Chromium focus must route through the Chromium backend")
 
         print("verify_chromium_extension_transport_semantics=ok")
     }

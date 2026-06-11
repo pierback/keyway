@@ -7,6 +7,7 @@ final class MediaTargetOverlayController {
     private let audioController: MediaAudioControlController
     private var panel: MediaTargetOverlayPanel?
     private var onChoose: ((MediaRemoteTarget, MediaRemoteTransportCommand?) -> Void)?
+    private var onFocus: ((MediaRemoteTarget) -> Void)?
     private var onDismiss: (() -> Void)?
     private var isClosing = false
     private var audioSnapshotGeneration = 0
@@ -61,10 +62,12 @@ final class MediaTargetOverlayController {
         command: MediaRemoteTransportCommand?,
         targets: [MediaRemoteTarget],
         onChoose: @escaping (MediaRemoteTarget, MediaRemoteTransportCommand?) -> Void,
+        onFocus: @escaping (MediaRemoteTarget) -> Void,
         onDismiss: @escaping () -> Void = {}
     ) {
         generation &+= 1
         self.onChoose = onChoose
+        self.onFocus = onFocus
         self.onDismiss = onDismiss
         isClosing = false
         model.update(command: command, targets: targets)
@@ -110,6 +113,7 @@ final class MediaTargetOverlayController {
         let dismiss = onDismiss
         panel?.orderOut(nil)
         onChoose = nil
+        onFocus = nil
         onDismiss = nil
         isClosing = false
 
@@ -203,57 +207,50 @@ final class MediaTargetOverlayController {
         let keyCode = event.keyCode
         let characters = event.charactersIgnoringModifiers?.lowercased() ?? ""
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let action = MediaTargetOverlayKeyboardInterpreter.action(
+            keyCode: keyCode,
+            characters: characters,
+            commandDown: modifiers.contains(.command),
+            expanded: model.expanded,
+            targetCount: model.targets.count
+        )
 
-        if model.expanded, modifiers.contains(.command), keyCode == 126 {
-            adjustSelectedExpandedVolume(direction: .up)
-            return true
-        }
-        if model.expanded, modifiers.contains(.command), keyCode == 125 {
-            adjustSelectedExpandedVolume(direction: .down)
-            return true
-        }
-
-        switch keyCode {
-        case 126:
-            model.moveSelection(by: -1)
+        switch action {
+        case .moveSelection(let delta):
+            model.moveSelection(by: delta)
             refreshAudioSnapshot()
             return true
-        case 125:
-            model.moveSelection(by: 1)
-            refreshAudioSnapshot()
+        case .adjustExpandedVolume(let direction):
+            adjustSelectedExpandedVolume(direction: direction)
             return true
-        case 36, 76:
+        case .routeSelected:
             if let target = model.selectedTarget {
                 choose(target)
             }
             return true
-        case 53:
+        case .focusSelected:
+            if let target = model.selectedTarget {
+                focus(target)
+            }
+            return true
+        case .close:
             close()
             return true
-        case 48:
+        case .toggleControls:
             model.expanded.toggle()
             resizeAndPosition(ensurePanel())
             refreshAudioSnapshot()
             return true
-        default:
-            break
-        }
-
-        if let number = Int(characters), (1 ... 9).contains(number) {
-            let index = number - 1
-            guard model.targets.indices.contains(index) else {
-                return true
-            }
-            if model.expanded {
-                model.select(index: index)
-                refreshAudioSnapshot()
-                return true
-            }
+        case .quickRoute(let index):
             choose(model.targets[index])
             return true
+        case .quickSelect(let index):
+            model.select(index: index)
+            refreshAudioSnapshot()
+            return true
+        case .none:
+            return false
         }
-
-        return false
     }
 
     private func choose(_ target: MediaRemoteTarget) {
@@ -263,6 +260,15 @@ final class MediaTargetOverlayController {
         onDismiss = nil
         close(notifyDismiss: false)
         choose?(target, command)
+    }
+
+    private func focus(_ target: MediaRemoteTarget) {
+        let focus = onFocus
+        onChoose = nil
+        onFocus = nil
+        onDismiss = nil
+        close(notifyDismiss: false)
+        focus?(target)
     }
 
     private func adjustSelectedExpandedVolume(direction: MediaAudioVolumeDirection) {

@@ -28,7 +28,8 @@
 		56AA620A5D9F22D807ED1A19 /* SettingsFeature.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBE36997FFAF38082833770B /* SettingsFeature.swift */; };
 		5DC1630CAA99A52A28A91658 /* PlaybackTransferActionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF3DE5098A9A4022C60DBFCB /* PlaybackTransferActionController.swift */; };
 		60C3988A21A349E817FDAF47 /* MediaRouteStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 242E301643ED8888CCF85AB6 /* MediaRouteStatus.swift */; };
-		68D32A0AE42F9419F5A3EB92 /* MediaRemoteHelperProcess.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01638FCA8D905930E32CCB11 /* MediaRemoteHelperProcess.swift */; };
+			68D32A0AE42F9419F5A3EB92 /* MediaRemoteHelperProcess.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01638FCA8D905930E32CCB11 /* MediaRemoteHelperProcess.swift */; };
+			6E03C17680C1DBDB9676259C /* MediaTargetOverlayKeyboardAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AA03CD841E9964AB0761B29 /* MediaTargetOverlayKeyboardAction.swift */; };
 		728DAC0B99EE7A49A3D2A18B /* VolumeHotkeyController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C6CE760E369A488678AEE47 /* VolumeHotkeyController.swift */; };
 		74715FF53BD5D6F702C90AC1 /* MediaChooserSessionGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 076214E846DFBA326F922B35 /* MediaChooserSessionGuard.swift */; };
 		75C0A4EE1B8860F3BC799BF4 /* ChromiumBrowserExtensionTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5E38A5A15966E0C6B84C8B /* ChromiumBrowserExtensionTransport.swift */; };
@@ -53,7 +54,8 @@
 		D7F8ECEB545F1DA8D14B5E26 /* MenuBarMotion.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2ADDA9977300BA26C72AE1BE /* MenuBarMotion.swift */; };
 		D8BC75DE1F7A5BB319167924 /* PlaybackGroupSuggestion.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9713F0CA862900ED3816BA99 /* PlaybackGroupSuggestion.swift */; };
 		DB41860AC93F61EB3616AA99 /* ShortcutEventTap.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D1516FC1EC45A540434ED3A /* ShortcutEventTap.swift */; };
-		DD02BF09E7B26A97261DD12F /* PlaybackOutputDirectory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3118916EF985824ED3AE833A /* PlaybackOutputDirectory.swift */; };
+			DD02BF09E7B26A97261DD12F /* PlaybackOutputDirectory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3118916EF985824ED3AE833A /* PlaybackOutputDirectory.swift */; };
+			E1523FAAA9485D6BE8A53816 /* SourceFocusActionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6E2C9837F646DA50417652E /* SourceFocusActionController.swift */; };
 		EF20DB3655ED22BBC2EBBD92 /* MediaTransportTraceRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACE15770F4B374A6E959E602 /* MediaTransportTraceRecorder.swift */; };
 		FB096BCF12FD33EEACCD1085 /* PlaybackSliderCommitter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60F51AA16D3F376673F2A1B2 /* PlaybackSliderCommitter.swift */; };
 		FB75194CD0FAEA66CDD74A6F /* MediaRemoteEvents.swift in Sources */ = {isa = PBXBuildFile; fileRef = D13C4EE0E99812913A4F6096 /* MediaRemoteEvents.swift */; };
@@ -96,8 +98,9 @@
 		8F63B6D6EE0F54D3F5219C3E /* PlaybackOutputSelection.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlaybackOutputSelection.swift; sourceTree = "<group>"; };
 		93D326328CB622938E59B528 /* MediaRemoteController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaRemoteController.swift; sourceTree = "<group>"; };
 		9480369471C946FFFE841DF6 /* ShortcutRuntimeReporter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ShortcutRuntimeReporter.swift; sourceTree = "<group>"; };
-		9713F0CA862900ED3816BA99 /* PlaybackGroupSuggestion.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlaybackGroupSuggestion.swift; sourceTree = "<group>"; };
-		9A58C71504EB31423D46F9B3 /* ShortcutEventParser.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ShortcutEventParser.swift; sourceTree = "<group>"; };
+			9713F0CA862900ED3816BA99 /* PlaybackGroupSuggestion.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlaybackGroupSuggestion.swift; sourceTree = "<group>"; };
+			9A58C71504EB31423D46F9B3 /* ShortcutEventParser.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ShortcutEventParser.swift; sourceTree = "<group>"; };
+			9AA03CD841E9964AB0761B29 /* MediaTargetOverlayKeyboardAction.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaTargetOverlayKeyboardAction.swift; sourceTree = "<group>"; };
 		A3180E637F984D20BFB6F89D /* MediaTransportCommandCenterFilter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaTransportCommandCenterFilter.swift; sourceTree = "<group>"; };
 		A767AEA3E231D304E31DCB55 /* MediaDesktopTransportAdapter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaDesktopTransportAdapter.swift; sourceTree = "<group>"; };
 		ACE15770F4B374A6E959E602 /* MediaTransportTraceRecorder.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaTransportTraceRecorder.swift; sourceTree = "<group>"; };
@@ -113,8 +116,9 @@
 		DCBAF1B54EFDD52CB24A27BA /* PlaybackVolumeActionController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlaybackVolumeActionController.swift; sourceTree = "<group>"; };
 		DF3DE5098A9A4022C60DBFCB /* PlaybackTransferActionController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlaybackTransferActionController.swift; sourceTree = "<group>"; };
 		DFCD5CF2D346C7512F52FE9A /* MediaRemoteModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaRemoteModels.swift; sourceTree = "<group>"; };
-		F10E50BA4A6995D7A9556E66 /* Assets.xcassets */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		FA2393621A13F9400EF82869 /* MediaAudioControlController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaAudioControlController.swift; sourceTree = "<group>"; };
+			F10E50BA4A6995D7A9556E66 /* Assets.xcassets */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+			FA2393621A13F9400EF82869 /* MediaAudioControlController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaAudioControlController.swift; sourceTree = "<group>"; };
+			F6E2C9837F646DA50417652E /* SourceFocusActionController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SourceFocusActionController.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -155,9 +159,10 @@
 				DFCD5CF2D346C7512F52FE9A /* MediaRemoteModels.swift */,
 				C3C502F0557C543CC26967CC /* MediaRemoteSnapshotRefreshGate.swift */,
 				242E301643ED8888CCF85AB6 /* MediaRouteStatus.swift */,
-				BAA555743BEFFAF37592B839 /* MediaTargetFocusResolver.swift */,
-				1C5FE9E6CAC1ABFA78EE1296 /* MediaTargetOverlayController.swift */,
-				BC5256D5E0989DE59D117BF8 /* MediaTargetOverlayModel.swift */,
+					BAA555743BEFFAF37592B839 /* MediaTargetFocusResolver.swift */,
+					1C5FE9E6CAC1ABFA78EE1296 /* MediaTargetOverlayController.swift */,
+					9AA03CD841E9964AB0761B29 /* MediaTargetOverlayKeyboardAction.swift */,
+					BC5256D5E0989DE59D117BF8 /* MediaTargetOverlayModel.swift */,
 				BA57DA47EB9330469792AAEC /* MediaTargetOverlayView.swift */,
 				69042549579E2C3E24027644 /* MediaTransportActionController.swift */,
 				A3180E637F984D20BFB6F89D /* MediaTransportCommandCenterFilter.swift */,
@@ -185,9 +190,10 @@
 				9480369471C946FFFE841DF6 /* ShortcutRuntimeReporter.swift */,
 				4B1D00346C30DF1817CB3CA0 /* ShortcutRuntimeStatus.swift */,
 				2FD7D24ECD2F50B661A9B1F2 /* ShortcutVolumeActionController.swift */,
-				08172EB71EF37A9C2C428A93 /* SonosHandoffApp.swift */,
-				55C47338D75744BB65449641 /* SonosVolumeMonitor.swift */,
-				4FF9899DBDC84B48EC582098 /* StatusHUD.swift */,
+					08172EB71EF37A9C2C428A93 /* SonosHandoffApp.swift */,
+					55C47338D75744BB65449641 /* SonosVolumeMonitor.swift */,
+					F6E2C9837F646DA50417652E /* SourceFocusActionController.swift */,
+					4FF9899DBDC84B48EC582098 /* StatusHUD.swift */,
 				5C6CE760E369A488678AEE47 /* VolumeHotkeyController.swift */,
 			);
 			name = App;
@@ -417,9 +423,10 @@
 				86C854719C7A5F666FB17EE7 /* MediaRemoteModels.swift in Sources */,
 				2865FF8CC0CD4C464CA71E5B /* MediaRemoteSnapshotRefreshGate.swift in Sources */,
 				60C3988A21A349E817FDAF47 /* MediaRouteStatus.swift in Sources */,
-				01785EB199413144370B1682 /* MediaTargetFocusResolver.swift in Sources */,
-				A8CAF3BE4E559408F9D2C269 /* MediaTargetOverlayController.swift in Sources */,
-				151DA934627AA57EDCD5C88D /* MediaTargetOverlayModel.swift in Sources */,
+					01785EB199413144370B1682 /* MediaTargetFocusResolver.swift in Sources */,
+					A8CAF3BE4E559408F9D2C269 /* MediaTargetOverlayController.swift in Sources */,
+					6E03C17680C1DBDB9676259C /* MediaTargetOverlayKeyboardAction.swift in Sources */,
+					151DA934627AA57EDCD5C88D /* MediaTargetOverlayModel.swift in Sources */,
 				FE41AD61BD14499D1C009EFF /* MediaTargetOverlayView.swift in Sources */,
 				98F3684974F24EA1FB8F3B06 /* MediaTransportActionController.swift in Sources */,
 				ADF28A0B55A7B0AB7E555C50 /* MediaTransportCommandCenterFilter.swift in Sources */,
@@ -447,9 +454,10 @@
 				8A5959C1FF46E1CC203BDBBE /* ShortcutRuntimeReporter.swift in Sources */,
 				49187900CE4DEB9803AD9F7E /* ShortcutRuntimeStatus.swift in Sources */,
 				1CDD3DFDD9F63AD27612536D /* ShortcutVolumeActionController.swift in Sources */,
-				BADCED1730FE598E3A9139BB /* SonosHandoffApp.swift in Sources */,
-				009DD6451CC6FC177E5AE5E9 /* SonosVolumeMonitor.swift in Sources */,
-				9BAF858BC36098BBB55B0F98 /* StatusHUD.swift in Sources */,
+					BADCED1730FE598E3A9139BB /* SonosHandoffApp.swift in Sources */,
+					009DD6451CC6FC177E5AE5E9 /* SonosVolumeMonitor.swift in Sources */,
+					E1523FAAA9485D6BE8A53816 /* SourceFocusActionController.swift in Sources */,
+					9BAF858BC36098BBB55B0F98 /* StatusHUD.swift in Sources */,
 				728DAC0B99EE7A49A3D2A18B /* VolumeHotkeyController.swift in Sources */,
 				56AA620A5D9F22D807ED1A19 /* SettingsFeature.swift in Sources */,
 				7E00B11248EF010C3101E1A7 /* AppEnvironment.swift in Sources */,

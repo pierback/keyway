@@ -111,7 +111,17 @@ function clearTargetsForTab(tabId) {
 }
 
 function handleNativeMessage(message) {
-  if (message.type !== "command") return;
+  if (message.type === "command") {
+    handleCommandMessage(message);
+    return;
+  }
+  if (message.type === "focusTarget") {
+    handleFocusMessage(message);
+  }
+}
+
+function handleCommandMessage(message) {
+  if (!targets.has(message.targetID)) return;
 
   chrome.tabs.sendMessage(
     message.tabId,
@@ -136,6 +146,40 @@ function handleNativeMessage(message) {
       });
     }
   );
+}
+
+function handleFocusMessage(message) {
+  const target = targets.get(message.targetID);
+  if (!target) return;
+
+  chrome.windows.update(target.windowId, { focused: true }, () => {
+    const windowError = chrome.runtime.lastError;
+    if (windowError) {
+      sendNative({
+        type: "focusResult",
+        requestID: message.requestID,
+        targetID: message.targetID,
+        ok: false,
+        message: windowError.message || "Could not focus browser window.",
+        backend: "chromium_extension",
+        failureReason: "browser_activation_failed",
+      });
+      return;
+    }
+
+    chrome.tabs.update(target.tabId, { active: true }, () => {
+      const tabError = chrome.runtime.lastError;
+      sendNative({
+        type: "focusResult",
+        requestID: message.requestID,
+        targetID: message.targetID,
+        ok: !tabError,
+        message: tabError ? tabError.message || "Could not activate browser tab." : "focused",
+        backend: "chromium_extension",
+        failureReason: tabError ? "browser_target_unavailable" : undefined,
+      });
+    });
+  });
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {

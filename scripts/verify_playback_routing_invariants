@@ -14,6 +14,7 @@ command_filter="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTran
 chooser_guard="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaChooserSessionGuard.swift"
 command_rules="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportCommandRules.swift"
 desktop_adapter="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaDesktopTransportAdapter.swift"
+source_focus="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/SourceFocusActionController.swift"
 refresh_gate="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaRemoteSnapshotRefreshGate.swift"
 remote_controller="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaRemoteController.swift"
 remote_helper_process="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaRemoteHelperProcess.swift"
@@ -100,7 +101,7 @@ for required in (
     if required not in targets_route:
         raise SystemExit(f"verify_playback_routing_invariants: ambiguous cache routing must pass chooser metadata: {required}")
 automatic_body = text[text.index("private func automaticTarget"):text.index("    private func send(command:")]
-if "$0.id == recentTargetID" not in automatic_body or ".recent" not in automatic_body:
+if "$0.id == targetSelectionMemory.recentTargetID" not in automatic_body or ".recent" not in automatic_body:
     raise SystemExit("verify_playback_routing_invariants: remembered targets must route the exact selected row automatically before falling back to chooser")
 PY
 
@@ -1331,7 +1332,13 @@ if grep -Eq 'selectedTargetID|selectedTargetIdentity|pinnedTarget|markRecentTarg
   fail "transport routing must not use selected or pinned hidden state"
 fi
 
-grep -q 'private var recentTargetID' "$transport" \
+grep -q 'final class MediaTargetSelectionMemory' "$source_focus" \
+  || fail "chooser order must keep selected target memory in the source-focus module"
+
+grep -q 'private let targetSelectionMemory: MediaTargetSelectionMemory' "$transport" \
+  || fail "transport routing must depend on shared selected-target memory instead of owning recent target state"
+
+grep -q 'targetSelectionMemory.recentTargetID' "$transport" \
   || fail "chooser order must remember the last selected target ID for stable repeated sessions"
 
 grep -q 'rememberTarget(target)' "$transport" \

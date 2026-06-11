@@ -19,6 +19,8 @@ const intervals = [];
 const timeouts = [];
 const clearedIntervals = [];
 const tabMessages = [];
+const tabUpdates = [];
+const windowUpdates = [];
 let disconnectListener = null;
 let nativeMessageListener = null;
 let runtimeMessageListener = null;
@@ -45,6 +47,7 @@ const context = {
   chrome: {
     runtime: {
       id: "extensionid",
+      lastError: null,
       connectNative(name) {
         assertEqual(name, "com.fpieringer.keyway.chromium", "native host name");
         return {
@@ -82,7 +85,20 @@ const context = {
       },
       sendMessage(tabId, message, options, callback) {
         tabMessages.push({ tabId, message, options });
+        context.chrome.runtime.lastError = null;
         callback({ ok: true, message: "ack" });
+      },
+      update(tabId, updateInfo, callback) {
+        tabUpdates.push({ tabId, updateInfo });
+        context.chrome.runtime.lastError = null;
+        callback({ id: tabId, active: updateInfo.active });
+      },
+    },
+    windows: {
+      update(windowId, updateInfo, callback) {
+        windowUpdates.push({ windowId, updateInfo });
+        context.chrome.runtime.lastError = null;
+        callback({ id: windowId, focused: updateInfo.focused });
       },
     },
   },
@@ -180,6 +196,57 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   );
 
   assert(typeof nativeMessageListener === "function", "service worker must register native command listener");
+  nativeMessageListener({
+    type: "command",
+    requestID: "ignored-command",
+    targetID: "chromium-extension:other-runtime:11:23:0:media-2",
+    tabId: 23,
+    frameId: 0,
+    mediaId: "media-2",
+    command: "playPause",
+  });
+  assertEqual(tabMessages.length, 0, "native command must ignore target IDs owned by another runtime");
+  assertEqual(
+    postedMessages.filter(message => message.type === "commandResult").length,
+    0,
+    "ignored native command must not publish a competing command result"
+  );
+
+  const focusResultCountBeforeIgnored = postedMessages.filter(message => message.type === "focusResult").length;
+  nativeMessageListener({
+    type: "focusTarget",
+    requestID: "ignored-focus",
+    targetID: "chromium-extension:other-runtime:11:23:0:media-2",
+    windowId: 11,
+    tabId: 23,
+  });
+  assertEqual(windowUpdates.length, 0, "native focus must ignore target IDs owned by another runtime");
+  assertEqual(tabUpdates.length, 0, "ignored native focus must not activate a browser tab");
+  assertEqual(
+    postedMessages.filter(message => message.type === "focusResult").length,
+    focusResultCountBeforeIgnored,
+    "ignored native focus must not publish a competing focus result"
+  );
+
+  nativeMessageListener({
+    type: "focusTarget",
+    requestID: "focus-1",
+    targetID: twoTargetSnapshot.targets[1].id,
+    windowId: 999,
+    tabId: 999,
+  });
+  assertEqual(windowUpdates.length, 1, "native focus must focus exactly one browser window");
+  assertEqual(windowUpdates[0].windowId, 11, "native focus must use the selected target window id");
+  assertEqual(windowUpdates[0].updateInfo.focused, true, "native focus must request window focus");
+  assertEqual(tabUpdates.length, 1, "native focus must activate exactly one browser tab");
+  assertEqual(tabUpdates[0].tabId, 23, "native focus must activate the selected tab id");
+  assertEqual(tabUpdates[0].updateInfo.active, true, "native focus must request active tab selection");
+  assert(!tabUpdates.some(update => update.tabId === 22), "native focus must leave competing tabs inactive");
+  const focusResult = postedMessages.filter(message => message.type === "focusResult").at(-1);
+  assertEqual(focusResult.requestID, "focus-1", "focus result must preserve request id");
+  assertEqual(focusResult.targetID, twoTargetSnapshot.targets[1].id, "focus result must preserve exact target id");
+  assertEqual(focusResult.ok, true, "focus result must report successful tab activation");
+
   nativeMessageListener({
     type: "command",
     requestID: "command-1",
@@ -286,6 +353,21 @@ expect(
 )
 expect(
     transport,
+    'static let focusResultNotificationName = Notification.Name("com.fpieringer.keyway.chromium.focusResult")',
+    "Swift Chromium transport must receive browser focus results separately from media command results",
+)
+expect(
+    transport,
+    'type: "focusTarget"',
+    "Swift Chromium transport must send explicit browser focus requests",
+)
+expect(
+    transport,
+    "func focus(\n        target: MediaRemoteTarget,",
+    "Swift Chromium transport must expose a dedicated focus operation",
+)
+expect(
+    transport,
     "static func browserFamily(target: MediaRemoteTarget) -> String?",
     "Chromium extension targets must expose their browser family for safe legacy fallback",
 )
@@ -318,6 +400,21 @@ expect(
     action_controller,
     '"chromium_extension_fallback"',
     "Chromium extension fallback must be traced distinctly",
+)
+expect(
+    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    'if (message.type === "focusTarget")',
+    "Chromium extension service worker must dispatch explicit focus requests",
+)
+expect(
+    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    "chrome.windows.update(target.windowId, { focused: true }",
+    "Chromium extension service worker must focus the selected browser window",
+)
+expect(
+    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    "chrome.tabs.update(target.tabId, { active: true }",
+    "Chromium extension service worker must activate the selected browser tab",
 )
 expect(
     environment,

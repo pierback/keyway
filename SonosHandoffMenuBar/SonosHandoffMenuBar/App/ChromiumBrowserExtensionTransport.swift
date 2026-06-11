@@ -10,6 +10,7 @@ enum ChromiumBrowserExtensionTransport {
     static let extensionID = "gmdpkggbaohimgacbclndlfjghgcbael"
     static let snapshotNotificationName = Notification.Name("com.fpieringer.keyway.chromium.snapshot")
     static let commandResultNotificationName = Notification.Name("com.fpieringer.keyway.chromium.commandResult")
+    static let focusResultNotificationName = Notification.Name("com.fpieringer.keyway.chromium.focusResult")
     static let commandNotificationName = Notification.Name("com.fpieringer.keyway.chromium.command")
 
     static func isTarget(_ target: MediaRemoteTarget) -> Bool {
@@ -225,10 +226,13 @@ final class ChromiumBrowserExtensionController: ObservableObject {
     private let decoder = JSONDecoder()
     private var snapshotObserver: NSObjectProtocol?
     private var commandResultObserver: NSObjectProtocol?
+    private var focusResultObserver: NSObjectProtocol?
     private var disconnectTimer: Timer?
     private var lastMessageAt: Date?
     private var pendingCommands: [String: ChromiumBrowserExtensionPendingCommand] = [:]
     private var commandResultTimeouts: [String: Task<Void, Never>] = [:]
+    private var pendingFocusRequests: [String: ChromiumBrowserExtensionPendingFocus] = [:]
+    private var focusResultTimeouts: [String: Task<Void, Never>] = [:]
 
     var hasRoutableTargets: Bool {
         connected && !targets.isEmpty
@@ -265,6 +269,19 @@ final class ChromiumBrowserExtensionController: ObservableObject {
             }
         }
 
+        focusResultObserver = DistributedNotificationCenter.default().addObserver(
+            forName: ChromiumBrowserExtensionTransport.focusResultNotificationName,
+            object: ChromiumBrowserExtensionTransport.nativeMessagingHostName,
+            queue: .main
+        ) { [weak self] notification in
+            guard let payload = notification.userInfo?["payload"] as? String else {
+                preconditionFailure("Chromium native host focus-result notifications must include a payload.")
+            }
+            Task { @MainActor [weak self, payload] in
+                self?.handleFocusResultPayload(payload)
+            }
+        }
+
         disconnectTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.markDisconnectedIfStale(now: Date())
@@ -279,13 +296,20 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         if let commandResultObserver {
             DistributedNotificationCenter.default().removeObserver(commandResultObserver)
         }
+        if let focusResultObserver {
+            DistributedNotificationCenter.default().removeObserver(focusResultObserver)
+        }
         snapshotObserver = nil
         commandResultObserver = nil
+        focusResultObserver = nil
         disconnectTimer?.invalidate()
         disconnectTimer = nil
         commandResultTimeouts.values.forEach { $0.cancel() }
         commandResultTimeouts = [:]
         pendingCommands = [:]
+        focusResultTimeouts.values.forEach { $0.cancel() }
+        focusResultTimeouts = [:]
+        pendingFocusRequests = [:]
         markDisconnected()
     }
 
@@ -368,6 +392,52 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         )
     }
 
+    func focus(
+        target: MediaRemoteTarget,
+        onResult: @escaping (SourceFocusResult) -> Void
+    ) -> Bool? {
+        guard ChromiumBrowserExtensionTransport.isTarget(target) else {
+            return nil
+        }
+        guard connected else {
+            onResult(SourceFocusResult(
+                requestID: UUID().uuidString,
+                targetID: target.id,
+                ok: false,
+                message: "Chromium extension is disconnected.",
+                backend: ChromiumBrowserExtensionTransport.backendName,
+                failureReason: .chromiumExtensionDisconnected
+            ))
+            return true
+        }
+
+        let requestID = UUID().uuidString
+        let targetAddress = ChromiumBrowserExtensionTargetAddress(targetID: target.id)
+        let payload = ChromiumBrowserExtensionFocusPayload(
+            type: "focusTarget",
+            requestID: requestID,
+            targetID: target.id,
+            windowId: targetAddress.windowID,
+            tabId: targetAddress.tabID
+        )
+        let data = try! JSONEncoder().encode(payload)
+        let json = String(data: data, encoding: .utf8)!
+        pendingFocusRequests[requestID] = ChromiumBrowserExtensionPendingFocus(
+            startedAt: ProcessInfo.processInfo.systemUptime,
+            targetID: target.id,
+            resultHandler: onResult
+        )
+        armFocusResultTimeout(requestID: requestID)
+        DistributedNotificationCenter.default().postNotificationName(
+            ChromiumBrowserExtensionTransport.commandNotificationName,
+            object: ChromiumBrowserExtensionTransport.nativeMessagingHostName,
+            userInfo: ["payload": json],
+            deliverImmediately: true
+        )
+        logger.info("ChromiumExtension focus_sent requestID=\(requestID, privacy: .public) target=\(target.id, privacy: .public)")
+        return true
+    }
+
     private func submit(
         commandName: String,
         volumeDelta: Double?,
@@ -436,6 +506,23 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         pending.resultHandler(result)
     }
 
+    private func handleFocusResultPayload(_ payload: String) {
+        guard let data = payload.data(using: .utf8) else {
+            preconditionFailure("Chromium native host focus-result notifications must include UTF-8 JSON.")
+        }
+        let result = try! decoder.decode(SourceFocusResult.self, from: data)
+        guard let requestID = result.requestID,
+              let pending = pendingFocusRequests.removeValue(forKey: requestID)
+        else {
+            return
+        }
+        focusResultTimeouts.removeValue(forKey: requestID)?.cancel()
+        lastMessageAt = Date()
+        let elapsed = ProcessInfo.processInfo.systemUptime - pending.startedAt
+        logger.info("ChromiumExtension focus_result requestID=\(requestID, privacy: .public) target=\(result.targetID, privacy: .public) ok=\(result.ok, privacy: .public) elapsedMs=\(Int((elapsed * 1000).rounded()), privacy: .public)")
+        pending.resultHandler(result)
+    }
+
     private func markDisconnectedIfStale(now: Date) {
         guard let lastMessageAt else {
             return
@@ -469,6 +556,29 @@ final class ChromiumBrowserExtensionController: ObservableObject {
             ))
         }
     }
+
+    private func armFocusResultTimeout(requestID: String) {
+        focusResultTimeouts[requestID]?.cancel()
+        focusResultTimeouts[requestID] = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: Self.commandResultTimeoutNanoseconds)
+            guard let self,
+                  let pending = self.pendingFocusRequests.removeValue(forKey: requestID)
+            else {
+                return
+            }
+            self.focusResultTimeouts[requestID] = nil
+            let elapsed = ProcessInfo.processInfo.systemUptime - pending.startedAt
+            self.logger.error("ChromiumExtension focus_timeout requestID=\(requestID, privacy: .public) target=\(pending.targetID, privacy: .public) elapsedMs=\(Int((elapsed * 1000).rounded()), privacy: .public)")
+            pending.resultHandler(SourceFocusResult(
+                requestID: requestID,
+                targetID: pending.targetID,
+                ok: false,
+                message: "Chromium extension focus timed out",
+                backend: ChromiumBrowserExtensionTransport.backendName,
+                failureReason: .chromiumExtensionTimedOut
+            ))
+        }
+    }
 }
 
 private struct ChromiumBrowserExtensionPendingCommand {
@@ -476,6 +586,12 @@ private struct ChromiumBrowserExtensionPendingCommand {
     let commandName: String
     let targetID: String
     let resultHandler: (MediaRemoteCommandResultEvent) -> Void
+}
+
+private struct ChromiumBrowserExtensionPendingFocus {
+    let startedAt: TimeInterval
+    let targetID: String
+    let resultHandler: (SourceFocusResult) -> Void
 }
 
 private struct ChromiumBrowserExtensionCommandPayload: Encodable {
@@ -489,7 +605,17 @@ private struct ChromiumBrowserExtensionCommandPayload: Encodable {
     let volumeDelta: Double?
 }
 
-private struct ChromiumBrowserExtensionTargetAddress {
+private struct ChromiumBrowserExtensionFocusPayload: Encodable {
+    let type: String
+    let requestID: String
+    let targetID: String
+    let windowId: Int
+    let tabId: Int
+}
+
+struct ChromiumBrowserExtensionTargetAddress {
+    let browserKey: String
+    let windowID: Int
     let tabID: Int
     let frameID: Int
     let mediaID: String
@@ -500,6 +626,8 @@ private struct ChromiumBrowserExtensionTargetAddress {
             parts.count >= 6 && parts[0] == "chromium-extension",
             "Chromium extension target IDs must include browser, window, tab, frame, and media components."
         )
+        self.browserKey = parts[1]
+        self.windowID = Int(parts[2])!
         self.tabID = Int(parts[3])!
         self.frameID = Int(parts[4])!
         self.mediaID = parts[5...].joined(separator: ":")

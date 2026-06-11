@@ -2,7 +2,7 @@ import Foundation
 import os
 import SonosHandoffCore
 
-enum MediaAudioVolumeDirection: Sendable {
+enum MediaAudioVolumeDirection: Equatable, Sendable {
     case down
     case up
 

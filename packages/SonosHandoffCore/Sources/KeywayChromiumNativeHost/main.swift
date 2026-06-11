@@ -2,6 +2,7 @@ import Foundation
 
 let snapshotNotificationName = Notification.Name("com.fpieringer.keyway.chromium.snapshot")
 let commandResultNotificationName = Notification.Name("com.fpieringer.keyway.chromium.commandResult")
+let focusResultNotificationName = Notification.Name("com.fpieringer.keyway.chromium.focusResult")
 let commandNotificationName = Notification.Name("com.fpieringer.keyway.chromium.command")
 let hostName = "com.fpieringer.keyway.chromium"
 let writeLock = NSLock()
@@ -62,14 +63,14 @@ func postNativeMessage(_ payload: String) {
     let data = Data(payload.utf8)
     let envelope = try! JSONDecoder().decode(NativeMessageEnvelope.self, from: data)
     precondition(
-        envelope.type == "snapshot" || envelope.type == "hello" || envelope.type == "commandResult",
+        envelope.type == "snapshot" || envelope.type == "hello" || envelope.type == "commandResult" || envelope.type == "focusResult",
         "Unknown Chromium native message type: \(envelope.type)"
     )
-    guard envelope.type == "snapshot" || envelope.type == "commandResult" else {
+    guard envelope.type == "snapshot" || envelope.type == "commandResult" || envelope.type == "focusResult" else {
         return
     }
     DistributedNotificationCenter.default().postNotificationName(
-        envelope.type == "snapshot" ? snapshotNotificationName : commandResultNotificationName,
+        envelope.type == "snapshot" ? snapshotNotificationName : envelope.type == "commandResult" ? commandResultNotificationName : focusResultNotificationName,
         object: hostName,
         userInfo: ["payload": payload],
         deliverImmediately: true
