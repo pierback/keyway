@@ -591,6 +591,10 @@ final class MediaTransportActionController {
             logger.info("MediaTransport route command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) reason=\(reason.rawValue, privacy: .public) transport=\(result.backend ?? "desktop", privacy: .public)")
             return
         }
+        guard canUseMediaRemotePlayerPath(command: command, target: target) else {
+            finishProgrammaticDispatch(id: dispatchID, fallback: true)
+            return
+        }
         guard sendProgrammaticMediaRemote(command: command, to: target, dispatchID: dispatchID, reason: reason) else {
             finishProgrammaticDispatch(id: dispatchID, fallback: true)
             logger.error("MediaTransport route_failed command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) reason=\(reason.rawValue, privacy: .public)")
@@ -664,6 +668,10 @@ final class MediaTransportActionController {
         dispatchID: UUID,
         reason: MediaTransportRoutingReason
     ) -> Bool {
+        guard canUseMediaRemotePlayerPath(command: command, target: target) else {
+            return false
+        }
+
         let sent = mediaRemoteController.submit(command: command, targetID: target.id) { [weak self] result in
             self?.trace(result: result, transportBackend: Self.mediaRemotePlayerPathBackend)
             self?.finishProgrammaticDispatch(
@@ -819,6 +827,10 @@ final class MediaTransportActionController {
             logger.info("MediaTransport chooser command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) transport=\(result.backend ?? "desktop", privacy: .public)")
             return
         }
+        guard canUseMediaRemotePlayerPath(command: command, target: target) else {
+            finishChooserDispatch(id: dispatchID, fallback: true)
+            return
+        }
         guard sendChooserMediaRemote(command: command, to: target, dispatchID: dispatchID) else {
             finishChooserDispatch(id: dispatchID, fallback: true)
             logger.error("MediaTransport chooser_failed command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public)")
@@ -890,6 +902,10 @@ final class MediaTransportActionController {
         to target: MediaRemoteTarget,
         dispatchID: UUID
     ) -> Bool {
+        guard canUseMediaRemotePlayerPath(command: command, target: target) else {
+            return false
+        }
+
         let sent = mediaRemoteController.submit(command: command, targetID: target.id) { [weak self] result in
             self?.trace(result: result, transportBackend: Self.mediaRemotePlayerPathBackend)
             self?.finishChooserDispatch(
@@ -902,6 +918,34 @@ final class MediaTransportActionController {
             logger.info("MediaTransport chooser command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) transport=\(Self.mediaRemotePlayerPathBackend, privacy: .public)")
         }
         return sent
+    }
+
+    private func canUseMediaRemotePlayerPath(
+        command: MediaRemoteTransportCommand,
+        target: MediaRemoteTarget
+    ) -> Bool {
+        if ChromiumBrowserExtensionTransport.isTarget(target) {
+            return true
+        }
+        if desktopTransport.backendName(for: target) != nil {
+            return true
+        }
+        if target.isChromiumBrowserLike {
+            trace(
+                "browser_legacy_mediaremote_blocked",
+                command: command,
+                target: target,
+                reason: "requires_browser_extension",
+                transportBackend: Self.mediaRemotePlayerPathBackend
+            )
+            StatusHUD.shared.finish(
+                title: "Browser Extension Required",
+                message: "Install and enable the Keyway browser extension in \(target.appName), then retry.",
+                dismissAfter: 2.8
+            )
+            return false
+        }
+        return true
     }
 
     private func legacyChromiumFallbackTarget(for target: MediaRemoteTarget) -> MediaRemoteTarget? {

@@ -137,6 +137,7 @@ assert_order(
         "if result.unsupported, sendProgrammaticSpotifyWebAPI(command: command, to: target, dispatchID: dispatchID, reason: reason)",
         '"desktop_transport_fallback"',
         "if result.unsupported, sendProgrammaticMediaRemote(command: command, to: target, dispatchID: dispatchID, reason: reason)",
+        "canUseMediaRemotePlayerPath(command: command, target: target)",
         "guard sendProgrammaticMediaRemote(command: command, to: target, dispatchID: dispatchID, reason: reason)",
     ],
     "programmatic legacy dispatch must try desktop adapters before Spotify Web API and MediaRemote while allowing unsupported desktop fallthrough"
@@ -162,6 +163,7 @@ programmatic_mediaremote = function_body("sendProgrammaticMediaRemote")
 assert_order(
     programmatic_mediaremote,
     [
+        "canUseMediaRemotePlayerPath(command: command, target: target)",
         "mediaRemoteController.submit(command: command, targetID: target.id)",
         "Self.mediaRemotePlayerPathBackend",
         "finishProgrammaticDispatch(",
@@ -192,6 +194,7 @@ assert_order(
         "if result.unsupported, sendChooserSpotifyWebAPI(command: command, to: target, dispatchID: dispatchID)",
         '"desktop_transport_fallback"',
         "if result.unsupported, sendChooserMediaRemote(command: command, to: target, dispatchID: dispatchID)",
+        "canUseMediaRemotePlayerPath(command: command, target: target)",
         "guard sendChooserMediaRemote(command: command, to: target, dispatchID: dispatchID)",
     ],
     "chooser legacy dispatch must try desktop adapters before Spotify Web API and MediaRemote while allowing unsupported desktop fallthrough"
@@ -217,12 +220,28 @@ chooser_mediaremote = function_body("sendChooserMediaRemote")
 assert_order(
     chooser_mediaremote,
     [
+        "canUseMediaRemotePlayerPath(command: command, target: target)",
         "mediaRemoteController.submit(command: command, targetID: target.id)",
         "Self.mediaRemotePlayerPathBackend",
         "finishChooserDispatch(",
         "showCommandFailureIfNeeded(result: result, target: target)",
     ],
     "chooser MediaRemote fallback must use the player path and preserve async result handling"
+)
+
+mediaremote_gate = function_body("canUseMediaRemotePlayerPath")
+assert_order(
+    mediaremote_gate,
+    [
+        "ChromiumBrowserExtensionTransport.isTarget(target)",
+        "desktopTransport.backendName(for: target) != nil",
+        "target.isChromiumBrowserLike",
+        '"browser_legacy_mediaremote_blocked"',
+        '"requires_browser_extension"',
+        '"Browser Extension Required"',
+        "return false",
+    ],
+    "legacy Chromium browser rows must not use MediaRemote player-path routing because selected-row dispatch can affect a competing global media session"
 )
 
 chromium_fallback = function_body("legacyChromiumFallbackTarget(\n        for target: MediaRemoteTarget,\n        in targets:")
