@@ -113,7 +113,7 @@ write_tone(root / "tone-b.wav", 660)
 <body>
 <button id="previous" aria-label="Previous track">Previous</button>
 <button id="next" aria-label="Next track">Next</button>
-<audio id="media" controls preload="auto" autoplay muted loop src="/tone-a.wav"></audio>
+<audio id="media" controls preload="auto" autoplay loop src="/tone-a.wav"></audio>
 <script>
 const tracks = [
   { title: "Keyway Chromium Smoke A Track 1", src: "/tone-a.wav" },
@@ -142,7 +142,7 @@ setTrack(0);
 <body>
 <button id="previous" aria-label="Previous track">Previous</button>
 <button id="next" aria-label="Next track">Next</button>
-<audio id="media" controls preload="auto" autoplay muted loop src="/tone-b.wav"></audio>
+<audio id="media" controls preload="auto" autoplay loop src="/tone-b.wav"></audio>
 <script>
 const tracks = [
   { title: "Keyway Chromium Smoke B Track 1", src: "/tone-b.wav" },
@@ -456,10 +456,6 @@ else {
 }
 let discoveryMs = Int(((ProcessInfo.processInfo.systemUptime - discoveryStarted) * 1000).rounded())
 
-var expectedMuted = [
-    initialTargets.0.id: initialTargets.0.muted,
-    initialTargets.1.id: initialTargets.1.muted,
-]
 var ackLatencies: [Int] = []
 var commandSurfaceSuccess = 0
 var commandSurfaceFailure = 0
@@ -579,16 +575,30 @@ if !initiallyPlaying {
     }
 }
 
+guard let stressTargets = state.smokeTargets(),
+      let firstVolume = stressTargets.0.volume,
+      let secondVolume = stressTargets.1.volume
+else {
+    FileHandle.standardError.write(Data("smoke_chromium_extension_transport_failure missing volumes before stress loop\n".utf8))
+    exit(1)
+}
+
+var expectedVolumes = [
+    stressTargets.0.id: firstVolume,
+    stressTargets.1.id: secondVolume,
+]
+
 for iteration in 0..<iterations {
     let currentTargets = state.smokeTargets()!
     let target = iteration.isMultiple(of: 2) ? currentTargets.0 : currentTargets.1
     let other = iteration.isMultiple(of: 2) ? currentTargets.1 : currentTargets.0
-    let previousTargetMuted = expectedMuted[target.id]!
-    expectedMuted[target.id] = !previousTargetMuted
-    let expectedOtherMuted = expectedMuted[other.id]!
+    let previousTargetVolume = expectedVolumes[target.id]!
+    let volumeDelta = previousTargetVolume >= 0.8 ? -0.2 : 0.2
+    expectedVolumes[target.id] = max(0, min(1, previousTargetVolume + volumeDelta))
+    let expectedOtherVolume = expectedVolumes[other.id]!
     let requestID = UUID().uuidString
     let started = ProcessInfo.processInfo.systemUptime
-    postCommand(target: target, requestID: requestID, command: "mute")
+    postCommand(target: target, requestID: requestID, command: "volumeDelta", volumeDelta: volumeDelta)
 
     guard runLoop(until: Date(timeIntervalSinceNow: 2), condition: { state.result(requestID: requestID) != nil }),
           let result = state.result(requestID: requestID)
@@ -600,7 +610,7 @@ for iteration in 0..<iterations {
     let ackMs = Int(((ProcessInfo.processInfo.systemUptime - started) * 1000).rounded())
     ackLatencies.append(ackMs)
 
-    if !result.ok || result.unsupported == true || result.targetID != target.id || result.command != "mute" {
+    if !result.ok || result.unsupported == true || result.targetID != target.id || result.command != "volumeDelta" {
         failure += 1
         if result.targetID != target.id {
             wrongTarget += 1
@@ -610,20 +620,20 @@ for iteration in 0..<iterations {
     }
 
     let observedExpectedState = runLoop(until: Date(timeIntervalSinceNow: 2)) {
-        state.target(id: target.id)?.muted == expectedMuted[target.id]
-            && state.target(id: other.id)?.muted == expectedOtherMuted
+        approximatelyEqual(state.target(id: target.id)?.volume, expectedVolumes[target.id]!)
+            && approximatelyEqual(state.target(id: other.id)?.volume, expectedOtherVolume)
     }
 
     if observedExpectedState {
         success += 1
     } else {
         failure += 1
-        let targetMuted = state.target(id: target.id)?.muted
-        let otherMuted = state.target(id: other.id)?.muted
-        if otherMuted != expectedOtherMuted {
+        let targetVolume = state.target(id: target.id)?.volume
+        let otherVolume = state.target(id: other.id)?.volume
+        if !approximatelyEqual(otherVolume, expectedOtherVolume) {
             wrongTarget += 1
         }
-        if targetMuted == previousTargetMuted && otherMuted == expectedOtherMuted {
+        if approximatelyEqual(targetVolume, previousTargetVolume) && approximatelyEqual(otherVolume, expectedOtherVolume) {
             duplicate += 1
         }
         FileHandle.standardError.write(Data("smoke_chromium_extension_transport_failure iteration=\(iteration + 1) target_state=\(String(describing: state.target(id: target.id))) other_state=\(String(describing: state.target(id: other.id)))\n".utf8))

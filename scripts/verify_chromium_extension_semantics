@@ -193,13 +193,121 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
     () => {}
   );
   await Promise.resolve();
+  const pausedTargetSnapshot = postedMessages.filter(message => message.type === "snapshot").at(-1);
+  assertEqual(pausedTargetSnapshot.targets.length, 1, "inactive paused browser media must not publish an active source row");
+
+  runtimeMessageListener(
+    {
+      type: "keywayMediaState",
+      mediaId: "media-2",
+      title: "Second Song",
+      artist: "Second Artist",
+      playing: true,
+      muted: true,
+      volume: 0.75,
+      duration: 180,
+      elapsedTime: 20,
+    },
+    {
+      tab: {
+        id: 23,
+        windowId: 11,
+        url: "https://example.test/second-video",
+        title: "Second Example Video",
+      },
+      frameId: 0,
+    },
+    () => {}
+  );
+  await Promise.resolve();
+  const mutedTargetSnapshot = postedMessages.filter(message => message.type === "snapshot").at(-1);
+  assertEqual(mutedTargetSnapshot.targets.length, 1, "muted browser media must not publish an active source row");
+
+  runtimeMessageListener(
+    {
+      type: "keywayMediaState",
+      mediaId: "media-2",
+      title: "Second Song",
+      artist: "Second Artist",
+      playing: true,
+      muted: false,
+      volume: 0,
+      duration: 180,
+      elapsedTime: 20,
+    },
+    {
+      tab: {
+        id: 23,
+        windowId: 11,
+        url: "https://example.test/second-video",
+        title: "Second Example Video",
+      },
+      frameId: 0,
+    },
+    () => {}
+  );
+  await Promise.resolve();
+  const silentTargetSnapshot = postedMessages.filter(message => message.type === "snapshot").at(-1);
+  assertEqual(silentTargetSnapshot.targets.length, 1, "zero-volume browser media must not publish an active source row");
+
+  runtimeMessageListener(
+    {
+      type: "keywayMediaState",
+      mediaId: "media-2",
+      title: "Second Song",
+      artist: "Second Artist",
+      playing: true,
+      muted: false,
+      volume: 0.75,
+      duration: 180,
+      elapsedTime: 20,
+    },
+    {
+      tab: {
+        id: 23,
+        windowId: 11,
+        url: "https://example.test/second-video",
+        title: "Second Example Video",
+      },
+      frameId: 0,
+    },
+    () => {}
+  );
+  await Promise.resolve();
   const twoTargetSnapshot = postedMessages.filter(message => message.type === "snapshot").at(-1);
-  assertEqual(twoTargetSnapshot.targets.length, 2, "two media tabs must publish two exact browser targets");
+  assertEqual(twoTargetSnapshot.targets.length, 2, "two audible media tabs must publish two exact browser targets");
   assertEqual(
     twoTargetSnapshot.targets[1].id,
     "chromium-extension:chrome-extensionid:11:23:0:media-2",
     "second target id must preserve its own tab identity"
   );
+
+  runtimeMessageListener(
+    {
+      type: "keywayMediaState",
+      mediaId: "media-2",
+      title: "Second Song",
+      artist: "Second Artist",
+      playing: false,
+      muted: false,
+      volume: 0.75,
+      duration: 180,
+      elapsedTime: 20,
+    },
+    {
+      tab: {
+        id: 23,
+        windowId: 11,
+        url: "https://example.test/second-video",
+        title: "Second Example Video",
+      },
+      frameId: 0,
+    },
+    () => {}
+  );
+  await Promise.resolve();
+  const recentlyActiveSnapshot = postedMessages.filter(message => message.type === "snapshot").at(-1);
+  assertEqual(recentlyActiveSnapshot.targets.length, 2, "recently active paused browser media must remain briefly commandable");
 
   assert(typeof nativeMessageListener === "function", "service worker must register native command listener");
   nativeMessageListener({

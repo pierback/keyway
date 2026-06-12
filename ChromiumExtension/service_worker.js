@@ -5,6 +5,7 @@ let heartbeatTimer = null;
 let cachedBrowserInfo = null;
 const targets = new Map();
 const targetStaleAfterMs = 3500;
+const recentlyActiveAfterMs = 15000;
 
 function connectNativeHost() {
   if (nativePort) return;
@@ -97,8 +98,17 @@ function publishSnapshot() {
     type: "snapshot",
     protocolVersion: 1,
     createdAt: Date.now(),
-    targets: Array.from(targets.values()),
+    targets: Array.from(targets.values()).filter(isVisibleTarget),
   });
+}
+
+function isVisibleTarget(target) {
+  if (isAudiblePlayback(target)) return true;
+  return Date.now() - target.lastActiveAt <= recentlyActiveAfterMs;
+}
+
+function isAudiblePlayback(target) {
+  return target.playing && !target.muted && target.volume !== 0;
 }
 
 function removeStaleTargets() {
@@ -215,15 +225,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     browserInfo().then(browser => {
+      const stateID = targetID({
+        browserKey: browser.key,
+        windowId: tab.windowId,
+        tabId: tab.id,
+        frameId: sender.frameId,
+        mediaId: message.mediaId,
+      });
+      const existingState = targets.get(stateID);
       const state = {
         type: "target",
-        id: targetID({
-          browserKey: browser.key,
-          windowId: tab.windowId,
-          tabId: tab.id,
-          frameId: sender.frameId,
-          mediaId: message.mediaId,
-        }),
+        id: stateID,
         browser: browser.name,
         tabId: tab.id,
         windowId: tab.windowId,
@@ -244,6 +256,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           : ["play", "pause", "playPause", "mute", "volumeDelta"],
         updatedAt: Date.now(),
       };
+      state.lastActiveAt = isAudiblePlayback(state) ? state.updatedAt : existingState?.lastActiveAt || 0;
       targets.set(state.id, state);
       publishSnapshot();
       sendResponse({ ok: true });
