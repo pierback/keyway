@@ -50,6 +50,7 @@
 		C530DAFF29C05D3D48FACDFE /* PlaybackBackgroundSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00C2077EF59C5AA84590F7C /* PlaybackBackgroundSync.swift */; };
 		C7545816D6CB88A3A20B529C /* MediaAudioControlController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA2393621A13F9400EF82869 /* MediaAudioControlController.swift */; };
 		C7FFEEB1245793B9EF7E8807 /* MenuBarOutputSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C11B98936E2EE9433109534 /* MenuBarOutputSection.swift */; };
+		CB30F1EE8B7E458B89C929F5 /* MenuBarMediaSourceSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4E1A22269DF4C2581F558B0 /* MenuBarMediaSourceSection.swift */; };
 		D401E5D69E7A5396A07113E7 /* MenuBarVolumeControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58DDCE3DF65F2E4A505190AA /* MenuBarVolumeControl.swift */; };
 		D7F8ECEB545F1DA8D14B5E26 /* MenuBarMotion.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2ADDA9977300BA26C72AE1BE /* MenuBarMotion.swift */; };
 		D8BC75DE1F7A5BB319167924 /* PlaybackGroupSuggestion.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9713F0CA862900ED3816BA99 /* PlaybackGroupSuggestion.swift */; };
@@ -116,6 +117,7 @@
 		DCBAF1B54EFDD52CB24A27BA /* PlaybackVolumeActionController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlaybackVolumeActionController.swift; sourceTree = "<group>"; };
 		DF3DE5098A9A4022C60DBFCB /* PlaybackTransferActionController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlaybackTransferActionController.swift; sourceTree = "<group>"; };
 		DFCD5CF2D346C7512F52FE9A /* MediaRemoteModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaRemoteModels.swift; sourceTree = "<group>"; };
+		E4E1A22269DF4C2581F558B0 /* MenuBarMediaSourceSection.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MenuBarMediaSourceSection.swift; sourceTree = "<group>"; };
 			F10E50BA4A6995D7A9556E66 /* Assets.xcassets */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 			FA2393621A13F9400EF82869 /* MediaAudioControlController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaAudioControlController.swift; sourceTree = "<group>"; };
 			F6E2C9837F646DA50417652E /* SourceFocusActionController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SourceFocusActionController.swift; sourceTree = "<group>"; };
@@ -170,6 +172,7 @@
 				119DEEF7B628EE89CC9F443D /* MediaTransportRouteSource.swift */,
 				ACE15770F4B374A6E959E602 /* MediaTransportTraceRecorder.swift */,
 				2ADDA9977300BA26C72AE1BE /* MenuBarMotion.swift */,
+				E4E1A22269DF4C2581F558B0 /* MenuBarMediaSourceSection.swift */,
 				3C11B98936E2EE9433109534 /* MenuBarOutputSection.swift */,
 				58DDCE3DF65F2E4A505190AA /* MenuBarVolumeControl.swift */,
 				D00C2077EF59C5AA84590F7C /* PlaybackBackgroundSync.swift */,
@@ -434,6 +437,7 @@
 				40D38B498B3DC835628BCF22 /* MediaTransportRouteSource.swift in Sources */,
 				EF20DB3655ED22BBC2EBBD92 /* MediaTransportTraceRecorder.swift in Sources */,
 				D7F8ECEB545F1DA8D14B5E26 /* MenuBarMotion.swift in Sources */,
+				CB30F1EE8B7E458B89C929F5 /* MenuBarMediaSourceSection.swift in Sources */,
 				C7FFEEB1245793B9EF7E8807 /* MenuBarOutputSection.swift in Sources */,
 				D401E5D69E7A5396A07113E7 /* MenuBarVolumeControl.swift in Sources */,
 				C530DAFF29C05D3D48FACDFE /* PlaybackBackgroundSync.swift in Sources */,

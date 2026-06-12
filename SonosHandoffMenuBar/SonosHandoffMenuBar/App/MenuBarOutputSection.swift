@@ -24,7 +24,7 @@ struct MenuBarOutputSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text(groupEditingActive ? "Group" : "Output")
+                Text(groupEditingActive ? "Group" : "Speakers")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.secondary)
 
@@ -185,7 +185,7 @@ struct MenuBarOutputSection: View {
 
         return HStack(spacing: 0) {
             Button {
-                playback.transfer(to: row)
+                playback.selectSpeaker(row: row)
             } label: {
                 HStack(spacing: 11) {
                     ZStack {
@@ -209,10 +209,10 @@ struct MenuBarOutputSection: View {
             .buttonStyle(.plain)
             .disabled(playback.loadingRoomName != nil || playback.groupLoadingRoomName != nil || playback.volumeState.isBusy)
             .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("transfer-to-\(row.coordinator.roomName)")
-            .accessibilityLabel("Transfer to \(row.displayName)")
+            .accessibilityIdentifier("select-speaker-\(row.coordinator.roomName)")
+            .accessibilityLabel("Select speaker \(row.displayName)")
             .accessibilityValue(selected ? "Selected" : "")
-            .accessibilityHint("Hands off Spotify playback to \(row.displayName)")
+            .accessibilityHint("Shows volume and grouping controls for \(row.displayName)")
 
             HStack(spacing: 0) {
                 if loading || selected {

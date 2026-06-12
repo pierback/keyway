@@ -26,6 +26,11 @@ expect_absent() {
 }
 
 expect_contains "$menu_section" "ForEach(playback.outputRows)"
+expect_contains "$menu_section" "playback.selectSpeaker(row: row)"
+expect_contains "$menu_section" 'Text(groupEditingActive ? "Group" : "Speakers")'
+expect_absent "$menu_section" "playback.transfer(to: row)"
+expect_absent "$menu_section" 'accessibilityIdentifier("transfer-to-'
+expect_absent "$menu_section" "Hands off Spotify playback"
 expect_absent "$menu_section" "playback.groupSuggestions"
 expect_absent "$menu_section" "acceptGroupSuggestion"
 expect_absent "$menu_section" "ignoreGroupSuggestion"

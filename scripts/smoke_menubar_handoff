@@ -7,7 +7,7 @@ APP_DIR="${KEYWAY_APP:-$HOME/Applications/Keyway.app}"
 ROOM="${1:-${SONOS_HANDOFF_ROOM:-Port}}"
 RELAUNCH="${KEYWAY_RELAUNCH:-1}"
 PREPARE_ROOM="${SONOS_HANDOFF_PREPARE_ROOM:-}"
-BUTTON_ID="transfer-to-${ROOM}"
+BUTTON_ID_SUFFIX="-route-spotify-to-${ROOM}"
 STATUS_FILE="$(mktemp -t sonos-handoff-ui-handoff.XXXXXX)"
 LOG_FILE="$(mktemp -t sonos-handoff-ui-handoff-log.XXXXXX)"
 
@@ -37,7 +37,7 @@ import ApplicationServices
 import Foundation
 
 let pid = pid_t(CommandLine.arguments[1])!
-let identifier = CommandLine.arguments[2]
+let identifierSuffix = CommandLine.arguments[2]
 let app = AXUIElementCreateApplication(pid)
 
 func copyAttribute(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
@@ -60,7 +60,7 @@ func findByIdentifier(_ element: AXUIElement, depth: Int = 0) -> AXUIElement? {
     if depth > 10 {
         return nil
     }
-    if stringAttribute(element, kAXIdentifierAttribute as String) == identifier {
+    if stringAttribute(element, kAXIdentifierAttribute as String).hasSuffix(identifierSuffix) {
         return element
     }
     for child in children(element) {
@@ -73,6 +73,7 @@ func findByIdentifier(_ element: AXUIElement, depth: Int = 0) -> AXUIElement? {
 
 for _ in 0 ..< 60 {
     if let button = findByIdentifier(app) {
+        let identifier = stringAttribute(button, kAXIdentifierAttribute as String)
         let description = stringAttribute(button, kAXDescriptionAttribute as String)
         let status = AXUIElementPerformAction(button, kAXPressAction as CFString)
         guard status == .success else {
@@ -85,9 +86,9 @@ for _ in 0 ..< 60 {
     usleep(200_000)
 }
 
-fputs("press_transfer_button: button not found: \(identifier)\n", stderr)
+fputs("press_transfer_button: button not found with suffix: \(identifierSuffix)\n", stderr)
 exit(2)
-' "$pid" "$BUTTON_ID"
+' "$pid" "$BUTTON_ID_SUFFIX"
 }
 
 show_recent_logs() {
@@ -154,7 +155,7 @@ if [[ -z "$pid" ]]; then
 fi
 
 echo "room=$ROOM"
-echo "button_id=$BUTTON_ID"
+echo "button_id_suffix=$BUTTON_ID_SUFFIX"
 press_transfer_button "$pid"
 
 for _ in {1..30}; do

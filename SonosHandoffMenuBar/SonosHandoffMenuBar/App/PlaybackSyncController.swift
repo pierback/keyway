@@ -468,11 +468,18 @@ final class PlaybackSyncController: ObservableObject {
         }
     }
 
-    func transfer(to row: PlaybackOutputRow) {
-        guard groupLoadingRoomName == nil else {
+    func transferSpotifyPlayback(source: MediaRemoteTarget, to row: PlaybackOutputRow) {
+        guard source.isSpotify, groupLoadingRoomName == nil else {
             return
         }
         transfer(to: row.coordinator)
+    }
+
+    func selectSpeaker(row: PlaybackOutputRow) {
+        let roomName = row.coordinator.roomName
+        selectRoomName(roomName)
+        clearSpotifyAuthRequired()
+        refreshVolumeStatus(roomName: roomName)
     }
 
     func toggleGroupMembership(_ row: PlaybackGroupEditRow) {

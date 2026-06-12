@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source_section="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MenuBarMediaSourceSection.swift"
+status_controller="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/KeywayStatusItemController.swift"
+output_section="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MenuBarOutputSection.swift"
+playback_controller="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/PlaybackSyncController.swift"
+transport_controller="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportActionController.swift"
+project_file="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar.xcodeproj/project.pbxproj"
+
+fail() {
+  printf 'verify_menubar_source_first_semantics: %s\n' "$*" >&2
+  exit 1
+}
+
+expect_contains() {
+  local path="$1"
+  local text="$2"
+  grep -Fq "$text" "$path" || fail "$path missing expected text: $text"
+}
+
+expect_absent() {
+  local path="$1"
+  local text="$2"
+  if grep -Fq "$text" "$path"; then
+    fail "$path still contains forbidden text: $text"
+  fi
+}
+
+ast-grep --lang swift -p 'struct MenuBarMediaSourceSection: View { $$$ }' "$source_section" >/dev/null
+ast-grep --lang swift -p 'func transferSpotifyPlayback(source: MediaRemoteTarget, to row: PlaybackOutputRow) { $$$ }' "$playback_controller" >/dev/null
+ast-grep --lang swift -p 'func focus(target: MediaRemoteTarget) { $$$ }' "$transport_controller" >/dev/null
+
+expect_contains "$status_controller" "MenuBarMediaSourceSection("
+expect_contains "$status_controller" "sonosTile"
+expect_contains "$status_controller" 'Text("Speakers")'
+expect_absent "$status_controller" "nowPlayingCard"
+expect_absent "$status_controller" "mediaTransportActions.route(command: command)"
+
+expect_contains "$source_section" 'Text("Active Sources")'
+expect_contains "$source_section" "mediaRemoteController.targets"
+expect_contains "$source_section" "ForEach(targets)"
+expect_contains "$source_section" "mediaTransportActions.route(command: command, to: target)"
+expect_absent "$source_section" "mediaTransportActions.route(command: command)"
+expect_contains "$source_section" "mediaTransportActions.focus(target: target)"
+expect_contains "$source_section" "if target.isSpotify"
+expect_contains "$source_section" "playback.transferSpotifyPlayback(source: source, to: row)"
+expect_contains "$source_section" "ChromiumBrowserExtensionTransport.supports(command: command, target: target)"
+expect_contains "$source_section" 'if target.mediaType == "desktop_automation", target.isChromiumBrowserLike'
+expect_contains "$source_section" "if target.isChromiumBrowserLike"
+expect_contains "$source_section" "return false"
+expect_absent "$source_section" "Office unavailable"
+expect_absent "$source_section" "Sonos routing not supported"
+
+expect_contains "$playback_controller" "func transferSpotifyPlayback(source: MediaRemoteTarget, to row: PlaybackOutputRow)"
+expect_contains "$playback_controller" "guard source.isSpotify, groupLoadingRoomName == nil else"
+expect_contains "$playback_controller" "func selectSpeaker(row: PlaybackOutputRow)"
+
+expect_contains "$output_section" "playback.selectSpeaker(row: row)"
+expect_contains "$output_section" 'Text(groupEditingActive ? "Group" : "Speakers")'
+expect_absent "$output_section" "playback.transfer(to: row)"
+expect_absent "$output_section" 'accessibilityIdentifier("transfer-to-'
+expect_absent "$output_section" "Hands off Spotify playback"
+
+expect_contains "$transport_controller" "func focus(target: MediaRemoteTarget)"
+expect_contains "$transport_controller" "sourceFocusActionController.focus(target: target)"
+
+expect_contains "$project_file" "MenuBarMediaSourceSection.swift"
+
+printf 'verify_menubar_source_first_semantics=ok\n'

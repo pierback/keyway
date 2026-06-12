@@ -60,14 +60,14 @@ open_menu() {
 
 press_transfer_button() {
   local pid="$1"
-  local button_id="transfer-to-${ROOM}"
+  local button_id_suffix="-route-spotify-to-${ROOM}"
 
   /usr/bin/swift -e '
 import ApplicationServices
 import Foundation
 
 let pid = pid_t(CommandLine.arguments[1])!
-let identifier = CommandLine.arguments[2]
+let identifierSuffix = CommandLine.arguments[2]
 let app = AXUIElementCreateApplication(pid)
 
 func copyAttribute(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
@@ -90,7 +90,7 @@ func findByIdentifier(_ element: AXUIElement, depth: Int = 0) -> AXUIElement? {
     if depth > 12 {
         return nil
     }
-    if stringAttribute(element, kAXIdentifierAttribute as String) == identifier {
+    if stringAttribute(element, kAXIdentifierAttribute as String).hasSuffix(identifierSuffix) {
         return element
     }
     for child in children(element) {
@@ -103,6 +103,7 @@ func findByIdentifier(_ element: AXUIElement, depth: Int = 0) -> AXUIElement? {
 
 for _ in 0 ..< 80 {
     if let button = findByIdentifier(app) {
+        let identifier = stringAttribute(button, kAXIdentifierAttribute as String)
         let status = AXUIElementPerformAction(button, kAXPressAction as CFString)
         guard status == .success else {
             fputs("press_transfer_button: AXPress failed: \(status.rawValue)\n", stderr)
@@ -114,9 +115,9 @@ for _ in 0 ..< 80 {
     usleep(200_000)
 }
 
-fputs("press_transfer_button: button not found: \(identifier)\n", stderr)
+fputs("press_transfer_button: button not found with suffix: \(identifierSuffix)\n", stderr)
 exit(2)
-' "$pid" "$button_id"
+' "$pid" "$button_id_suffix"
 }
 
 drag_slider_to_volume() {

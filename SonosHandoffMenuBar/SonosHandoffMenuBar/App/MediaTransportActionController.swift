@@ -191,6 +191,10 @@ final class MediaTransportActionController {
         send(command: command, to: target, reason: .current)
     }
 
+    func focus(target: MediaRemoteTarget) {
+        sourceFocusActionController.focus(target: target)
+    }
+
     func currentRouteStatus() -> MediaRouteStatus {
         let targets = sortedTargets(mediaRemoteController.targets)
         guard !targets.isEmpty, mediaRemoteController.canRouteCommands else {

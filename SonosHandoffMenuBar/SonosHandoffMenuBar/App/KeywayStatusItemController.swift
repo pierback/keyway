@@ -294,7 +294,12 @@ private struct KeywayControlCenterPopoverView: View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(spacing: 8) {
                 header
-                nowPlayingCard
+                MenuBarMediaSourceSection(
+                    mediaRemoteController: mediaRemoteController,
+                    playback: playback,
+                    mediaTransportActions: mediaTransportActions,
+                    progressTick: progressTick
+                )
                 sonosTile
             }
             .padding(12)
@@ -435,148 +440,6 @@ private struct KeywayControlCenterPopoverView: View {
         .padding(.horizontal, 2)
     }
 
-    private var nowPlayingCard: some View {
-        let target = currentPlaybackTarget
-        let isRefreshingWithoutTarget = mediaRemoteController.isRefreshingSnapshot && target == nil
-        let displayTarget = target
-        let isPlaying = displayTarget?.isCurrentlyPlaying == true
-
-        return card(cornerRadius: Metrics.cardCornerRadius, padding: 10) {
-            VStack(spacing: 0) {
-                HStack(spacing: 10) {
-                    artworkView(displayTarget, size: 40)
-
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(nowPlayingTitle(target: displayTarget, refreshing: isRefreshingWithoutTarget))
-                            .font(.system(size: 12, weight: .medium))
-                            .lineLimit(1)
-                        Text(nowPlayingSubtitle(target: displayTarget, refreshing: isRefreshingWithoutTarget))
-                            .font(.system(size: 11))
-                            .foregroundStyle(.white.opacity(0.50))
-                            .lineLimit(1)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
-                progressBar(displayTarget, tick: progressTick)
-                    .padding(.top, 8)
-
-                HStack(spacing: 18) {
-                    Spacer(minLength: 0)
-                    transportButton(.previous, target: displayTarget)
-                    transportButton(isPlaying ? .pause : .play, target: displayTarget, emphasized: true)
-                    transportButton(.next, target: displayTarget)
-                    Spacer(minLength: 0)
-                }
-                .padding(.top, 4)
-            }
-        }
-    }
-
-    private func nowPlayingTitle(target: MediaRemoteTarget?, refreshing: Bool) -> String {
-        if let target, !target.title.isEmpty {
-            return target.title
-        }
-        if refreshing {
-            return "Refreshing..."
-        }
-        return "Not Playing"
-    }
-
-    private func nowPlayingSubtitle(target: MediaRemoteTarget?, refreshing: Bool) -> String {
-        if let target, !target.artist.isEmpty {
-            return target.artist
-        }
-        if let target {
-            return target.appName
-        }
-        return refreshing ? "Updating media target" : "No media target"
-    }
-
-    private var currentPlaybackTarget: MediaRemoteTarget? {
-        let targets = mediaRemoteController.targets
-        if let activeTarget = mediaRemoteController.activeTarget, activeTarget.isCurrentlyPlaying {
-            return activeTarget
-        }
-
-        if let playingTarget = targets.filter(\.isCurrentlyPlaying).max(by: { lhs, rhs in
-            lhs.playbackFreshness < rhs.playbackFreshness
-        }) {
-            return playingTarget
-        }
-
-        return mediaRemoteController.activeTarget ?? targets.first
-    }
-
-    private func artworkView(_ target: MediaRemoteTarget?, size: CGFloat) -> some View {
-        let radius = size * 0.175
-
-        return Group {
-            if let target, let artworkImage = target.artworkImage {
-                Image(nsImage: artworkImage)
-                    .resizable()
-                    .interpolation(.high)
-                    .scaledToFill()
-            } else if let target {
-                Image(nsImage: target.appIcon)
-                    .resizable()
-                    .interpolation(.high)
-                    .scaledToFill()
-            } else {
-                Rectangle()
-                    .fill(
-                        LinearGradient(
-                            colors: [.white.opacity(0.08), .white.opacity(0.03)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .overlay {
-                        Image(systemName: "music.note")
-                            .font(.system(size: size * 0.25, weight: .light))
-                            .foregroundStyle(.white.opacity(0.25))
-                    }
-            }
-        }
-        .frame(width: size, height: size)
-        .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: radius, style: .continuous)
-                .stroke(.white.opacity(0.10), lineWidth: 0.5)
-        }
-    }
-
-    private func progressBar(_ target: MediaRemoteTarget?, tick: UInt64) -> some View {
-        let _ = tick
-        let fraction = target?.playbackFraction ?? 0
-        let elapsedText = target?.elapsedFormatted ?? "-:--"
-        let remainingText = target?.remainingFormatted ?? "-:--"
-
-        return VStack(spacing: 3) {
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(.white.opacity(0.10))
-                        .frame(height: 3)
-                    Capsule()
-                        .fill(.white.opacity(0.55))
-                        .frame(width: max(0, geo.size.width * fraction), height: 3)
-                }
-            }
-            .frame(height: 3)
-
-            HStack {
-                Text(elapsedText)
-                    .font(.system(size: 9, weight: .medium).monospacedDigit())
-                    .foregroundStyle(.white.opacity(0.35))
-                Spacer()
-                Text(remainingText)
-                    .font(.system(size: 9, weight: .medium).monospacedDigit())
-                    .foregroundStyle(.white.opacity(0.35))
-            }
-        }
-    }
-
     private var sonosTile: some View {
         let row = selectedOutputRow
         let hasOutput = row != nil
@@ -593,7 +456,7 @@ private struct KeywayControlCenterPopoverView: View {
                         .background(.white.opacity(0.085), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
 
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Sonos")
+                        Text("Speakers")
                             .font(Metrics.tileEyebrowFont)
                             .foregroundStyle(.white.opacity(0.62))
                         Text(roomName)
@@ -657,29 +520,6 @@ private struct KeywayControlCenterPopoverView: View {
         return playback.outputRows.first
     }
 
-    private func transportButton(
-        _ command: MediaRemoteTransportCommand,
-        target: MediaRemoteTarget?,
-        emphasized: Bool = false
-    ) -> some View {
-        Button {
-            guard let target else {
-                mediaTransportActions.route(command: command)
-                return
-            }
-            mediaTransportActions.route(command: command, to: target)
-        } label: {
-            Image(systemName: command.symbolName)
-                .font(.system(size: emphasized ? 14 : 11, weight: .medium))
-                .frame(width: 26, height: 26)
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(.white.opacity(emphasized ? 0.90 : 0.68))
-        .accessibilityIdentifier("transport-\(command.rawValue)")
-        .accessibilityLabel(command.displayName)
-    }
-
     private func sonosStatusText(row: PlaybackOutputRow?) -> String {
         if playback.isRefreshingOutputs {
             return "Searching for speakers"
@@ -694,15 +534,6 @@ private struct KeywayControlCenterPopoverView: View {
             return playback.volumeState.muted ? "Muted" : "Volume \(playback.volumeState.roundedValue)%"
         }
         return "Volume unavailable"
-    }
-
-    private func statusPill(_ title: String) -> some View {
-        Text(title)
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(.white.opacity(0.58))
-            .padding(.horizontal, 6)
-            .frame(height: 17)
-            .background(.white.opacity(0.08), in: Capsule())
     }
 
     private var helperDot: some View {
