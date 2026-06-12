@@ -128,15 +128,15 @@ struct Semantics {
     @MainActor
     static func main() {
         let target = chromiumTarget(
-            id: "chromium-extension:chromium:11:22:0:media-1",
+            id: "chromium-extension:chromium:22",
             title: "Video A"
         )
         let second = chromiumTarget(
-            id: "chromium-extension:chromium:11:23:0:media-1",
+            id: "chromium-extension:chromium:23",
             title: "Video B"
         )
         let unsupportedTrackTarget = chromiumTarget(
-            id: "chromium-extension:chromium:11:24:0:media-1",
+            id: "chromium-extension:chromium:24",
             title: "Video C",
             supportedCommands: [.play, .pause, .playPause]
         )
@@ -165,12 +165,6 @@ struct Semantics {
             "chromium",
             "Chromium extension targets must expose the browser family from their target ID"
         )
-        let targetAddress = ChromiumBrowserExtensionTargetAddress(targetID: target.id)
-        expectEqual(targetAddress.browserKey, "chromium", "Chromium target address must preserve selected browser runtime")
-        expectEqual(targetAddress.windowID, 11, "Chromium target address must preserve selected window ID")
-        expectEqual(targetAddress.tabID, 22, "Chromium target address must preserve selected tab ID")
-        expectEqual(targetAddress.frameID, 0, "Chromium target address must preserve selected frame ID")
-        expectEqual(targetAddress.mediaID, "media-1", "Chromium target address must preserve selected media ID")
         expectEqual(
             ChromiumBrowserExtensionTransport.targetDisplayName(browser: "Chromium", pageTitle: ""),
             "Chromium",

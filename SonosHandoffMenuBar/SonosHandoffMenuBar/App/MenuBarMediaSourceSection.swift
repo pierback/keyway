@@ -11,26 +11,41 @@ struct MenuBarMediaSourceSection: View {
     @ObservedObject var playback: PlaybackSyncController
     let mediaTransportActions: MediaTransportActionController
     let progressTick: UInt64
+    @State private var cachedTargets: [MediaRemoteTarget] = []
 
-    private var targets: [MediaRemoteTarget] {
+    private var freshTargets: [MediaRemoteTarget] {
+        sortedTargets(mediaRemoteController.targets)
+    }
+
+    private var displayTargets: [MediaRemoteTarget] {
+        let targets = freshTargets
+        if targets.isEmpty, mediaRemoteController.isRefreshingSnapshot {
+            return cachedTargets
+        }
+        return targets
+    }
+
+    private func sortedTargets(_ targets: [MediaRemoteTarget]) -> [MediaRemoteTarget] {
         MediaTransportCommandRules.sortedTargets(
-            mediaRemoteController.targets,
+            targets,
             preferredTargetID: mediaRemoteController.activeTargetID
         )
     }
 
     private var targetIDs: [String] {
-        targets.map(\.id)
+        displayTargets.map(\.id)
     }
 
     var body: some View {
+        let displayTargets = self.displayTargets
+
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("Active Sources")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.62))
                 Spacer()
-                if targets.isEmpty, mediaRemoteController.isRefreshingSnapshot {
+                if displayTargets.isEmpty, mediaRemoteController.isRefreshingSnapshot {
                     ProgressView()
                         .controlSize(.small)
                         .scaleEffect(0.56)
@@ -38,12 +53,13 @@ struct MenuBarMediaSourceSection: View {
                 }
             }
 
-            if targets.isEmpty {
+            if displayTargets.isEmpty {
                 emptyRow
             } else {
-                ForEach(targets) { target in
-                    sourceRow(target)
-                    if target.id != targets.last?.id {
+                ForEach(displayTargets) { target in
+                    let displayTarget = target
+                    sourceRow(displayTarget)
+                    if displayTarget.id != displayTargets.last?.id {
                         Divider()
                             .background(.white.opacity(0.08))
                     }
@@ -69,6 +85,18 @@ struct MenuBarMediaSourceSection: View {
         .animation(MenuBarMotion.rowUpdate, value: targetIDs)
         .animation(MenuBarMotion.rowUpdate, value: playback.outputRows)
         .animation(MenuBarMotion.rowUpdate, value: playback.selectedRoomName)
+        .onAppear {
+            rememberTargets(freshTargets)
+        }
+        .onReceive(mediaRemoteController.$targets) { targets in
+            rememberTargets(sortedTargets(targets))
+        }
+    }
+
+    private func rememberTargets(_ targets: [MediaRemoteTarget]) {
+        if !targets.isEmpty {
+            cachedTargets = targets
+        }
     }
 
     private var emptyRow: some View {

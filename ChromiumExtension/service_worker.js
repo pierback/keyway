@@ -3,7 +3,7 @@ let nativePort = null;
 let reconnectTimer = null;
 let heartbeatTimer = null;
 let cachedBrowserInfo = null;
-const targets = new Map();
+const sources = new Map();
 const targetStaleAfterMs = 3500;
 const recentlyActiveAfterMs = 15000;
 
@@ -47,15 +47,12 @@ function stopHeartbeat() {
   heartbeatTimer = null;
 }
 
-function targetID(message) {
-  return [
-    "chromium-extension",
-    message.browserKey,
-    message.windowId,
-    message.tabId,
-    message.frameId,
-    message.mediaId,
-  ].join(":");
+function sourceID(message) {
+  return ["chromium-extension", message.browserKey, message.tabId].join(":");
+}
+
+function candidateID(frameId, mediaId) {
+  return `${frameId}:${mediaId}`;
 }
 
 function browserInfo() {
@@ -94,12 +91,12 @@ function browserInfoFromUserAgent(userAgent) {
 }
 
 function publishSnapshot() {
-  removeStaleTargets();
+  removeStaleSources();
   sendNative({
     type: "snapshot",
     protocolVersion: 1,
     createdAt: Date.now(),
-    targets: Array.from(targets.values()).filter(isVisibleTarget),
+    targets: Array.from(sources.values()).map(materializeSource).filter(Boolean).filter(isVisibleTarget),
   });
 }
 
@@ -113,24 +110,182 @@ function isAudiblePlayback(target) {
   return target.playing && !target.muted && target.volume !== 0;
 }
 
-function removeStaleTargets() {
+function removeStaleSources() {
   const now = Date.now();
-  for (const [id, target] of targets) {
-    if (now - target.updatedAt > targetStaleAfterMs) {
-      targets.delete(id);
+  for (const [id, source] of sources) {
+    for (const [candidateKey, candidate] of source.candidates) {
+      if (now - candidate.updatedAt > targetStaleAfterMs) {
+        source.candidates.delete(candidateKey);
+      }
+    }
+
+    if (source.candidates.size === 0) {
+      sources.delete(id);
+    } else {
+      refreshSource(source);
     }
   }
 }
 
-function clearTargetsForTab(tabId) {
+function clearSourcesForTab(tabId) {
   let changed = false;
-  for (const [id, target] of targets) {
-    if (target.tabId === tabId) {
-      targets.delete(id);
+  for (const [id, source] of sources) {
+    if (source.tabId === tabId) {
+      sources.delete(id);
       changed = true;
     }
   }
   if (changed) publishSnapshot();
+}
+
+function upsertCandidate(browser, tab, frameId, message) {
+  const now = Date.now();
+  const id = sourceID({
+    browserKey: browser.key,
+    tabId: tab.id,
+  });
+  const candidateKey = candidateID(frameId, message.mediaId);
+  const existingSource = sources.get(id);
+  const source = existingSource || {
+    type: "target",
+    id,
+    browser: browser.name,
+    tabId: tab.id,
+    windowId: tab.windowId,
+    tabTitle: tab.title || "",
+    tabUrl: tab.url || "",
+    candidates: new Map(),
+    route: null,
+    updatedAt: now,
+    lastActiveAt: 0,
+  };
+  const existingCandidate = source.candidates.get(candidateKey);
+  const candidate = {
+    candidateKey,
+    frameId,
+    mediaId: message.mediaId,
+    url: message.url || tab.url || "",
+    frameTitle: message.pageTitle || "",
+    tabTitle: tab.title || "",
+    tabUrl: tab.url || "",
+    title: message.title || "",
+    artist: message.artist || "",
+    album: message.album || "",
+    playing: Boolean(message.playing),
+    muted: Boolean(message.muted),
+    volume: Number.isFinite(message.volume) ? message.volume : null,
+    duration: Number.isFinite(message.duration) ? message.duration : null,
+    elapsedTime: Number.isFinite(message.elapsedTime) ? message.elapsedTime : null,
+    hasMediaSessionMetadata: Boolean(message.hasMediaSessionMetadata),
+    supportedCommands: Array.isArray(message.supportedCommands)
+      ? message.supportedCommands
+      : ["play", "pause", "playPause", "mute", "volumeDelta"],
+    updatedAt: now,
+    lastActiveAt: 0,
+  };
+
+  candidate.lastActiveAt = isAudiblePlayback(candidate)
+    ? now
+    : existingCandidate?.lastActiveAt || 0;
+  source.browser = browser.name;
+  source.windowId = tab.windowId;
+  source.tabTitle = tab.title || source.tabTitle || "";
+  source.tabUrl = tab.url || source.tabUrl || "";
+  source.candidates.set(candidateKey, candidate);
+  refreshSource(source);
+  sources.set(source.id, source);
+  return source;
+}
+
+function refreshSource(source) {
+  const selected = selectPrimaryCandidate(source);
+  if (!selected) {
+    source.route = null;
+    source.updatedAt = Date.now();
+    source.lastActiveAt = 0;
+    return;
+  }
+
+  let updatedAt = 0;
+  let lastActiveAt = 0;
+  for (const candidate of source.candidates.values()) {
+    updatedAt = Math.max(updatedAt, candidate.updatedAt);
+    lastActiveAt = Math.max(lastActiveAt, candidate.lastActiveAt);
+  }
+
+  source.route = {
+    candidateKey: selected.candidateKey,
+    frameId: selected.frameId,
+    mediaId: selected.mediaId,
+  };
+  source.updatedAt = updatedAt;
+  source.lastActiveAt = lastActiveAt;
+}
+
+function selectPrimaryCandidate(source) {
+  let selected = null;
+  const now = Date.now();
+  for (const candidate of source.candidates.values()) {
+    if (!selected || compareCandidates(candidate, selected, source.route, now) < 0) {
+      selected = candidate;
+    }
+  }
+  return selected;
+}
+
+function compareCandidates(left, right, currentRoute, now) {
+  const scoreDifference = candidateScore(right, currentRoute, now) - candidateScore(left, currentRoute, now);
+  if (scoreDifference !== 0) return scoreDifference;
+  if (right.updatedAt !== left.updatedAt) return right.updatedAt - left.updatedAt;
+  return left.candidateKey.localeCompare(right.candidateKey);
+}
+
+function candidateScore(candidate, currentRoute, now) {
+  let score = 0;
+  if (isAudiblePlayback(candidate)) {
+    score += 100000;
+  } else if (candidate.playing) {
+    score += 50000;
+  }
+  if (candidate.hasMediaSessionMetadata) score += 10000;
+  if (candidate.duration !== null && candidate.duration > 0) score += 1000;
+  if (candidate.lastActiveAt > 0 && now - candidate.lastActiveAt <= recentlyActiveAfterMs) score += 500;
+  if (currentRoute?.candidateKey === candidate.candidateKey) score += 10;
+  score += Math.max(0, 100 - Math.floor((now - candidate.updatedAt) / 100));
+  return score;
+}
+
+function materializeSource(source) {
+  const selected = source.route ? source.candidates.get(source.route.candidateKey) : selectPrimaryCandidate(source);
+  if (!selected) return null;
+
+  const pageTitle = source.tabTitle || selected.frameTitle || "";
+  const title = selected.hasMediaSessionMetadata && selected.title
+    ? selected.title
+    : source.tabTitle || selected.title || selected.frameTitle || "Browser media";
+  return {
+    type: "target",
+    id: source.id,
+    browser: source.browser,
+    tabId: source.tabId,
+    windowId: source.windowId,
+    frameId: selected.frameId,
+    mediaId: selected.mediaId,
+    url: source.tabUrl || selected.url,
+    pageTitle,
+    title,
+    artist: selected.artist,
+    album: selected.album,
+    playing: selected.playing,
+    muted: selected.muted,
+    volume: selected.volume,
+    duration: selected.duration,
+    elapsedTime: selected.elapsedTime,
+    hasMediaSessionMetadata: selected.hasMediaSessionMetadata,
+    supportedCommands: selected.supportedCommands,
+    updatedAt: source.updatedAt,
+    lastActiveAt: source.lastActiveAt,
+  };
 }
 
 function probeTabsForMedia() {
@@ -155,7 +310,10 @@ function handleNativeMessage(message) {
 }
 
 function handleCommandMessage(message) {
-  if (!targets.has(message.targetID)) {
+  removeStaleSources();
+  const source = sources.get(message.targetID);
+  const route = source?.route;
+  if (!source || !route) {
     sendNative({
       type: "commandResult",
       requestID: message.requestID,
@@ -170,15 +328,15 @@ function handleCommandMessage(message) {
   }
 
   chrome.tabs.sendMessage(
-    message.tabId,
+    source.tabId,
     {
       type: "keywayCommand",
       requestID: message.requestID,
-      mediaId: message.mediaId,
+      mediaId: route.mediaId,
       command: message.command,
       volumeDelta: message.volumeDelta || 0,
     },
-    { frameId: message.frameId },
+    { frameId: route.frameId },
     response => {
       const error = chrome.runtime.lastError;
       sendNative({
@@ -196,10 +354,11 @@ function handleCommandMessage(message) {
 }
 
 function handleFocusMessage(message) {
-  const target = targets.get(message.targetID);
-  if (!target) return;
+  removeStaleSources();
+  const source = sources.get(message.targetID);
+  if (!source) return;
 
-  chrome.windows.update(target.windowId, { focused: true }, () => {
+  chrome.windows.update(source.windowId, { focused: true }, () => {
     const windowError = chrome.runtime.lastError;
     if (windowError) {
       sendNative({
@@ -214,7 +373,7 @@ function handleFocusMessage(message) {
       return;
     }
 
-    chrome.tabs.update(target.tabId, { active: true }, () => {
+    chrome.tabs.update(source.tabId, { active: true }, () => {
       const tabError = chrome.runtime.lastError;
       sendNative({
         type: "focusResult",
@@ -238,40 +397,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     browserInfo().then(browser => {
-      const stateID = targetID({
-        browserKey: browser.key,
-        windowId: tab.windowId,
-        tabId: tab.id,
-        frameId: sender.frameId,
-        mediaId: message.mediaId,
-      });
-      const existingState = targets.get(stateID);
-      const state = {
-        type: "target",
-        id: stateID,
-        browser: browser.name,
-        tabId: tab.id,
-        windowId: tab.windowId,
-        frameId: sender.frameId,
-        mediaId: message.mediaId,
-        url: message.url || tab.url || "",
-        pageTitle: message.pageTitle || tab.title || "",
-        title: message.title || tab.title || "Browser media",
-        artist: message.artist || "",
-        album: message.album || "",
-        playing: Boolean(message.playing),
-        muted: Boolean(message.muted),
-        volume: Number.isFinite(message.volume) ? message.volume : null,
-        duration: Number.isFinite(message.duration) ? message.duration : null,
-        elapsedTime: Number.isFinite(message.elapsedTime) ? message.elapsedTime : null,
-        hasMediaSessionMetadata: Boolean(message.hasMediaSessionMetadata),
-        supportedCommands: Array.isArray(message.supportedCommands)
-          ? message.supportedCommands
-          : ["play", "pause", "playPause", "mute", "volumeDelta"],
-        updatedAt: Date.now(),
-      };
-      state.lastActiveAt = isAudiblePlayback(state) ? state.updatedAt : existingState?.lastActiveAt || 0;
-      targets.set(state.id, state);
+      upsertCandidate(browser, tab, sender.frameId, message);
       publishSnapshot();
       sendResponse({ ok: true });
     });
@@ -279,12 +405,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "keywayMediaGone") {
-    for (const [id, target] of targets) {
-      if (target.tabId === sender.tab?.id && target.frameId === sender.frameId && target.mediaId === message.mediaId) {
-        targets.delete(id);
+    let changed = false;
+    for (const [id, source] of sources) {
+      if (source.tabId === sender.tab?.id) {
+        const key = candidateID(sender.frameId, message.mediaId);
+        if (source.candidates.delete(key)) {
+          changed = true;
+          if (source.candidates.size === 0) {
+            sources.delete(id);
+          } else {
+            refreshSource(source);
+          }
+        }
       }
     }
-    publishSnapshot();
+    if (changed) publishSnapshot();
     sendResponse({ ok: true });
     return false;
   }
@@ -293,12 +428,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 chrome.tabs.onRemoved.addListener(tabId => {
-  clearTargetsForTab(tabId);
+  clearSourcesForTab(tabId);
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.url || changeInfo.status === "loading") {
-    clearTargetsForTab(tabId);
+    clearSourcesForTab(tabId);
   }
 });
 

@@ -1,17 +1,17 @@
 # Keyway Chromium Media Bridge
 
-The extension makes browser media deterministic by giving Keyway an exact target address:
+The extension makes browser media deterministic by giving Keyway one canonical source row for each browser tab/session:
 
 ```text
-chromium-extension:<browser-runtime>:<window-id>:<tab-id>:<frame-id>:<media-id>
+chromium-extension:<browser-runtime>:<tab-id>
 ```
 
-The browser runtime component includes the detected Chrome-family browser and extension runtime ID, so Chromium-family targets do not collapse into the same identity when tab IDs overlap. The unpacked extension has a stable manifest key, so its runtime ID is deterministic: `gmdpkggbaohimgacbclndlfjghgcbael`. The address lets the Swift app send a command to the same browser tab, frame, and media element that reported playback. This avoids the OS media-key ambiguity where Chromium, Spotify, and Helium compete for the same global transport commands.
+The browser runtime component includes the detected Chrome-family browser and extension runtime ID, so Chromium-family targets do not collapse into the same identity when tab IDs overlap. The unpacked extension has a stable manifest key, so its runtime ID is deterministic: `gmdpkggbaohimgacbclndlfjghgcbael`. The service worker keeps frame and media element IDs as private route state and sends commands to the selected element for the source. This avoids both OS media-key ambiguity and duplicate Keyway rows when one page exposes several media elements.
 
 ## Architecture
 
 - `content_script.js` discovers `video` and `audio` elements in each page/frame and reports title, page title, URL, playback state, duration, and elapsed time.
-- `service_worker.js` keeps a live target map and talks to Chrome native messaging.
+- `service_worker.js` aggregates media candidates into one live source per tab/session and talks to Chrome native messaging.
 - `keyway-chromium-native-host` bridges native messages into Keyway with distributed notifications.
 - `ChromiumBrowserExtensionController` merges browser targets into Keyway's existing media target list and routes browser commands back through the native host.
 

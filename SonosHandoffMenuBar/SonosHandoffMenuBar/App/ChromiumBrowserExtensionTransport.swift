@@ -463,13 +463,10 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         }
 
         let requestID = UUID().uuidString
-        let targetAddress = ChromiumBrowserExtensionTargetAddress(targetID: target.id)
         let payload = ChromiumBrowserExtensionFocusPayload(
             type: "focusTarget",
             requestID: requestID,
-            targetID: target.id,
-            windowId: targetAddress.windowID,
-            tabId: targetAddress.tabID
+            targetID: target.id
         )
         let data = try! JSONEncoder().encode(payload)
         let json = String(data: data, encoding: .utf8)!
@@ -496,14 +493,10 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         onResult: @escaping (MediaRemoteCommandResultEvent) -> Void
     ) -> Bool? {
         let requestID = UUID().uuidString
-        let targetAddress = ChromiumBrowserExtensionTargetAddress(targetID: target.id)
         let payload = ChromiumBrowserExtensionCommandPayload(
             type: "command",
             requestID: requestID,
             targetID: target.id,
-            tabId: targetAddress.tabID,
-            frameId: targetAddress.frameID,
-            mediaId: targetAddress.mediaID,
             command: commandName,
             volumeDelta: volumeDelta
         )
@@ -655,9 +648,6 @@ private struct ChromiumBrowserExtensionCommandPayload: Encodable {
     let type: String
     let requestID: String
     let targetID: String
-    let tabId: Int
-    let frameId: Int
-    let mediaId: String
     let command: String
     let volumeDelta: Double?
 }
@@ -666,29 +656,6 @@ private struct ChromiumBrowserExtensionFocusPayload: Encodable {
     let type: String
     let requestID: String
     let targetID: String
-    let windowId: Int
-    let tabId: Int
-}
-
-struct ChromiumBrowserExtensionTargetAddress {
-    let browserKey: String
-    let windowID: Int
-    let tabID: Int
-    let frameID: Int
-    let mediaID: String
-
-    init(targetID: String) {
-        let parts = targetID.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
-        precondition(
-            parts.count >= 6 && parts[0] == "chromium-extension",
-            "Chromium extension target IDs must include browser, window, tab, frame, and media components."
-        )
-        self.browserKey = parts[1]
-        self.windowID = Int(parts[2])!
-        self.tabID = Int(parts[3])!
-        self.frameID = Int(parts[4])!
-        self.mediaID = parts[5...].joined(separator: ":")
-    }
 }
 
 private struct ChromiumBrowserExtensionSnapshotPayload: Decodable {

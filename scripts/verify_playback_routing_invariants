@@ -19,6 +19,7 @@ refresh_gate="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaRemote
 remote_controller="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaRemoteController.swift"
 remote_helper_process="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaRemoteHelperProcess.swift"
 status_item="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/KeywayStatusItemController.swift"
+menu_bar_media_sources="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MenuBarMediaSourceSection.swift"
 app_environment="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/Support/AppEnvironment.swift"
 info_plist="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/Resources/Info.plist"
 runtime_status="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutRuntimeStatus.swift"
@@ -1317,8 +1318,11 @@ if grep -q 'hasFreshSnapshot(maxAge: 1.5)' "$status_item"; then
   fail "playback UI must not blank controls behind a 1.5s snapshot freshness delay"
 fi
 
-grep -q 'let displayTarget = target' "$status_item" \
+grep -q 'let displayTarget = target' "$menu_bar_media_sources" \
   || fail "status menu playback controls must keep the cached target visible during refresh"
+
+grep -q 'cachedTargets' "$menu_bar_media_sources" \
+  || fail "status menu playback controls must keep non-empty source rows visible while snapshots refresh"
 
 if grep -Eq 'target\.isCurrentlyPlaying \\? MediaRemoteTransportCommand\.pause : \\.play|repairIfNeeded|MediaTransportLeakRepairController' "$transport" "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar.xcodeproj/project.pbxproj"; then
   fail "transport routing must not repair or infer Play/Pause from delayed playback state"

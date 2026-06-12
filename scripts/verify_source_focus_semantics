@@ -52,20 +52,9 @@ enum ChromiumBrowserExtensionTransport {
 }
 
 struct ChromiumBrowserExtensionTargetAddress {
-    let browserKey: String
-    let windowID: Int
-    let tabID: Int
-    let frameID: Int
-    let mediaID: String
-
     init(targetID: String) {
         let parts = targetID.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
-        precondition(parts.count >= 6 && parts[0] == "chromium-extension")
-        browserKey = parts[1]
-        windowID = Int(parts[2])!
-        tabID = Int(parts[3])!
-        frameID = Int(parts[4])!
-        mediaID = parts[5...].joined(separator: ":")
+        precondition(parts.count == 3 && parts[0] == "chromium-extension")
     }
 }
 
@@ -185,16 +174,12 @@ struct Semantics {
         )
         let chromeTab = browserTarget(
             browserRuntime: "chrome-runtime",
-            windowID: 11,
             tabID: 22,
-            mediaID: "media-1",
             displayName: "Chrome - Song A"
         )
         let heliumTab = browserTarget(
             browserRuntime: "helium-runtime",
-            windowID: 33,
             tabID: 44,
-            mediaID: "media-2",
             displayName: "Helium - Song B"
         )
 
@@ -210,13 +195,13 @@ struct Semantics {
         )
         expectEqual(
             SourceFocusDestination(target: chromeTab),
-            .chromiumExtension(targetID: chromeTab.id, windowID: 11, tabID: 22),
-            "Chrome tab focus must preserve selected browser runtime window and tab"
+            .chromiumExtension(targetID: chromeTab.id),
+            "Chrome tab focus must preserve the selected browser source identity"
         )
         expectEqual(
             SourceFocusDestination(target: heliumTab),
-            .chromiumExtension(targetID: heliumTab.id, windowID: 33, tabID: 44),
-            "Helium tab focus must preserve selected browser runtime window and tab"
+            .chromiumExtension(targetID: heliumTab.id),
+            "Helium tab focus must preserve the selected browser source identity"
         )
 
         let codableResult = SourceFocusResult(
@@ -323,13 +308,11 @@ struct Semantics {
 
     private static func browserTarget(
         browserRuntime: String,
-        windowID: Int,
         tabID: Int,
-        mediaID: String,
         displayName: String
     ) -> MediaRemoteTarget {
         MediaRemoteTarget(
-            id: "chromium-extension:\(browserRuntime):\(windowID):\(tabID):0:\(mediaID)",
+            id: "chromium-extension:\(browserRuntime):\(tabID)",
             bundleIdentifier: "com.fpieringer.keyway.chromium",
             parentBundleIdentifier: "",
             displayName: displayName,

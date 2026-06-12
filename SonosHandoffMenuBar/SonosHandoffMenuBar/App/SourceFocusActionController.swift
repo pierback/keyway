@@ -49,17 +49,12 @@ struct SourceFocusResult: Codable, Equatable {
 }
 
 enum SourceFocusDestination: Equatable {
-    case chromiumExtension(targetID: String, windowID: Int, tabID: Int)
+    case chromiumExtension(targetID: String)
     case application(pid: Int?, bundleIdentifiers: [String])
 
     init(target: MediaRemoteTarget) {
         if ChromiumBrowserExtensionTransport.isTarget(target) {
-            let address = ChromiumBrowserExtensionTargetAddress(targetID: target.id)
-            self = .chromiumExtension(
-                targetID: target.id,
-                windowID: address.windowID,
-                tabID: address.tabID
-            )
+            self = .chromiumExtension(targetID: target.id)
             return
         }
 

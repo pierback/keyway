@@ -271,9 +271,6 @@ struct Snapshot: Decodable {
 struct Target: Decodable {
     let id: String
     let browser: String
-    let tabId: Int
-    let frameId: Int
-    let mediaId: String
     let pageTitle: String
     let title: String
     let playing: Bool
@@ -295,9 +292,6 @@ struct CommandPayload: Encodable {
     let type: String
     let requestID: String
     let targetID: String
-    let tabId: Int
-    let frameId: Int
-    let mediaId: String
     let command: String
     let volumeDelta: Double?
 }
@@ -374,9 +368,6 @@ func postCommand(target: Target, requestID: String, command: String, volumeDelta
         type: "command",
         requestID: requestID,
         targetID: target.id,
-        tabId: target.tabId,
-        frameId: target.frameId,
-        mediaId: target.mediaId,
         command: command,
         volumeDelta: volumeDelta
     )

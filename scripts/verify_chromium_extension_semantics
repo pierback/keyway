@@ -154,6 +154,7 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
       volume: 0.5,
       duration: 120,
       elapsedTime: 10,
+      hasMediaSessionMetadata: true,
       supportedCommands: ["play", "pause", "playPause", "next"],
     },
     {
@@ -176,14 +177,48 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   assertEqual(snapshot.targets.length, 1, "media state must publish one browser target");
   assertEqual(
     snapshot.targets[0].id,
-    "chromium-extension:chrome-extensionid:11:22:0:media-1",
-    "target id must include browser and runtime identity"
+    "chromium-extension:chrome-extensionid:22",
+    "target id must include browser runtime and tab identity"
   );
   assertEqual(snapshot.targets[0].browser, "Chrome", "target browser label");
-  assertEqual(snapshot.targets[0].pageTitle, "Frame Video", "media state must prefer content-script page title");
-  assertEqual(snapshot.targets[0].url, "https://frame.example.test/video", "media state must preserve content-script frame URL");
+  assertEqual(snapshot.targets[0].pageTitle, "Example Video", "browser source must prefer the tab title over frame titles");
+  assertEqual(snapshot.targets[0].url, "https://example.test/video", "browser source must preserve the tab URL");
   assertEqual(snapshot.targets[0].album, "Album", "media state must preserve Media Session album metadata");
   assertEqual(snapshot.targets[0].supportedCommands.join(","), "play,pause,playPause,next", "media state must preserve page-supported commands");
+
+  runtimeMessageListener(
+    {
+      type: "keywayMediaState",
+      mediaId: "media-iframe",
+      title: "Embedded Duplicate",
+      artist: "Other Artist",
+      album: "Other Album",
+      pageTitle: "Eingebettetes Video - https://example.test/embed",
+      url: "https://example.test/embed",
+      playing: true,
+      muted: false,
+      volume: 0.5,
+      duration: 120,
+      elapsedTime: 11,
+      hasMediaSessionMetadata: true,
+      supportedCommands: ["play", "pause", "playPause"],
+    },
+    {
+      tab: {
+        id: 22,
+        windowId: 11,
+        url: "https://example.test/video",
+        title: "Example Video",
+      },
+      frameId: 7,
+    },
+    () => {}
+  );
+  await Promise.resolve();
+  const duplicateElementSnapshot = postedMessages.filter(message => message.type === "snapshot").at(-1);
+  assertEqual(duplicateElementSnapshot.targets.length, 1, "multiple media elements in one tab must publish one browser source");
+  assertEqual(duplicateElementSnapshot.targets[0].id, "chromium-extension:chrome-extensionid:22", "duplicate media elements must keep the same tab source identity");
+  assertEqual(duplicateElementSnapshot.targets[0].pageTitle, "Example Video", "duplicate iframe media must not replace the tab source title");
 
   runtimeMessageListener(
     {
@@ -324,7 +359,7 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   assertEqual(twoTargetSnapshot.targets.length, 2, "two audible media tabs must publish two exact browser targets");
   assertEqual(
     twoTargetSnapshot.targets[1].id,
-    "chromium-extension:chrome-extensionid:11:23:0:media-2",
+    "chromium-extension:chrome-extensionid:23",
     "second target id must preserve its own tab identity"
   );
 
@@ -359,10 +394,7 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   nativeMessageListener({
     type: "command",
     requestID: "ignored-command",
-    targetID: "chromium-extension:other-runtime:11:23:0:media-2",
-    tabId: 23,
-    frameId: 0,
-    mediaId: "media-2",
+    targetID: "chromium-extension:other-runtime:23",
     command: "playPause",
   });
   assertEqual(tabMessages.length, 0, "native command must ignore target IDs owned by another runtime");
@@ -381,9 +413,7 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   nativeMessageListener({
     type: "focusTarget",
     requestID: "ignored-focus",
-    targetID: "chromium-extension:other-runtime:11:23:0:media-2",
-    windowId: 11,
-    tabId: 23,
+    targetID: "chromium-extension:other-runtime:23",
   });
   assertEqual(windowUpdates.length, 0, "native focus must ignore target IDs owned by another runtime");
   assertEqual(tabUpdates.length, 0, "ignored native focus must not activate a browser tab");
@@ -397,8 +427,6 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
     type: "focusTarget",
     requestID: "focus-1",
     targetID: twoTargetSnapshot.targets[1].id,
-    windowId: 999,
-    tabId: 999,
   });
   assertEqual(windowUpdates.length, 1, "native focus must focus exactly one browser window");
   assertEqual(windowUpdates[0].windowId, 11, "native focus must use the selected target window id");
@@ -416,15 +444,15 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
     type: "command",
     requestID: "command-1",
     targetID: twoTargetSnapshot.targets[1].id,
-    tabId: 23,
-    frameId: 0,
-    mediaId: "media-2",
+    tabId: 999,
+    frameId: 999,
+    mediaId: "wrong-media",
     command: "playPause",
   });
   assertEqual(tabMessages.length, 1, "native command must dispatch to exactly one browser tab");
-  assertEqual(tabMessages[0].tabId, 23, "native command must dispatch to the requested tab");
-  assertEqual(tabMessages[0].options.frameId, 0, "native command must dispatch to the requested frame");
-  assertEqual(tabMessages[0].message.mediaId, "media-2", "native command must dispatch to the requested media element");
+  assertEqual(tabMessages[0].tabId, 23, "native command must dispatch to the stored source tab");
+  assertEqual(tabMessages[0].options.frameId, 0, "native command must dispatch to the stored selected frame");
+  assertEqual(tabMessages[0].message.mediaId, "media-2", "native command must dispatch to the stored selected media element");
   assertEqual(tabMessages[0].message.command, "playPause", "native command must preserve the command");
   const commandResult = postedMessages.filter(message => message.type === "commandResult").at(-1);
   assertEqual(commandResult.targetID, twoTargetSnapshot.targets[1].id, "command result must preserve exact target id");
@@ -591,13 +619,18 @@ expect(
 )
 expect(
     repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
-    "removeStaleTargets()",
-    "Chromium extension service worker must remove stale targets before snapshots",
+    "removeStaleSources()",
+    "Chromium extension service worker must remove stale sources before snapshots",
 )
 expect(
     repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
-    "message.pageTitle || tab.title ||",
-    "Chromium extension service worker must accept content-script page titles for frame-aware metadata",
+    "sourceID(message)",
+    "Chromium extension service worker must expose tab-scoped source identities instead of media-element target identities",
+)
+expect(
+    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    "source.tabTitle || selected.frameTitle ||",
+    "Chromium extension service worker must prefer tab titles over frame titles for browser source rows",
 )
 expect(
     repo_root.joinpath("ChromiumExtension/content_script.js").read_text(),
@@ -621,12 +654,12 @@ expect(
 )
 expect(
     repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
-    "chrome.windows.update(target.windowId, { focused: true }",
+    "chrome.windows.update(source.windowId, { focused: true }",
     "Chromium extension service worker must focus the selected browser window",
 )
 expect(
     repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
-    "chrome.tabs.update(target.tabId, { active: true }",
+    "chrome.tabs.update(source.tabId, { active: true }",
     "Chromium extension service worker must activate the selected browser tab",
 )
 expect(
