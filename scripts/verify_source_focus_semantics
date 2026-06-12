@@ -53,8 +53,7 @@ enum ChromiumBrowserExtensionTransport {
 
 struct ChromiumBrowserExtensionTargetAddress {
     init(targetID: String) {
-        let parts = targetID.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
-        precondition(parts.count == 3 && parts[0] == "chromium-extension")
+        precondition(targetID.hasPrefix("chromium-extension:"))
     }
 }
 
@@ -312,7 +311,7 @@ struct Semantics {
         displayName: String
     ) -> MediaRemoteTarget {
         MediaRemoteTarget(
-            id: "chromium-extension:\(browserRuntime):\(tabID)",
+            id: "chromium-extension:\(browserRuntime):chromium-extension:runtime:\(tabID)",
             bundleIdentifier: "com.fpieringer.keyway.chromium",
             parentBundleIdentifier: "",
             displayName: displayName,

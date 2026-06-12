@@ -5,6 +5,7 @@ import os
 enum ChromiumBrowserExtensionTransport {
     static let backendName = "chromium_extension"
     static let mediaType = "chromium_extension"
+    static let protocolVersion = 2
     static let targetIDPrefix = "chromium-extension:"
     static let nativeMessagingHostName = "com.fpieringer.keyway.chromium"
     static let extensionID = "gmdpkggbaohimgacbclndlfjghgcbael"
@@ -21,13 +22,7 @@ enum ChromiumBrowserExtensionTransport {
         guard isTarget(target) else {
             return nil
         }
-        let parts = target.id.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
-        guard parts.count >= 2 else {
-            return nil
-        }
-        return parts[1].split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false).first.map {
-            String($0).lowercased()
-        }
+        return target.browserFamily?.lowercased()
     }
 
     static func legacyBrowserFamily(target: MediaRemoteTarget) -> String? {
@@ -465,6 +460,7 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         let requestID = UUID().uuidString
         let payload = ChromiumBrowserExtensionFocusPayload(
             type: "focusTarget",
+            protocolVersion: ChromiumBrowserExtensionTransport.protocolVersion,
             requestID: requestID,
             targetID: target.id
         )
@@ -495,6 +491,7 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         let requestID = UUID().uuidString
         let payload = ChromiumBrowserExtensionCommandPayload(
             type: "command",
+            protocolVersion: ChromiumBrowserExtensionTransport.protocolVersion,
             requestID: requestID,
             targetID: target.id,
             command: commandName,
@@ -536,6 +533,11 @@ final class ChromiumBrowserExtensionController: ObservableObject {
             preconditionFailure("Chromium native host snapshot notifications must include UTF-8 JSON.")
         }
         let snapshot = try! decoder.decode(ChromiumBrowserExtensionSnapshotPayload.self, from: data)
+        guard snapshot.protocolVersion == ChromiumBrowserExtensionTransport.protocolVersion else {
+            logger.error("Ignoring Chromium extension snapshot protocol=\(snapshot.protocolVersion, privacy: .public)")
+            markConnected(targets: [])
+            return
+        }
         markConnected(targets: snapshot.targets.map(\.mediaRemoteTarget))
     }
 
@@ -646,6 +648,7 @@ private struct ChromiumBrowserExtensionPendingFocus {
 
 private struct ChromiumBrowserExtensionCommandPayload: Encodable {
     let type: String
+    let protocolVersion: Int
     let requestID: String
     let targetID: String
     let command: String
@@ -654,17 +657,22 @@ private struct ChromiumBrowserExtensionCommandPayload: Encodable {
 
 private struct ChromiumBrowserExtensionFocusPayload: Encodable {
     let type: String
+    let protocolVersion: Int
     let requestID: String
     let targetID: String
 }
 
 private struct ChromiumBrowserExtensionSnapshotPayload: Decodable {
+    let protocolVersion: Int
     let targets: [ChromiumBrowserExtensionTargetPayload]
 }
 
 private struct ChromiumBrowserExtensionTargetPayload: Decodable {
     let id: String
     let browser: String
+    let browserFamily: String?
+    let browserDisplayName: String?
+    let browserBundleIdentifier: String?
     let url: String
     let pageTitle: String
     let title: String
@@ -678,10 +686,10 @@ private struct ChromiumBrowserExtensionTargetPayload: Decodable {
     var mediaRemoteTarget: MediaRemoteTarget {
         MediaRemoteTarget(
             id: id,
-            bundleIdentifier: ChromiumBrowserExtensionTransport.nativeMessagingHostName,
+            bundleIdentifier: browserBundleIdentifier ?? ChromiumBrowserExtensionTransport.nativeMessagingHostName,
             parentBundleIdentifier: "",
             displayName: ChromiumBrowserExtensionTransport.targetDisplayName(
-                browser: browser,
+                browser: browserDisplayName ?? browser,
                 pageTitle: pageTitle
             ),
             pid: 0,
@@ -694,7 +702,10 @@ private struct ChromiumBrowserExtensionTargetPayload: Decodable {
             duration: duration,
             elapsedTime: elapsedTime,
             elapsedTimestamp: Date().timeIntervalSince1970,
-            supportedCommands: supportedCommands.compactMap(MediaRemoteTransportCommand.init(rawValue:))
+            supportedCommands: supportedCommands.compactMap(MediaRemoteTransportCommand.init(rawValue:)),
+            browserFamily: browserFamily,
+            browserDisplayName: browserDisplayName,
+            browserBundleIdentifier: browserBundleIdentifier
         )
     }
 }

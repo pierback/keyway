@@ -46,6 +46,12 @@ grep -q "command === 'pause'" "$desktop_adapter" \
 grep -q "command === 'play'" "$desktop_adapter" \
   || fail "Helium play must be an idempotent play command, not a playback toggle"
 
+grep -q 'cachedTargetsGraceInterval' "$menu_bar_media_sources" \
+  || fail "menu bar source cache must have a bounded grace interval so stale rows cannot stay commandable"
+
+grep -q 'canShowCachedTargets' "$menu_bar_media_sources" \
+  || fail "menu bar source cache must expire cached rows when refresh gets stuck"
+
 python3 - "$project_file" <<'PY'
 import pathlib
 import re

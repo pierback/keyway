@@ -83,7 +83,10 @@ final class MediaDesktopTransportAdapter {
             duration: nil,
             elapsedTime: nil,
             elapsedTimestamp: nil,
-            supportedCommands: nil
+            supportedCommands: nil,
+            browserFamily: nil,
+            browserDisplayName: nil,
+            browserBundleIdentifier: nil
         )]
     }
 

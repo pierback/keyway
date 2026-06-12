@@ -1,3 +1,9 @@
+if (!globalThis.__keywayMediaBridgeInstalled) {
+globalThis.__keywayMediaBridgeInstalled = true;
+
+const documentID = crypto.randomUUID
+  ? crypto.randomUUID()
+  : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const keywayMedia = new WeakMap();
 let nextMediaIndex = 1;
 const baseSupportedCommands = ["play", "pause", "playPause", "mute", "volumeDelta"];
@@ -88,6 +94,7 @@ function publishElement(element) {
   if (!isUsableMedia(element)) {
     chrome.runtime.sendMessage({
       type: "keywayMediaGone",
+      documentID,
       mediaId: mediaIdFor(element),
       pageTitle: document.title || "",
       url: location.href || "",
@@ -99,6 +106,7 @@ function publishElement(element) {
   const hasMediaSessionMetadata = Boolean(metadata && (metadata.title || metadata.artist || metadata.album));
   chrome.runtime.sendMessage({
     type: "keywayMediaState",
+    documentID,
     mediaId: mediaIdFor(element),
     title: metadata?.title || element.getAttribute("title") || element.getAttribute("aria-label") || document.title || "",
     artist: metadata?.artist || "",
@@ -124,6 +132,10 @@ function commandTarget(mediaId) {
 }
 
 function applyCommand(message) {
+  if (message.documentID !== documentID) {
+    return Promise.resolve({ ok: false, message: "Media document is no longer available." });
+  }
+
   const element = commandTarget(message.mediaId);
   if (!element) {
     return Promise.resolve({ ok: false, message: "Media element is no longer available." });
@@ -199,3 +211,4 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 observer.observe(document.documentElement, { childList: true, subtree: true });
 setInterval(publishAll, 1000);
 publishAll();
+}

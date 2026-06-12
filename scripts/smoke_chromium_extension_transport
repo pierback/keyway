@@ -265,12 +265,16 @@ let commandNotificationName = Notification.Name("com.fpieringer.keyway.chromium.
 let iterations = Int(CommandLine.arguments[1])!
 
 struct Snapshot: Decodable {
+    let protocolVersion: Int
     let targets: [Target]
 }
 
 struct Target: Decodable {
     let id: String
     let browser: String
+    let browserFamily: String?
+    let browserDisplayName: String?
+    let browserBundleIdentifier: String?
     let pageTitle: String
     let title: String
     let playing: Bool
@@ -290,6 +294,7 @@ struct CommandResult: Decodable {
 
 struct CommandPayload: Encodable {
     let type: String
+    let protocolVersion: Int
     let requestID: String
     let targetID: String
     let command: String
@@ -305,6 +310,7 @@ final class State {
 
     func handleSnapshot(_ payload: String) {
         let snapshot = try! decoder.decode(Snapshot.self, from: Data(payload.utf8))
+        precondition(snapshot.protocolVersion == 2, "Chromium extension snapshots must use protocol v2.")
         lock.lock()
         for target in snapshot.targets where target.pageTitle.hasPrefix("Keyway Chromium Smoke ") {
             targetsByTitle[target.pageTitle] = target
@@ -366,6 +372,7 @@ func percentile95(_ values: [Int]) -> Int {
 func postCommand(target: Target, requestID: String, command: String, volumeDelta: Double? = nil) {
     let payload = CommandPayload(
         type: "command",
+        protocolVersion: 2,
         requestID: requestID,
         targetID: target.id,
         command: command,

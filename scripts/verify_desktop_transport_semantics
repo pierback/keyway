@@ -52,6 +52,9 @@ struct MediaRemoteTarget: Equatable, Identifiable {
     let elapsedTime: Double?
     let elapsedTimestamp: Double?
     let supportedCommands: [MediaRemoteTransportCommand]?
+    let browserFamily: String?
+    let browserDisplayName: String?
+    let browserBundleIdentifier: String?
 }
 
 struct MediaRemoteCommandResultEvent: Equatable {
@@ -158,7 +161,10 @@ struct Semantics {
             duration: nil,
             elapsedTime: nil,
             elapsedTimestamp: nil,
-            supportedCommands: nil
+            supportedCommands: nil,
+            browserFamily: nil,
+            browserDisplayName: nil,
+            browserBundleIdentifier: nil
         )
     }
 

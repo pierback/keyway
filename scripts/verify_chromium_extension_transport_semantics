@@ -55,6 +55,9 @@ struct MediaRemoteTarget: Equatable, Identifiable {
     let elapsedTime: Double?
     let elapsedTimestamp: Double?
     let supportedCommands: [MediaRemoteTransportCommand]?
+    let browserFamily: String?
+    let browserDisplayName: String?
+    let browserBundleIdentifier: String?
 
     var isChromiumBrowserLike: Bool {
         let identities = [bundleIdentifier, parentBundleIdentifier, displayName].map { $0.lowercased() }
@@ -86,6 +89,7 @@ enum SourceFocusFailureReason: String, Codable {
     case missingApplication = "missing_application"
     case applicationActivationRejected = "application_activation_rejected"
     case chromiumExtensionDisconnected = "chromium_extension_disconnected"
+    case chromiumExtensionProtocolMismatch = "chromium_extension_protocol_mismatch"
     case chromiumExtensionTimedOut = "chromium_extension_timed_out"
     case browserActivationFailed = "browser_activation_failed"
     case browserTargetUnavailable = "browser_target_unavailable"
@@ -128,15 +132,15 @@ struct Semantics {
     @MainActor
     static func main() {
         let target = chromiumTarget(
-            id: "chromium-extension:chromium:22",
+            id: "chromium-extension:chrome:chromium-extension:runtime:22",
             title: "Video A"
         )
         let second = chromiumTarget(
-            id: "chromium-extension:chromium:23",
+            id: "chromium-extension:chrome:chromium-extension:runtime:23",
             title: "Video B"
         )
         let unsupportedTrackTarget = chromiumTarget(
-            id: "chromium-extension:chromium:24",
+            id: "chromium-extension:chrome:chromium-extension:runtime:24",
             title: "Video C",
             supportedCommands: [.play, .pause, .playPause]
         )
@@ -151,6 +155,11 @@ struct Semantics {
             "Chromium targets must visibly include browser and tab title"
         )
         expectEqual(
+            ChromiumBrowserExtensionTransport.protocolVersion,
+            2,
+            "Chromium extension transport must use protocol v2"
+        )
+        expectEqual(
             ChromiumBrowserExtensionTransport.extensionID,
             "gmdpkggbaohimgacbclndlfjghgcbael",
             "Chromium native host manifests must use the stable extension ID"
@@ -163,7 +172,7 @@ struct Semantics {
         expectEqual(
             ChromiumBrowserExtensionTransport.browserFamily(target: target),
             "chromium",
-            "Chromium extension targets must expose the browser family from their target ID"
+            "Chromium extension targets must expose the browser family from typed metadata"
         )
         expectEqual(
             ChromiumBrowserExtensionTransport.targetDisplayName(browser: "Chromium", pageTitle: ""),
@@ -287,7 +296,10 @@ struct Semantics {
             duration: 100,
             elapsedTime: 10,
             elapsedTimestamp: 0,
-            supportedCommands: supportedCommands
+            supportedCommands: supportedCommands,
+            browserFamily: "chromium",
+            browserDisplayName: "Chromium",
+            browserBundleIdentifier: "org.chromium.Chromium"
         )
     }
 
@@ -311,7 +323,10 @@ struct Semantics {
             duration: nil,
             elapsedTime: nil,
             elapsedTimestamp: nil,
-            supportedCommands: nil
+            supportedCommands: nil,
+            browserFamily: nil,
+            browserDisplayName: nil,
+            browserBundleIdentifier: nil
         )
     }
 

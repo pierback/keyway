@@ -56,6 +56,9 @@ struct MediaRemoteTarget: Codable, Equatable, Identifiable, Sendable {
     let elapsedTime: Double?
     let elapsedTimestamp: Double?
     let supportedCommands: [MediaRemoteTransportCommand]?
+    let browserFamily: String?
+    let browserDisplayName: String?
+    let browserBundleIdentifier: String?
 
     var appName: String {
         if !displayName.isEmpty {
@@ -237,7 +240,7 @@ struct MediaRemoteTarget: Codable, Equatable, Identifiable, Sendable {
 
     @MainActor
     var appIcon: NSImage {
-        let bundleIDs = [bundleIdentifier, parentBundleIdentifier].filter { !$0.isEmpty }
+        let bundleIDs = [browserBundleIdentifier, bundleIdentifier, parentBundleIdentifier].compactMap { $0 }.filter { !$0.isEmpty }
         for bundleID in bundleIDs {
             if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
                 let image = NSWorkspace.shared.icon(forFile: url.path)

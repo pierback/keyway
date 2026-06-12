@@ -1,3 +1,5 @@
+import AppKit
+import Darwin
 import Foundation
 
 let snapshotNotificationName = Notification.Name("com.fpieringer.keyway.chromium.snapshot")
@@ -5,10 +7,109 @@ let commandResultNotificationName = Notification.Name("com.fpieringer.keyway.chr
 let focusResultNotificationName = Notification.Name("com.fpieringer.keyway.chromium.focusResult")
 let commandNotificationName = Notification.Name("com.fpieringer.keyway.chromium.command")
 let hostName = "com.fpieringer.keyway.chromium"
+let chromiumTargetIDPrefix = "chromium-extension:"
 let writeLock = NSLock()
+let hostBrowserIdentity = HostBrowserIdentity.current()
 
 struct NativeMessageEnvelope: Decodable {
     let type: String
+}
+
+struct HostBrowserIdentity {
+    let family: String
+    let displayName: String
+    let bundleIdentifier: String
+
+    var publicTargetIDPrefix: String {
+        "\(chromiumTargetIDPrefix)\(family):"
+    }
+
+    static func current() -> HostBrowserIdentity? {
+        let parentPID = getppid()
+        guard let app = NSRunningApplication(processIdentifier: pid_t(parentPID)) else {
+            return nil
+        }
+        let bundleIdentifier = app.bundleIdentifier ?? ""
+        let appName = app.localizedName ?? ""
+        guard let family = browserFamily(bundleIdentifier: bundleIdentifier, displayName: appName) else {
+            return nil
+        }
+
+        return HostBrowserIdentity(
+            family: family,
+            displayName: appName.isEmpty ? displayName(family: family) : appName,
+            bundleIdentifier: bundleIdentifier
+        )
+    }
+
+    private static func browserFamily(bundleIdentifier: String, displayName: String) -> String? {
+        let identities = [bundleIdentifier, displayName].map { $0.lowercased() }
+        if identities.contains(where: { $0.contains("helium") }) {
+            return "helium"
+        }
+        if identities.contains(where: { $0.contains("thebrowser") || $0.contains("arc") }) {
+            return "arc"
+        }
+        if identities.contains(where: { $0.contains("brave") }) {
+            return "brave"
+        }
+        if identities.contains(where: { $0.contains("edgemac") || $0.contains("microsoft edge") }) {
+            return "edge"
+        }
+        if identities.contains(where: { $0.contains("opera") }) {
+            return "opera"
+        }
+        if identities.contains(where: { $0.contains("vivaldi") }) {
+            return "vivaldi"
+        }
+        if identities.contains(where: { $0.contains("chromium") }) {
+            return "chromium"
+        }
+        if identities.contains(where: { $0.contains("chrome") || $0.contains("google") }) {
+            return "chrome"
+        }
+        return nil
+    }
+
+    private static func displayName(family: String) -> String {
+        switch family {
+        case "arc":
+            return "Arc"
+        case "brave":
+            return "Brave"
+        case "edge":
+            return "Microsoft Edge"
+        case "helium":
+            return "Helium"
+        case "opera":
+            return "Opera"
+        case "vivaldi":
+            return "Vivaldi"
+        case "chrome":
+            return "Chrome"
+        default:
+            return "Chromium"
+        }
+    }
+
+    func publicTargetID(rawTargetID: String) -> String {
+        guard rawTargetID.hasPrefix(chromiumTargetIDPrefix),
+              !rawTargetID.hasPrefix(publicTargetIDPrefix)
+        else {
+            return rawTargetID
+        }
+        return "\(publicTargetIDPrefix)\(rawTargetID)"
+    }
+
+    func rawTargetID(publicTargetID: String) -> String? {
+        guard publicTargetID.hasPrefix(chromiumTargetIDPrefix) else {
+            return publicTargetID
+        }
+        guard publicTargetID.hasPrefix(publicTargetIDPrefix) else {
+            return nil
+        }
+        return String(publicTargetID.dropFirst(publicTargetIDPrefix.count))
+    }
 }
 
 func readExact(_ byteCount: Int) -> Data? {
@@ -48,6 +149,64 @@ func writeNativeMessage(_ payload: String) {
     writeLock.unlock()
 }
 
+func payloadByAddingHostBrowserIdentity(_ payload: String) -> String {
+    guard let hostBrowserIdentity else {
+        return payload
+    }
+    let data = Data(payload.utf8)
+    var root = try! JSONSerialization.jsonObject(with: data) as! [String: Any]
+    guard var targets = root["targets"] as? [[String: Any]] else {
+        return payload
+    }
+
+    for index in targets.indices {
+        if let rawTargetID = targets[index]["id"] as? String {
+            targets[index]["id"] = hostBrowserIdentity.publicTargetID(rawTargetID: rawTargetID)
+        }
+        targets[index]["browserFamily"] = hostBrowserIdentity.family
+        targets[index]["browserDisplayName"] = hostBrowserIdentity.displayName
+        targets[index]["browserBundleIdentifier"] = hostBrowserIdentity.bundleIdentifier
+        targets[index]["browser"] = hostBrowserIdentity.displayName
+    }
+    root["targets"] = targets
+
+    let enriched = try! JSONSerialization.data(withJSONObject: root)
+    return String(data: enriched, encoding: .utf8)!
+}
+
+func payloadByRestoringRawTargetIdentity(_ payload: String) -> String? {
+    guard let hostBrowserIdentity else {
+        return payload
+    }
+    let data = Data(payload.utf8)
+    var root = try! JSONSerialization.jsonObject(with: data) as! [String: Any]
+    guard let publicTargetID = root["targetID"] as? String else {
+        return payload
+    }
+    guard let rawTargetID = hostBrowserIdentity.rawTargetID(publicTargetID: publicTargetID) else {
+        return nil
+    }
+    root["targetID"] = rawTargetID
+
+    let routed = try! JSONSerialization.data(withJSONObject: root)
+    return String(data: routed, encoding: .utf8)!
+}
+
+func payloadByRestoringPublicTargetIdentity(_ payload: String) -> String {
+    guard let hostBrowserIdentity else {
+        return payload
+    }
+    let data = Data(payload.utf8)
+    var root = try! JSONSerialization.jsonObject(with: data) as! [String: Any]
+    guard let rawTargetID = root["targetID"] as? String else {
+        return payload
+    }
+    root["targetID"] = hostBrowserIdentity.publicTargetID(rawTargetID: rawTargetID)
+
+    let routed = try! JSONSerialization.data(withJSONObject: root)
+    return String(data: routed, encoding: .utf8)!
+}
+
 let commandObserver = DistributedNotificationCenter.default().addObserver(
     forName: commandNotificationName,
     object: hostName,
@@ -56,7 +215,10 @@ let commandObserver = DistributedNotificationCenter.default().addObserver(
     guard let payload = notification.userInfo?["payload"] as? String else {
         preconditionFailure("Keyway command notifications must include a payload.")
     }
-    writeNativeMessage(payload)
+    guard let routedPayload = payloadByRestoringRawTargetIdentity(payload) else {
+        return
+    }
+    writeNativeMessage(routedPayload)
 }
 
 func postNativeMessage(_ payload: String) {
@@ -69,10 +231,13 @@ func postNativeMessage(_ payload: String) {
     guard envelope.type == "snapshot" || envelope.type == "commandResult" || envelope.type == "focusResult" else {
         return
     }
+    let postedPayload = envelope.type == "snapshot"
+        ? payloadByAddingHostBrowserIdentity(payload)
+        : payloadByRestoringPublicTargetIdentity(payload)
     DistributedNotificationCenter.default().postNotificationName(
         envelope.type == "snapshot" ? snapshotNotificationName : envelope.type == "commandResult" ? commandResultNotificationName : focusResultNotificationName,
         object: hostName,
-        userInfo: ["payload": payload],
+        userInfo: ["payload": postedPayload],
         deliverImmediately: true
     )
 }

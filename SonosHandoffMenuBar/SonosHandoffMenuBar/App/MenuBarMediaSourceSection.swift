@@ -6,23 +6,33 @@ import SwiftUI
 struct MenuBarMediaSourceSection: View {
     private static let accentColor = Color(nsColor: .controlAccentColor)
     private static let routeButtonHeight: CGFloat = 22
+    private static let cachedTargetsGraceInterval: TimeInterval = 1.5
 
     @ObservedObject var mediaRemoteController: MediaRemoteController
     @ObservedObject var playback: PlaybackSyncController
     let mediaTransportActions: MediaTransportActionController
     let progressTick: UInt64
     @State private var cachedTargets: [MediaRemoteTarget] = []
+    @State private var cachedTargetsUpdatedAt: Date?
 
     private var freshTargets: [MediaRemoteTarget] {
         sortedTargets(mediaRemoteController.targets)
     }
 
     private var displayTargets: [MediaRemoteTarget] {
+        let _ = progressTick
         let targets = freshTargets
-        if targets.isEmpty, mediaRemoteController.isRefreshingSnapshot {
+        if targets.isEmpty, mediaRemoteController.isRefreshingSnapshot, canShowCachedTargets {
             return cachedTargets
         }
         return targets
+    }
+
+    private var canShowCachedTargets: Bool {
+        guard let cachedTargetsUpdatedAt else {
+            return false
+        }
+        return Date().timeIntervalSince(cachedTargetsUpdatedAt) <= Self.cachedTargetsGraceInterval
     }
 
     private func sortedTargets(_ targets: [MediaRemoteTarget]) -> [MediaRemoteTarget] {
@@ -96,6 +106,7 @@ struct MenuBarMediaSourceSection: View {
     private func rememberTargets(_ targets: [MediaRemoteTarget]) {
         if !targets.isEmpty {
             cachedTargets = targets
+            cachedTargetsUpdatedAt = Date()
         }
     }
 

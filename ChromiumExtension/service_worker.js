@@ -1,4 +1,5 @@
 const nativeHostName = "com.fpieringer.keyway.chromium";
+const protocolVersion = 2;
 let nativePort = null;
 let reconnectTimer = null;
 let heartbeatTimer = null;
@@ -17,7 +18,7 @@ function connectNativeHost() {
     stopHeartbeat();
     scheduleReconnect();
   });
-  sendNative({ type: "hello", protocolVersion: 1 });
+  sendNative({ type: "hello", protocolVersion });
   probeTabsForMedia();
   publishSnapshot();
   startHeartbeat();
@@ -51,8 +52,8 @@ function sourceID(message) {
   return ["chromium-extension", message.browserKey, message.tabId].join(":");
 }
 
-function candidateID(frameId, mediaId) {
-  return `${frameId}:${mediaId}`;
+function candidateID(documentID, frameId, mediaId) {
+  return `${documentID}:${frameId}:${mediaId}`;
 }
 
 function browserInfo() {
@@ -73,8 +74,11 @@ function browserInfo() {
 }
 
 function runtimeScopedBrowserInfo(info) {
+  const runtimeID = chrome.runtime.id || "runtime";
   return {
-    key: `${info.key}-${chrome.runtime.id || "runtime"}`,
+    key: `${info.key}-${runtimeID}`,
+    family: info.key,
+    runtimeID,
     name: info.name,
   };
 }
@@ -94,7 +98,7 @@ function publishSnapshot() {
   removeStaleSources();
   sendNative({
     type: "snapshot",
-    protocolVersion: 1,
+    protocolVersion,
     createdAt: Date.now(),
     targets: Array.from(sources.values()).map(materializeSource).filter(Boolean).filter(isVisibleTarget),
   });
@@ -144,12 +148,14 @@ function upsertCandidate(browser, tab, frameId, message) {
     browserKey: browser.key,
     tabId: tab.id,
   });
-  const candidateKey = candidateID(frameId, message.mediaId);
+  const candidateKey = candidateID(message.documentID, frameId, message.mediaId);
   const existingSource = sources.get(id);
   const source = existingSource || {
     type: "target",
     id,
     browser: browser.name,
+    browserFamily: browser.family,
+    browserRuntimeID: browser.runtimeID,
     tabId: tab.id,
     windowId: tab.windowId,
     tabTitle: tab.title || "",
@@ -162,6 +168,7 @@ function upsertCandidate(browser, tab, frameId, message) {
   const existingCandidate = source.candidates.get(candidateKey);
   const candidate = {
     candidateKey,
+    documentID: message.documentID,
     frameId,
     mediaId: message.mediaId,
     url: message.url || tab.url || "",
@@ -188,6 +195,8 @@ function upsertCandidate(browser, tab, frameId, message) {
     ? now
     : existingCandidate?.lastActiveAt || 0;
   source.browser = browser.name;
+  source.browserFamily = browser.family;
+  source.browserRuntimeID = browser.runtimeID;
   source.windowId = tab.windowId;
   source.tabTitle = tab.title || source.tabTitle || "";
   source.tabUrl = tab.url || source.tabUrl || "";
@@ -215,6 +224,7 @@ function refreshSource(source) {
 
   source.route = {
     candidateKey: selected.candidateKey,
+    documentID: selected.documentID,
     frameId: selected.frameId,
     mediaId: selected.mediaId,
   };
@@ -223,34 +233,59 @@ function refreshSource(source) {
 }
 
 function selectPrimaryCandidate(source) {
-  let selected = null;
   const now = Date.now();
+  const current = source.route ? source.candidates.get(source.route.candidateKey) : null;
+  const audible = bestCandidate(source, candidate => isAudiblePlayback(candidate), current, now);
+  if (audible) {
+    if (current && current.candidateKey !== audible.candidateKey && isAudiblePlayback(current)) {
+      return current;
+    }
+    return audible;
+  }
+
+  if (current && isStickyCandidate(current, now)) {
+    return current;
+  }
+
+  return bestCandidate(source, () => true, current, now);
+}
+
+function bestCandidate(source, predicate, current, now) {
+  let selected = null;
   for (const candidate of source.candidates.values()) {
-    if (!selected || compareCandidates(candidate, selected, source.route, now) < 0) {
+    if (!predicate(candidate)) continue;
+    if (!selected || compareCandidates(candidate, selected, current, now) < 0) {
       selected = candidate;
     }
   }
   return selected;
 }
 
-function compareCandidates(left, right, currentRoute, now) {
-  const scoreDifference = candidateScore(right, currentRoute, now) - candidateScore(left, currentRoute, now);
+function isStickyCandidate(candidate, now) {
+  return now - candidate.updatedAt <= targetStaleAfterMs
+    && (candidate.playing || (candidate.lastActiveAt > 0 && now - candidate.lastActiveAt <= recentlyActiveAfterMs));
+}
+
+function compareCandidates(left, right, current, now) {
+  const scoreDifference = candidateScore(right, current, now) - candidateScore(left, current, now);
   if (scoreDifference !== 0) return scoreDifference;
   if (right.updatedAt !== left.updatedAt) return right.updatedAt - left.updatedAt;
   return left.candidateKey.localeCompare(right.candidateKey);
 }
 
-function candidateScore(candidate, currentRoute, now) {
+function candidateScore(candidate, current, now) {
   let score = 0;
   if (isAudiblePlayback(candidate)) {
     score += 100000;
-  } else if (candidate.playing) {
+  } else if (candidate.playing && !candidate.muted) {
     score += 50000;
+  } else if (candidate.playing) {
+    score += 1000;
   }
-  if (candidate.hasMediaSessionMetadata) score += 10000;
-  if (candidate.duration !== null && candidate.duration > 0) score += 1000;
-  if (candidate.lastActiveAt > 0 && now - candidate.lastActiveAt <= recentlyActiveAfterMs) score += 500;
-  if (currentRoute?.candidateKey === candidate.candidateKey) score += 10;
+  if (current?.candidateKey === candidate.candidateKey && isStickyCandidate(candidate, now)) score += 75000;
+  if (candidate.lastActiveAt > 0 && now - candidate.lastActiveAt <= recentlyActiveAfterMs) score += 20000;
+  if (candidate.duration !== null && candidate.duration > 0) score += 500;
+  if (candidate.hasMediaSessionMetadata) score += 100;
   score += Math.max(0, 100 - Math.floor((now - candidate.updatedAt) / 100));
   return score;
 }
@@ -267,10 +302,8 @@ function materializeSource(source) {
     type: "target",
     id: source.id,
     browser: source.browser,
-    tabId: source.tabId,
-    windowId: source.windowId,
-    frameId: selected.frameId,
-    mediaId: selected.mediaId,
+    browserFamily: source.browserFamily,
+    browserRuntimeID: source.browserRuntimeID,
     url: source.tabUrl || selected.url,
     pageTitle,
     title,
@@ -292,20 +325,60 @@ function probeTabsForMedia() {
   chrome.tabs.query({}, tabs => {
     for (const tab of tabs) {
       if (tab.id === undefined) continue;
-      chrome.tabs.sendMessage(tab.id, { type: "keywayProbeMedia" }, () => {
-        chrome.runtime.lastError;
-      });
+      if (tab.url && !tab.url.startsWith("http://") && !tab.url.startsWith("https://")) continue;
+      chrome.scripting.executeScript(
+        { target: { tabId: tab.id, allFrames: true }, files: ["content_script.js"] },
+        () => {
+          chrome.runtime.lastError;
+          chrome.tabs.sendMessage(tab.id, { type: "keywayProbeMedia", protocolVersion }, () => {
+            chrome.runtime.lastError;
+          });
+        }
+      );
     }
   });
 }
 
 function handleNativeMessage(message) {
+  if (message.protocolVersion !== protocolVersion) {
+    rejectUnsupportedProtocol(message);
+    return;
+  }
+
   if (message.type === "command") {
     handleCommandMessage(message);
     return;
   }
   if (message.type === "focusTarget") {
     handleFocusMessage(message);
+  }
+}
+
+function rejectUnsupportedProtocol(message) {
+  if (message.type === "command") {
+    sendNative({
+      type: "commandResult",
+      protocolVersion,
+      requestID: message.requestID,
+      targetID: message.targetID,
+      command: message.command,
+      ok: false,
+      unsupported: true,
+      message: "Chromium extension protocol mismatch.",
+      backend: "chromium_extension",
+    });
+  }
+  if (message.type === "focusTarget") {
+    sendNative({
+      type: "focusResult",
+      protocolVersion,
+      requestID: message.requestID,
+      targetID: message.targetID,
+      ok: false,
+      message: "Chromium extension protocol mismatch.",
+      backend: "chromium_extension",
+      failureReason: "chromium_extension_protocol_mismatch",
+    });
   }
 }
 
@@ -316,6 +389,7 @@ function handleCommandMessage(message) {
   if (!source || !route) {
     sendNative({
       type: "commandResult",
+      protocolVersion,
       requestID: message.requestID,
       targetID: message.targetID,
       command: message.command,
@@ -327,11 +401,28 @@ function handleCommandMessage(message) {
     return;
   }
 
+  const selected = source.candidates.get(route.candidateKey);
+  if (!selected || !selected.supportedCommands.includes(message.command)) {
+    sendNative({
+      type: "commandResult",
+      protocolVersion,
+      requestID: message.requestID,
+      targetID: message.targetID,
+      command: message.command,
+      ok: false,
+      unsupported: true,
+      message: `${message.command} is unsupported for this Chromium media source.`,
+      backend: "chromium_extension",
+    });
+    return;
+  }
+
   chrome.tabs.sendMessage(
     source.tabId,
     {
       type: "keywayCommand",
       requestID: message.requestID,
+      documentID: route.documentID,
       mediaId: route.mediaId,
       command: message.command,
       volumeDelta: message.volumeDelta || 0,
@@ -341,6 +432,7 @@ function handleCommandMessage(message) {
       const error = chrome.runtime.lastError;
       sendNative({
         type: "commandResult",
+        protocolVersion,
         requestID: message.requestID,
         targetID: message.targetID,
         command: message.command,
@@ -356,13 +448,42 @@ function handleCommandMessage(message) {
 function handleFocusMessage(message) {
   removeStaleSources();
   const source = sources.get(message.targetID);
-  if (!source) return;
+  if (!source) {
+    sendNative({
+      type: "focusResult",
+      protocolVersion,
+      requestID: message.requestID,
+      targetID: message.targetID,
+      ok: false,
+      message: "Chromium extension target is no longer available.",
+      backend: "chromium_extension",
+      failureReason: "browser_target_unavailable",
+    });
+    return;
+  }
 
-  chrome.windows.update(source.windowId, { focused: true }, () => {
+  chrome.tabs.get(source.tabId, tab => {
+    const lookupError = chrome.runtime.lastError;
+    if (lookupError || !tab) {
+      sendNative({
+        type: "focusResult",
+        protocolVersion,
+        requestID: message.requestID,
+        targetID: message.targetID,
+        ok: false,
+        message: lookupError ? lookupError.message || "Could not find browser tab." : "Could not find browser tab.",
+        backend: "chromium_extension",
+        failureReason: "browser_target_unavailable",
+      });
+      return;
+    }
+
+  chrome.windows.update(tab.windowId, { focused: true }, () => {
     const windowError = chrome.runtime.lastError;
     if (windowError) {
       sendNative({
         type: "focusResult",
+        protocolVersion,
         requestID: message.requestID,
         targetID: message.targetID,
         ok: false,
@@ -373,10 +494,11 @@ function handleFocusMessage(message) {
       return;
     }
 
-    chrome.tabs.update(source.tabId, { active: true }, () => {
+    chrome.tabs.update(tab.id, { active: true }, () => {
       const tabError = chrome.runtime.lastError;
       sendNative({
         type: "focusResult",
+        protocolVersion,
         requestID: message.requestID,
         targetID: message.targetID,
         ok: !tabError,
@@ -386,12 +508,13 @@ function handleFocusMessage(message) {
       });
     });
   });
+  });
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "keywayMediaState") {
     const tab = sender.tab;
-    if (!tab || sender.frameId === undefined) {
+    if (!tab || sender.frameId === undefined || !message.documentID) {
       sendResponse({ ok: false });
       return false;
     }
@@ -408,7 +531,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     let changed = false;
     for (const [id, source] of sources) {
       if (source.tabId === sender.tab?.id) {
-        const key = candidateID(sender.frameId, message.mediaId);
+        const key = candidateID(message.documentID, sender.frameId, message.mediaId);
         if (source.candidates.delete(key)) {
           changed = true;
           if (source.candidates.size === 0) {
