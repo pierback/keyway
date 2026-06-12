@@ -30,6 +30,39 @@ enum ChromiumBrowserExtensionTransport {
         }
     }
 
+    static func legacyBrowserFamily(target: MediaRemoteTarget) -> String? {
+        guard !isTarget(target), target.isChromiumBrowserLike else {
+            return nil
+        }
+
+        let identities = [target.bundleIdentifier, target.parentBundleIdentifier, target.displayName].map { $0.lowercased() }
+        if identities.contains(where: { $0.contains("helium") }) {
+            return "helium"
+        }
+        if identities.contains(where: { $0.contains("arc") }) {
+            return "arc"
+        }
+        if identities.contains(where: { $0.contains("brave") }) {
+            return "brave"
+        }
+        if identities.contains(where: { $0.contains("edge") || $0.contains("microsoft") }) {
+            return "edge"
+        }
+        if identities.contains(where: { $0.contains("opera") }) {
+            return "opera"
+        }
+        if identities.contains(where: { $0.contains("vivaldi") }) {
+            return "vivaldi"
+        }
+        if identities.contains(where: { $0.contains("chromium") }) {
+            return "chromium"
+        }
+        if identities.contains(where: { $0.contains("chrome") || $0.contains("google") }) {
+            return "chrome"
+        }
+        return nil
+    }
+
     static func targetDisplayName(browser: String, pageTitle: String) -> String {
         let trimmedBrowser = browser.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedPageTitle = pageTitle.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -476,8 +509,16 @@ final class ChromiumBrowserExtensionController: ObservableObject {
     }
 
     func targetsIncludingBrowserExtensionTargets(_ mediaRemoteTargets: [MediaRemoteTarget]) -> [MediaRemoteTarget] {
-        mediaRemoteTargets + targets.filter { extensionTarget in
-            !mediaRemoteTargets.contains { $0.id == extensionTarget.id }
+        let extensionFamilies = Set(targets.compactMap(ChromiumBrowserExtensionTransport.browserFamily))
+        let visibleMediaRemoteTargets = mediaRemoteTargets.filter { target in
+            guard let family = ChromiumBrowserExtensionTransport.legacyBrowserFamily(target: target) else {
+                return true
+            }
+            return !extensionFamilies.contains(family)
+        }
+
+        return visibleMediaRemoteTargets + targets.filter { extensionTarget in
+            !visibleMediaRemoteTargets.contains { $0.id == extensionTarget.id }
         }
     }
 
@@ -645,6 +686,7 @@ private struct ChromiumBrowserExtensionTargetPayload: Decodable {
     let pageTitle: String
     let title: String
     let artist: String
+    let album: String?
     let playing: Bool
     let duration: Double?
     let elapsedTime: Double?
@@ -662,7 +704,7 @@ private struct ChromiumBrowserExtensionTargetPayload: Decodable {
             pid: 0,
             title: title.isEmpty ? pageTitle : title,
             artist: artist.isEmpty ? url : artist,
-            album: pageTitle,
+            album: album ?? pageTitle,
             playbackRate: playing ? "1" : "0",
             mediaType: ChromiumBrowserExtensionTransport.mediaType,
             artworkBase64: nil,

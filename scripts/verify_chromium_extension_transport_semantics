@@ -55,6 +55,20 @@ struct MediaRemoteTarget: Equatable, Identifiable {
     let elapsedTime: Double?
     let elapsedTimestamp: Double?
     let supportedCommands: [MediaRemoteTransportCommand]?
+
+    var isChromiumBrowserLike: Bool {
+        let identities = [bundleIdentifier, parentBundleIdentifier, displayName].map { $0.lowercased() }
+        return identities.contains { identity in
+            identity.contains("chrome")
+                || identity.contains("chromium")
+                || identity.contains("brave")
+                || identity.contains("edge")
+                || identity.contains("arc")
+                || identity.contains("helium")
+                || identity.contains("opera")
+                || identity.contains("vivaldi")
+        }
+    }
 }
 
 struct MediaRemoteCommandResultEvent: Decodable {
@@ -190,11 +204,24 @@ struct Semantics {
 
         let controller = ChromiumBrowserExtensionController()
         controller.markConnected(targets: [target, second])
-        let merged = controller.targetsIncludingBrowserExtensionTargets([target])
+        let chromiumLegacy = legacyTarget(
+            bundleIdentifier: "org.chromium.Chromium",
+            displayName: "Chromium"
+        )
+        let heliumLegacy = legacyTarget(
+            bundleIdentifier: "net.imput.helium",
+            displayName: "Helium"
+        )
+        let merged = controller.targetsIncludingBrowserExtensionTargets([target, chromiumLegacy, heliumLegacy])
         expectEqual(
             merged.map(\.id),
-            [target.id, second.id],
-            "Merging browser extension targets must preserve exact tab targets without duplicating IDs"
+            [target.id, heliumLegacy.id, second.id],
+            "Merging browser extension targets must hide same-family legacy rows while preserving unrelated browser fallbacks"
+        )
+        expectEqual(
+            ChromiumBrowserExtensionTransport.legacyBrowserFamily(target: heliumLegacy),
+            "helium",
+            "Legacy Chromium browser family detection must identify Helium rows"
         )
 
         var unsupportedCallbackResult: MediaRemoteCommandResultEvent?
@@ -261,6 +288,29 @@ struct Semantics {
             elapsedTime: 10,
             elapsedTimestamp: 0,
             supportedCommands: supportedCommands
+        )
+    }
+
+    private static func legacyTarget(
+        bundleIdentifier: String,
+        displayName: String
+    ) -> MediaRemoteTarget {
+        MediaRemoteTarget(
+            id: "\(bundleIdentifier):123:legacy",
+            bundleIdentifier: bundleIdentifier,
+            parentBundleIdentifier: "",
+            displayName: displayName,
+            pid: 123,
+            title: "Browser media",
+            artist: "",
+            album: "",
+            playbackRate: "1",
+            mediaType: nil,
+            artworkBase64: nil,
+            duration: nil,
+            elapsedTime: nil,
+            elapsedTimestamp: nil,
+            supportedCommands: nil
         )
     }
 

@@ -130,6 +130,9 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
       mediaId: "media-1",
       title: "Song",
       artist: "Artist",
+      album: "Album",
+      pageTitle: "Frame Video",
+      url: "https://frame.example.test/video",
       playing: true,
       muted: false,
       volume: 0.5,
@@ -161,6 +164,9 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
     "target id must include browser and runtime identity"
   );
   assertEqual(snapshot.targets[0].browser, "Chrome", "target browser label");
+  assertEqual(snapshot.targets[0].pageTitle, "Frame Video", "media state must prefer content-script page title");
+  assertEqual(snapshot.targets[0].url, "https://frame.example.test/video", "media state must preserve content-script frame URL");
+  assertEqual(snapshot.targets[0].album, "Album", "media state must preserve Media Session album metadata");
   assertEqual(snapshot.targets[0].supportedCommands.join(","), "play,pause,playPause,next", "media state must preserve page-supported commands");
 
   runtimeMessageListener(
@@ -208,8 +214,13 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   assertEqual(tabMessages.length, 0, "native command must ignore target IDs owned by another runtime");
   assertEqual(
     postedMessages.filter(message => message.type === "commandResult").length,
-    0,
-    "ignored native command must not publish a competing command result"
+    1,
+    "unknown native command must publish an explicit failure instead of timing out"
+  );
+  assertEqual(
+    postedMessages.filter(message => message.type === "commandResult").at(-1).message,
+    "Chromium extension target is no longer available.",
+    "unknown native command failure must identify stale extension targets"
   );
 
   const focusResultCountBeforeIgnored = postedMessages.filter(message => message.type === "focusResult").length;
@@ -369,7 +380,17 @@ expect(
 expect(
     transport,
     "static func browserFamily(target: MediaRemoteTarget) -> String?",
-    "Chromium extension targets must expose their browser family for safe legacy fallback",
+    "Chromium extension targets must expose their browser family for visible target precedence",
+)
+expect(
+    transport,
+    "static func legacyBrowserFamily(target: MediaRemoteTarget) -> String?",
+    "Chromium transport must classify legacy browser rows so exact extension targets can hide weaker same-family rows",
+)
+expect(
+    transport,
+    "visibleMediaRemoteTargets",
+    "Chromium transport must filter visible MediaRemote browser rows when exact extension targets exist",
 )
 expect(
     transport,
@@ -382,24 +403,62 @@ expect(
     "media targets must identify Chromium-like legacy browser targets separately from Safari and Firefox",
 )
 expect(
+    models,
+    "var routeSourceLabel: String?",
+    "media target model must expose route provenance for chooser display",
+)
+expect(
     action_controller,
     "preferredChromiumExtensionTarget(command: command, from: targets)",
     "automatic routing must prefer a single playing Chromium extension target",
 )
 expect(
     action_controller,
-    "automaticRoutingTargets(command: command, from: targets)",
-    "automatic routing must drop unsupported Chromium extension targets when legacy Chromium fallback exists",
+    "private func shouldFallbackFromUnsupportedDesktopResult(target: MediaRemoteTarget) -> Bool",
+    "routing must gate unsupported desktop fallthrough by target kind",
 )
 expect(
     action_controller,
-    "legacyChromiumFallbackTarget(for: target)",
-    "Chromium extension command failures must attempt a safe legacy Chromium fallback",
+    "!target.isChromiumBrowserLike",
+    "browser automation unsupported commands must not fall through to Spotify or MediaRemote",
+)
+for forbidden in ["legacyChromiumFallbackTarget", '"chromium_extension_fallback"']:
+    if forbidden in action_controller:
+        raise SystemExit("verify_chromium_extension_semantics: Chromium extension failures must not retain legacy browser fallback hooks")
+expect(
+    repo_root.joinpath("SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTargetOverlayView.swift").read_text(),
+    "target.routeSourceLabel",
+    "chooser rows must display route provenance for browser targets",
 )
 expect(
-    action_controller,
-    '"chromium_extension_fallback"',
-    "Chromium extension fallback must be traced distinctly",
+    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    "const targetStaleAfterMs = 3500",
+    "Chromium extension service worker must expire stale media targets",
+)
+expect(
+    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    "removeStaleTargets()",
+    "Chromium extension service worker must remove stale targets before snapshots",
+)
+expect(
+    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    "message.pageTitle || tab.title ||",
+    "Chromium extension service worker must accept content-script page titles for frame-aware metadata",
+)
+expect(
+    repo_root.joinpath("ChromiumExtension/content_script.js").read_text(),
+    "element.shadowRoot",
+    "Chromium extension content script must discover media and controls inside shadow DOM",
+)
+expect(
+    repo_root.joinpath("ChromiumExtension/content_script.js").read_text(),
+    "metadata?.album",
+    "Chromium extension content script must report Media Session album metadata",
+)
+expect(
+    repo_root.joinpath("ChromiumExtension/content_script.js").read_text(),
+    'Boolean(element.currentSrc || element.src || element.querySelector("source"))',
+    "Chromium extension content script must keep stable targets during readyState=0 source transitions",
 )
 expect(
     repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),

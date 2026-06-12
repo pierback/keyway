@@ -31,7 +31,18 @@ function mediaIdFor(element) {
 }
 
 function mediaElements() {
-  return Array.from(document.querySelectorAll("video,audio"));
+  const elements = [];
+  const visit = root => {
+    for (const element of root.querySelectorAll("video,audio")) {
+      elements.push(element);
+    }
+    for (const element of root.querySelectorAll("*")) {
+      if (element.shadowRoot) visit(element.shadowRoot);
+    }
+  };
+
+  visit(document);
+  return elements;
 }
 
 function isClickable(element) {
@@ -43,8 +54,21 @@ function isClickable(element) {
 function trackControl(command) {
   const selectors = trackControlSelectors[command] || [];
   for (const selector of selectors) {
-    const element = document.querySelector(selector);
+    const element = querySelectorDeep(selector);
     if (isClickable(element)) return element;
+  }
+  return null;
+}
+
+function querySelectorDeep(selector) {
+  const roots = [document];
+  while (roots.length) {
+    const root = roots.shift();
+    const match = root.querySelector(selector);
+    if (match) return match;
+    for (const element of root.querySelectorAll("*")) {
+      if (element.shadowRoot) roots.push(element.shadowRoot);
+    }
   }
   return null;
 }
@@ -57,20 +81,29 @@ function supportedCommands() {
 }
 
 function isUsableMedia(element) {
-  return !element.ended && element.readyState > 0 && (Number.isFinite(element.duration) ? element.duration > 0 : true);
+  return !element.ended && Boolean(element.currentSrc || element.src || element.querySelector("source"));
 }
 
 function publishElement(element) {
   if (!isUsableMedia(element)) {
-    chrome.runtime.sendMessage({ type: "keywayMediaGone", mediaId: mediaIdFor(element) });
+    chrome.runtime.sendMessage({
+      type: "keywayMediaGone",
+      mediaId: mediaIdFor(element),
+      pageTitle: document.title || "",
+      url: location.href || "",
+    });
     return;
   }
 
+  const metadata = navigator.mediaSession?.metadata;
   chrome.runtime.sendMessage({
     type: "keywayMediaState",
     mediaId: mediaIdFor(element),
-    title: navigator.mediaSession?.metadata?.title || document.title || "",
-    artist: navigator.mediaSession?.metadata?.artist || "",
+    title: metadata?.title || element.getAttribute("title") || element.getAttribute("aria-label") || document.title || "",
+    artist: metadata?.artist || "",
+    album: metadata?.album || "",
+    pageTitle: document.title || "",
+    url: location.href || "",
     playing: !element.paused && !element.ended,
     muted: element.muted,
     volume: element.volume,
@@ -136,7 +169,7 @@ function applyCommand(message) {
 function observeElement(element) {
   if (element.dataset.keywayObserved === "true") return;
   element.dataset.keywayObserved = "true";
-  for (const eventName of ["play", "pause", "volumechange", "durationchange", "timeupdate", "loadedmetadata", "ended"]) {
+  for (const eventName of ["play", "pause", "volumechange", "durationchange", "timeupdate", "loadedmetadata", "emptied", "abort", "ended"]) {
     element.addEventListener(eventName, () => publishElement(element), { passive: true });
   }
   publishElement(element);

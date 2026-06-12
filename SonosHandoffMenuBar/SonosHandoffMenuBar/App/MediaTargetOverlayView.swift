@@ -140,10 +140,25 @@ struct MediaTargetOverlayView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(target.appName)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
+                    HStack(spacing: 6) {
+                        Text(target.appName)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+
+                        if let routeSourceLabel = target.routeSourceLabel {
+                            Text(routeSourceLabel)
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 5)
+                                .frame(height: 16)
+                                .background(
+                                    Color.primary.opacity(0.08),
+                                    in: RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                )
+                                .lineLimit(1)
+                        }
+                    }
                     Text(target.detailText)
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)

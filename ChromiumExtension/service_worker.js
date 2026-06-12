@@ -4,6 +4,7 @@ let reconnectTimer = null;
 let heartbeatTimer = null;
 let cachedBrowserInfo = null;
 const targets = new Map();
+const targetStaleAfterMs = 3500;
 
 function connectNativeHost() {
   if (nativePort) return;
@@ -91,12 +92,22 @@ function browserInfoFromUserAgent(userAgent) {
 }
 
 function publishSnapshot() {
+  removeStaleTargets();
   sendNative({
     type: "snapshot",
     protocolVersion: 1,
     createdAt: Date.now(),
     targets: Array.from(targets.values()),
   });
+}
+
+function removeStaleTargets() {
+  const now = Date.now();
+  for (const [id, target] of targets) {
+    if (now - target.updatedAt > targetStaleAfterMs) {
+      targets.delete(id);
+    }
+  }
 }
 
 function clearTargetsForTab(tabId) {
@@ -121,7 +132,19 @@ function handleNativeMessage(message) {
 }
 
 function handleCommandMessage(message) {
-  if (!targets.has(message.targetID)) return;
+  if (!targets.has(message.targetID)) {
+    sendNative({
+      type: "commandResult",
+      requestID: message.requestID,
+      targetID: message.targetID,
+      command: message.command,
+      ok: false,
+      unsupported: false,
+      message: "Chromium extension target is no longer available.",
+      backend: "chromium_extension",
+    });
+    return;
+  }
 
   chrome.tabs.sendMessage(
     message.tabId,
@@ -134,14 +157,15 @@ function handleCommandMessage(message) {
     },
     { frameId: message.frameId },
     response => {
+      const error = chrome.runtime.lastError;
       sendNative({
         type: "commandResult",
         requestID: message.requestID,
         targetID: message.targetID,
         command: message.command,
-        ok: Boolean(response && response.ok),
+        ok: !error && Boolean(response && response.ok),
         unsupported: Boolean(response && response.unsupported),
-        message: response && response.message ? response.message : "Chromium tab did not acknowledge the command.",
+        message: error ? error.message || "Chromium tab command failed." : response && response.message ? response.message : "Chromium tab did not acknowledge the command.",
         backend: "chromium_extension",
       });
     }
@@ -205,10 +229,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         windowId: tab.windowId,
         frameId: sender.frameId,
         mediaId: message.mediaId,
-        url: tab.url || "",
-        pageTitle: tab.title || "",
+        url: message.url || tab.url || "",
+        pageTitle: message.pageTitle || tab.title || "",
         title: message.title || tab.title || "Browser media",
         artist: message.artist || "",
+        album: message.album || "",
         playing: Boolean(message.playing),
         muted: Boolean(message.muted),
         volume: Number.isFinite(message.volume) ? message.volume : null,

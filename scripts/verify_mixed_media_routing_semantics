@@ -3,16 +3,19 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 controller="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportActionController.swift"
+desktop_transport="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaDesktopTransportAdapter.swift"
 
 ast-grep --pattern 'private func automaticTarget($$$) -> $$$ { $$$ }' "$controller" >/dev/null
 ast-grep --pattern 'private func showCommandFailureIfNeeded($$$) { $$$ }' "$controller" >/dev/null
 ast-grep --pattern 'private func transportBackendName($$$) -> $$$ { $$$ }' "$controller" >/dev/null
 
-python3 - "$controller" <<'PY'
+python3 - "$controller" "$desktop_transport" <<'PY'
 import sys
 
 source_path = sys.argv[1]
 source = open(source_path, encoding="utf-8").read()
+desktop_transport_path = sys.argv[2]
+desktop_transport = open(desktop_transport_path, encoding="utf-8").read()
 
 def fail(message):
     print(f"verify_mixed_media_routing_semantics: {message}", file=sys.stderr)
@@ -82,7 +85,6 @@ assert_order(
     automatic_target,
     [
         "preferredChromiumExtensionTarget(command: command, from: targets)",
-        "automaticRoutingTargets(command: command, from: targets)",
         "targets.count == 1",
         "playingTargets.count == 1",
         "focusResolver.focusedTarget(in: targets)",
@@ -103,44 +105,36 @@ assert_order(
     "automatic routing must prefer exactly one playing Chromium extension target for supported commands"
 )
 
-chromium_unsupported = function_body("automaticRoutingTargets")
-assert_order(
-    chromium_unsupported,
-        [
-            "ChromiumBrowserExtensionTransport.isTarget($0)",
-            "!ChromiumBrowserExtensionTransport.supports(command: command, target: $0)",
-            "legacyChromiumFallbackTarget(for: $0, in: targets) != nil",
-            "targets.filter { !unsupportedExtensionTargetsWithLegacyFallback.contains($0) }",
-        ],
-        "unsupported Chromium extension targets must be removed from automatic routing only when same-browser legacy fallback exists"
-    )
-
 send = function_body("send(command:")
 assert_order(
     send,
     [
         "desktopTransport.submit(command: command, target: target)",
-        "if result.unsupported, sendProgrammaticSpotifyWebAPI(command: command, to: target, dispatchID: dispatchID, reason: reason)",
+        "shouldFallbackFromUnsupportedDesktopResult(target: target)",
+        "sendProgrammaticSpotifyWebAPI(command: command, to: target, dispatchID: dispatchID, reason: reason)",
         '"desktop_transport_fallback"',
-        "if result.unsupported, sendProgrammaticMediaRemote(command: command, to: target, dispatchID: dispatchID, reason: reason)",
+        "sendProgrammaticMediaRemote(command: command, to: target, dispatchID: dispatchID, reason: reason)",
         "chromiumBrowserExtensionController.submit(command: command, target: target",
         "sendProgrammaticLegacy(command: command, to: target, dispatchID: dispatchID, reason: reason)",
     ],
-    "programmatic dispatch must prefer desktop adapters, fall through from unsupported desktop results to Spotify Web API then MediaRemote, then Chromium extension, then legacy"
+    "programmatic dispatch must prefer desktop adapters, gate unsupported desktop fallback, then use Chromium extension exactly before legacy"
 )
+if "legacyChromiumFallbackTarget" in send or '"chromium_extension_fallback"' in send:
+    fail("Chromium extension command failures must not fall back to legacy browser rows")
 
 programmatic_legacy = function_body("sendProgrammaticLegacy")
 assert_order(
     programmatic_legacy,
     [
         "desktopTransport.submit(command: command, target: target)",
-        "if result.unsupported, sendProgrammaticSpotifyWebAPI(command: command, to: target, dispatchID: dispatchID, reason: reason)",
+        "shouldFallbackFromUnsupportedDesktopResult(target: target)",
+        "sendProgrammaticSpotifyWebAPI(command: command, to: target, dispatchID: dispatchID, reason: reason)",
         '"desktop_transport_fallback"',
-        "if result.unsupported, sendProgrammaticMediaRemote(command: command, to: target, dispatchID: dispatchID, reason: reason)",
+        "sendProgrammaticMediaRemote(command: command, to: target, dispatchID: dispatchID, reason: reason)",
         "canUseMediaRemotePlayerPath(command: command, target: target)",
         "guard sendProgrammaticMediaRemote(command: command, to: target, dispatchID: dispatchID, reason: reason)",
     ],
-    "programmatic legacy dispatch must try desktop adapters before Spotify Web API and MediaRemote while allowing unsupported desktop fallthrough"
+    "programmatic legacy dispatch must gate unsupported desktop fallback before Spotify Web API and MediaRemote"
 )
 
 programmatic_spotify_webapi = function_body("sendProgrammaticSpotifyWebAPI")
@@ -177,27 +171,31 @@ assert_order(
     chooser_send,
     [
         "desktopTransport.submit(command: command, target: target)",
-        "if result.unsupported, sendChooserSpotifyWebAPI(command: command, to: target, dispatchID: dispatchID)",
+        "shouldFallbackFromUnsupportedDesktopResult(target: target)",
+        "sendChooserSpotifyWebAPI(command: command, to: target, dispatchID: dispatchID)",
         '"desktop_transport_fallback"',
-        "if result.unsupported, sendChooserMediaRemote(command: command, to: target, dispatchID: dispatchID)",
+        "sendChooserMediaRemote(command: command, to: target, dispatchID: dispatchID)",
         "chromiumBrowserExtensionController.submit(command: command, target: target",
         "sendChooserLegacy(command: command, to: target, dispatchID: dispatchID)",
     ],
-    "chooser dispatch must prefer desktop adapters, fall through from unsupported desktop results to Spotify Web API then MediaRemote, then Chromium extension, then legacy"
+    "chooser dispatch must prefer desktop adapters, gate unsupported desktop fallback, then use Chromium extension exactly before legacy"
 )
+if "legacyChromiumFallbackTarget" in chooser_send or '"chromium_extension_fallback"' in chooser_send:
+    fail("Chooser Chromium extension command failures must not fall back to legacy browser rows")
 
 chooser_legacy = function_body("sendChooserLegacy")
 assert_order(
     chooser_legacy,
     [
         "desktopTransport.submit(command: command, target: target)",
-        "if result.unsupported, sendChooserSpotifyWebAPI(command: command, to: target, dispatchID: dispatchID)",
+        "shouldFallbackFromUnsupportedDesktopResult(target: target)",
+        "sendChooserSpotifyWebAPI(command: command, to: target, dispatchID: dispatchID)",
         '"desktop_transport_fallback"',
-        "if result.unsupported, sendChooserMediaRemote(command: command, to: target, dispatchID: dispatchID)",
+        "sendChooserMediaRemote(command: command, to: target, dispatchID: dispatchID)",
         "canUseMediaRemotePlayerPath(command: command, target: target)",
         "guard sendChooserMediaRemote(command: command, to: target, dispatchID: dispatchID)",
     ],
-    "chooser legacy dispatch must try desktop adapters before Spotify Web API and MediaRemote while allowing unsupported desktop fallthrough"
+    "chooser legacy dispatch must gate unsupported desktop fallback before Spotify Web API and MediaRemote"
 )
 
 chooser_spotify_webapi = function_body("sendChooserSpotifyWebAPI")
@@ -244,20 +242,19 @@ assert_order(
     "legacy Chromium browser rows must not use MediaRemote player-path routing because selected-row dispatch can affect a competing global media session"
 )
 
-chromium_fallback = function_body("legacyChromiumFallbackTarget(\n        for target: MediaRemoteTarget,\n        in targets:")
+desktop_fallback_gate = function_body("shouldFallbackFromUnsupportedDesktopResult")
 assert_contains(
-    chromium_fallback,
-    "ChromiumBrowserExtensionTransport.browserFamily(target: target)",
-    "Chromium extension fallback must key off the extension browser family"
+    desktop_fallback_gate,
+    "!target.isChromiumBrowserLike",
+    "Unsupported browser desktop automation commands must not fall through to MediaRemote or Spotify fallback"
 )
 assert_contains(
-    chromium_fallback,
-    "familyMatches.count == 1",
-    "Chromium extension fallback must require exactly one same-browser legacy target"
+    desktop_transport,
+    "const hasMediaSource = element => Boolean(element.currentSrc || element.src || element.querySelector('source')); const isReady = element => !element.ended && hasMediaSource(element);",
+    "Helium desktop fallback must keep active-tab media targets stable through pause and source transitions"
 )
-for forbidden in ["playing.count == 1", "candidates.count == 1"]:
-    if forbidden in chromium_fallback:
-        fail("Chromium extension fallback must not guess from playing or single unrelated browser candidates")
+if "legacyChromiumFallbackTarget" in source or '"chromium_extension_fallback"' in source:
+    fail("Chromium extension routing must not retain legacy browser fallback hooks")
 
 failure = function_body("showCommandFailureIfNeeded")
 assert_order(

@@ -83,6 +83,19 @@ struct MediaRemoteTarget: Codable, Equatable, Identifiable, Sendable {
         return bundleIdentifier
     }
 
+    var routeSourceLabel: String? {
+        if ChromiumBrowserExtensionTransport.isTarget(self) {
+            return "Extension"
+        }
+        if mediaType == "desktop_automation", isChromiumBrowserLike {
+            return "Helium JS fallback"
+        }
+        if isChromiumBrowserLike {
+            return "Extension required"
+        }
+        return nil
+    }
+
     @MainActor
     var artworkImage: NSImage? {
         guard let artworkBase64, !artworkBase64.isEmpty,

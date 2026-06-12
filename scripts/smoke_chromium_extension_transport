@@ -17,7 +17,13 @@ cleanup() {
     kill "$server_pid" >/dev/null 2>&1 || true
     wait "$server_pid" >/dev/null 2>&1 || true
   fi
-  rm -rf "$workdir"
+  for _ in {1..20}; do
+    if rm -rf "$workdir" >/dev/null 2>&1; then
+      return
+    fi
+    sleep 0.1
+  done
+  rm -rf "$workdir" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 

@@ -434,7 +434,6 @@ final class MediaTransportActionController {
             return (extensionTarget, .current)
         }
 
-        let targets = automaticRoutingTargets(command: command, from: targets)
         if targets.count == 1, let target = targets.first {
             return (target, .single)
         }
@@ -467,25 +466,15 @@ final class MediaTransportActionController {
         return playingExtensionTargets[0]
     }
 
-    private func automaticRoutingTargets(command: MediaRemoteTransportCommand, from targets: [MediaRemoteTarget]) -> [MediaRemoteTarget] {
-        let unsupportedExtensionTargetsWithLegacyFallback = targets.filter {
-            ChromiumBrowserExtensionTransport.isTarget($0)
-                && !ChromiumBrowserExtensionTransport.supports(command: command, target: $0)
-                && legacyChromiumFallbackTarget(for: $0, in: targets) != nil
-        }
-        guard !unsupportedExtensionTargetsWithLegacyFallback.isEmpty else {
-            return targets
-        }
-        return targets.filter { !unsupportedExtensionTargetsWithLegacyFallback.contains($0) }
-    }
-
     private func send(command: MediaRemoteTransportCommand, to target: MediaRemoteTarget, reason: MediaTransportRoutingReason) {
         logger.info("MediaTransport dispatch command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) targetID=\(target.id, privacy: .public) reason=\(reason.rawValue, privacy: .public)")
         rememberTarget(target)
         let dispatchID = beginBoundedProgrammaticDispatch(command: command)
         if let result = desktopTransport.submit(command: command, target: target) {
             trace(result: result, transportBackend: result.backend)
-            if result.unsupported, sendProgrammaticSpotifyWebAPI(command: command, to: target, dispatchID: dispatchID, reason: reason) {
+            if shouldFallbackFromUnsupportedDesktopResult(target: target),
+               result.unsupported,
+               sendProgrammaticSpotifyWebAPI(command: command, to: target, dispatchID: dispatchID, reason: reason) {
                 trace(
                     "desktop_transport_fallback",
                     command: command,
@@ -495,7 +484,9 @@ final class MediaTransportActionController {
                 )
                 return
             }
-            if result.unsupported, sendProgrammaticMediaRemote(command: command, to: target, dispatchID: dispatchID, reason: reason) {
+            if shouldFallbackFromUnsupportedDesktopResult(target: target),
+               result.unsupported,
+               sendProgrammaticMediaRemote(command: command, to: target, dispatchID: dispatchID, reason: reason) {
                 trace(
                     "desktop_transport_fallback",
                     command: command,
@@ -517,17 +508,6 @@ final class MediaTransportActionController {
         if let sent = chromiumBrowserExtensionController.submit(command: command, target: target, onResult: { [weak self] result in
             guard let self else { return }
             self.trace(result: result, transportBackend: result.backend)
-            if !result.ok, let fallbackTarget = self.legacyChromiumFallbackTarget(for: target) {
-                self.trace(
-                    "chromium_extension_fallback",
-                    command: command,
-                    target: fallbackTarget,
-                    reason: result.unsupported ? "unsupported" : "failed",
-                    transportBackend: result.backend
-                )
-                self.sendProgrammaticLegacy(command: command, to: fallbackTarget, dispatchID: dispatchID, reason: reason)
-                return
-            }
             self.finishProgrammaticDispatch(
                 id: dispatchID,
                 fallback: false
@@ -535,16 +515,12 @@ final class MediaTransportActionController {
             self.showCommandFailureIfNeeded(result: result, target: target)
         }) {
             guard sent else {
-                if let fallbackTarget = legacyChromiumFallbackTarget(for: target) {
-                    sendProgrammaticLegacy(command: command, to: fallbackTarget, dispatchID: dispatchID, reason: reason)
-                } else {
-                    finishProgrammaticDispatch(id: dispatchID, fallback: true)
-                    StatusHUD.shared.finish(
-                        title: "Media Command Failed",
-                        message: "Keyway could not reach \(target.appName).",
-                        dismissAfter: 2.2
-                    )
-                }
+                finishProgrammaticDispatch(id: dispatchID, fallback: true)
+                StatusHUD.shared.finish(
+                    title: "Media Command Failed",
+                    message: "Keyway could not reach \(target.appName).",
+                    dismissAfter: 2.2
+                )
                 return
             }
             logger.info("MediaTransport route command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) reason=\(reason.rawValue, privacy: .public) transport=chromium_extension")
@@ -562,7 +538,9 @@ final class MediaTransportActionController {
         rememberTarget(target)
         if let result = desktopTransport.submit(command: command, target: target) {
             trace(result: result, transportBackend: result.backend)
-            if result.unsupported, sendProgrammaticSpotifyWebAPI(command: command, to: target, dispatchID: dispatchID, reason: reason) {
+            if shouldFallbackFromUnsupportedDesktopResult(target: target),
+               result.unsupported,
+               sendProgrammaticSpotifyWebAPI(command: command, to: target, dispatchID: dispatchID, reason: reason) {
                 trace(
                     "desktop_transport_fallback",
                     command: command,
@@ -572,7 +550,9 @@ final class MediaTransportActionController {
                 )
                 return
             }
-            if result.unsupported, sendProgrammaticMediaRemote(command: command, to: target, dispatchID: dispatchID, reason: reason) {
+            if shouldFallbackFromUnsupportedDesktopResult(target: target),
+               result.unsupported,
+               sendProgrammaticMediaRemote(command: command, to: target, dispatchID: dispatchID, reason: reason) {
                 trace(
                     "desktop_transport_fallback",
                     command: command,
@@ -722,7 +702,9 @@ final class MediaTransportActionController {
     ) {
         if let result = desktopTransport.submit(command: command, target: target) {
             trace(result: result, transportBackend: result.backend)
-            if result.unsupported, sendChooserSpotifyWebAPI(command: command, to: target, dispatchID: dispatchID) {
+            if shouldFallbackFromUnsupportedDesktopResult(target: target),
+               result.unsupported,
+               sendChooserSpotifyWebAPI(command: command, to: target, dispatchID: dispatchID) {
                 trace(
                     "desktop_transport_fallback",
                     command: command,
@@ -732,7 +714,9 @@ final class MediaTransportActionController {
                 )
                 return
             }
-            if result.unsupported, sendChooserMediaRemote(command: command, to: target, dispatchID: dispatchID) {
+            if shouldFallbackFromUnsupportedDesktopResult(target: target),
+               result.unsupported,
+               sendChooserMediaRemote(command: command, to: target, dispatchID: dispatchID) {
                 trace(
                     "desktop_transport_fallback",
                     command: command,
@@ -754,17 +738,6 @@ final class MediaTransportActionController {
         if let sent = chromiumBrowserExtensionController.submit(command: command, target: target, onResult: { [weak self] result in
             guard let self else { return }
             self.trace(result: result, transportBackend: result.backend)
-            if !result.ok, let fallbackTarget = self.legacyChromiumFallbackTarget(for: target) {
-                self.trace(
-                    "chromium_extension_fallback",
-                    command: command,
-                    target: fallbackTarget,
-                    reason: result.unsupported ? "unsupported" : "failed",
-                    transportBackend: result.backend
-                )
-                self.sendChooserLegacy(command: command, to: fallbackTarget, dispatchID: dispatchID)
-                return
-            }
             self.finishChooserDispatch(
                 id: dispatchID,
                 fallback: false
@@ -772,16 +745,12 @@ final class MediaTransportActionController {
             self.showCommandFailureIfNeeded(result: result, target: target)
         }) {
             guard sent else {
-                if let fallbackTarget = legacyChromiumFallbackTarget(for: target) {
-                    sendChooserLegacy(command: command, to: fallbackTarget, dispatchID: dispatchID)
-                } else {
-                    finishChooserDispatch(id: dispatchID, fallback: true)
-                    StatusHUD.shared.finish(
-                        title: "Media Command Failed",
-                        message: "Keyway could not reach \(target.appName).",
-                        dismissAfter: 2.2
-                    )
-                }
+                finishChooserDispatch(id: dispatchID, fallback: true)
+                StatusHUD.shared.finish(
+                    title: "Media Command Failed",
+                    message: "Keyway could not reach \(target.appName).",
+                    dismissAfter: 2.2
+                )
                 return
             }
             logger.info("MediaTransport chooser command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) transport=chromium_extension")
@@ -798,7 +767,9 @@ final class MediaTransportActionController {
         rememberTarget(target)
         if let result = desktopTransport.submit(command: command, target: target) {
             trace(result: result, transportBackend: result.backend)
-            if result.unsupported, sendChooserSpotifyWebAPI(command: command, to: target, dispatchID: dispatchID) {
+            if shouldFallbackFromUnsupportedDesktopResult(target: target),
+               result.unsupported,
+               sendChooserSpotifyWebAPI(command: command, to: target, dispatchID: dispatchID) {
                 trace(
                     "desktop_transport_fallback",
                     command: command,
@@ -808,7 +779,9 @@ final class MediaTransportActionController {
                 )
                 return
             }
-            if result.unsupported, sendChooserMediaRemote(command: command, to: target, dispatchID: dispatchID) {
+            if shouldFallbackFromUnsupportedDesktopResult(target: target),
+               result.unsupported,
+               sendChooserMediaRemote(command: command, to: target, dispatchID: dispatchID) {
                 trace(
                     "desktop_transport_fallback",
                     command: command,
@@ -948,52 +921,8 @@ final class MediaTransportActionController {
         return true
     }
 
-    private func legacyChromiumFallbackTarget(for target: MediaRemoteTarget) -> MediaRemoteTarget? {
-        legacyChromiumFallbackTarget(for: target, in: mediaRemoteController.targets)
-    }
-
-    private func legacyChromiumFallbackTarget(
-        for target: MediaRemoteTarget,
-        in targets: [MediaRemoteTarget]
-    ) -> MediaRemoteTarget? {
-        guard ChromiumBrowserExtensionTransport.isTarget(target) else {
-            return nil
-        }
-        let candidates = legacyChromiumBrowserTargets(in: targets)
-        guard !candidates.isEmpty else {
-            return nil
-        }
-        if let family = ChromiumBrowserExtensionTransport.browserFamily(target: target) {
-            let familyMatches = candidates.filter { legacyChromiumTarget($0, matchesBrowserFamily: family) }
-            if familyMatches.count == 1 {
-                return familyMatches[0]
-            }
-        }
-        return nil
-    }
-
-    private func legacyChromiumBrowserTargets(in targets: [MediaRemoteTarget]) -> [MediaRemoteTarget] {
-        targets.filter {
-            !ChromiumBrowserExtensionTransport.isTarget($0) && $0.isChromiumBrowserLike
-        }
-    }
-
-    private func legacyChromiumTarget(_ target: MediaRemoteTarget, matchesBrowserFamily family: String) -> Bool {
-        let identities = [target.bundleIdentifier, target.parentBundleIdentifier, target.displayName].map { $0.lowercased() }
-        switch family {
-        case "brave":
-            return identities.contains { $0.contains("brave") }
-        case "edge":
-            return identities.contains { $0.contains("edge") || $0.contains("microsoft") }
-        case "opera":
-            return identities.contains { $0.contains("opera") }
-        case "chromium":
-            return identities.contains { $0.contains("chromium") }
-        case "chrome":
-            return identities.contains { $0.contains("chrome") || $0.contains("google") || $0.contains("helium") }
-        default:
-            return identities.contains { $0.contains(family) }
-        }
+    private func shouldFallbackFromUnsupportedDesktopResult(target: MediaRemoteTarget) -> Bool {
+        !target.isChromiumBrowserLike
     }
 
     private func chooserScopedCommand(

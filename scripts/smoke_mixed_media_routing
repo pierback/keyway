@@ -439,23 +439,25 @@ func route(
     expectUnsupported: Bool,
     expectedBackend: String,
     latencies: inout [Int]
-) -> (success: Bool, wrongTarget: Bool, duplicate: Bool) {
+) -> (success: Bool, wrongTarget: Bool, duplicate: Bool, reason: String) {
     let baseline = state.maxSequence()
     let requestID = UUID().uuidString
     let started = ProcessInfo.processInfo.systemUptime
     postProbe(ProbeRequest(requestID: requestID, action: "route", targetID: target.id, command: command))
 
     guard runLoop(until: Date(timeIntervalSinceNow: 2), condition: { state.response(requestID: requestID) != nil }),
-          let response = state.response(requestID: requestID),
-          response.ok
+          let response = state.response(requestID: requestID)
     else {
-        return (false, false, false)
+        return (false, false, false, "missing probe response")
+    }
+    guard response.ok else {
+        return (false, false, false, "probe rejected message=\(response.message)")
     }
 
     guard runLoop(until: Date(timeIntervalSinceNow: 3), condition: { !state.helperResults(after: baseline, command: command).isEmpty }),
           let first = state.helperResults(after: baseline, command: command).first
     else {
-        return (false, false, false)
+        return (false, false, false, "missing helper result")
     }
 
     latencies.append(Int(((first.receivedUptime - started) * 1000).rounded()))
@@ -467,7 +469,8 @@ func route(
     let unsupportedOK = expectUnsupported
         ? (!first.ok && first.unsupported)
         : (first.ok && !first.unsupported)
-    return (unsupportedOK && !wrongTarget && !duplicate && backendOK, wrongTarget, duplicate)
+    let reason = "target=\(first.targetID) backend=\(first.backend) ok=\(first.ok) unsupported=\(first.unsupported) results=\(results.count)"
+    return (unsupportedOK && !wrongTarget && !duplicate && backendOK, wrongTarget, duplicate, reason)
 }
 
 func firstTarget(_ targets: [Target], bundleID: String) -> Target? {
@@ -551,6 +554,7 @@ for check in unsupportedChecks {
         unsupportedSuccess += 1
     } else {
         unsupportedFailure += 1
+        FileHandle.standardError.write(Data("mixed_media_routing_unsupported_failure_detail target=\(check.0.displayName) command=\(check.1) expectedBackend=\(check.2) reason=\(result.reason)\n".utf8))
     }
     if result.wrongTarget { wrongTarget += 1 }
     if result.duplicate { duplicate += 1 }
@@ -579,6 +583,7 @@ for index in 0..<iterations {
         success += 1
     } else {
         failure += 1
+        FileHandle.standardError.write(Data("mixed_media_routing_failure_detail target=\(check.0.displayName) command=\(check.1) expectedBackend=\(check.2) reason=\(result.reason)\n".utf8))
     }
     if result.wrongTarget { wrongTarget += 1 }
     if result.duplicate { duplicate += 1 }
