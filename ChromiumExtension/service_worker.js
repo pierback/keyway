@@ -478,47 +478,69 @@ function handleFocusMessage(message) {
       return;
     }
 
-    if (!Number.isInteger(tab.index)) {
+    if (!Number.isInteger(tab.id) || !Number.isInteger(tab.windowId)) {
       sendNative({
         type: "focusResult",
         protocolVersion,
         requestID: message.requestID,
         targetID: message.targetID,
         ok: false,
-        message: "Could not resolve browser tab index.",
+        message: "Could not resolve browser tab.",
         backend: "chromium_extension",
         failureReason: "browser_target_unavailable",
       });
       return;
     }
 
-    chrome.tabs.highlight({ windowId: tab.windowId, tabs: tab.index }, () => {
-      const tabError = chrome.runtime.lastError;
-      if (tabError) {
+    chrome.windows.update(tab.windowId, { focused: true }, () => {
+      const windowError = chrome.runtime.lastError;
+      if (windowError) {
         sendNative({
           type: "focusResult",
           protocolVersion,
           requestID: message.requestID,
           targetID: message.targetID,
           ok: false,
-          message: tabError.message || "Could not select browser tab.",
+          message: windowError.message || "Could not focus browser window.",
           backend: "chromium_extension",
-          failureReason: "browser_target_unavailable",
+          failureReason: "browser_activation_failed",
         });
         return;
       }
 
-      chrome.windows.update(tab.windowId, { focused: true }, () => {
-        const windowError = chrome.runtime.lastError;
-        sendNative({
-          type: "focusResult",
-          protocolVersion,
-          requestID: message.requestID,
-          targetID: message.targetID,
-          ok: !windowError,
-          message: windowError ? windowError.message || "Could not focus browser window." : "focused",
-          backend: "chromium_extension",
-          failureReason: windowError ? "browser_activation_failed" : undefined,
+      chrome.tabs.update(tab.id, { active: true, highlighted: true }, () => {
+        const tabError = chrome.runtime.lastError;
+        if (tabError) {
+          sendNative({
+            type: "focusResult",
+            protocolVersion,
+            requestID: message.requestID,
+            targetID: message.targetID,
+            ok: false,
+            message: tabError.message || "Could not activate browser tab.",
+            backend: "chromium_extension",
+            failureReason: "browser_target_unavailable",
+          });
+          return;
+        }
+
+        chrome.tabs.query({ active: true, windowId: tab.windowId }, activeTabs => {
+          const queryError = chrome.runtime.lastError;
+          const selected = !queryError && activeTabs.some(activeTab => activeTab.id === tab.id);
+          const errorMessage = queryError
+            ? queryError.message || "Could not confirm active browser tab."
+            : "Could not activate browser tab.";
+
+          sendNative({
+            type: "focusResult",
+            protocolVersion,
+            requestID: message.requestID,
+            targetID: message.targetID,
+            ok: selected,
+            message: selected ? "focused" : errorMessage,
+            backend: "chromium_extension",
+            failureReason: selected ? undefined : "browser_target_unavailable",
+          });
         });
       });
     });

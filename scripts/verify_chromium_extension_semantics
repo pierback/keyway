@@ -23,8 +23,12 @@ const scriptExecutions = [];
 const tabUpdates = [];
 const tabHighlights = [];
 const windowUpdates = [];
+const focusEvents = [];
 const tabGetRequests = [];
 const queryRequests = [];
+const tabWindowIDs = new Map([[22, 11], [23, 11]]);
+const activeTabIDByWindowID = new Map();
+let focusedWindowID = null;
 let disconnectListener = null;
 let nativeMessageListener = null;
 let runtimeMessageListener = null;
@@ -99,14 +103,24 @@ const context = {
       get(tabId, callback) {
         tabGetRequests.push(tabId);
         context.chrome.runtime.lastError = null;
-        callback({ id: tabId, windowId: 11, index: 3 });
+        callback({ id: tabId, windowId: tabWindowIDs.get(tabId) || 11, index: tabId === 23 ? 3 : 2 });
       },
       query(queryInfo, callback) {
         queryRequests.push(queryInfo);
+        if (queryInfo.active === true && Number.isInteger(queryInfo.windowId)) {
+          focusEvents.push(`query-active:${queryInfo.windowId}`);
+          const activeTabId = activeTabIDByWindowID.get(queryInfo.windowId);
+          callback(activeTabId ? [{ id: activeTabId, windowId: queryInfo.windowId, active: true }] : []);
+          return;
+        }
         callback([{ id: 22 }, { id: 23 }, {}]);
       },
       update(tabId, updateInfo, callback) {
+        focusEvents.push(`tab-update:${tabId}:focused-window:${focusedWindowID ?? "none"}`);
         tabUpdates.push({ tabId, updateInfo });
+        if (updateInfo.active === true) {
+          activeTabIDByWindowID.set(tabWindowIDs.get(tabId) || 11, tabId);
+        }
         context.chrome.runtime.lastError = null;
         callback({ id: tabId, active: updateInfo.active });
       },
@@ -125,6 +139,10 @@ const context = {
     },
     windows: {
       update(windowId, updateInfo, callback) {
+        focusEvents.push(`window-update:${windowId}:${updateInfo.focused}`);
+        if (updateInfo.focused === true) {
+          focusedWindowID = windowId;
+        }
         windowUpdates.push({ windowId, updateInfo });
         context.chrome.runtime.lastError = null;
         callback({ id: windowId, focused: updateInfo.focused });
@@ -487,13 +505,19 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
     targetID: twoTargetSnapshot.targets[1].id,
   });
   assertEqual(tabGetRequests.at(-1), 23, "native focus must resolve the live tab before focusing");
-  assertEqual(tabHighlights.length, 1, "native focus must select exactly one browser tab");
-  assertEqual(tabHighlights[0].windowId, 11, "native focus must select the tab inside the live browser window");
-  assertEqual(tabHighlights[0].tabs, 3, "native focus must select the exact tab index reported by the browser");
   assertEqual(windowUpdates.length, 1, "native focus must focus exactly one browser window");
   assertEqual(windowUpdates[0].windowId, 11, "native focus must use the selected target window id");
   assertEqual(windowUpdates[0].updateInfo.focused, true, "native focus must request window focus");
-  assertEqual(tabUpdates.length, 0, "native focus must use tab highlighting instead of active-tab updates");
+  assertEqual(tabUpdates.length, 1, "native focus must activate exactly one browser tab");
+  assertEqual(tabUpdates[0].tabId, 23, "native focus must activate the selected tab id");
+  assertEqual(tabUpdates[0].updateInfo.active, true, "native focus must request active tab selection");
+  assertEqual(tabUpdates[0].updateInfo.highlighted, true, "native focus must request selected tab highlighting");
+  assertEqual(tabHighlights.length, 0, "native focus must not rely on index-based tab highlighting");
+  assertEqual(
+    focusEvents.join(","),
+    "window-update:11:true,tab-update:23:focused-window:11,query-active:11",
+    "native focus must focus the window before activating and confirming the exact tab"
+  );
   assert(!tabUpdates.some(update => update.tabId === 22), "native focus must leave competing tabs inactive");
   const focusResult = postedMessages.filter(message => message.type === "focusResult").at(-1);
   assertEqual(focusResult.requestID, "focus-1", "focus result must preserve request id");
@@ -783,8 +807,13 @@ expect(
 )
 expect(
     repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
-    "chrome.tabs.highlight({ windowId: tab.windowId, tabs: tab.index }",
-    "Chromium extension service worker must select the target tab before focusing the browser window",
+    "chrome.tabs.update(tab.id, { active: true, highlighted: true }",
+    "Chromium extension service worker must activate the selected browser tab by id",
+)
+expect(
+    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    "chrome.tabs.query({ active: true, windowId: tab.windowId }",
+    "Chromium extension service worker must confirm the selected tab became active",
 )
 expect(
     native_host,
