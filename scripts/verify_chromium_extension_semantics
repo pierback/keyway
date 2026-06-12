@@ -21,6 +21,7 @@ const clearedIntervals = [];
 const tabMessages = [];
 const tabUpdates = [];
 const windowUpdates = [];
+const queryRequests = [];
 let disconnectListener = null;
 let nativeMessageListener = null;
 let runtimeMessageListener = null;
@@ -84,9 +85,17 @@ const context = {
         },
       },
       sendMessage(tabId, message, options, callback) {
+        if (typeof options === "function") {
+          callback = options;
+          options = {};
+        }
         tabMessages.push({ tabId, message, options });
         context.chrome.runtime.lastError = null;
         callback({ ok: true, message: "ack" });
+      },
+      query(queryInfo, callback) {
+        queryRequests.push(queryInfo);
+        callback([{ id: 22 }, { id: 23 }, {}]);
       },
       update(tabId, updateInfo, callback) {
         tabUpdates.push({ tabId, updateInfo });
@@ -114,6 +123,13 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
 (async () => {
   assert(postedMessages.some(message => message.type === "hello"), "service worker must announce hello to native host");
   assert(postedMessages.some(message => message.type === "snapshot"), "service worker must publish a snapshot immediately");
+  assertEqual(queryRequests.length, 1, "service worker must probe tabs after connecting to the native host");
+  assertEqual(
+    tabMessages.filter(entry => entry.message.type === "keywayProbeMedia").length,
+    2,
+    "service worker must ask existing tabs to republish media state after app restart"
+  );
+  tabMessages.length = 0;
   assertEqual(intervals.length, 1, "service worker must start one heartbeat interval");
   assertEqual(intervals[0].delay, 1000, "service worker heartbeat interval");
 
@@ -180,6 +196,7 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
       volume: 0.75,
       duration: 180,
       elapsedTime: 20,
+      hasMediaSessionMetadata: false,
     },
     {
       tab: {
@@ -194,7 +211,35 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   );
   await Promise.resolve();
   const pausedTargetSnapshot = postedMessages.filter(message => message.type === "snapshot").at(-1);
-  assertEqual(pausedTargetSnapshot.targets.length, 1, "inactive paused browser media must not publish an active source row");
+  assertEqual(pausedTargetSnapshot.targets.length, 1, "inactive paused browser media without Media Session metadata must not publish an active source row");
+
+  runtimeMessageListener(
+    {
+      type: "keywayMediaState",
+      mediaId: "media-2",
+      title: "Second Song",
+      artist: "Second Artist",
+      playing: false,
+      muted: false,
+      volume: 0.75,
+      duration: 180,
+      elapsedTime: 20,
+      hasMediaSessionMetadata: true,
+    },
+    {
+      tab: {
+        id: 23,
+        windowId: 11,
+        url: "https://example.test/second-video",
+        title: "Second Example Video",
+      },
+      frameId: 0,
+    },
+    () => {}
+  );
+  await Promise.resolve();
+  const pausedMediaSessionSnapshot = postedMessages.filter(message => message.type === "snapshot").at(-1);
+  assertEqual(pausedMediaSessionSnapshot.targets.length, 2, "paused browser media with Media Session metadata must remain visible after app restart");
 
   runtimeMessageListener(
     {
@@ -207,6 +252,7 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
       volume: 0.75,
       duration: 180,
       elapsedTime: 20,
+      hasMediaSessionMetadata: false,
     },
     {
       tab: {
@@ -221,7 +267,7 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   );
   await Promise.resolve();
   const mutedTargetSnapshot = postedMessages.filter(message => message.type === "snapshot").at(-1);
-  assertEqual(mutedTargetSnapshot.targets.length, 1, "muted browser media must not publish an active source row");
+  assertEqual(mutedTargetSnapshot.targets.length, 1, "muted browser media without Media Session metadata must not publish an active source row");
 
   runtimeMessageListener(
     {

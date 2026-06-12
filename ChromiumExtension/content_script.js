@@ -96,6 +96,7 @@ function publishElement(element) {
   }
 
   const metadata = navigator.mediaSession?.metadata;
+  const hasMediaSessionMetadata = Boolean(metadata && (metadata.title || metadata.artist || metadata.album));
   chrome.runtime.sendMessage({
     type: "keywayMediaState",
     mediaId: mediaIdFor(element),
@@ -109,6 +110,7 @@ function publishElement(element) {
     volume: element.volume,
     duration: element.duration,
     elapsedTime: element.currentTime,
+    hasMediaSessionMetadata,
     supportedCommands: supportedCommands(),
   });
 }
@@ -180,6 +182,12 @@ const observer = new MutationObserver(() => {
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message.type === "keywayProbeMedia") {
+    publishAll();
+    sendResponse({ ok: true });
+    return false;
+  }
+
   if (message.type !== "keywayCommand") return false;
   applyCommand(message).then(response => {
     publishAll();

@@ -18,6 +18,7 @@ function connectNativeHost() {
     scheduleReconnect();
   });
   sendNative({ type: "hello", protocolVersion: 1 });
+  probeTabsForMedia();
   publishSnapshot();
   startHeartbeat();
 }
@@ -104,6 +105,7 @@ function publishSnapshot() {
 
 function isVisibleTarget(target) {
   if (isAudiblePlayback(target)) return true;
+  if (target.hasMediaSessionMetadata) return true;
   return Date.now() - target.lastActiveAt <= recentlyActiveAfterMs;
 }
 
@@ -129,6 +131,17 @@ function clearTargetsForTab(tabId) {
     }
   }
   if (changed) publishSnapshot();
+}
+
+function probeTabsForMedia() {
+  chrome.tabs.query({}, tabs => {
+    for (const tab of tabs) {
+      if (tab.id === undefined) continue;
+      chrome.tabs.sendMessage(tab.id, { type: "keywayProbeMedia" }, () => {
+        chrome.runtime.lastError;
+      });
+    }
+  });
 }
 
 function handleNativeMessage(message) {
@@ -251,6 +264,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         volume: Number.isFinite(message.volume) ? message.volume : null,
         duration: Number.isFinite(message.duration) ? message.duration : null,
         elapsedTime: Number.isFinite(message.elapsedTime) ? message.elapsedTime : null,
+        hasMediaSessionMetadata: Boolean(message.hasMediaSessionMetadata),
         supportedCommands: Array.isArray(message.supportedCommands)
           ? message.supportedCommands
           : ["play", "pause", "playPause", "mute", "volumeDelta"],
