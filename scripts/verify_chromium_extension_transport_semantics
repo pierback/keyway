@@ -58,6 +58,7 @@ struct MediaRemoteTarget: Equatable, Identifiable {
     let browserFamily: String?
     let browserDisplayName: String?
     let browserBundleIdentifier: String?
+    let browserInstanceID: String?
 
     var isChromiumBrowserLike: Bool {
         let identities = [bundleIdentifier, parentBundleIdentifier, displayName].map { $0.lowercased() }
@@ -173,6 +174,11 @@ struct Semantics {
             ChromiumBrowserExtensionTransport.browserFamily(target: target),
             "chromium",
             "Chromium extension targets must expose the browser family from typed metadata"
+        )
+        expectEqual(
+            target.browserInstanceID,
+            "chromium-profile-a",
+            "Chromium extension targets must preserve the browser host instance identity"
         )
         expectEqual(
             ChromiumBrowserExtensionTransport.targetDisplayName(browser: "Chromium", pageTitle: ""),
@@ -299,7 +305,8 @@ struct Semantics {
             supportedCommands: supportedCommands,
             browserFamily: "chromium",
             browserDisplayName: "Chromium",
-            browserBundleIdentifier: "org.chromium.Chromium"
+            browserBundleIdentifier: "org.chromium.Chromium",
+            browserInstanceID: "chromium-profile-a"
         )
     }
 
@@ -326,7 +333,8 @@ struct Semantics {
             supportedCommands: nil,
             browserFamily: nil,
             browserDisplayName: nil,
-            browserBundleIdentifier: nil
+            browserBundleIdentifier: nil,
+            browserInstanceID: nil
         )
     }
 

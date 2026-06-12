@@ -19,9 +19,10 @@ struct HostBrowserIdentity {
     let family: String
     let displayName: String
     let bundleIdentifier: String
+    let instanceID: String
 
     var publicTargetIDPrefix: String {
-        "\(chromiumTargetIDPrefix)\(family):"
+        "\(chromiumTargetIDPrefix)\(family):\(instanceID):"
     }
 
     static func current() -> HostBrowserIdentity? {
@@ -38,7 +39,8 @@ struct HostBrowserIdentity {
         return HostBrowserIdentity(
             family: family,
             displayName: appName.isEmpty ? displayName(family: family) : appName,
-            bundleIdentifier: bundleIdentifier
+            bundleIdentifier: bundleIdentifier,
+            instanceID: UUID().uuidString.lowercased()
         )
     }
 
@@ -166,6 +168,7 @@ func payloadByAddingHostBrowserIdentity(_ payload: String) -> String {
         targets[index]["browserFamily"] = hostBrowserIdentity.family
         targets[index]["browserDisplayName"] = hostBrowserIdentity.displayName
         targets[index]["browserBundleIdentifier"] = hostBrowserIdentity.bundleIdentifier
+        targets[index]["browserInstanceID"] = hostBrowserIdentity.instanceID
         targets[index]["browser"] = hostBrowserIdentity.displayName
     }
     root["targets"] = targets

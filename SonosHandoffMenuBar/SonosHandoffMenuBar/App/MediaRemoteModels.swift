@@ -59,6 +59,7 @@ struct MediaRemoteTarget: Codable, Equatable, Identifiable, Sendable {
     let browserFamily: String?
     let browserDisplayName: String?
     let browserBundleIdentifier: String?
+    let browserInstanceID: String?
 
     var appName: String {
         if !displayName.isEmpty {

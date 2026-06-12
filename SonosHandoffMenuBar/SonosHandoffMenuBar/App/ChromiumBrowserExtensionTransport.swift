@@ -673,6 +673,7 @@ private struct ChromiumBrowserExtensionTargetPayload: Decodable {
     let browserFamily: String?
     let browserDisplayName: String?
     let browserBundleIdentifier: String?
+    let browserInstanceID: String?
     let url: String
     let pageTitle: String
     let title: String
@@ -705,7 +706,8 @@ private struct ChromiumBrowserExtensionTargetPayload: Decodable {
             supportedCommands: supportedCommands.compactMap(MediaRemoteTransportCommand.init(rawValue:)),
             browserFamily: browserFamily,
             browserDisplayName: browserDisplayName,
-            browserBundleIdentifier: browserBundleIdentifier
+            browserBundleIdentifier: browserBundleIdentifier,
+            browserInstanceID: browserInstanceID
         )
     }
 }

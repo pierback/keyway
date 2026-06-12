@@ -785,6 +785,11 @@ expect(
 )
 expect(
     native_host,
+    '"\\(chromiumTargetIDPrefix)\\(family):\\(instanceID):"',
+    "Chromium native host public target IDs must include host instance identity to avoid profile collisions",
+)
+expect(
+    native_host,
     "payloadByRestoringRawTargetIdentity",
     "Chromium native host must strip public target IDs before forwarding commands to the owning extension",
 )
@@ -797,6 +802,11 @@ expect(
     native_host,
     'targets[index]["browserFamily"]',
     "Chromium native host must add browser family metadata from the launching browser",
+)
+expect(
+    native_host,
+    'targets[index]["browserInstanceID"]',
+    "Chromium native host must expose browser host instance metadata",
 )
 expect(
     environment,

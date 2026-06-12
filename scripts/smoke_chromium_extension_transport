@@ -275,6 +275,7 @@ struct Target: Decodable {
     let browserFamily: String?
     let browserDisplayName: String?
     let browserBundleIdentifier: String?
+    let browserInstanceID: String?
     let pageTitle: String
     let title: String
     let playing: Bool

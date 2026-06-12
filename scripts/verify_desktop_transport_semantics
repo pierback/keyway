@@ -55,6 +55,7 @@ struct MediaRemoteTarget: Equatable, Identifiable {
     let browserFamily: String?
     let browserDisplayName: String?
     let browserBundleIdentifier: String?
+    let browserInstanceID: String?
 }
 
 struct MediaRemoteCommandResultEvent: Equatable {
@@ -164,7 +165,8 @@ struct Semantics {
             supportedCommands: nil,
             browserFamily: nil,
             browserDisplayName: nil,
-            browserBundleIdentifier: nil
+            browserBundleIdentifier: nil,
+            browserInstanceID: nil
         )
     }
 
