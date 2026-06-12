@@ -19,6 +19,10 @@ struct MenuBarMediaSourceSection: View {
         )
     }
 
+    private var targetIDs: [String] {
+        targets.map(\.id)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
@@ -26,7 +30,7 @@ struct MenuBarMediaSourceSection: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.62))
                 Spacer()
-                if mediaRemoteController.isRefreshingSnapshot {
+                if targets.isEmpty, mediaRemoteController.isRefreshingSnapshot {
                     ProgressView()
                         .controlSize(.small)
                         .scaleEffect(0.56)
@@ -62,7 +66,7 @@ struct MenuBarMediaSourceSection: View {
             RoundedRectangle(cornerRadius: 15, style: .continuous)
                 .stroke(.white.opacity(0.09), lineWidth: 0.5)
         }
-        .animation(MenuBarMotion.rowUpdate, value: targets)
+        .animation(MenuBarMotion.rowUpdate, value: targetIDs)
         .animation(MenuBarMotion.rowUpdate, value: playback.outputRows)
         .animation(MenuBarMotion.rowUpdate, value: playback.selectedRoomName)
     }
