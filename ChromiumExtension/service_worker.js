@@ -478,36 +478,50 @@ function handleFocusMessage(message) {
       return;
     }
 
-  chrome.windows.update(tab.windowId, { focused: true }, () => {
-    const windowError = chrome.runtime.lastError;
-    if (windowError) {
+    if (!Number.isInteger(tab.index)) {
       sendNative({
         type: "focusResult",
         protocolVersion,
         requestID: message.requestID,
         targetID: message.targetID,
         ok: false,
-        message: windowError.message || "Could not focus browser window.",
+        message: "Could not resolve browser tab index.",
         backend: "chromium_extension",
-        failureReason: "browser_activation_failed",
+        failureReason: "browser_target_unavailable",
       });
       return;
     }
 
-    chrome.tabs.update(tab.id, { active: true }, () => {
+    chrome.tabs.highlight({ windowId: tab.windowId, tabs: tab.index }, () => {
       const tabError = chrome.runtime.lastError;
-      sendNative({
-        type: "focusResult",
-        protocolVersion,
-        requestID: message.requestID,
-        targetID: message.targetID,
-        ok: !tabError,
-        message: tabError ? tabError.message || "Could not activate browser tab." : "focused",
-        backend: "chromium_extension",
-        failureReason: tabError ? "browser_target_unavailable" : undefined,
+      if (tabError) {
+        sendNative({
+          type: "focusResult",
+          protocolVersion,
+          requestID: message.requestID,
+          targetID: message.targetID,
+          ok: false,
+          message: tabError.message || "Could not select browser tab.",
+          backend: "chromium_extension",
+          failureReason: "browser_target_unavailable",
+        });
+        return;
+      }
+
+      chrome.windows.update(tab.windowId, { focused: true }, () => {
+        const windowError = chrome.runtime.lastError;
+        sendNative({
+          type: "focusResult",
+          protocolVersion,
+          requestID: message.requestID,
+          targetID: message.targetID,
+          ok: !windowError,
+          message: windowError ? windowError.message || "Could not focus browser window." : "focused",
+          backend: "chromium_extension",
+          failureReason: windowError ? "browser_activation_failed" : undefined,
+        });
       });
     });
-  });
   });
 }
 
