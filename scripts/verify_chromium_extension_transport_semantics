@@ -210,13 +210,19 @@ struct Semantics {
         )
         let heliumLegacy = legacyTarget(
             bundleIdentifier: "net.imput.helium",
-            displayName: "Helium"
+            displayName: "Helium",
+            title: "Unrelated Helium Video"
         )
-        let merged = controller.targetsIncludingBrowserExtensionTargets([target, chromiumLegacy, heliumLegacy])
+        let duplicateHeliumLegacy = legacyTarget(
+            bundleIdentifier: "net.imput.helium",
+            displayName: "Helium",
+            title: "Video A"
+        )
+        let merged = controller.targetsIncludingBrowserExtensionTargets([target, chromiumLegacy, heliumLegacy, duplicateHeliumLegacy])
         expectEqual(
             merged.map(\.id),
             [target.id, heliumLegacy.id, second.id],
-            "Merging browser extension targets must hide same-family legacy rows while preserving unrelated browser fallbacks"
+            "Merging browser extension targets must hide same-family and same-media legacy rows while preserving unrelated browser fallbacks"
         )
         expectEqual(
             ChromiumBrowserExtensionTransport.legacyBrowserFamily(target: heliumLegacy),
@@ -293,15 +299,16 @@ struct Semantics {
 
     private static func legacyTarget(
         bundleIdentifier: String,
-        displayName: String
+        displayName: String,
+        title: String = "Browser media"
     ) -> MediaRemoteTarget {
         MediaRemoteTarget(
-            id: "\(bundleIdentifier):123:legacy",
+            id: "\(bundleIdentifier):\(title):legacy",
             bundleIdentifier: bundleIdentifier,
             parentBundleIdentifier: "",
             displayName: displayName,
             pid: 123,
-            title: "Browser media",
+            title: title,
             artist: "",
             album: "",
             playbackRate: "1",

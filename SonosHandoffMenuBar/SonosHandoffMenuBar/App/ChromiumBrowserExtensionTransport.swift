@@ -63,6 +63,24 @@ enum ChromiumBrowserExtensionTransport {
         return nil
     }
 
+    static func shadowsLegacyTarget(extensionTarget: MediaRemoteTarget, legacyTarget: MediaRemoteTarget) -> Bool {
+        guard isTarget(extensionTarget), !isTarget(legacyTarget), legacyTarget.isChromiumBrowserLike else {
+            return false
+        }
+        if let extensionFamily = browserFamily(target: extensionTarget),
+           let legacyFamily = legacyBrowserFamily(target: legacyTarget),
+           extensionFamily == legacyFamily {
+            return true
+        }
+
+        let extensionTitle = normalizedMediaTitle(extensionTarget.title)
+        return !extensionTitle.isEmpty && extensionTitle == normalizedMediaTitle(legacyTarget.title)
+    }
+
+    private static func normalizedMediaTitle(_ title: String) -> String {
+        title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
     static func targetDisplayName(browser: String, pageTitle: String) -> String {
         let trimmedBrowser = browser.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedPageTitle = pageTitle.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -509,12 +527,10 @@ final class ChromiumBrowserExtensionController: ObservableObject {
     }
 
     func targetsIncludingBrowserExtensionTargets(_ mediaRemoteTargets: [MediaRemoteTarget]) -> [MediaRemoteTarget] {
-        let extensionFamilies = Set(targets.compactMap(ChromiumBrowserExtensionTransport.browserFamily))
         let visibleMediaRemoteTargets = mediaRemoteTargets.filter { target in
-            guard let family = ChromiumBrowserExtensionTransport.legacyBrowserFamily(target: target) else {
-                return true
+            !targets.contains { extensionTarget in
+                ChromiumBrowserExtensionTransport.shadowsLegacyTarget(extensionTarget: extensionTarget, legacyTarget: target)
             }
-            return !extensionFamilies.contains(family)
         }
 
         return visibleMediaRemoteTargets + targets.filter { extensionTarget in
