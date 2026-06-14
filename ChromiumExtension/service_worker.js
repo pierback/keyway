@@ -492,34 +492,34 @@ function handleFocusMessage(message) {
       return;
     }
 
-    chrome.windows.update(tab.windowId, { focused: true }, () => {
-      const windowError = chrome.runtime.lastError;
-      if (windowError) {
+    chrome.tabs.update(tab.id, { active: true }, () => {
+      const tabError = chrome.runtime.lastError;
+      if (tabError) {
         sendNative({
           type: "focusResult",
           protocolVersion,
           requestID: message.requestID,
           targetID: message.targetID,
           ok: false,
-          message: windowError.message || "Could not focus browser window.",
+          message: tabError.message || "Could not activate browser tab.",
           backend: "chromium_extension",
-          failureReason: "browser_activation_failed",
+          failureReason: "browser_target_unavailable",
         });
         return;
       }
 
-      chrome.tabs.update(tab.id, { active: true, highlighted: true }, () => {
-        const tabError = chrome.runtime.lastError;
-        if (tabError) {
+      chrome.windows.update(tab.windowId, { focused: true }, () => {
+        const windowError = chrome.runtime.lastError;
+        if (windowError) {
           sendNative({
             type: "focusResult",
             protocolVersion,
             requestID: message.requestID,
             targetID: message.targetID,
             ok: false,
-            message: tabError.message || "Could not activate browser tab.",
+            message: windowError.message || "Could not focus browser window.",
             backend: "chromium_extension",
-            failureReason: "browser_target_unavailable",
+            failureReason: "browser_activation_failed",
           });
           return;
         }

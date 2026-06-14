@@ -79,6 +79,8 @@ playwright_module="$(
     || fail "Playwright must be available to launch Chromium with extension support"
 )"
 
+active_page_file="$workdir/active-page-title"
+
 "$repo_root/scripts/install_chromium_native_host" "$extension_id" >/dev/null
 
 cat >"$workdir/server.py" <<'PY'
@@ -88,10 +90,12 @@ import pathlib
 import socketserver
 import struct
 import sys
+import urllib.parse
 import wave
 
 root = pathlib.Path(sys.argv[1])
 port_file = pathlib.Path(sys.argv[2])
+active_title_file = pathlib.Path(sys.argv[3])
 
 def write_tone(path, frequency):
     sample_rate = 44100
@@ -130,7 +134,16 @@ function setTrack(index) {
 media.volume = 0.4;
 next.addEventListener("click", () => setTrack(trackIndex + 1));
 previous.addEventListener("click", () => setTrack(trackIndex - 1));
+function reportVisibility() {
+  if (document.visibilityState === "visible") {
+    void fetch(`/keyway-active-title?title=${encodeURIComponent(document.title)}`, { cache: "no-store" });
+  }
+}
+document.addEventListener("visibilitychange", reportVisibility);
+window.addEventListener("focus", reportVisibility);
+setInterval(reportVisibility, 100);
 setTrack(0);
+reportVisibility();
 </script>
 </body>
 </html>
@@ -159,13 +172,32 @@ function setTrack(index) {
 media.volume = 0.6;
 next.addEventListener("click", () => setTrack(trackIndex + 1));
 previous.addEventListener("click", () => setTrack(trackIndex - 1));
+function reportVisibility() {
+  if (document.visibilityState === "visible") {
+    void fetch(`/keyway-active-title?title=${encodeURIComponent(document.title)}`, { cache: "no-store" });
+  }
+}
+document.addEventListener("visibilitychange", reportVisibility);
+window.addEventListener("focus", reportVisibility);
+setInterval(reportVisibility, 100);
 setTrack(0);
+reportVisibility();
 </script>
 </body>
 </html>
 """, encoding="utf-8")
 
 class QuietHandler(http.server.SimpleHTTPRequestHandler):
+    def do_GET(self):
+        url = urllib.parse.urlsplit(self.path)
+        if url.path == "/keyway-active-title":
+            title = urllib.parse.parse_qs(url.query).get("title", [""])[0]
+            active_title_file.write_text(title, encoding="utf-8")
+            self.send_response(204)
+            self.end_headers()
+            return
+        super().do_GET()
+
     def log_message(self, format, *args):
         return
 
@@ -177,7 +209,7 @@ with socketserver.TCPServer(("127.0.0.1", 0), QuietHandler) as httpd:
 PY
 
 port_file="$workdir/port"
-python3 "$workdir/server.py" "$workdir" "$port_file" &
+python3 "$workdir/server.py" "$workdir" "$port_file" "$active_page_file" &
 server_pid="$!"
 
 for _ in {1..100}; do
@@ -261,8 +293,10 @@ import Foundation
 let hostName = "com.fpieringer.keyway.chromium"
 let snapshotNotificationName = Notification.Name("com.fpieringer.keyway.chromium.snapshot")
 let commandResultNotificationName = Notification.Name("com.fpieringer.keyway.chromium.commandResult")
+let focusResultNotificationName = Notification.Name("com.fpieringer.keyway.chromium.focusResult")
 let commandNotificationName = Notification.Name("com.fpieringer.keyway.chromium.command")
 let iterations = Int(CommandLine.arguments[1])!
+let activePageTitlePath = CommandLine.arguments[2]
 
 struct Snapshot: Decodable {
     let protocolVersion: Int
@@ -293,6 +327,13 @@ struct CommandResult: Decodable {
     let message: String
 }
 
+struct FocusResult: Decodable {
+    let requestID: String?
+    let targetID: String
+    let ok: Bool
+    let message: String
+}
+
 struct CommandPayload: Encodable {
     let type: String
     let protocolVersion: Int
@@ -302,12 +343,20 @@ struct CommandPayload: Encodable {
     let volumeDelta: Double?
 }
 
+struct FocusPayload: Encodable {
+    let type: String
+    let protocolVersion: Int
+    let requestID: String
+    let targetID: String
+}
+
 final class State {
     private let decoder = JSONDecoder()
     private let lock = NSLock()
     private(set) var targetsByTitle: [String: Target] = [:]
     private(set) var targetsByID: [String: Target] = [:]
     private var resultsByRequestID: [String: CommandResult] = [:]
+    private var focusResultsByRequestID: [String: FocusResult] = [:]
 
     func handleSnapshot(_ payload: String) {
         let snapshot = try! decoder.decode(Snapshot.self, from: Data(payload.utf8))
@@ -327,6 +376,16 @@ final class State {
         }
         lock.lock()
         resultsByRequestID[requestID] = result
+        lock.unlock()
+    }
+
+    func handleFocusResult(_ payload: String) {
+        let result = try! decoder.decode(FocusResult.self, from: Data(payload.utf8))
+        guard let requestID = result.requestID else {
+            preconditionFailure("Chromium focus result must include requestID.")
+        }
+        lock.lock()
+        focusResultsByRequestID[requestID] = result
         lock.unlock()
     }
 
@@ -351,6 +410,12 @@ final class State {
         lock.lock()
         defer { lock.unlock() }
         return resultsByRequestID[requestID]
+    }
+
+    func focusResult(requestID: String) -> FocusResult? {
+        lock.lock()
+        defer { lock.unlock() }
+        return focusResultsByRequestID[requestID]
     }
 }
 
@@ -388,6 +453,22 @@ func postCommand(target: Target, requestID: String, command: String, volumeDelta
     )
 }
 
+func postFocus(target: Target, requestID: String) {
+    let payload = FocusPayload(
+        type: "focusTarget",
+        protocolVersion: 2,
+        requestID: requestID,
+        targetID: target.id
+    )
+    let data = try! JSONEncoder().encode(payload)
+    DistributedNotificationCenter.default().postNotificationName(
+        commandNotificationName,
+        object: hostName,
+        userInfo: ["payload": String(data: data, encoding: .utf8)!],
+        deliverImmediately: true
+    )
+}
+
 func runCommand(
     state: State,
     target: Target,
@@ -411,6 +492,44 @@ func runCommand(
 func approximatelyEqual(_ lhs: Double?, _ rhs: Double, tolerance: Double = 0.02) -> Bool {
     guard let lhs else { return false }
     return abs(lhs - rhs) <= tolerance
+}
+
+func activePageTitle(path: String) -> String {
+    guard let data = FileManager.default.contents(atPath: path),
+          let title = String(data: data, encoding: .utf8)
+    else {
+        return ""
+    }
+    return title.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+func runFocusCheck(
+    state: State,
+    target: Target,
+    activePageTitlePath: String,
+    ackLatencies: inout [Int]
+) -> Bool {
+    let requestID = UUID().uuidString
+    let started = ProcessInfo.processInfo.systemUptime
+    postFocus(target: target, requestID: requestID)
+    guard runLoop(until: Date(timeIntervalSinceNow: 2), condition: { state.focusResult(requestID: requestID) != nil }),
+          let result = state.focusResult(requestID: requestID)
+    else {
+        FileHandle.standardError.write(Data("smoke_chromium_extension_transport_failure focus_target=\(target.pageTitle) timeout\n".utf8))
+        return false
+    }
+    ackLatencies.append(Int(((ProcessInfo.processInfo.systemUptime - started) * 1000).rounded()))
+    guard result.ok, result.targetID == target.id else {
+        FileHandle.standardError.write(Data("smoke_chromium_extension_transport_failure focus_target=\(target.pageTitle) result=\(result)\n".utf8))
+        return false
+    }
+    let activated = runLoop(until: Date(timeIntervalSinceNow: 2)) {
+        activePageTitle(path: activePageTitlePath) == target.pageTitle
+    }
+    if !activated {
+        FileHandle.standardError.write(Data("smoke_chromium_extension_transport_failure focus_target=\(target.pageTitle) active_page=\(activePageTitle(path: activePageTitlePath))\n".utf8))
+    }
+    return activated
 }
 
 func currentSmokeTarget(state: State, pageTitle: String) -> Target? {
@@ -445,6 +564,16 @@ let resultObserver = DistributedNotificationCenter.default().addObserver(
     }
     state.handleCommandResult(payload)
 }
+let focusResultObserver = DistributedNotificationCenter.default().addObserver(
+    forName: focusResultNotificationName,
+    object: hostName,
+    queue: .main
+) { notification in
+    guard let payload = notification.userInfo?["payload"] as? String else {
+        preconditionFailure("Chromium focus-result notifications must include payload.")
+    }
+    state.handleFocusResult(payload)
+}
 
 let discoveryStarted = ProcessInfo.processInfo.systemUptime
 guard runLoop(until: Date(timeIntervalSinceNow: 10), condition: { state.smokeTargets() != nil }),
@@ -458,6 +587,8 @@ let discoveryMs = Int(((ProcessInfo.processInfo.systemUptime - discoveryStarted)
 var ackLatencies: [Int] = []
 var commandSurfaceSuccess = 0
 var commandSurfaceFailure = 0
+var focusSurfaceSuccess = 0
+var focusSurfaceFailure = 0
 var success = 0
 var failure = 0
 var wrongTarget = 0
@@ -473,7 +604,18 @@ if !initiallyPlaying {
     FileHandle.standardError.write(Data("smoke_chromium_extension_transport_failure command_surface=autoplay target_state=\(String(describing: state.smokeTargets()))\n".utf8))
 }
 
-    if let commandTargets = state.smokeTargets(), commandSurfaceFailure == 0 {
+if runFocusCheck(state: state, target: initialTargets.0, activePageTitlePath: activePageTitlePath, ackLatencies: &ackLatencies) {
+    focusSurfaceSuccess += 1
+} else {
+    focusSurfaceFailure += 1
+}
+if runFocusCheck(state: state, target: initialTargets.1, activePageTitlePath: activePageTitlePath, ackLatencies: &ackLatencies) {
+    focusSurfaceSuccess += 1
+} else {
+    focusSurfaceFailure += 1
+}
+
+if let commandTargets = state.smokeTargets(), commandSurfaceFailure == 0 {
     let target = commandTargets.0
     let other = commandTargets.1
     let otherVolume = other.volume
@@ -641,10 +783,13 @@ for iteration in 0..<iterations {
 
 DistributedNotificationCenter.default().removeObserver(snapshotObserver)
 DistributedNotificationCenter.default().removeObserver(resultObserver)
+DistributedNotificationCenter.default().removeObserver(focusResultObserver)
 
 print("chromium_extension_smoke_total=\(iterations)")
 print("chromium_extension_command_surface_success=\(commandSurfaceSuccess)")
 print("chromium_extension_command_surface_failure=\(commandSurfaceFailure)")
+print("chromium_extension_focus_surface_success=\(focusSurfaceSuccess)")
+print("chromium_extension_focus_surface_failure=\(focusSurfaceFailure)")
 print("chromium_extension_smoke_success=\(success)")
 print("chromium_extension_smoke_failure=\(failure)")
 print("chromium_extension_smoke_wrong_target=\(wrongTarget)")
@@ -652,10 +797,10 @@ print("chromium_extension_smoke_duplicate=\(duplicate)")
 print("chromium_extension_smoke_discovery_ms=\(discoveryMs)")
 print("chromium_extension_smoke_p95_ack_ms=\(ackLatencies.isEmpty ? 0 : percentile95(ackLatencies))")
 
-if commandSurfaceFailure > 0 || failure > 0 {
+if commandSurfaceFailure > 0 || focusSurfaceFailure > 0 || failure > 0 {
     exit(1)
 }
 SWIFT
 
 swiftc "$workdir/ChromiumExtensionLiveSmoke.swift" -o "$workdir/chromium-extension-live-smoke"
-"$workdir/chromium-extension-live-smoke" "$iterations"
+"$workdir/chromium-extension-live-smoke" "$iterations" "$active_page_file"

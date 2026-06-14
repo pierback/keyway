@@ -88,6 +88,15 @@ struct MediaRemoteCommandResultEvent: Equatable {
         self.unsupported = unsupported
     }
 }
+
+enum ChromiumBrowserExtensionTransport {
+    static let mediaType = "chromium_extension"
+    static let targetIDPrefix = "chromium-extension:"
+
+    static func isTarget(_ target: MediaRemoteTarget) -> Bool {
+        target.mediaType == mediaType || target.id.hasPrefix(targetIDPrefix)
+    }
+}
 SWIFT
 
 cat >"$workdir/Semantics.swift" <<'SWIFT'
@@ -102,6 +111,12 @@ struct Semantics {
             id: "net.imput.helium:123:desktop",
             bundleIdentifier: "net.imput.helium",
             parentBundleIdentifier: ""
+        )
+        let heliumExtension = target(
+            id: "chromium-extension:helium:host:chromium-extension:runtime:44",
+            bundleIdentifier: "net.imput.helium",
+            parentBundleIdentifier: "",
+            mediaType: "chromium_extension"
         )
         let spotify = target(
             id: "com.spotify.client:123",
@@ -136,6 +151,17 @@ struct Semantics {
         expectEqual(previous?.backend, MediaDesktopTransportBackend.heliumJavaScript.rawValue, "Helium previous must report the Helium backend")
 
         expectEqual(
+            adapter.backendName(command: .playPause, target: heliumExtension),
+            nil,
+            "Helium extension rows must not be claimed by the Helium desktop automation backend"
+        )
+        expectEqual(
+            adapter.submit(command: .playPause, target: heliumExtension),
+            nil,
+            "Helium extension rows must route through the Chromium extension adapter"
+        )
+
+        expectEqual(
             adapter.backendName(command: .next, target: spotify),
             MediaDesktopTransportBackend.spotifyAppleEvent.rawValue,
             "Spotify next must be owned by Spotify AppleEvents"
@@ -146,7 +172,12 @@ struct Semantics {
         print("verify_desktop_transport_semantics=ok")
     }
 
-    private static func target(id: String, bundleIdentifier: String, parentBundleIdentifier: String) -> MediaRemoteTarget {
+    private static func target(
+        id: String,
+        bundleIdentifier: String,
+        parentBundleIdentifier: String,
+        mediaType: String? = nil
+    ) -> MediaRemoteTarget {
         MediaRemoteTarget(
             id: id,
             bundleIdentifier: bundleIdentifier,
@@ -157,7 +188,7 @@ struct Semantics {
             artist: "",
             album: "",
             playbackRate: "1",
-            mediaType: nil,
+            mediaType: mediaType,
             artworkBase64: nil,
             duration: nil,
             elapsedTime: nil,

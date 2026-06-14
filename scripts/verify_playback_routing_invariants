@@ -40,6 +40,9 @@ grep -q 'command_center_play_family_route_shield_ignored' "$transport" \
 grep -q 'runHeliumJavaScriptCommand(command: command)' "$desktop_adapter" \
   || fail "Helium transport must pass explicit play/pause/playPause commands into JavaScript instead of always toggling"
 
+grep -q 'guard !ChromiumBrowserExtensionTransport.isTarget(target) else' "$desktop_adapter" \
+  || fail "Desktop transport must not claim exact Chromium extension rows"
+
 grep -q "command === 'pause'" "$desktop_adapter" \
   || fail "Helium pause must be an idempotent pause command, not a playback toggle"
 

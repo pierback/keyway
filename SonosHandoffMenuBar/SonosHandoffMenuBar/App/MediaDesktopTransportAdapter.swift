@@ -92,6 +92,9 @@ final class MediaDesktopTransportAdapter {
     }
 
     private func backend(for target: MediaRemoteTarget) -> MediaDesktopTransportBackend? {
+        guard !ChromiumBrowserExtensionTransport.isTarget(target) else {
+            return nil
+        }
         if Self.isSpotifyTarget(target) {
             return .spotifyAppleEvent
         }

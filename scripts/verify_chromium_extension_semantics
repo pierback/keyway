@@ -511,12 +511,12 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   assertEqual(tabUpdates.length, 1, "native focus must activate exactly one browser tab");
   assertEqual(tabUpdates[0].tabId, 23, "native focus must activate the selected tab id");
   assertEqual(tabUpdates[0].updateInfo.active, true, "native focus must request active tab selection");
-  assertEqual(tabUpdates[0].updateInfo.highlighted, true, "native focus must request selected tab highlighting");
+  assertEqual(tabUpdates[0].updateInfo.highlighted, undefined, "native focus must not rely on multi-select tab highlighting");
   assertEqual(tabHighlights.length, 0, "native focus must not rely on index-based tab highlighting");
   assertEqual(
     focusEvents.join(","),
-    "window-update:11:true,tab-update:23:focused-window:11,query-active:11",
-    "native focus must focus the window before activating and confirming the exact tab"
+    "tab-update:23:focused-window:none,window-update:11:true,query-active:11",
+    "native focus must activate the exact tab before focusing the window and confirming it"
   );
   assert(!tabUpdates.some(update => update.tabId === 22), "native focus must leave competing tabs inactive");
   const focusResult = postedMessages.filter(message => message.type === "focusResult").at(-1);
@@ -635,6 +635,7 @@ readme = (repo_root / "ChromiumExtension/README.md").read_text()
 generator = (repo_root / "scripts/generate_xcode_projects.rb").read_text()
 setup = (repo_root / "scripts/setup_chromium_extension").read_text()
 helium_smoke = (repo_root / "scripts/smoke_helium_chromium_extension_transport").read_text()
+chromium_smoke = (repo_root / "scripts/smoke_chromium_extension_transport").read_text()
 regression_gate = (repo_root / "scripts/regression_gate").read_text()
 native_host = (repo_root / "packages/SonosHandoffCore/Sources/KeywayChromiumNativeHost/main.swift").read_text()
 
@@ -807,7 +808,7 @@ expect(
 )
 expect(
     repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
-    "chrome.tabs.update(tab.id, { active: true, highlighted: true }",
+    "chrome.tabs.update(tab.id, { active: true }",
     "Chromium extension service worker must activate the selected browser tab by id",
 )
 expect(
@@ -929,6 +930,26 @@ expect(
     helium_smoke,
     "KEYWAY_CHROMIUM_SMOKE_BROWSER_PATH",
     "Helium extension smoke must reuse the Chromium extension transport smoke against Helium",
+)
+expect(
+    chromium_smoke,
+    "focusResultNotificationName",
+    "live Chromium extension smoke must observe focus results",
+)
+expect(
+    chromium_smoke,
+    'type: "focusTarget"',
+    "live Chromium extension smoke must send exact-target focus requests",
+)
+expect(
+    chromium_smoke,
+    "activePageTitlePath",
+    "live Chromium extension smoke must verify the browser's active tab after focus",
+)
+expect(
+    chromium_smoke,
+    "chromium_extension_focus_surface_failure",
+    "live Chromium extension smoke must fail when exact-tab focus does not land",
 )
 expect(
     helium_smoke,

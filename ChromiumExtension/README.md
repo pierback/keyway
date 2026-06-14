@@ -47,7 +47,7 @@ The app and script install the host for common Chromium-family browsers on macOS
 
 ## Smoke Test
 
-The live smoke test launches a temporary Brave or Chrome profile with this unpacked extension, opens two local media tabs, and sends exact-target `mute` commands through the native host:
+The live smoke test launches a temporary Brave or Chrome profile with this unpacked extension, opens two local media tabs, sends exact-target commands through the native host, and verifies exact-tab focus by switching the active tab for each source:
 
 ```bash
 scripts/smoke_chromium_extension_transport
