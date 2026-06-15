@@ -32,6 +32,10 @@ final class StatusHUD {
         volumeHUD.show(roomName: roomName, volume: volume, dismissAfter: seconds)
     }
 
+    func setVolumeAnchorProvider(_ provider: @escaping () -> NSRect?) {
+        volumeHUD.setAnchorFrameProvider(provider)
+    }
+
     func showMutePending(roomName: String) {
         deliver(title: roomName, message: "Toggling mute...", identifier: Self.pendingStatusIdentifier)
     }
@@ -111,6 +115,11 @@ private final class VolumeHUDController {
     private let model = VolumeHUDModel()
     private var panel: VolumeHUDPanel?
     private var dismissWorkItem: DispatchWorkItem?
+    private var anchorFrameProvider: (() -> NSRect?)?
+
+    func setAnchorFrameProvider(_ provider: @escaping () -> NSRect?) {
+        anchorFrameProvider = provider
+    }
 
     func show(roomName: String, volume: Int, dismissAfter seconds: TimeInterval) {
         model.roomName = roomName
@@ -161,6 +170,26 @@ private final class VolumeHUDController {
 
     private func position(_ panel: NSPanel) {
         let size = VolumeHUDView.size
+        if let anchorFrame = anchorFrameProvider?(),
+           let screen = screen(containing: anchorFrame)
+        {
+            let visibleFrame = screen.visibleFrame
+            let verticalGap: CGFloat = 8
+            let edgeInset: CGFloat = 8
+            let x = clamped(
+                anchorFrame.midX - size.width / 2,
+                min: visibleFrame.minX + edgeInset,
+                max: visibleFrame.maxX - size.width - edgeInset
+            )
+            let y = clamped(
+                anchorFrame.minY - verticalGap - size.height,
+                min: visibleFrame.minY + edgeInset,
+                max: visibleFrame.maxY - size.height - edgeInset
+            )
+            panel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
+            return
+        }
+
         let mouseLocation = NSEvent.mouseLocation
         let screen = NSScreen.screens.first(where: { $0.frame.contains(mouseLocation) })
             ?? NSScreen.main
@@ -181,6 +210,20 @@ private final class VolumeHUDController {
             display: true
         )
     }
+
+    private func screen(containing frame: NSRect) -> NSScreen? {
+        let center = NSPoint(x: frame.midX, y: frame.midY)
+        return NSScreen.screens.first(where: { $0.frame.contains(center) })
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+    }
+
+    private func clamped(_ value: CGFloat, min minValue: CGFloat, max maxValue: CGFloat) -> CGFloat {
+        guard maxValue >= minValue else {
+            return minValue
+        }
+        return min(max(value, minValue), maxValue)
+    }
 }
 
 @MainActor
@@ -191,37 +234,38 @@ private final class VolumeHUDModel: ObservableObject {
 
 @MainActor
 private struct VolumeHUDView: View {
-    static let size = NSSize(width: 340, height: 78)
+    static let size = NSSize(width: 292, height: 63)
 
     @ObservedObject var model: VolumeHUDModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(model.roomName)
-                .font(.system(size: 15, weight: .semibold))
+                .font(.system(size: 13, weight: .semibold))
                 .lineLimit(1)
                 .foregroundStyle(.white.opacity(0.96))
 
-            HStack(spacing: 8) {
+            HStack(spacing: 7) {
                 Image(systemName: leadingIconName)
-                    .font(.system(size: 13, weight: .semibold))
-                    .frame(width: 16)
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(width: 14)
                     .foregroundStyle(.white.opacity(0.94))
 
                 VolumeHUDSlider(volume: model.volume)
 
                 Image(systemName: "speaker.wave.3.fill")
-                    .font(.system(size: 14, weight: .semibold))
-                    .frame(width: 20)
+                    .font(.system(size: 15, weight: .semibold))
+                    .frame(width: 18)
                     .foregroundStyle(.white.opacity(0.94))
             }
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .padding(.bottom, 9)
         .frame(width: Self.size.width, height: Self.size.height)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .stroke(.white.opacity(0.24), lineWidth: 1)
         }
         .environment(\.colorScheme, .dark)
@@ -252,11 +296,11 @@ private struct VolumeHUDSlider: View {
             ZStack(alignment: .leading) {
                 Capsule()
                     .fill(.white.opacity(0.24))
-                    .frame(height: 5)
+                    .frame(height: 4)
 
                 Capsule()
                     .fill(.white.opacity(0.92))
-                    .frame(width: width * progress, height: 5)
+                    .frame(width: width * progress, height: 4)
 
                 HStack {
                     ForEach(0 ..< 13, id: \.self) { _ in
@@ -267,11 +311,11 @@ private struct VolumeHUDSlider: View {
                     }
                 }
                 .padding(.horizontal, 4)
-                .offset(y: 9)
+                .offset(y: 8)
             }
-            .frame(height: 15)
+            .frame(height: 13)
         }
-        .frame(height: 15)
+        .frame(height: 13)
     }
 }
 

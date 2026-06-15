@@ -33,6 +33,9 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
         button.action = #selector(handleStatusItemClick(_:))
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         button.toolTip = "Keyway"
+        StatusHUD.shared.setVolumeAnchorProvider { [weak self] in
+            self?.statusItemButtonScreenFrame()
+        }
         startAppDeactivationObserver()
     }
 
@@ -220,10 +223,17 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
     }
 
     private func statusItemButtonFrameContains(_ screenPoint: NSPoint) -> Bool {
-        guard let frame = statusItem.button?.window?.frame else {
+        guard let frame = statusItemButtonScreenFrame() else {
             return false
         }
         return frame.insetBy(dx: -4, dy: -4).contains(screenPoint)
+    }
+
+    private func statusItemButtonScreenFrame() -> NSRect? {
+        guard let button = statusItem.button else {
+            return nil
+        }
+        return button.window?.convertToScreen(button.convert(button.bounds, to: nil))
     }
 
     private func popoverWindowFrameContains(_ screenPoint: NSPoint) -> Bool {
