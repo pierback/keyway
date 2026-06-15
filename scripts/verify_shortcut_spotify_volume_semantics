@@ -33,9 +33,12 @@ require "case spotify" "$SHORTCUT_CONTROLLER" "shortcut_target_missing_spotify_c
 require "return .spotify" "$SHORTCUT_CONTROLLER" "no_sonos_selection_must_target_spotify"
 require "activePlaybackObserver.activePlaybackDeviceStatus()" "$SHORTCUT_CONTROLLER" "spotify_shortcut_volume_must_probe_active_device"
 require "activePlaybackObserver.setActivePlaybackDeviceVolume(requestedVolume)" "$SHORTCUT_CONTROLLER" "spotify_shortcut_volume_must_set_active_device_volume"
-require "StatusHUD.shared.showVolume(roomName: status.deviceName, volume: confirmedVolume)" "$SHORTCUT_CONTROLLER" "spotify_shortcut_volume_must_show_active_device_hud"
+require "private var spotifyVolumeWritePending = false" "$SHORTCUT_CONTROLLER" "spotify_shortcut_volume_must_coalesce_writes"
+require "applySpotifyDesiredVolume(deviceName: state.deviceName, volume: state.desiredVolume + delta)" "$SHORTCUT_CONTROLLER" "spotify_shortcut_volume_must_update_optimistically"
+require "StatusHUD.shared.showVolume(roomName: deviceName, volume: requestedVolume, dismissAfter: 1.2)" "$SHORTCUT_CONTROLLER" "spotify_shortcut_volume_must_show_optimistic_active_device_hud"
 require "activePlaybackObserver: any SpotifyActivePlaybackObserving" "$HOTKEY_CONTROLLER" "hotkey_controller_missing_spotify_observer_dependency"
 require "activePlaybackObserver: activePlaybackObserver" "$HOTKEY_CONTROLLER" "hotkey_controller_must_pass_spotify_observer_to_shortcut_controller"
+require "timer.schedule(deadline: .now() + 0.22, repeating: 0.09)" "$HOTKEY_CONTROLLER" "hotkey_volume_repeat_must_be_continuous"
 require "activePlaybackObserver: environment.activePlaybackObserver" "$APP_DELEGATE" "app_delegate_must_wire_environment_spotify_observer"
 
 reject "outputPreferenceResolver" "$SHORTCUT_CONTROLLER" "shortcut_volume_must_not_invent_preferred_sonos_target"

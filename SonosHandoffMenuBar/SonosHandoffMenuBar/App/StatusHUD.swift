@@ -191,37 +191,37 @@ private final class VolumeHUDModel: ObservableObject {
 
 @MainActor
 private struct VolumeHUDView: View {
-    static let size = NSSize(width: 584, height: 126)
+    static let size = NSSize(width: 340, height: 78)
 
     @ObservedObject var model: VolumeHUDModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 10) {
             Text(model.roomName)
-                .font(.system(size: 24, weight: .semibold))
+                .font(.system(size: 15, weight: .semibold))
                 .lineLimit(1)
                 .foregroundStyle(.white.opacity(0.96))
 
-            HStack(spacing: 12) {
+            HStack(spacing: 8) {
                 Image(systemName: leadingIconName)
-                    .font(.system(size: 18, weight: .semibold))
-                    .frame(width: 22)
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 16)
                     .foregroundStyle(.white.opacity(0.94))
 
                 VolumeHUDSlider(volume: model.volume)
 
                 Image(systemName: "speaker.wave.3.fill")
-                    .font(.system(size: 20, weight: .semibold))
-                    .frame(width: 28)
+                    .font(.system(size: 14, weight: .semibold))
+                    .frame(width: 20)
                     .foregroundStyle(.white.opacity(0.94))
             }
         }
-        .padding(.horizontal, 30)
-        .padding(.vertical, 20)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
         .frame(width: Self.size.width, height: Self.size.height)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 36, style: .continuous))
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 36, style: .continuous)
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .stroke(.white.opacity(0.24), lineWidth: 1)
         }
         .environment(\.colorScheme, .dark)
@@ -252,26 +252,26 @@ private struct VolumeHUDSlider: View {
             ZStack(alignment: .leading) {
                 Capsule()
                     .fill(.white.opacity(0.24))
-                    .frame(height: 8)
+                    .frame(height: 5)
 
                 Capsule()
                     .fill(.white.opacity(0.92))
-                    .frame(width: width * progress, height: 8)
+                    .frame(width: width * progress, height: 5)
 
                 HStack {
                     ForEach(0 ..< 13, id: \.self) { _ in
                         Circle()
                             .fill(.black.opacity(0.22))
-                            .frame(width: 3, height: 3)
+                            .frame(width: 2, height: 2)
                         Spacer(minLength: 0)
                     }
                 }
-                .padding(.horizontal, 6)
-                .offset(y: 14)
+                .padding(.horizontal, 4)
+                .offset(y: 9)
             }
-            .frame(height: 24)
+            .frame(height: 15)
         }
-        .frame(height: 24)
+        .frame(height: 15)
     }
 }
 

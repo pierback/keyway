@@ -444,7 +444,7 @@ final class VolumeHotkeyController {
         volumeActions.adjustVolume(direction: direction)
 
         let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now() + 0.35, repeating: 0.28)
+        timer.schedule(deadline: .now() + 0.22, repeating: 0.09)
         timer.setEventHandler { [weak self] in
             guard let self, self.repeatingDirection == direction else {
                 return
