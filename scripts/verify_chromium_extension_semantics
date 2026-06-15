@@ -792,6 +792,18 @@ expect(
     "Chromium extension content script must keep stable targets during readyState=0 source transitions",
 )
 expect(
+    repo_root.joinpath("ChromiumExtension/content_script.js").read_text(),
+    "}).catch(() => {",
+    "Chromium extension content script must answer rejected media commands with an explicit failure",
+)
+expect(
+    repo_root.joinpath("ChromiumExtension/content_script.js").read_text(),
+    "Chromium media command failed.",
+    "Chromium extension content script must return a deterministic failed-command message",
+)
+if "error instanceof Error ? error.message" in repo_root.joinpath("ChromiumExtension/content_script.js").read_text():
+    raise SystemExit("verify_chromium_extension_semantics: Chromium rejected-command errors must not expose browser-specific messages")
+expect(
     repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
     'if (message.type === "focusTarget")',
     "Chromium extension service worker must dispatch explicit focus requests",

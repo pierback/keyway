@@ -204,6 +204,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   applyCommand(message).then(response => {
     publishAll();
     sendResponse(response);
+  }).catch(() => {
+    publishAll();
+    sendResponse({
+      ok: false,
+      message: "Chromium media command failed.",
+    });
   });
   return true;
 });
