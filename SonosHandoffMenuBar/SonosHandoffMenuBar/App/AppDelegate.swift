@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let volumeHotkeys = VolumeHotkeyController(
             volumeService: environment.volumeService,
             outputSelection: environment.outputSelection,
+            activePlaybackObserver: environment.activePlaybackObserver,
             mediaTransportActions: environment.mediaTransportActionController
         )
         environment.mediaTransportActionController.relaxRouteShield = { [weak volumeHotkeys] reason in

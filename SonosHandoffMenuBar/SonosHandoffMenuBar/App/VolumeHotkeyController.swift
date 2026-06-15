@@ -44,6 +44,7 @@ final class VolumeHotkeyController {
     init(
         volumeService: any SpeakerVolumeAdjusting,
         outputSelection: PlaybackOutputSelection,
+        activePlaybackObserver: any SpotifyActivePlaybackObserving,
         mediaTransportActions: MediaTransportActionController,
         volumeCommands: SpeakerVolumeCommandQueue = .shared,
         runtimeReporter: ShortcutRuntimeReporter = ShortcutRuntimeReporter()
@@ -51,6 +52,7 @@ final class VolumeHotkeyController {
         self.volumeActions = ShortcutVolumeActionController(
             volumeService: volumeService,
             outputSelection: outputSelection,
+            activePlaybackObserver: activePlaybackObserver,
             volumeCommands: volumeCommands
         )
         self.mediaTransportActions = mediaTransportActions

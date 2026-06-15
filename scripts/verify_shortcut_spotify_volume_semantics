@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SHORTCUT_CONTROLLER="$ROOT_DIR/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutVolumeActionController.swift"
+HOTKEY_CONTROLLER="$ROOT_DIR/SonosHandoffMenuBar/SonosHandoffMenuBar/App/VolumeHotkeyController.swift"
+APP_DELEGATE="$ROOT_DIR/SonosHandoffMenuBar/SonosHandoffMenuBar/App/AppDelegate.swift"
+
+require() {
+  local pattern="$1"
+  local file="$2"
+  local message="$3"
+
+  if ! grep -Fq "$pattern" "$file"; then
+    echo "shortcut_spotify_volume_semantics=fail reason=$message" >&2
+    exit 1
+  fi
+}
+
+reject() {
+  local pattern="$1"
+  local file="$2"
+  local message="$3"
+
+  if grep -Fq "$pattern" "$file"; then
+    echo "shortcut_spotify_volume_semantics=fail reason=$message" >&2
+    exit 1
+  fi
+}
+
+require "private let activePlaybackObserver: any SpotifyActivePlaybackObserving" "$SHORTCUT_CONTROLLER" "shortcut_controller_missing_spotify_observer"
+require "case spotify" "$SHORTCUT_CONTROLLER" "shortcut_target_missing_spotify_case"
+require "return .spotify" "$SHORTCUT_CONTROLLER" "no_sonos_selection_must_target_spotify"
+require "activePlaybackObserver.activePlaybackDeviceStatus()" "$SHORTCUT_CONTROLLER" "spotify_shortcut_volume_must_probe_active_device"
+require "activePlaybackObserver.setActivePlaybackDeviceVolume(requestedVolume)" "$SHORTCUT_CONTROLLER" "spotify_shortcut_volume_must_set_active_device_volume"
+require "StatusHUD.shared.showVolume(roomName: status.deviceName, volume: confirmedVolume)" "$SHORTCUT_CONTROLLER" "spotify_shortcut_volume_must_show_active_device_hud"
+require "activePlaybackObserver: any SpotifyActivePlaybackObserving" "$HOTKEY_CONTROLLER" "hotkey_controller_missing_spotify_observer_dependency"
+require "activePlaybackObserver: activePlaybackObserver" "$HOTKEY_CONTROLLER" "hotkey_controller_must_pass_spotify_observer_to_shortcut_controller"
+require "activePlaybackObserver: environment.activePlaybackObserver" "$APP_DELEGATE" "app_delegate_must_wire_environment_spotify_observer"
+
+reject "outputPreferenceResolver" "$SHORTCUT_CONTROLLER" "shortcut_volume_must_not_invent_preferred_sonos_target"
+reject "Start Spotify playback on a Sonos speaker first." "$SHORTCUT_CONTROLLER" "shortcut_volume_must_not_block_spotify_only_playback"
+
+echo "shortcut_spotify_volume_semantics=ok"
