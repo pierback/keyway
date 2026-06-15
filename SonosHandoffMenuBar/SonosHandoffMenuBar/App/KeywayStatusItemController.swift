@@ -329,13 +329,11 @@ private struct KeywayControlCenterPopoverView: View {
             progressTick &+= 1
         }
         .onAppear {
-            StatusHUD.shared.setVolumeOverlaySuppressed(true)
             playback.appear()
             mediaRemoteController.refreshSnapshot()
             startModifierMonitor()
         }
         .onDisappear {
-            StatusHUD.shared.setVolumeOverlaySuppressed(false)
             playback.disappear()
             showSpeakersList = true
             stopModifierMonitor()

@@ -196,6 +196,9 @@ final class PlaybackSyncController: ObservableObject {
 
     func setVolumeFromSlider(locationX: CGFloat, width: CGFloat) {
         volumeState.setSliderValue(locationX: Double(locationX), width: Double(width))
+        if let selectedRoomName, volumeState.hasStatus {
+            StatusHUD.shared.showVolume(roomName: selectedRoomName, volume: volumeState.roundedValue, dismissAfter: 1.6)
+        }
     }
 
     func commitSliderVolumeImmediately() {
@@ -852,6 +855,7 @@ final class PlaybackSyncController: ObservableObject {
     private func applyLocalVolume(roomName: String, volume: Int, muted: Bool) {
         volumeState.applyLocalVolume(volume, muted: muted)
         volumeActions.noteLocalChange(roomName: roomName, volume: volume, muted: muted)
+        StatusHUD.shared.showVolume(roomName: roomName, volume: volume, dismissAfter: 1.6)
     }
 
     private func applyVolumeStatus(_ status: SpeakerVolumeStatus) {

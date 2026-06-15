@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+status_hud="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/StatusHUD.swift"
+status_item="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/KeywayStatusItemController.swift"
+playback_sync="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/PlaybackSyncController.swift"
+
+fail() {
+  printf 'verify_volume_hud_semantics: %s\n' "$*" >&2
+  exit 1
+}
+
+grep -Fq 'private let volumeHUD = VolumeHUDController()' "$status_hud" \
+  || fail "StatusHUD must own a volume HUD presenter"
+
+grep -Fq 'volumeHUD.show(roomName: roomName, volume: volume, dismissAfter: seconds)' "$status_hud" \
+  || fail "showVolume must render the Keyway HUD instead of posting a notification"
+
+grep -Fq 'private final class VolumeHUDPanel: NSPanel' "$status_hud" \
+  || fail "volume feedback must be a local non-activating panel"
+
+if grep -Fq 'setVolumeOverlaySuppressed' "$status_hud" "$status_item"; then
+  fail "opening the Keyway popover must not suppress volume HUD feedback"
+fi
+
+python3 - "$playback_sync" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+slider = text[text.index("    func setVolumeFromSlider("):text.index("    func commitSliderVolumeImmediately", text.index("    func setVolumeFromSlider("))]
+if "StatusHUD.shared.showVolume(roomName: selectedRoomName, volume: volumeState.roundedValue, dismissAfter: 1.6)" not in slider:
+    raise SystemExit("verify_volume_hud_semantics: dragging the menu slider must update the volume HUD")
+
+local = text[text.index("    private func applyLocalVolume("):text.index("    private func applyVolumeStatus", text.index("    private func applyLocalVolume("))]
+if "StatusHUD.shared.showVolume(roomName: roomName, volume: volume, dismissAfter: 1.6)" not in local:
+    raise SystemExit("verify_volume_hud_semantics: committed menu volume changes must update the volume HUD")
+PY
+
+printf 'verify_volume_hud_semantics=ok\n'
