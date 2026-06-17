@@ -27,7 +27,7 @@ struct MenuBarMediaSourceSection: View {
             return openingTargets
         }
         let latestTargetsByID = Dictionary(uniqueKeysWithValues: freshTargets.map { ($0.id, $0) })
-        return sessionTargets.map { latestTargetsByID[$0.id] ?? $0 }
+        return sessionTargets.map { liveSessionTarget($0, latestTarget: latestTargetsByID[$0.id]) }
     }
 
     private var openingTargets: [MediaRemoteTarget] {
@@ -115,6 +115,36 @@ struct MenuBarMediaSourceSection: View {
         rememberTargets(freshTargets)
         sessionTargets = openingTargets
         sessionHasOpened = true
+    }
+
+    private func liveSessionTarget(
+        _ sessionTarget: MediaRemoteTarget,
+        latestTarget: MediaRemoteTarget?
+    ) -> MediaRemoteTarget {
+        guard let latestTarget else {
+            return sessionTarget
+        }
+        return MediaRemoteTarget(
+            id: sessionTarget.id,
+            bundleIdentifier: sessionTarget.bundleIdentifier,
+            parentBundleIdentifier: sessionTarget.parentBundleIdentifier,
+            displayName: sessionTarget.displayName,
+            pid: latestTarget.pid,
+            title: sessionTarget.title,
+            artist: sessionTarget.artist,
+            album: sessionTarget.album,
+            playbackRate: latestTarget.playbackRate,
+            mediaType: sessionTarget.mediaType,
+            artworkBase64: sessionTarget.artworkBase64,
+            duration: latestTarget.duration ?? sessionTarget.duration,
+            elapsedTime: latestTarget.elapsedTime ?? sessionTarget.elapsedTime,
+            elapsedTimestamp: latestTarget.elapsedTimestamp ?? sessionTarget.elapsedTimestamp,
+            supportedCommands: latestTarget.supportedCommands ?? sessionTarget.supportedCommands,
+            browserFamily: sessionTarget.browserFamily,
+            browserDisplayName: sessionTarget.browserDisplayName,
+            browserBundleIdentifier: sessionTarget.browserBundleIdentifier,
+            browserInstanceID: sessionTarget.browserInstanceID
+        )
     }
 
     private func rememberTargets(_ targets: [MediaRemoteTarget]) {
