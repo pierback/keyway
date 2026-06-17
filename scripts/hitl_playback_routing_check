@@ -7,7 +7,6 @@ chooser_open_latency_ms_max="${KEYWAY_HITL_CHOOSER_OPEN_LATENCY_MS_MAX:-75}"
 row_dispatch_latency_ms_max="${KEYWAY_HITL_ROW_DISPATCH_LATENCY_MS_MAX:-260}"
 helper_result_latency_ms_max="${KEYWAY_HITL_HELPER_RESULT_LATENCY_MS_MAX:-200}"
 spotify_helper_result_latency_ms_max="${KEYWAY_HITL_SPOTIFY_HELPER_RESULT_LATENCY_MS_MAX:-50}"
-helium_helper_result_latency_ms_max="${KEYWAY_HITL_HELIUM_HELPER_RESULT_LATENCY_MS_MAX:-125}"
 post_dispatch_settle_seconds="${KEYWAY_HITL_POST_DISPATCH_SETTLE_SECONDS:-0.35}"
 skip_wait="${KEYWAY_HITL_SKIP_WAIT:-0}"
 
@@ -99,7 +98,7 @@ PY
 }
 
 analyze_trace() {
-  python3 - "$status_file" "$1" "$chooser_open_latency_ms_max" "$row_dispatch_latency_ms_max" "$helper_result_latency_ms_max" "$spotify_helper_result_latency_ms_max" "$helium_helper_result_latency_ms_max" <<'PY'
+  python3 - "$status_file" "$1" "$chooser_open_latency_ms_max" "$row_dispatch_latency_ms_max" "$helper_result_latency_ms_max" "$spotify_helper_result_latency_ms_max" <<'PY'
 import json
 import pathlib
 import sys
@@ -110,7 +109,6 @@ chooser_open_latency_ms_max = float(sys.argv[3])
 row_dispatch_latency_ms_max = float(sys.argv[4])
 helper_result_latency_ms_max = float(sys.argv[5])
 spotify_helper_result_latency_ms_max = float(sys.argv[6])
-helium_helper_result_latency_ms_max = float(sys.argv[7])
 payload = json.loads(path.read_text())
 events = [
     event for event in payload.get("mediaTransportTrace", [])
@@ -254,11 +252,11 @@ expected_backend = "mediaremote_player_path"
 if select.get("target") == "Spotify" or selected_bundle == "com.spotify.client":
     expected_backend = "spotify_apple_event"
 elif select.get("target") == "Helium" or selected_bundle == "net.imput.helium":
-    expected_backend = "helium_javascript"
-selected_uses_desktop_transport = expected_backend != "mediaremote_player_path"
+    expected_backend = "chromium_extension"
+selected_uses_precise_transport = expected_backend != "mediaremote_player_path"
 if dispatch.get("transportBackend") != expected_backend:
     fail(f"chooser_dispatch transportBackend {dispatch.get('transportBackend')!r}; expected {expected_backend!r}")
-if not selected_uses_desktop_transport:
+if not selected_uses_precise_transport:
     if selected_playing is True and dispatch.get("command") != "pause":
         fail(f"selected playing target routed {dispatch.get('command')}; expected pause")
     if selected_playing is False and dispatch.get("command") != "play":
@@ -296,8 +294,6 @@ if helper_latency < 0:
     fail(f"helper result happened before chooser_dispatch in the trace: {helper_latency:.1f}ms")
 if expected_backend == "spotify_apple_event":
     helper_latency_ms_max = spotify_helper_result_latency_ms_max
-elif expected_backend == "helium_javascript":
-    helper_latency_ms_max = helium_helper_result_latency_ms_max
 else:
     helper_latency_ms_max = helper_result_latency_ms_max
 if helper_latency > helper_latency_ms_max:

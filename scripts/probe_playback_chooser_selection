@@ -9,7 +9,6 @@ chooser_open_latency_ms_max="${KEYWAY_PROBE_CHOOSER_OPEN_LATENCY_MS_MAX:-75}"
 row_dispatch_latency_ms_max="${KEYWAY_PROBE_ROW_DISPATCH_LATENCY_MS_MAX:-260}"
 helper_result_latency_ms_max="${KEYWAY_PROBE_HELPER_RESULT_LATENCY_MS_MAX:-350}"
 spotify_helper_result_latency_ms_max="${KEYWAY_PROBE_SPOTIFY_HELPER_RESULT_LATENCY_MS_MAX:-50}"
-helium_helper_result_latency_ms_max="${KEYWAY_PROBE_HELIUM_HELPER_RESULT_LATENCY_MS_MAX:-125}"
 min_target_count="${KEYWAY_PROBE_MIN_TARGET_COUNT:-1}"
 selection_down_count="${KEYWAY_PROBE_SELECTION_DOWN_COUNT:-0}"
 selection_index=""
@@ -177,7 +176,7 @@ analyze_trace() {
   local start_sequence="$1"
   local trace_json
   trace_json="$(read_trace_json)"
-  python3 - "$start_sequence" "$chooser_open_latency_ms_max" "$row_dispatch_latency_ms_max" "$helper_result_latency_ms_max" "$spotify_helper_result_latency_ms_max" "$helium_helper_result_latency_ms_max" "$min_target_count" "$expected_target_name" "$trace_json" <<'PY'
+  python3 - "$start_sequence" "$chooser_open_latency_ms_max" "$row_dispatch_latency_ms_max" "$helper_result_latency_ms_max" "$spotify_helper_result_latency_ms_max" "$min_target_count" "$expected_target_name" "$trace_json" <<'PY'
 import json
 import sys
 
@@ -186,11 +185,10 @@ chooser_open_latency_ms_max = float(sys.argv[2])
 row_dispatch_latency_ms_max = float(sys.argv[3])
 helper_result_latency_ms_max = float(sys.argv[4])
 spotify_helper_result_latency_ms_max = float(sys.argv[5])
-helium_helper_result_latency_ms_max = float(sys.argv[6])
-min_target_count = int(sys.argv[7])
-expected_target_name = sys.argv[8]
+min_target_count = int(sys.argv[6])
+expected_target_name = sys.argv[7]
 events = [
-    event for event in json.loads(sys.argv[9])
+    event for event in json.loads(sys.argv[8])
     if int(event.get("sequence", 0)) > start_sequence
 ]
 
@@ -292,11 +290,11 @@ expected_backend = "mediaremote_player_path"
 if selected_target == "Spotify" or selected_bundle == "com.spotify.client":
     expected_backend = "spotify_apple_event"
 elif selected_target == "Helium" or selected_bundle == "net.imput.helium":
-    expected_backend = "helium_javascript"
-selected_uses_desktop_transport = expected_backend != "mediaremote_player_path"
+    expected_backend = "chromium_extension"
+selected_uses_precise_transport = expected_backend != "mediaremote_player_path"
 if dispatch.get("transportBackend") != expected_backend:
     fail(f"chooser_dispatch transportBackend {dispatch.get('transportBackend')!r}; expected {expected_backend!r}")
-if not selected_uses_desktop_transport:
+if not selected_uses_precise_transport:
     if selected_playing is True and dispatch.get("command") != "pause":
         fail(f"selected playing target routed {dispatch.get('command')}; expected pause")
     if selected_playing is False and dispatch.get("command") != "play":
@@ -333,8 +331,6 @@ if helper.get("transportBackend") != expected_backend:
 helper_latency = latency_ms(dispatch, helper)
 if expected_backend == "spotify_apple_event":
     helper_latency_ms_max = spotify_helper_result_latency_ms_max
-elif expected_backend == "helium_javascript":
-    helper_latency_ms_max = helium_helper_result_latency_ms_max
 else:
     helper_latency_ms_max = helper_result_latency_ms_max
 if helper_latency < 0 or helper_latency > helper_latency_ms_max:

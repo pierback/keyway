@@ -91,9 +91,6 @@ struct MediaRemoteTarget: Codable, Equatable, Identifiable, Sendable {
         if ChromiumBrowserExtensionTransport.isTarget(self) {
             return "Extension"
         }
-        if mediaType == "desktop_automation", isChromiumBrowserLike {
-            return "Helium JS fallback"
-        }
         if isChromiumBrowserLike {
             return "Extension required"
         }

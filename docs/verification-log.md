@@ -1,6 +1,6 @@
 # Keyway Verification Log
 
-Last updated: 2026-06-01
+Last updated: 2026-06-17
 
 ## Playback Routing Hardening Update (2026-05-31)
 
@@ -17,9 +17,9 @@ Last updated: 2026-06-01
 - Selected-row dispatch now records structured `transportBackend` values:
   - `mediaremote_player_path`
   - `spotify_apple_event`
-  - `helium_javascript`
+  - `chromium_extension`
 - Spotify selected-row dispatch uses in-process Apple Events instead of MediaRemote player-path commands or `/usr/bin/osascript`.
-- Helium selected-row dispatch uses Chromium active-tab JavaScript, with direct playing-media lookup first, then deeper coverage for open shadow roots and same-origin frames before choosing a paused target. It does not simulate Space.
+- Helium selected-row dispatch uses the Chromium extension route. The desktop JavaScript fallback is removed, so Helium rows are commandable only when extension targets are present.
 - Desktop selected-row dispatch keeps the route shield armed; normal MediaRemote selected-row dispatch suspends and rearms the route shield.
 - Apple Events/TCC failures now surface an actionable Automation permission recovery hint.
 - Verification passed after the final installed build:
@@ -38,14 +38,14 @@ Last updated: 2026-06-01
   - `scripts/hitl_helium_playback_toggle_check`
   - `KEYWAY_APP="$HOME/Applications/Keyway.app" scripts/smoke_transport_routing_confirmation`
   - `KEYWAY_TRANSPORT_UI_SMOKE=1 scripts/regression_gate`
-- Live Helium HITL passed with `beforePlayingCount=1`, `afterPlayingCount=0`, selected target `net.imput.helium:776:desktop`, and backend `helium_javascript`.
+- Live Helium HITL expects `beforePlayingCount=1`, `afterPlayingCount=0`, a selected Helium extension target, and backend `chromium_extension`.
 - Transport routing smoke now covers focused-target Previous/Next only; Play/Pause is chooser-first and is covered by chooser/HITL probes.
 - Observed selected-row backend latency in probes:
   - Spotify AppleEvent helper result: `0ms`
-  - Helium JavaScript helper result: `17ms`
+  - Helium extension helper result: covered by the Chromium extension backend budget.
 - Display brightness keys were verified as pass-through after removing the mistaken `keyCode=2` Play/Pause mapping; `keyCode=2` is brightness-up, not Play/Pause.
 - Media chooser rows now use deterministic order: playing rows first, then the most recently selected/routed target, then app name, title, and id. Stopped recent targets never jump above currently playing rows; ordering no longer depends on MediaRemote freshness timestamps, active-route churn, or helper array order.
-- Helium chooser rows are now gated by active-tab JavaScript media availability, so stale MediaRemote Helium rows and desktop fallback rows are removed when Helium has no playable active-tab media.
+- Helium chooser rows are now gated by extension-reported media availability, so stale MediaRemote Helium rows and desktop fallback rows are not commandable.
 - The chooser now dismisses without dispatch when Keyway loses focus or another app is activated; this is covered by `scripts/probe_playback_chooser_focus_dismiss`, which focuses a different foreground app to avoid no-op activation when Finder is already frontmost.
 - `scripts/acceptance_preflight` remains environment-blocked, not Keyway-routing-blocked:
   - `sonos-handoff-port: Spotify has no active playback`

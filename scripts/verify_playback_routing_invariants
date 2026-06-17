@@ -37,17 +37,14 @@ grep -q 'commandCenterMetadata: commandCenterMetadata' "$transport" \
 grep -q 'command_center_play_family_route_shield_ignored' "$transport" \
   || fail "Command Center play-family input must not open the chooser"
 
-grep -q 'runHeliumJavaScriptCommand(command: command)' "$desktop_adapter" \
-  || fail "Helium transport must pass explicit play/pause/playPause commands into JavaScript instead of always toggling"
-
 grep -q 'guard !ChromiumBrowserExtensionTransport.isTarget(target) else' "$desktop_adapter" \
   || fail "Desktop transport must not claim exact Chromium extension rows"
 
-grep -q "command === 'pause'" "$desktop_adapter" \
-  || fail "Helium pause must be an idempotent pause command, not a playback toggle"
+! grep -q 'net.imput.helium' "$desktop_adapter" \
+  || fail "Helium must not have a desktop JavaScript fallback; it is extension-owned"
 
-grep -q "command === 'play'" "$desktop_adapter" \
-  || fail "Helium play must be an idempotent play command, not a playback toggle"
+grep -q 'Library/Application Support/net.imput.helium/NativeMessagingHosts' "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionTransport.swift" \
+  || fail "Helium must be installed through the Chromium extension native host path"
 
 grep -q 'cachedTargetsGraceInterval' "$menu_bar_media_sources" \
   || fail "menu bar source cache must have a bounded grace interval so stale rows cannot stay commandable"
@@ -298,44 +295,20 @@ grep -q 'MediaTransportCommandRules.rowScopedCommand(command, for: target)' "$tr
 grep -q 'desktopTransport.keepsPlayPauseToggle(for: target)' "$transport" \
   || fail "desktop chooser Play/Pause must keep app-owned transport toggles because MediaRemote playbackRate can be stale"
 
-grep -q 'net.imput.helium' "$desktop_adapter" \
-  || fail "Helium must have a selected-row desktop transport when MediaRemote player-path commands do not affect it"
-
 grep -q 'com.spotify.client' "$desktop_adapter" \
   || fail "Spotify must have a selected-row desktop transport when MediaRemote player-path commands are stale"
 
-grep -q 'targetsIncludingDesktopAutomationTargets' "$remote_controller" \
-  || fail "MediaRemoteController must delegate synthetic desktop target visibility to the desktop transport adapter"
+! grep -q 'targetsIncludingDesktopAutomationTargets' "$remote_controller" \
+  || fail "MediaRemoteController must not inject synthetic desktop automation targets"
 
-grep -q 'heliumActiveTabMediaAvailable' "$desktop_adapter" \
-  || fail "Helium must remain visible as a chooser target when MediaRemote omits its browser media row"
+! grep -q 'heliumActiveTabMediaAvailable' "$desktop_adapter" \
+  || fail "Helium visibility must come from the Chromium extension, not AppleScript probing"
 
 grep -q 'sendAppleEvent' "$desktop_adapter" \
   || fail "Spotify desktop dispatch must use in-process Apple Events instead of spawning osascript"
 
-grep -q 'runHeliumJavaScriptCommand(command: command)' "$desktop_adapter" \
-  || fail "Helium desktop dispatch must use command-aware JavaScript instead of MediaRemote playbackRate state"
-
-grep -q 'runHeliumJavaScriptCommand(command: command)' "$desktop_adapter" \
-  || fail "Helium desktop dispatch must execute tab JavaScript instead of using MediaRemote or keypress guesses"
-
-grep -q 'case .play, .pause, .playPause:' "$desktop_adapter" \
-  || fail "Helium direct play and pause controls must use the JavaScript backend, not synthetic MediaRemote target IDs"
-
-grep -q 'execute active tab of front window javascript' "$desktop_adapter" \
-  || fail "Helium desktop dispatch must target browser media through Chromium scripting"
-
-grep -q 'shadowRoot' "$desktop_adapter" \
-  || fail "Helium desktop dispatch must inspect open shadow DOM media elements"
-
-grep -q 'contentDocument' "$desktop_adapter" \
-  || fail "Helium desktop dispatch must inspect same-origin iframe media elements"
-
-grep -q 'const directPlaying = direct.filter(isPlaying)' "$desktop_adapter" \
-  || fail "Helium desktop dispatch must keep the direct playing-media path fast before deep DOM traversal"
-
-grep -q 'const deepPlaying = deep.filter(isPlaying)' "$desktop_adapter" \
-  || fail "Helium desktop dispatch must pause playing media found in shadow DOM or same-origin frames"
+! grep -q 'execute active tab of front window javascript' "$desktop_adapter" \
+  || fail "Desktop transport must not reach into Helium tabs through AppleScript JavaScript"
 
 if grep -q '/usr/bin/osascript' "$transport" "$desktop_adapter"; then
   fail "selected-row desktop dispatch must not spawn osascript from the app hot path"
@@ -353,9 +326,6 @@ grep -q 'transportBackendName(command: command, target: target)' "$transport" \
 
 grep -q 'transportBackend: result.backend' "$transport" \
   || fail "desktop helper results must preserve their selected transport backend"
-
-grep -q 'output == "paused" || output == "playing" || output == "play_requested"' "$desktop_adapter" \
-  || fail "Helium JavaScript dispatch must fail closed for no_media/no_windows states"
 
 grep -q 'selected_row_dispatch_route_shield_kept' "$transport" \
   || fail "desktop selected-row dispatch must keep the route shield armed"
@@ -945,8 +915,8 @@ fi
 grep -q 'verify_shortcut_event_parser_semantics=ok' "$repo_root/scripts/verify_shortcut_event_parser_semantics" \
   || fail "event parser semantics must lock display brightness keys to pass-through"
 
-grep -q 'heliumActiveTabMediaAvailable' "$desktop_adapter" \
-  || fail "Helium chooser rows must be gated by active-tab playable media"
+! grep -q 'heliumActiveTabMediaAvailable' "$desktop_adapter" \
+  || fail "Helium chooser rows must be reported by the Chromium extension, not desktop active-tab probing"
 
 grep -q 'probe_display_brightness_passthrough_stable' "$repo_root/scripts/probe_display_brightness_passthrough" \
   || fail "runtime probe must reject display brightness keys opening the media chooser"
@@ -1224,8 +1194,8 @@ grep -q 'hitl_helium_playback_toggle_stable' "$repo_root/scripts/hitl_helium_pla
 grep -q 'execute active tab of front window javascript' "$repo_root/scripts/hitl_helium_playback_toggle_check" \
   || fail "Helium HITL regression must inspect real active-tab media state through browser JavaScript"
 
-grep -q 'transportBackend.*helium_javascript' "$repo_root/scripts/hitl_helium_playback_toggle_check" \
-  || fail "Helium HITL regression must require the selected-row Helium JavaScript backend"
+grep -q 'transportBackend.*chromium_extension' "$repo_root/scripts/hitl_helium_playback_toggle_check" \
+  || fail "Helium HITL regression must require the selected-row Chromium extension backend"
 
 grep -q 'verify_hitl_helium_playback_toggle_check_semantics=ok' "$repo_root/scripts/verify_hitl_helium_playback_toggle_check_semantics" \
   || fail "Helium HITL regression semantics must be covered by replay fixtures"

@@ -22,7 +22,10 @@ run "$ROOT_DIR/scripts/verify_chromium_extension_semantics"
 run "$ROOT_DIR/scripts/verify_source_focus_semantics"
 run "$ROOT_DIR/scripts/verify_mixed_media_routing_semantics"
 run "$ROOT_DIR/scripts/verify_media_routing_probe_semantics"
-run bash -n "$ROOT_DIR/scripts/smoke_spotify_webapi_transport" "$ROOT_DIR/scripts/diagnose_spotify_playback_readiness"
+run bash -n \
+  "$ROOT_DIR/scripts/smoke_spotify_webapi_transport" \
+  "$ROOT_DIR/scripts/diagnose_spotify_playback_readiness" \
+  "$ROOT_DIR/scripts/reload_chromium_extension"
 run git -C "$ROOT_DIR" diff --check
 run "$ROOT_DIR/scripts/install_menubar_app"
 
@@ -61,10 +64,6 @@ fi
 
 if [[ "${KEYWAY_SPOTIFY_WEBAPI_SMOKE:-0}" == "1" ]]; then
   run "$ROOT_DIR/scripts/smoke_spotify_webapi_transport"
-fi
-
-if [[ "${KEYWAY_HELIUM_JAVASCRIPT_SMOKE:-0}" == "1" ]]; then
-  run "$ROOT_DIR/scripts/smoke_helium_javascript_transport"
 fi
 
 if [[ "${KEYWAY_HELIUM_CHROMIUM_EXTENSION_SMOKE:-0}" == "1" ]]; then

@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+payload='{"type":"reloadExtension","protocolVersion":2}'
+
+/usr/bin/swift - "$payload" <<'SWIFT'
+import Foundation
+
+let payload = CommandLine.arguments[1]
+DistributedNotificationCenter.default().postNotificationName(
+    Notification.Name("com.fpieringer.keyway.chromium.command"),
+    object: "com.fpieringer.keyway.chromium",
+    userInfo: ["payload": payload],
+    deliverImmediately: true
+)
+SWIFT
+
+printf 'chromium_extension_reload_requested=1\n'

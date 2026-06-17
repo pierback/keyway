@@ -50,5 +50,6 @@ else
 fi
 codesign --verify --deep --strict "$APP_DIR"
 open "$APP_DIR"
+"$ROOT_DIR/scripts/reload_chromium_extension"
 
 echo "$APP_DIR"

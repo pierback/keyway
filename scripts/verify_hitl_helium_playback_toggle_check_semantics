@@ -97,7 +97,7 @@ cat >"$ok_status" <<'JSON'
       "command": "playPause",
       "target": "Helium",
       "targetID": "helium",
-      "transportBackend": "helium_javascript",
+      "transportBackend": "chromium_extension",
       "monotonicMilliseconds": 131
     },
     {
@@ -114,7 +114,7 @@ cat >"$ok_status" <<'JSON'
       "command": "playPause",
       "target": "Helium",
       "targetID": "helium",
-      "transportBackend": "helium_javascript",
+      "transportBackend": "chromium_extension",
       "monotonicMilliseconds": 133
     },
     {
@@ -124,8 +124,8 @@ cat >"$ok_status" <<'JSON'
       "requestID": "cmd-1",
       "targetID": "helium",
       "ok": true,
-      "message": "submitted Helium JavaScript command state=paused",
-      "transportBackend": "helium_javascript",
+      "message": "paused",
+      "transportBackend": "chromium_extension",
       "monotonicMilliseconds": 150
     }
   ]
@@ -189,7 +189,7 @@ if KEYWAY_HITL_SKIP_WAIT=1 \
   printf 'verify_hitl_helium_playback_toggle_check_semantics: wrong-backend fixture unexpectedly passed\n' >&2
   exit 1
 fi
-grep -q "expected 'helium_javascript'" "$workdir/wrong-backend.err" \
+grep -q "expected 'chromium_extension'" "$workdir/wrong-backend.err" \
   || {
     printf 'verify_hitl_helium_playback_toggle_check_semantics: wrong-backend failure reason was wrong\n' >&2
     cat "$workdir/wrong-backend.err" >&2

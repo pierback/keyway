@@ -266,9 +266,7 @@ final class MediaRemoteController: ObservableObject {
                 }
                 snapshotRefreshTimeout?.cancel()
                 snapshotRefreshTimeout = nil
-                mediaRemoteTargets = MediaDesktopTransportAdapter.targetsIncludingDesktopAutomationTargets(
-                    snapshot.targets.filter { !Self.isIgnoredTarget($0) }
-                )
+                mediaRemoteTargets = snapshot.targets.filter { !Self.isIgnoredTarget($0) }
                 let visibleTargets = chromiumBrowserExtensionController.targetsIncludingBrowserExtensionTargets(mediaRemoteTargets)
                 targets = visibleTargets
                 activeTargetID = visibleTargets.contains { $0.id == snapshot.activeTargetID }

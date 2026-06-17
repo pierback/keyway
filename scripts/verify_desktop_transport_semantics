@@ -131,24 +131,15 @@ struct Semantics {
 
         expectEqual(
             adapter.backendName(command: .next, target: helium),
-            MediaDesktopTransportBackend.heliumJavaScript.rawValue,
-            "Helium next must still be owned by the Helium backend"
+            nil,
+            "Helium desktop targets must not be owned by a fallback backend"
         )
         expectEqual(
-            adapter.backendName(command: .previous, target: helium),
-            MediaDesktopTransportBackend.heliumJavaScript.rawValue,
-            "Helium previous must still be owned by the Helium backend"
+            adapter.backendName(command: .playPause, target: helium),
+            nil,
+            "Helium desktop play/pause must require the Chromium extension route"
         )
-
-        let next = adapter.submit(command: .next, target: helium)
-        expectEqual(next?.ok, false, "Helium next must not report success")
-        expectEqual(next?.unsupported, true, "Helium next must be marked unsupported")
-        expectEqual(next?.backend, MediaDesktopTransportBackend.heliumJavaScript.rawValue, "Helium next must report the Helium backend")
-
-        let previous = adapter.submit(command: .previous, target: helium)
-        expectEqual(previous?.ok, false, "Helium previous must not report success")
-        expectEqual(previous?.unsupported, true, "Helium previous must be marked unsupported")
-        expectEqual(previous?.backend, MediaDesktopTransportBackend.heliumJavaScript.rawValue, "Helium previous must report the Helium backend")
+        expectEqual(adapter.submit(command: .playPause, target: helium), nil, "Helium desktop targets must fail closed without fallback commands")
 
         expectEqual(
             adapter.backendName(command: .playPause, target: heliumExtension),

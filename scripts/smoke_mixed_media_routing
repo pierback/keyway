@@ -537,8 +537,8 @@ var unsupportedSuccess = 0
 var unsupportedFailure = 0
 
 let unsupportedChecks = [
-    (targets.helium, "next", "helium_javascript"),
-    (targets.helium, "previous", "helium_javascript"),
+    (targets.helium, "next", "chromium_extension"),
+    (targets.helium, "previous", "chromium_extension"),
 ]
 
 for check in unsupportedChecks {
@@ -562,7 +562,7 @@ for check in unsupportedChecks {
 
 let supportedTargets = [
     (targets.spotify, "playPause", "spotify_apple_event"),
-    (targets.helium, "playPause", "helium_javascript"),
+    (targets.helium, "playPause", "chromium_extension"),
     (targets.chromiumA, "playPause", "chromium_extension"),
     (targets.chromiumB, "playPause", "chromium_extension"),
     (targets.chromiumA, "next", "chromium_extension"),

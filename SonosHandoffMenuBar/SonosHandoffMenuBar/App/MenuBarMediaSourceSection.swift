@@ -296,9 +296,6 @@ struct MenuBarMediaSourceSection: View {
         if ChromiumBrowserExtensionTransport.isTarget(target) {
             return ChromiumBrowserExtensionTransport.supports(command: command, target: target)
         }
-        if target.mediaType == "desktop_automation", target.isChromiumBrowserLike {
-            return command == .play || command == .pause || command == .playPause
-        }
         if target.isChromiumBrowserLike {
             return false
         }

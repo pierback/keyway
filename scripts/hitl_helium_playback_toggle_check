@@ -213,12 +213,12 @@ if select.get("target") != "Helium" and selected_bundle != "net.imput.helium":
     fail(f"selected target was {select.get('target')!r}/{selected_bundle!r}; expected Helium")
 if selected_id and dispatch_id and selected_id != dispatch_id:
     fail(f"selected targetID {selected_id} did not match dispatch targetID {dispatch_id}")
-if dispatch.get("transportBackend") != "helium_javascript":
-    fail(f"chooser_dispatch transportBackend {dispatch.get('transportBackend')!r}; expected 'helium_javascript'")
+if dispatch.get("transportBackend") != "chromium_extension":
+    fail(f"chooser_dispatch transportBackend {dispatch.get('transportBackend')!r}; expected 'chromium_extension'")
 if shield_kept is None:
     fail("Helium selected-row dispatch did not keep the route shield armed")
-if shield_kept.get("transportBackend") != "helium_javascript":
-    fail(f"route-shield keep backend {shield_kept.get('transportBackend')!r}; expected 'helium_javascript'")
+if shield_kept.get("transportBackend") != "chromium_extension":
+    fail(f"route-shield keep backend {shield_kept.get('transportBackend')!r}; expected 'chromium_extension'")
 
 helper_results = [
     event for event in events[events.index(dispatch) + 1:]
@@ -229,12 +229,10 @@ if not helper_results:
 helper = helper_results[0]
 if helper.get("targetID") and dispatch_id and helper.get("targetID") != dispatch_id:
     fail(f"helper targetID {helper.get('targetID')} did not match dispatch targetID {dispatch_id}")
-if helper.get("transportBackend") != "helium_javascript":
-    fail(f"helper transportBackend {helper.get('transportBackend')!r}; expected 'helium_javascript'")
+if helper.get("transportBackend") != "chromium_extension":
+    fail(f"helper transportBackend {helper.get('transportBackend')!r}; expected 'chromium_extension'")
 if helper.get("ok") is not True:
     fail(f"helper did not report success: {helper.get('message')}")
-if "submitted Helium JavaScript command state=paused" not in str(helper.get("message")):
-    fail(f"helper did not report a JavaScript pause: {helper.get('message')!r}")
 if int(before.get("playingCount") or 0) < 1:
     fail("before state was not playing")
 if int(after.get("playingCount") or 0) != 0:
@@ -243,7 +241,7 @@ if int(after.get("playingCount") or 0) != 0:
 print(json.dumps({
     "event": "hitl_helium_playback_toggle_stable",
     "selectedTargetID": selected_id,
-    "transportBackend": "helium_javascript",
+    "transportBackend": "chromium_extension",
     "beforePlayingCount": before.get("playingCount"),
     "afterPlayingCount": after.get("playingCount"),
     "helperMessage": helper.get("message"),

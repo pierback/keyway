@@ -66,9 +66,9 @@ expect_contains "$source_section" "mediaTransportActions.focus(target: target)"
 expect_contains "$source_section" "if target.isSpotify"
 expect_contains "$source_section" "playback.transferSpotifyPlayback(source: source, to: row)"
 expect_contains "$source_section" "ChromiumBrowserExtensionTransport.supports(command: command, target: target)"
-expect_contains "$source_section" 'if target.mediaType == "desktop_automation", target.isChromiumBrowserLike'
 expect_contains "$source_section" "if target.isChromiumBrowserLike"
 expect_contains "$source_section" "return false"
+expect_absent "$source_section" 'target.mediaType == "desktop_automation"'
 expect_absent "$source_section" "Office unavailable"
 expect_absent "$source_section" "Sonos routing not supported"
 

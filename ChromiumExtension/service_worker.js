@@ -345,6 +345,10 @@ function handleNativeMessage(message) {
     return;
   }
 
+  if (message.type === "reloadExtension") {
+    chrome.runtime.reload();
+    return;
+  }
   if (message.type === "command") {
     handleCommandMessage(message);
     return;

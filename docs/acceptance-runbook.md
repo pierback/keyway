@@ -150,7 +150,7 @@ Playback chooser routing hardening suite:
 KEYWAY_PROBE_ROUTING_SUITE_TARGETS=1 /Users/f.pieringer/projects/keyway/scripts/probe_playback_routing_suite
 ```
 
-The default suite verifies cghid event-tap readiness, generated media-key rejection, selected-row echo semantics, route-shield invariants, and HITL replay fixtures. The target mode additionally selects Spotify and Helium rows and asserts the selected backend is `spotify_apple_event` or `helium_javascript`, with latency thresholds that reject slow `/usr/bin/osascript`-style dispatch.
+The default suite verifies cghid event-tap readiness, generated media-key rejection, selected-row echo semantics, route-shield invariants, and HITL replay fixtures. The target mode additionally selects Spotify and Helium rows and asserts the selected backend is `spotify_apple_event` or `chromium_extension`, with latency thresholds that reject slow `/usr/bin/osascript`-style dispatch.
 
 Live Helium selected-row regression:
 
@@ -158,7 +158,7 @@ Live Helium selected-row regression:
 /Users/f.pieringer/projects/keyway/scripts/hitl_helium_playback_toggle_check
 ```
 
-Start media in Helium first, then press the real hardware Play/Pause key and select Helium in the chooser. The checker verifies active-tab JavaScript state before and after selection, selected target identity, `helium_javascript` backend traces, and that the Helium media is paused after dispatch.
+Start media in Helium first, then press the real hardware Play/Pause key and select Helium in the chooser. The checker verifies active-tab JavaScript state before and after selection, selected target identity, `chromium_extension` backend traces, and that the Helium media is paused after dispatch.
 
 ## 10. Settings
 
