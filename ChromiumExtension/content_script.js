@@ -9,6 +9,65 @@ let nextMediaIndex = 1;
 let bridgeActive = true;
 let publishTimer = null;
 const baseSupportedCommands = ["play", "pause", "playPause", "mute", "volumeDelta"];
+const playbackControlSelectors = {
+  play: [
+    'button[aria-label="Play" i]',
+    '[role="button"][aria-label="Play" i]',
+    'button[aria-label="Abspielen" i]',
+    '[role="button"][aria-label="Abspielen" i]',
+    'button[aria-label*="play video" i]',
+    '[role="button"][aria-label*="play video" i]',
+    'button[aria-label*="start playback" i]',
+    '[role="button"][aria-label*="start playback" i]',
+    'button[title="Play" i]',
+    'button[title="Abspielen" i]',
+    'button[title*="play video" i]',
+    'button[title*="start playback" i]',
+    '[data-testid="play" i]',
+    '[data-testid*="play-button" i]',
+    '[data-testid*="play_button" i]',
+    ".vjs-play-control",
+    ".jw-icon-playback",
+    ".shaka-play-button",
+    ".bmpui-ui-playbacktogglebutton",
+  ],
+  pause: [
+    'button[aria-label="Pause" i]',
+    '[role="button"][aria-label="Pause" i]',
+    'button[aria-label="Pausieren" i]',
+    '[role="button"][aria-label="Pausieren" i]',
+    'button[aria-label*="pause video" i]',
+    '[role="button"][aria-label*="pause video" i]',
+    'button[aria-label*="pause playback" i]',
+    '[role="button"][aria-label*="pause playback" i]',
+    'button[title="Pause" i]',
+    'button[title="Pausieren" i]',
+    'button[title*="pause video" i]',
+    'button[title*="pause playback" i]',
+    '[data-testid="pause" i]',
+    '[data-testid*="pause-button" i]',
+    '[data-testid*="pause_button" i]',
+    ".vjs-play-control",
+    ".jw-icon-playback",
+    ".shaka-play-button",
+    ".bmpui-ui-playbacktogglebutton",
+  ],
+  playPause: [
+    '[aria-label*="play/pause" i]',
+    '[aria-label*="play pause" i]',
+    '[aria-label*="play-pause" i]',
+    '[aria-label*="wiedergabe stoppen" i]',
+    '[aria-label*="wiedergabe starten" i]',
+    '[title*="play/pause" i]',
+    '[title*="play pause" i]',
+    '[title*="play-pause" i]',
+    '[title*="wiedergabe stoppen" i]',
+    '[title*="wiedergabe starten" i]',
+    '[data-testid*="play-pause" i]',
+    '[data-testid*="play_pause" i]',
+    '[data-testid*="playpause" i]',
+  ],
+};
 const trackControlSelectors = {
   next: [
     '[data-testid="control-button-skip-forward"]',
@@ -64,6 +123,19 @@ function trackControl(command) {
   for (const selector of selectors) {
     const element = querySelectorDeep(selector);
     if (isClickable(element)) return element;
+  }
+  return null;
+}
+
+function playbackControl(command, element) {
+  const commands = command === "playPause"
+    ? (element.paused || element.ended ? ["play", "playPause"] : ["pause", "playPause"])
+    : [command];
+  for (const name of commands) {
+    for (const selector of playbackControlSelectors[name] || []) {
+      const control = querySelectorDeep(selector);
+      if (isClickable(control)) return control;
+    }
   }
   return null;
 }
@@ -173,15 +245,37 @@ function applyCommand(message) {
   }
 
   if (message.command === "play") {
+    if (!element.paused && !element.ended) {
+      return Promise.resolve({ ok: true, message: "already playing" });
+    }
+    const control = playbackControl(message.command, element);
+    if (control) {
+      control.click();
+      return Promise.resolve({ ok: true, message: "playing" });
+    }
     return element.play().then(() => ({ ok: true, message: "playing" }));
   }
 
   if (message.command === "pause") {
+    if (element.paused || element.ended) {
+      return Promise.resolve({ ok: true, message: "already paused" });
+    }
+    const control = playbackControl(message.command, element);
+    if (control) {
+      control.click();
+      return Promise.resolve({ ok: true, message: "paused" });
+    }
     element.pause();
     return Promise.resolve({ ok: true, message: "paused" });
   }
 
   if (message.command === "playPause") {
+    const control = playbackControl(message.command, element);
+    if (control) {
+      const wasPaused = element.paused || element.ended;
+      control.click();
+      return Promise.resolve({ ok: true, message: wasPaused ? "playing" : "paused" });
+    }
     if (element.paused || element.ended) {
       return element.play().then(() => ({ ok: true, message: "playing" }));
     }
