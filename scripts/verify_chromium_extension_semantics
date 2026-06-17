@@ -635,6 +635,7 @@ function makeContext(options = {}) {
   let observerDisconnected = false;
   let runtimeMessageListener = null;
   let sendMessageThrows = false;
+  let clearIntervalThrows = false;
 
   const video = {
     ended: false,
@@ -702,6 +703,9 @@ function makeContext(options = {}) {
       return `interval-${intervals.length}`;
     },
     clearInterval(id) {
+      if (clearIntervalThrows) {
+        throw new Error("Extension context invalidated.");
+      }
       clearedIntervals.push(id);
     },
     MutationObserver: function MutationObserver(callback) {
@@ -731,6 +735,9 @@ function makeContext(options = {}) {
     invalidateRuntime() {
       sendMessageThrows = true;
     },
+    invalidateTimerRuntime() {
+      clearIntervalThrows = true;
+    },
   };
 }
 
@@ -742,8 +749,12 @@ assertEqual(live.sentMessages.at(-1).type, "keywayMediaState", "content script m
 live.mutationCallback();
 assert(typeof live.events.get("timeupdate") === "function", "content script must observe media events after discovery");
 live.invalidateRuntime();
+live.invalidateTimerRuntime();
 live.events.get("timeupdate")();
-assertEqual(live.clearedIntervals[0], "interval-1", "invalidated extension context must clear the publish heartbeat");
+const sentMessageCountAfterRetire = live.sentMessages.length;
+live.intervals[0].callback();
+assertEqual(live.clearedIntervals.length, 0, "invalidated extension context must not call clearInterval after the browser world is gone");
+assertEqual(live.sentMessages.length, sentMessageCountAfterRetire, "retired extension heartbeat must not keep publishing media state");
 assert(live.observerDisconnected, "invalidated extension context must disconnect the DOM observer");
 
 const missingRuntime = makeContext({ withRuntime: false });

@@ -103,10 +103,7 @@ function runtimeAvailable() {
 function retireBridge() {
   bridgeActive = false;
   observer.disconnect();
-  if (publishTimer !== null) {
-    clearInterval(publishTimer);
-    publishTimer = null;
-  }
+  publishTimer = null;
 }
 
 function sendRuntimeMessage(message) {
@@ -252,7 +249,9 @@ if (!runtimeAvailable()) {
   });
 
   observer.observe(document.documentElement, { childList: true, subtree: true });
-  publishTimer = setInterval(publishAll, 1000);
+  publishTimer = setInterval(() => {
+    if (bridgeActive) publishAll();
+  }, 1000);
   publishAll();
 }
 }
