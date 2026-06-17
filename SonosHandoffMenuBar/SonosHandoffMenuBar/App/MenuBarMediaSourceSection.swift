@@ -26,7 +26,8 @@ struct MenuBarMediaSourceSection: View {
         guard sessionHasOpened else {
             return openingTargets
         }
-        return sessionTargets
+        let latestTargetsByID = Dictionary(uniqueKeysWithValues: freshTargets.map { ($0.id, $0) })
+        return sessionTargets.map { latestTargetsByID[$0.id] ?? $0 }
     }
 
     private var openingTargets: [MediaRemoteTarget] {
