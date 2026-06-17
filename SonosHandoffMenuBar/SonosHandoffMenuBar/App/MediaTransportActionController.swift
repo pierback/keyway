@@ -1,4 +1,3 @@
-import Combine
 import Foundation
 import os
 import SonosHandoffCore
@@ -27,7 +26,6 @@ final class MediaTransportActionController {
     private let chooserSession = MediaChooserSessionGuard()
     private let focusResolver = MediaTargetFocusResolver()
     var relaxRouteShield: ((String) -> Void)?
-    private var targetSubscription: AnyCancellable?
     private var programmaticDispatches: [UUID: MediaTransportPendingDispatchEcho] = [:]
 
     init(
@@ -52,17 +50,6 @@ final class MediaTransportActionController {
             physicalMediaKeyReboundWindow: Self.physicalMediaKeyReboundWindow,
             chooserTargetedMediaKeyEchoWindow: Self.chooserTargetedMediaKeyEchoWindow
         )
-        targetSubscription = mediaRemoteController.$targets
-            .dropFirst()
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] newTargets in
-                guard let self else { return }
-                let sorted = self.sortedTargets(newTargets)
-                self.overlayController.updateTargetsIfVisible(
-                    targets: sorted,
-                    generation: self.overlayController.currentGeneration
-                )
-            }
     }
 
     func route(command: MediaRemoteTransportCommand) {
@@ -197,7 +184,7 @@ final class MediaTransportActionController {
 
     func currentRouteStatus() -> MediaRouteStatus {
         let targets = sortedTargets(mediaRemoteController.targets)
-        guard !targets.isEmpty, mediaRemoteController.canRouteCommands else {
+        guard !targets.isEmpty else {
             return MediaRouteStatus(kind: .unavailable, target: nil, targetCount: 0)
         }
 
@@ -244,16 +231,6 @@ final class MediaTransportActionController {
             )
             return
         }
-        guard mediaRemoteController.canRouteCommands else {
-            logger.error("MediaTransport chooser_blocked command=\(commandName, privacy: .public) reason=helper_not_running")
-            StatusHUD.shared.finish(
-                title: "Media Targets Unavailable",
-                message: "MediaRemote helper is not running.",
-                dismissAfter: 2.4
-            )
-            return
-        }
-
         let cached = sortedTargets(mediaRemoteController.targets)
         let refreshQueued = mediaRemoteController.refreshSnapshot()
 
@@ -283,7 +260,7 @@ final class MediaTransportActionController {
         commandCenterMetadata: MediaCommandCenterInputMetadata?
     ) {
         let targets = sortedTargets(mediaRemoteController.targets)
-        guard !targets.isEmpty, mediaRemoteController.canRouteCommands else {
+        guard !targets.isEmpty else {
             mediaRemoteController.refreshSnapshot()
             StatusHUD.shared.finish(
                 title: "No Media Target",

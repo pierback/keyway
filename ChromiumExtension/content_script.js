@@ -6,6 +6,8 @@ const documentID = crypto.randomUUID
   : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const keywayMedia = new WeakMap();
 let nextMediaIndex = 1;
+let bridgeActive = true;
+let publishTimer = null;
 const baseSupportedCommands = ["play", "pause", "playPause", "mute", "volumeDelta"];
 const trackControlSelectors = {
   next: [
@@ -90,9 +92,41 @@ function isUsableMedia(element) {
   return !element.ended && Boolean(element.currentSrc || element.src || element.querySelector("source"));
 }
 
+function runtimeAvailable() {
+  return bridgeActive
+    && typeof chrome !== "undefined"
+    && Boolean(chrome.runtime?.id)
+    && typeof chrome.runtime.sendMessage === "function"
+    && typeof chrome.runtime.onMessage?.addListener === "function";
+}
+
+function retireBridge() {
+  bridgeActive = false;
+  observer.disconnect();
+  if (publishTimer !== null) {
+    clearInterval(publishTimer);
+    publishTimer = null;
+  }
+}
+
+function sendRuntimeMessage(message) {
+  if (!runtimeAvailable()) {
+    retireBridge();
+    return false;
+  }
+
+  try {
+    chrome.runtime.sendMessage(message);
+    return true;
+  } catch {
+    retireBridge();
+    return false;
+  }
+}
+
 function publishElement(element) {
   if (!isUsableMedia(element)) {
-    chrome.runtime.sendMessage({
+    sendRuntimeMessage({
       type: "keywayMediaGone",
       documentID,
       mediaId: mediaIdFor(element),
@@ -104,7 +138,7 @@ function publishElement(element) {
 
   const metadata = navigator.mediaSession?.metadata;
   const hasMediaSessionMetadata = Boolean(metadata && (metadata.title || metadata.artist || metadata.album));
-  chrome.runtime.sendMessage({
+  sendRuntimeMessage({
     type: "keywayMediaState",
     documentID,
     mediaId: mediaIdFor(element),
@@ -193,28 +227,32 @@ const observer = new MutationObserver(() => {
   for (const element of mediaElements()) observeElement(element);
 });
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message.type === "keywayProbeMedia") {
-    publishAll();
-    sendResponse({ ok: true });
-    return false;
-  }
+if (!runtimeAvailable()) {
+  retireBridge();
+} else {
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message.type === "keywayProbeMedia") {
+      publishAll();
+      sendResponse({ ok: true });
+      return false;
+    }
 
-  if (message.type !== "keywayCommand") return false;
-  applyCommand(message).then(response => {
-    publishAll();
-    sendResponse(response);
-  }).catch(() => {
-    publishAll();
-    sendResponse({
-      ok: false,
-      message: "Chromium media command failed.",
+    if (message.type !== "keywayCommand") return false;
+    applyCommand(message).then(response => {
+      publishAll();
+      sendResponse(response);
+    }).catch(() => {
+      publishAll();
+      sendResponse({
+        ok: false,
+        message: "Chromium media command failed.",
+      });
     });
+    return true;
   });
-  return true;
-});
 
-observer.observe(document.documentElement, { childList: true, subtree: true });
-setInterval(publishAll, 1000);
-publishAll();
+  observer.observe(document.documentElement, { childList: true, subtree: true });
+  publishTimer = setInterval(publishAll, 1000);
+  publishAll();
+}
 }

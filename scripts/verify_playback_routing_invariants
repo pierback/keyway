@@ -1162,6 +1162,26 @@ grep -q 'onFailure:' "$remote_helper_process" \
 grep -q 'handleHelperFailure' "$remote_controller" \
   || fail "MediaRemote helper internal failures must drive controller failure and recovery"
 
+python3 - "$remote_controller" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+mark_failed = text[text.index("    private func markFailed"):text.index("    private func schedulePeriodicRecovery")]
+if "clearMediaRemoteTargets()" not in mark_failed:
+    raise SystemExit("verify_playback_routing_invariants: MediaRemote helper failure must clear only MediaRemote-owned rows")
+if "clearAllTargets()" in mark_failed:
+    raise SystemExit("verify_playback_routing_invariants: MediaRemote helper failure must not clear Chromium extension-owned rows")
+if "targetCount: targets.count" not in mark_failed:
+    raise SystemExit("verify_playback_routing_invariants: MediaRemote helper failure health must report surviving extension rows")
+clear_media = text[text.index("    private func clearMediaRemoteTargets"):text.index("    private func clearAllTargets")]
+if "mediaRemoteTargets = []" not in clear_media or "mergeVisibleTargets()" not in clear_media:
+    raise SystemExit("verify_playback_routing_invariants: clearing MediaRemote rows must re-merge Chromium extension rows")
+clear_all = text[text.index("    private func clearAllTargets"):]
+if "mediaRemoteTargets = []" not in clear_all or "targets = []" not in clear_all:
+    raise SystemExit("verify_playback_routing_invariants: full stop must still clear all visible rows")
+PY
+
 grep -q 'mediaTransportTrace json' "$repo_root/scripts/show_playback_trace" \
   || fail "playback trace reader must print persisted media routing events"
 
@@ -1298,26 +1318,14 @@ choose = text.index("choose?(target, command)")
 close = text.index("close(notifyDismiss: false)")
 if close > choose:
     raise SystemExit("verify_playback_routing_invariants: chooser must close the panel before selected-row dispatch")
-update = model[model.index("func updateTargetsPreservingSelection"):model.index("    func moveSelection")]
-if "updatedTarget(" not in update:
-    raise SystemExit("verify_playback_routing_invariants: visible chooser rows must be refreshed through a stable target matcher")
-if "consumedIDs" not in update:
-    raise SystemExit("verify_playback_routing_invariants: visible chooser row refresh must not duplicate refreshed targets")
-if "selectedIndex(matching: selectedTarget)" not in update:
-    raise SystemExit("verify_playback_routing_invariants: visible chooser selection must survive metadata-derived id churn")
-if "preservedSelectedTargetID" not in update:
-    raise SystemExit("verify_playback_routing_invariants: visible chooser selection must track refreshed row identity explicitly")
-matcher = model[model.index("private func updatedTarget"):model.index("    func moveSelection")]
-if "$0.id == existingTarget.id" not in matcher:
-    raise SystemExit("verify_playback_routing_invariants: visible chooser row refresh must prefer exact target ids")
-if "isSameProcessTarget(candidate, existingTarget)" not in matcher:
-    raise SystemExit("verify_playback_routing_invariants: visible chooser row refresh must tolerate metadata-derived id churn")
-if "candidates.count == 1" not in matcher:
-    raise SystemExit("verify_playback_routing_invariants: visible chooser row refresh must reject ambiguous same-process matches")
-    if "targets.isEmpty" not in update or "self.targets = []" not in update:
-        raise SystemExit("verify_playback_routing_invariants: empty target refresh must clear visible chooser rows")
-    if "?? existingTarget" in update:
-        raise SystemExit("verify_playback_routing_invariants: visible chooser refresh must not keep stale rows that disappeared from the current snapshot")
+if "updateTargetsIfVisible" in text:
+    raise SystemExit("verify_playback_routing_invariants: open chooser rows must not be mutated by background target snapshots")
+if "updateTargetsPreservingSelection" in model:
+    raise SystemExit("verify_playback_routing_invariants: overlay model must not keep a live row-refresh path")
+if "func update(\n        command: MediaRemoteTransportCommand?,\n        targets: [MediaRemoteTarget]" not in model:
+    raise SystemExit("verify_playback_routing_invariants: overlay rows must be replaced only when opening a new session")
+if "selectedIndex = 0" not in model or "expanded = false" not in model:
+    raise SystemExit("verify_playback_routing_invariants: new chooser sessions must reset selection and expanded controls")
 PY
 
 grep -q 'routeFromCache(' "$transport" \

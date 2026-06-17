@@ -11,7 +11,6 @@ final class MediaTargetOverlayController {
     private var onDismiss: (() -> Void)?
     private var isClosing = false
     private var audioSnapshotGeneration = 0
-    private var generation = 0
     private var resignActiveObserver: NSObjectProtocol?
     private var workspaceActivationObserver: NSObjectProtocol?
 
@@ -54,10 +53,6 @@ final class MediaTargetOverlayController {
         panel?.isVisible == true
     }
 
-    var currentGeneration: Int {
-        generation
-    }
-
     func show(
         command: MediaRemoteTransportCommand?,
         targets: [MediaRemoteTarget],
@@ -65,7 +60,6 @@ final class MediaTargetOverlayController {
         onFocus: @escaping (MediaRemoteTarget) -> Void,
         onDismiss: @escaping () -> Void = {}
     ) {
-        generation &+= 1
         self.onChoose = onChoose
         self.onFocus = onFocus
         self.onDismiss = onDismiss
@@ -120,16 +114,6 @@ final class MediaTargetOverlayController {
         if notifyDismiss {
             dismiss?()
         }
-    }
-
-    func updateTargetsIfVisible(targets: [MediaRemoteTarget], generation: Int) {
-        guard isVisible, generation == self.generation else {
-            return
-        }
-
-        model.updateTargetsPreservingSelection(targets)
-        resizeAndPosition(ensurePanel())
-        refreshAudioSnapshot()
     }
 
     private func ensurePanel() -> MediaTargetOverlayPanel {

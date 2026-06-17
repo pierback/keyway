@@ -80,6 +80,33 @@ assert_order(
     "ambiguous multi-target routing must fall through to the chooser"
 )
 
+chooser_immediate = function_body("showChooserImmediately")
+if "helper_not_running" in chooser_immediate or "MediaRemote helper is not running" in chooser_immediate:
+    fail("chooser presentation must not be blocked by a global MediaRemote-helper health gate")
+assert_order(
+    chooser_immediate,
+    [
+        "let cached = sortedTargets(mediaRemoteController.targets)",
+        "let refreshQueued = mediaRemoteController.refreshSnapshot()",
+        "showChooserOverlay(",
+    ],
+    "chooser presentation must take the cached rows first and refresh snapshots only in the background"
+)
+
+route_cache = function_body("routeFromCache")
+if "mediaRemoteController.canRouteCommands" in route_cache:
+    fail("cache routing must not use a blanket MediaRemote-helper health gate before adapter dispatch")
+assert_order(
+    route_cache,
+    [
+        "let targets = sortedTargets(mediaRemoteController.targets)",
+        "guard !targets.isEmpty else",
+        "mediaRemoteController.refreshSnapshot()",
+        "route(",
+    ],
+    "cache routing must dispatch existing rows through their owning adapters"
+)
+
 automatic_target = function_body("automaticTarget")
 assert_order(
     automatic_target,

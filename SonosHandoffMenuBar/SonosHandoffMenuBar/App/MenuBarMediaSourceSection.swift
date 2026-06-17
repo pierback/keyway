@@ -14,6 +14,8 @@ struct MenuBarMediaSourceSection: View {
     let progressTick: UInt64
     @State private var cachedTargets: [MediaRemoteTarget] = []
     @State private var cachedTargetsUpdatedAt: Date?
+    @State private var sessionTargets: [MediaRemoteTarget] = []
+    @State private var sessionHasOpened = false
 
     private var freshTargets: [MediaRemoteTarget] {
         sortedTargets(mediaRemoteController.targets)
@@ -21,6 +23,13 @@ struct MenuBarMediaSourceSection: View {
 
     private var displayTargets: [MediaRemoteTarget] {
         let _ = progressTick
+        guard sessionHasOpened else {
+            return openingTargets
+        }
+        return sessionTargets
+    }
+
+    private var openingTargets: [MediaRemoteTarget] {
         let targets = freshTargets
         if targets.isEmpty, mediaRemoteController.isRefreshingSnapshot, canShowCachedTargets {
             return cachedTargets
@@ -55,12 +64,6 @@ struct MenuBarMediaSourceSection: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.62))
                 Spacer()
-                if displayTargets.isEmpty, mediaRemoteController.isRefreshingSnapshot {
-                    ProgressView()
-                        .controlSize(.small)
-                        .scaleEffect(0.56)
-                        .frame(width: 16, height: 16)
-                }
             }
 
             if displayTargets.isEmpty {
@@ -96,11 +99,21 @@ struct MenuBarMediaSourceSection: View {
         .animation(MenuBarMotion.rowUpdate, value: playback.outputRows)
         .animation(MenuBarMotion.rowUpdate, value: playback.selectedRoomName)
         .onAppear {
-            rememberTargets(freshTargets)
+            openTargetSession()
+        }
+        .onDisappear {
+            sessionTargets = []
+            sessionHasOpened = false
         }
         .onReceive(mediaRemoteController.$targets) { targets in
             rememberTargets(sortedTargets(targets))
         }
+    }
+
+    private func openTargetSession() {
+        rememberTargets(freshTargets)
+        sessionTargets = openingTargets
+        sessionHasOpened = true
     }
 
     private func rememberTargets(_ targets: [MediaRemoteTarget]) {
@@ -118,7 +131,7 @@ struct MenuBarMediaSourceSection: View {
                 .frame(width: 26, height: 26)
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(mediaRemoteController.isRefreshingSnapshot ? "Refreshing..." : "No active media sources")
+                Text("No active media sources")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.white.opacity(0.82))
                 Text(mediaRemoteController.health.badgeTitle)

@@ -128,7 +128,7 @@ final class MediaRemoteController: ObservableObject {
         refreshTimer = nil
         snapshotHelper.stop()
         commandHelper.stop()
-        clearTargets()
+        clearAllTargets()
         clearCommandState()
         refreshGate.reset()
         snapshotRefreshTimeout?.cancel()
@@ -417,7 +417,6 @@ final class MediaRemoteController: ObservableObject {
         commandHelper.stop()
         refreshTimer?.invalidate()
         refreshTimer = nil
-        clearTargets()
         clearCommandState()
         refreshGate.reset()
         snapshotRefreshTimeout?.cancel()
@@ -448,7 +447,6 @@ final class MediaRemoteController: ObservableObject {
         commandHelper.stop()
         refreshTimer?.invalidate()
         refreshTimer = nil
-        clearTargets()
         clearCommandState()
         refreshGate.reset()
         snapshotRefreshTimeout?.cancel()
@@ -470,7 +468,7 @@ final class MediaRemoteController: ObservableObject {
 
     private func markFailed(_ message: String) {
         logger.error("MediaRemoteHelper failed=\(message, privacy: .public)")
-        clearTargets()
+        clearMediaRemoteTargets()
         isRefreshingSnapshot = false
         refreshGate.reset()
         snapshotRefreshTimeout?.cancel()
@@ -482,7 +480,7 @@ final class MediaRemoteController: ObservableObject {
             message: message,
             pid: health.pid,
             lastSnapshotAt: health.lastSnapshotAt,
-            targetCount: 0
+            targetCount: targets.count
         )
     }
 
@@ -514,7 +512,13 @@ final class MediaRemoteController: ObservableObject {
         recoveryTimer = nil
     }
 
-    private func clearTargets() {
+    private func clearMediaRemoteTargets() {
+        mediaRemoteTargets = []
+        mergeVisibleTargets()
+    }
+
+    private func clearAllTargets() {
+        mediaRemoteTargets = []
         targets = []
         activeTargetID = nil
         ShortcutRuntimeStatus.shared.updateMediaTargets([], activeTargetID: nil, rawTargetCount: 0)
