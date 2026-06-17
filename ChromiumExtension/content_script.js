@@ -172,6 +172,24 @@ function runtimeAvailable() {
     && typeof chrome.runtime.onMessage?.addListener === "function";
 }
 
+function retireIfExtensionContextInvalidated(error) {
+  if (error?.message === "Extension context invalidated.") {
+    retireBridge();
+    return true;
+  }
+  return false;
+}
+
+function runBridgeTask(action) {
+  if (!bridgeActive) return undefined;
+  try {
+    return action();
+  } catch (error) {
+    if (retireIfExtensionContextInvalidated(error)) return undefined;
+    throw error;
+  }
+}
+
 function retireBridge() {
   bridgeActive = false;
   observer.disconnect();
@@ -194,44 +212,48 @@ function sendRuntimeMessage(message) {
 }
 
 function publishElement(element) {
-  if (!isUsableMedia(element)) {
+  runBridgeTask(() => {
+    if (!isUsableMedia(element)) {
+      sendRuntimeMessage({
+        type: "keywayMediaGone",
+        documentID,
+        mediaId: mediaIdFor(element),
+        pageTitle: document.title || "",
+        url: location.href || "",
+      });
+      return;
+    }
+
+    const metadata = navigator.mediaSession?.metadata;
+    const hasMediaSessionMetadata = Boolean(metadata && (metadata.title || metadata.artist || metadata.album));
     sendRuntimeMessage({
-      type: "keywayMediaGone",
+      type: "keywayMediaState",
       documentID,
       mediaId: mediaIdFor(element),
+      title: metadata?.title || element.getAttribute("title") || element.getAttribute("aria-label") || document.title || "",
+      artist: metadata?.artist || "",
+      album: metadata?.album || "",
       pageTitle: document.title || "",
       url: location.href || "",
+      playing: !element.paused && !element.ended,
+      muted: element.muted,
+      volume: element.volume,
+      duration: element.duration,
+      elapsedTime: element.currentTime,
+      hasMediaSessionMetadata,
+      supportedCommands: supportedCommands(),
     });
-    return;
-  }
-
-  const metadata = navigator.mediaSession?.metadata;
-  const hasMediaSessionMetadata = Boolean(metadata && (metadata.title || metadata.artist || metadata.album));
-  sendRuntimeMessage({
-    type: "keywayMediaState",
-    documentID,
-    mediaId: mediaIdFor(element),
-    title: metadata?.title || element.getAttribute("title") || element.getAttribute("aria-label") || document.title || "",
-    artist: metadata?.artist || "",
-    album: metadata?.album || "",
-    pageTitle: document.title || "",
-    url: location.href || "",
-    playing: !element.paused && !element.ended,
-    muted: element.muted,
-    volume: element.volume,
-    duration: element.duration,
-    elapsedTime: element.currentTime,
-    hasMediaSessionMetadata,
-    supportedCommands: supportedCommands(),
   });
 }
 
 function publishAll() {
-  for (const element of mediaElements()) publishElement(element);
+  runBridgeTask(() => {
+    for (const element of mediaElements()) publishElement(element);
+  });
 }
 
 function commandTarget(mediaId) {
-  return mediaElements().find(element => mediaIdFor(element) === mediaId);
+  return runBridgeTask(() => mediaElements().find(element => mediaIdFor(element) === mediaId));
 }
 
 function applyCommand(message) {
@@ -315,7 +337,9 @@ function observeElement(element) {
 }
 
 const observer = new MutationObserver(() => {
-  for (const element of mediaElements()) observeElement(element);
+  runBridgeTask(() => {
+    for (const element of mediaElements()) observeElement(element);
+  });
 });
 
 if (!runtimeAvailable()) {
@@ -332,7 +356,8 @@ if (!runtimeAvailable()) {
     applyCommand(message).then(response => {
       publishAll();
       sendResponse(response);
-    }).catch(() => {
+    }).catch(error => {
+      retireIfExtensionContextInvalidated(error);
       publishAll();
       sendResponse({
         ok: false,

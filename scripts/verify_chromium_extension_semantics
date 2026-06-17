@@ -636,6 +636,7 @@ function makeContext(options = {}) {
   let runtimeMessageListener = null;
   let sendMessageThrows = false;
   let clearIntervalThrows = false;
+  let domTraversalInvalidated = false;
   let playbackButtonClickCount = 0;
 
   const video = {
@@ -700,6 +701,15 @@ function makeContext(options = {}) {
       : normalized.includes("pause") || normalized.includes("pausieren");
   }
 
+  const shadowHost = {
+    get shadowRoot() {
+      if (domTraversalInvalidated) {
+        throw new Error("Extension context invalidated.");
+      }
+      return null;
+    },
+  };
+
   const document = {
     title: "Magenta TV",
     documentElement: {},
@@ -709,6 +719,7 @@ function makeContext(options = {}) {
     },
     querySelectorAll(selector) {
       if (selector === "video,audio") return [video];
+      if (selector === "*" && options.withShadowHost) return [shadowHost];
       if (selector === "*") return [];
       return [];
     },
@@ -782,6 +793,9 @@ function makeContext(options = {}) {
     invalidateTimerRuntime() {
       clearIntervalThrows = true;
     },
+    invalidateDomTraversal() {
+      domTraversalInvalidated = true;
+    },
   };
 }
 
@@ -820,6 +834,17 @@ async function sendCommand(fixture, command) {
   assertEqual(live.clearedIntervals.length, 0, "invalidated extension context must not call clearInterval after the browser world is gone");
   assertEqual(live.sentMessages.length, sentMessageCountAfterRetire, "retired extension heartbeat must not keep publishing media state");
   assert(live.observerDisconnected, "invalidated extension context must disconnect the DOM observer");
+
+  const staleDomTraversal = makeContext({ withShadowHost: true });
+  vm.runInNewContext(code, staleDomTraversal.context, { filename: contentScriptPath });
+  staleDomTraversal.mutationCallback();
+  assert(typeof staleDomTraversal.events.get("timeupdate") === "function", "stale DOM traversal fixture must observe media before invalidation");
+  staleDomTraversal.invalidateDomTraversal();
+  staleDomTraversal.intervals[0].callback();
+  assert(staleDomTraversal.observerDisconnected, "invalidated extension context during DOM traversal must disconnect the DOM observer");
+  const sentMessageCountAfterDomRetire = staleDomTraversal.sentMessages.length;
+  staleDomTraversal.events.get("timeupdate")();
+  assertEqual(staleDomTraversal.sentMessages.length, sentMessageCountAfterDomRetire, "retired DOM traversal bridge must not keep publishing media state");
 
   const magentaPlaying = makeContext({
     withPlaybackButton: true,
@@ -1074,8 +1099,13 @@ expect(
 )
 expect(
     repo_root.joinpath("ChromiumExtension/content_script.js").read_text(),
-    "}).catch(() => {",
+    "}).catch(error => {",
     "Chromium extension content script must answer rejected media commands with an explicit failure",
+)
+expect(
+    repo_root.joinpath("ChromiumExtension/content_script.js").read_text(),
+    "retireIfExtensionContextInvalidated(error)",
+    "Chromium extension content script must retire rejected commands caused by invalidated extension contexts",
 )
 expect(
     repo_root.joinpath("ChromiumExtension/content_script.js").read_text(),
