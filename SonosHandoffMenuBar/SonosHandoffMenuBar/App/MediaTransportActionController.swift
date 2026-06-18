@@ -507,51 +507,15 @@ final class MediaTransportActionController {
             logger.info("MediaTransport route command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) reason=\(reason.rawValue, privacy: .public) transport=chromium_extension")
             return
         }
-        sendProgrammaticLegacy(command: command, to: target, dispatchID: dispatchID, reason: reason)
+        fallbackProgrammaticMediaRemote(command: command, to: target, dispatchID: dispatchID, reason: reason)
     }
 
-    private func sendProgrammaticLegacy(
+    private func fallbackProgrammaticMediaRemote(
         command: MediaRemoteTransportCommand,
         to target: MediaRemoteTarget,
         dispatchID: UUID,
         reason: MediaTransportRoutingReason
     ) {
-        rememberTarget(target)
-        if let result = desktopTransport.submit(command: command, target: target) {
-            trace(result: result, transportBackend: result.backend)
-            if shouldFallbackFromUnsupportedDesktopResult(target: target),
-               result.unsupported,
-               sendProgrammaticSpotifyWebAPI(command: command, to: target, dispatchID: dispatchID, reason: reason) {
-                trace(
-                    "desktop_transport_fallback",
-                    command: command,
-                    target: target,
-                    reason: "unsupported",
-                    transportBackend: result.backend
-                )
-                return
-            }
-            if shouldFallbackFromUnsupportedDesktopResult(target: target),
-               result.unsupported,
-               sendProgrammaticMediaRemote(command: command, to: target, dispatchID: dispatchID, reason: reason) {
-                trace(
-                    "desktop_transport_fallback",
-                    command: command,
-                    target: target,
-                    reason: "unsupported",
-                    transportBackend: result.backend
-                )
-                return
-            }
-            finishProgrammaticDispatch(
-                id: dispatchID,
-                fallback: false
-            )
-            mediaRemoteController.refreshSnapshot()
-            showCommandFailureIfNeeded(result: result, target: target)
-            logger.info("MediaTransport route command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) reason=\(reason.rawValue, privacy: .public) transport=\(result.backend ?? "desktop", privacy: .public)")
-            return
-        }
         guard canUseMediaRemotePlayerPath(command: command, target: target) else {
             finishProgrammaticDispatch(id: dispatchID, fallback: true)
             return
@@ -737,50 +701,14 @@ final class MediaTransportActionController {
             logger.info("MediaTransport chooser command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) transport=chromium_extension")
             return
         }
-        sendChooserLegacy(command: command, to: target, dispatchID: dispatchID)
+        fallbackChooserMediaRemote(command: command, to: target, dispatchID: dispatchID)
     }
 
-    private func sendChooserLegacy(
+    private func fallbackChooserMediaRemote(
         command: MediaRemoteTransportCommand,
         to target: MediaRemoteTarget,
         dispatchID: UUID
     ) {
-        rememberTarget(target)
-        if let result = desktopTransport.submit(command: command, target: target) {
-            trace(result: result, transportBackend: result.backend)
-            if shouldFallbackFromUnsupportedDesktopResult(target: target),
-               result.unsupported,
-               sendChooserSpotifyWebAPI(command: command, to: target, dispatchID: dispatchID) {
-                trace(
-                    "desktop_transport_fallback",
-                    command: command,
-                    target: target,
-                    reason: "unsupported",
-                    transportBackend: result.backend
-                )
-                return
-            }
-            if shouldFallbackFromUnsupportedDesktopResult(target: target),
-               result.unsupported,
-               sendChooserMediaRemote(command: command, to: target, dispatchID: dispatchID) {
-                trace(
-                    "desktop_transport_fallback",
-                    command: command,
-                    target: target,
-                    reason: "unsupported",
-                    transportBackend: result.backend
-                )
-                return
-            }
-            finishChooserDispatch(
-                id: dispatchID,
-                fallback: false
-            )
-            mediaRemoteController.refreshSnapshot()
-            showCommandFailureIfNeeded(result: result, target: target)
-            logger.info("MediaTransport chooser command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) transport=\(result.backend ?? "desktop", privacy: .public)")
-            return
-        }
         guard canUseMediaRemotePlayerPath(command: command, target: target) else {
             finishChooserDispatch(id: dispatchID, fallback: true)
             return

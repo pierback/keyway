@@ -142,26 +142,23 @@ assert_order(
         '"desktop_transport_fallback"',
         "sendProgrammaticMediaRemote(command: command, to: target, dispatchID: dispatchID, reason: reason)",
         "chromiumBrowserExtensionController.submit(command: command, target: target",
-        "sendProgrammaticLegacy(command: command, to: target, dispatchID: dispatchID, reason: reason)",
+        "fallbackProgrammaticMediaRemote(command: command, to: target, dispatchID: dispatchID, reason: reason)",
     ],
-    "programmatic dispatch must prefer desktop adapters, gate unsupported desktop fallback, then use Chromium extension exactly before legacy"
+    "programmatic dispatch must prefer desktop adapters, gate unsupported desktop fallback, then use Chromium extension exactly before MediaRemote fallback"
 )
 if "legacyChromiumFallbackTarget" in send or '"chromium_extension_fallback"' in send:
     fail("Chromium extension command failures must not fall back to legacy browser rows")
 
-programmatic_legacy = function_body("sendProgrammaticLegacy")
+programmatic_mediaremote_fallback = function_body("fallbackProgrammaticMediaRemote")
+if "desktopTransport.submit(command: command, target: target)" in programmatic_mediaremote_fallback:
+    fail("programmatic MediaRemote fallback must not retry desktop dispatch after the primary chain already tried it")
 assert_order(
-    programmatic_legacy,
+    programmatic_mediaremote_fallback,
     [
-        "desktopTransport.submit(command: command, target: target)",
-        "shouldFallbackFromUnsupportedDesktopResult(target: target)",
-        "sendProgrammaticSpotifyWebAPI(command: command, to: target, dispatchID: dispatchID, reason: reason)",
-        '"desktop_transport_fallback"',
-        "sendProgrammaticMediaRemote(command: command, to: target, dispatchID: dispatchID, reason: reason)",
         "canUseMediaRemotePlayerPath(command: command, target: target)",
         "guard sendProgrammaticMediaRemote(command: command, to: target, dispatchID: dispatchID, reason: reason)",
     ],
-    "programmatic legacy dispatch must gate unsupported desktop fallback before Spotify Web API and MediaRemote"
+    "programmatic MediaRemote fallback must gate the player path before dispatch"
 )
 
 programmatic_spotify_webapi = function_body("sendProgrammaticSpotifyWebAPI")
@@ -203,26 +200,23 @@ assert_order(
         '"desktop_transport_fallback"',
         "sendChooserMediaRemote(command: command, to: target, dispatchID: dispatchID)",
         "chromiumBrowserExtensionController.submit(command: command, target: target",
-        "sendChooserLegacy(command: command, to: target, dispatchID: dispatchID)",
+        "fallbackChooserMediaRemote(command: command, to: target, dispatchID: dispatchID)",
     ],
-    "chooser dispatch must prefer desktop adapters, gate unsupported desktop fallback, then use Chromium extension exactly before legacy"
+    "chooser dispatch must prefer desktop adapters, gate unsupported desktop fallback, then use Chromium extension exactly before MediaRemote fallback"
 )
 if "legacyChromiumFallbackTarget" in chooser_send or '"chromium_extension_fallback"' in chooser_send:
     fail("Chooser Chromium extension command failures must not fall back to legacy browser rows")
 
-chooser_legacy = function_body("sendChooserLegacy")
+chooser_mediaremote_fallback = function_body("fallbackChooserMediaRemote")
+if "desktopTransport.submit(command: command, target: target)" in chooser_mediaremote_fallback:
+    fail("chooser MediaRemote fallback must not retry desktop dispatch after the primary chain already tried it")
 assert_order(
-    chooser_legacy,
+    chooser_mediaremote_fallback,
     [
-        "desktopTransport.submit(command: command, target: target)",
-        "shouldFallbackFromUnsupportedDesktopResult(target: target)",
-        "sendChooserSpotifyWebAPI(command: command, to: target, dispatchID: dispatchID)",
-        '"desktop_transport_fallback"',
-        "sendChooserMediaRemote(command: command, to: target, dispatchID: dispatchID)",
         "canUseMediaRemotePlayerPath(command: command, target: target)",
         "guard sendChooserMediaRemote(command: command, to: target, dispatchID: dispatchID)",
     ],
-    "chooser legacy dispatch must gate unsupported desktop fallback before Spotify Web API and MediaRemote"
+    "chooser MediaRemote fallback must gate the player path before dispatch"
 )
 
 chooser_spotify_webapi = function_body("sendChooserSpotifyWebAPI")
