@@ -935,6 +935,7 @@ repo_root = pathlib.Path(sys.argv[1])
 transport = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionTransport.swift").read_text()
 models = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaRemoteModels.swift").read_text()
 action_controller = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportActionController.swift").read_text()
+target_resolver = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportTargetResolver.swift").read_text()
 environment = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/Support/AppEnvironment.swift").read_text()
 settings = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/Features/SettingsFeature.swift").read_text()
 project = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar.xcodeproj/project.pbxproj").read_text()
@@ -1007,7 +1008,7 @@ expect(
     "media target model must expose route provenance for chooser display",
 )
 expect(
-    action_controller,
+    target_resolver,
     "preferredChromiumExtensionTarget(command: command, from: targets)",
     "automatic routing must prefer a single playing Chromium extension target",
 )

@@ -24,7 +24,7 @@ final class MediaTransportActionController {
     private let targetSelectionMemory: MediaTargetSelectionMemory
     private let traceRecorder = MediaTransportTraceRecorder()
     private let chooserSession = MediaChooserSessionGuard()
-    private let focusResolver = MediaTargetFocusResolver()
+    private let targetResolver = MediaTransportTargetResolver()
     var relaxRouteShield: ((String) -> Void)?
     private var programmaticDispatches: [UUID: MediaTransportPendingDispatchEcho] = [:]
 
@@ -188,7 +188,11 @@ final class MediaTransportActionController {
             return MediaRouteStatus(kind: .unavailable, target: nil, targetCount: 0)
         }
 
-        if let decision = automaticTarget(command: .playPause, from: targets) {
+        if let decision = targetResolver.automaticTarget(
+            command: .playPause,
+            from: targets,
+            recentTargetID: targetSelectionMemory.recentTargetID
+        ) {
             let kind: MediaRouteStatusKind = targets.count > 1
                 ? .chooser
                 : MediaTransportCommandRules.statusKind(for: decision.reason)
@@ -287,7 +291,11 @@ final class MediaTransportActionController {
         metadata: MediaTransportInputMetadata?,
         commandCenterMetadata: MediaCommandCenterInputMetadata?
     ) {
-        if let decision = automaticTarget(command: command, from: targets) {
+        if let decision = targetResolver.automaticTarget(
+            command: command,
+            from: targets,
+            recentTargetID: targetSelectionMemory.recentTargetID
+        ) {
             send(command: command, to: decision.target, reason: decision.reason)
             return
         }
@@ -400,7 +408,7 @@ final class MediaTransportActionController {
     }
 
     private func sortedTargets(_ targets: [MediaRemoteTarget]) -> [MediaRemoteTarget] {
-        MediaTransportCommandRules.sortedTargets(
+        targetResolver.sortedTargets(
             targets,
             preferredTargetID: targetSelectionMemory.recentTargetID
         )
@@ -408,43 +416,6 @@ final class MediaTransportActionController {
 
     private func rememberTarget(_ target: MediaRemoteTarget) {
         targetSelectionMemory.remember(target)
-    }
-
-    private func automaticTarget(command: MediaRemoteTransportCommand, from targets: [MediaRemoteTarget]) -> (target: MediaRemoteTarget, reason: MediaTransportRoutingReason)? {
-        if let extensionTarget = preferredChromiumExtensionTarget(command: command, from: targets) {
-            return (extensionTarget, .current)
-        }
-
-        if targets.count == 1, let target = targets.first {
-            return (target, .single)
-        }
-
-        let playingTargets = targets.filter(\.isCurrentlyPlaying)
-
-        if playingTargets.count == 1, let playingTarget = playingTargets.first {
-            return (playingTarget, .current)
-        }
-
-        if let focusedTarget = focusResolver.focusedTarget(in: targets) {
-            return (focusedTarget, .focused)
-        }
-
-        if let recentTarget = targets.first(where: { $0.id == targetSelectionMemory.recentTargetID }) {
-            return (recentTarget, .recent)
-        }
-
-        return nil
-    }
-
-    private func preferredChromiumExtensionTarget(command: MediaRemoteTransportCommand, from targets: [MediaRemoteTarget]) -> MediaRemoteTarget? {
-        let extensionTargets = targets.filter {
-            ChromiumBrowserExtensionTransport.supports(command: command, target: $0)
-        }
-        let playingExtensionTargets = extensionTargets.filter(\.isCurrentlyPlaying)
-        guard playingExtensionTargets.count == 1 else {
-            return nil
-        }
-        return playingExtensionTargets[0]
     }
 
     private func send(command: MediaRemoteTransportCommand, to target: MediaRemoteTarget, reason: MediaTransportRoutingReason) {

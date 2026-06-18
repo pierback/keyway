@@ -13,6 +13,7 @@ event_tap="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutEventT
 command_filter="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportCommandCenterFilter.swift"
 chooser_guard="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaChooserSessionGuard.swift"
 command_rules="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportCommandRules.swift"
+target_resolver="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportTargetResolver.swift"
 desktop_adapter="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaDesktopTransportAdapter.swift"
 source_focus="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/SourceFocusActionController.swift"
 refresh_gate="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaRemoteSnapshotRefreshGate.swift"
@@ -76,11 +77,12 @@ for required in (
         raise SystemExit(f"verify_playback_routing_invariants: MediaRemote helper dylib must be built for every target architecture: {required}")
 PY
 
-python3 - "$transport" <<'PY'
+python3 - "$transport" "$target_resolver" <<'PY'
 import pathlib
 import sys
 
 text = pathlib.Path(sys.argv[1]).read_text()
+target_resolver = pathlib.Path(sys.argv[2]).read_text()
 route_body = text[
     text.index("    private func route("):
     text.index("    func showChooser(command:", text.index("    private func route("))
@@ -107,8 +109,11 @@ for required in (
 ):
     if required not in targets_route:
         raise SystemExit(f"verify_playback_routing_invariants: ambiguous cache routing must pass chooser metadata: {required}")
-automatic_body = text[text.index("private func automaticTarget"):text.index("    private func send(command:")]
-if "$0.id == targetSelectionMemory.recentTargetID" not in automatic_body or ".recent" not in automatic_body:
+automatic_body = target_resolver[
+    target_resolver.index("func automaticTarget"):
+    target_resolver.index("    private func preferredChromiumExtensionTarget")
+]
+if "recentTargetID" not in automatic_body or ".recent" not in automatic_body:
     raise SystemExit("verify_playback_routing_invariants: remembered targets must route the exact selected row automatically before falling back to chooser")
 PY
 

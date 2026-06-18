@@ -3,18 +3,21 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 controller="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportActionController.swift"
+target_resolver="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportTargetResolver.swift"
 desktop_transport="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaDesktopTransportAdapter.swift"
 
-ast-grep --pattern 'private func automaticTarget($$$) -> $$$ { $$$ }' "$controller" >/dev/null
+ast-grep --pattern 'func automaticTarget($$$) -> $$$ { $$$ }' "$target_resolver" >/dev/null
 ast-grep --pattern 'private func showCommandFailureIfNeeded($$$) { $$$ }' "$controller" >/dev/null
 ast-grep --pattern 'private func transportBackendName($$$) -> $$$ { $$$ }' "$controller" >/dev/null
 
-python3 - "$controller" "$desktop_transport" <<'PY'
+python3 - "$controller" "$target_resolver" "$desktop_transport" <<'PY'
 import sys
 
 source_path = sys.argv[1]
 source = open(source_path, encoding="utf-8").read()
-desktop_transport_path = sys.argv[2]
+target_resolver_path = sys.argv[2]
+target_resolver = open(target_resolver_path, encoding="utf-8").read()
+desktop_transport_path = sys.argv[3]
 desktop_transport = open(desktop_transport_path, encoding="utf-8").read()
 
 def fail(message):
@@ -27,21 +30,27 @@ def index(needle):
         fail(f"missing {needle!r}")
     return position
 
-def function_body(signature_suffix):
+def function_body(signature_suffix, text=None):
+    text = source if text is None else text
     signature = f"private func {signature_suffix}"
-    start = index(signature)
-    brace = source.find("{", start)
+    start = text.find(signature)
+    if start < 0:
+        signature = f"func {signature_suffix}"
+        start = text.find(signature)
+    if start < 0:
+        fail(f"missing {signature!r}")
+    brace = text.find("{", start)
     if brace < 0:
         fail(f"missing body for {name}")
     depth = 0
-    for offset in range(brace, len(source)):
-        char = source[offset]
+    for offset in range(brace, len(text)):
+        char = text[offset]
         if char == "{":
             depth += 1
         elif char == "}":
             depth -= 1
             if depth == 0:
-                return source[brace + 1:offset]
+                return text[brace + 1:offset]
     fail(f"unterminated body for {name}")
 
 def assert_contains(haystack, needle, message):
@@ -73,7 +82,8 @@ route_targets = function_body("route(\n        command: MediaRemoteTransportComm
 assert_order(
     route_targets,
     [
-        "if let decision = automaticTarget(command: command, from: targets)",
+        "if let decision = targetResolver.automaticTarget(",
+        "recentTargetID: targetSelectionMemory.recentTargetID",
         "send(command: command, to: decision.target, reason: decision.reason)",
         "showChooserOverlay(",
     ],
@@ -107,21 +117,21 @@ assert_order(
     "cache routing must dispatch existing rows through their owning adapters"
 )
 
-automatic_target = function_body("automaticTarget")
+automatic_target = function_body("automaticTarget", target_resolver)
 assert_order(
     automatic_target,
     [
         "preferredChromiumExtensionTarget(command: command, from: targets)",
         "targets.count == 1",
         "playingTargets.count == 1",
-        "focusResolver.focusedTarget(in: targets)",
-        "targetSelectionMemory.recentTargetID",
+        "focusedTarget(in: targets)",
+        "recentTargetID",
         "return nil",
     ],
     "automatic target selection must prefer a single playing target before focused/recent targets"
 )
 
-chromium_extension = function_body("preferredChromiumExtensionTarget")
+chromium_extension = function_body("preferredChromiumExtensionTarget", target_resolver)
 assert_order(
     chromium_extension,
     [

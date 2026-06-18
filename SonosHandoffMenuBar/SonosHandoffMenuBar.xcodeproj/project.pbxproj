@@ -8,7 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		009DD6451CC6FC177E5AE5E9 /* SonosVolumeMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55C47338D75744BB65449641 /* SonosVolumeMonitor.swift */; };
-		01785EB199413144370B1682 /* MediaTargetFocusResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAA555743BEFFAF37592B839 /* MediaTargetFocusResolver.swift */; };
+		01785EB199413144370B1682 /* MediaTransportTargetResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAA555743BEFFAF37592B839 /* MediaTransportTargetResolver.swift */; };
 		151DA934627AA57EDCD5C88D /* MediaTargetOverlayModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC5256D5E0989DE59D117BF8 /* MediaTargetOverlayModel.swift */; };
 		165B47D58B5DE22963BA7415 /* MediaDesktopTransportAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A767AEA3E231D304E31DCB55 /* MediaDesktopTransportAdapter.swift */; };
 		18F762B6D9AC525543C51E56 /* KeywayStatusItemController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DE3F0A675524EC72C701A31 /* KeywayStatusItemController.swift */; };
@@ -107,7 +107,7 @@
 		ACE15770F4B374A6E959E602 /* MediaTransportTraceRecorder.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaTransportTraceRecorder.swift; sourceTree = "<group>"; };
 		AFF21469C6D3F421E4A63ADC /* PlaybackOperationGate.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlaybackOperationGate.swift; sourceTree = "<group>"; };
 		BA57DA47EB9330469792AAEC /* MediaTargetOverlayView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaTargetOverlayView.swift; sourceTree = "<group>"; };
-		BAA555743BEFFAF37592B839 /* MediaTargetFocusResolver.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaTargetFocusResolver.swift; sourceTree = "<group>"; };
+		BAA555743BEFFAF37592B839 /* MediaTransportTargetResolver.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaTransportTargetResolver.swift; sourceTree = "<group>"; };
 		BC5256D5E0989DE59D117BF8 /* MediaTargetOverlayModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaTargetOverlayModel.swift; sourceTree = "<group>"; };
 		C3C502F0557C543CC26967CC /* MediaRemoteSnapshotRefreshGate.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaRemoteSnapshotRefreshGate.swift; sourceTree = "<group>"; };
 		C764BE5BD2684BDDDDFEF45F /* MediaTransportCommandRules.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaTransportCommandRules.swift; sourceTree = "<group>"; };
@@ -161,7 +161,7 @@
 				DFCD5CF2D346C7512F52FE9A /* MediaRemoteModels.swift */,
 				C3C502F0557C543CC26967CC /* MediaRemoteSnapshotRefreshGate.swift */,
 				242E301643ED8888CCF85AB6 /* MediaRouteStatus.swift */,
-					BAA555743BEFFAF37592B839 /* MediaTargetFocusResolver.swift */,
+					BAA555743BEFFAF37592B839 /* MediaTransportTargetResolver.swift */,
 					1C5FE9E6CAC1ABFA78EE1296 /* MediaTargetOverlayController.swift */,
 					9AA03CD841E9964AB0761B29 /* MediaTargetOverlayKeyboardAction.swift */,
 					BC5256D5E0989DE59D117BF8 /* MediaTargetOverlayModel.swift */,
@@ -426,7 +426,7 @@
 				86C854719C7A5F666FB17EE7 /* MediaRemoteModels.swift in Sources */,
 				2865FF8CC0CD4C464CA71E5B /* MediaRemoteSnapshotRefreshGate.swift in Sources */,
 				60C3988A21A349E817FDAF47 /* MediaRouteStatus.swift in Sources */,
-					01785EB199413144370B1682 /* MediaTargetFocusResolver.swift in Sources */,
+					01785EB199413144370B1682 /* MediaTransportTargetResolver.swift in Sources */,
 					A8CAF3BE4E559408F9D2C269 /* MediaTargetOverlayController.swift in Sources */,
 					6E03C17680C1DBDB9676259C /* MediaTargetOverlayKeyboardAction.swift in Sources */,
 					151DA934627AA57EDCD5C88D /* MediaTargetOverlayModel.swift in Sources */,
