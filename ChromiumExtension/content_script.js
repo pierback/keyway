@@ -1,10 +1,9 @@
 if (!globalThis.__keywayMediaBridgeInstalled) {
 globalThis.__keywayMediaBridgeInstalled = true;
 
-const documentID = crypto.randomUUID
-  ? crypto.randomUUID()
-  : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+const documentID = crypto.randomUUID();
 const keywayMedia = new WeakMap();
+const observedMedia = new WeakSet();
 let nextMediaIndex = 1;
 let bridgeActive = true;
 let publishTimer = null;
@@ -328,8 +327,8 @@ function applyCommand(message) {
 }
 
 function observeElement(element) {
-  if (element.dataset.keywayObserved === "true") return;
-  element.dataset.keywayObserved = "true";
+  if (observedMedia.has(element)) return;
+  observedMedia.add(element);
   for (const eventName of ["play", "pause", "volumechange", "durationchange", "timeupdate", "loadedmetadata", "emptied", "abort", "ended"]) {
     element.addEventListener(eventName, () => publishElement(element), { passive: true });
   }
