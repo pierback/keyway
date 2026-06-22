@@ -351,8 +351,7 @@ final class PlaybackBackgroundSync {
         }
         pendingHeadphoneConnectionOutputID = nil
 
-        let devices = try await environment.activePlaybackObserver.availablePlaybackDevices()
-        guard let spotifyComputerDevice = spotifyComputerPlaybackDevice(in: devices) else {
+        guard try await spotifyComputerPlaybackDeviceIsAvailable() else {
             headphoneTransferSuggestionPresenter.clearAll()
             logger.info("SonosHandoffHeadphoneTransferSuggestion state=unavailable reason=no_spotify_computer_device output=\(output.name, privacy: .public)")
             return
@@ -360,21 +359,18 @@ final class PlaybackBackgroundSync {
 
         let suggestion = HeadphoneTransferSuggestion(
             output: output,
-            spotifyDeviceName: spotifyComputerDevice.name,
             activeRoomName: activeRoomName
         )
         if headphoneTransferSuggestionPresenter.presentIfNeeded(suggestion) {
-            logger.info("SonosHandoffHeadphoneTransferSuggestion state=prompted output=\(output.name, privacy: .public) spotifyDevice=\(spotifyComputerDevice.name, privacy: .public) room=\(activeRoomName, privacy: .public)")
+            logger.info("SonosHandoffHeadphoneTransferSuggestion state=prompted output=\(output.name, privacy: .public) spotifyDeviceType=Computer room=\(activeRoomName, privacy: .public)")
         }
     }
 
-    private func spotifyComputerPlaybackDevice(
-        in devices: [SpotifyAvailablePlaybackDevice]
-    ) -> SpotifyAvailablePlaybackDevice? {
-        let computerDevices = devices.filter {
+    private func spotifyComputerPlaybackDeviceIsAvailable() async throws -> Bool {
+        let devices = try await environment.activePlaybackObserver.availablePlaybackDevices()
+        return devices.contains {
             !$0.isRestricted && $0.type.caseInsensitiveCompare("Computer") == .orderedSame
         }
-        return computerDevices.first { !$0.isActive } ?? computerDevices.first
     }
 
     private func cachedTransferSuggestionBaselineSpeakerIDs() async -> Set<String>? {
@@ -626,19 +622,19 @@ final class PlaybackBackgroundSync {
         do {
             try await environment.activePlaybackObserver.startActivePlayback(
                 spotifyURI: nil,
-                deviceName: suggestion.spotifyDeviceName,
+                deviceName: nil,
                 deviceType: "Computer"
             )
-            clearSelection(reason: "spotify_transferred_to_headphones")
+            clearSelection(reason: "spotify_transferred_to_mac")
             NotificationCenter.default.post(name: .sonosHandoffRefreshOutputs, object: nil)
-            logger.info("SonosHandoffHeadphoneTransferSuggestion result=notification_accepted output=\(suggestion.outputName, privacy: .public) spotifyDevice=\(suggestion.spotifyDeviceName, privacy: .public)")
+            logger.info("SonosHandoffHeadphoneTransferSuggestion result=notification_accepted output=\(suggestion.outputName, privacy: .public) spotifyDeviceType=Computer")
         } catch {
             let message = headphoneTransferFailureMessage(suggestion: suggestion)
             headphoneTransferSuggestionPresenter.deliverFailure(suggestion, message: message)
             if SpotifyAuthRecovery.isAuthRequired(error) {
                 showAuthPromptIfNeeded(error)
             }
-            logger.error("SonosHandoffHeadphoneTransferSuggestion result=notification_failure output=\(suggestion.outputName, privacy: .public) spotifyDevice=\(suggestion.spotifyDeviceName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+            logger.error("SonosHandoffHeadphoneTransferSuggestion result=notification_failure output=\(suggestion.outputName, privacy: .public) spotifyDeviceType=Computer error=\(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -653,7 +649,7 @@ final class PlaybackBackgroundSync {
     }
 
     private func headphoneTransferFailureMessage(suggestion: HeadphoneTransferSuggestion) -> String {
-        "Could not move Spotify playback to \(suggestion.outputName)."
+        "Could not move Spotify playback to this Mac."
     }
 
     private func activePlaybackRoomNameForSuggestionRefresh() async -> String? {

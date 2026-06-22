@@ -6,26 +6,23 @@ struct HeadphoneTransferSuggestion: Identifiable, Equatable, Sendable {
     let id: String
     let outputID: UInt32
     let outputName: String
-    let spotifyDeviceName: String
     let activeRoomName: String
     let detectedAt: Date
 
     init(
         output: MacAudioOutputDevice,
-        spotifyDeviceName: String,
         activeRoomName: String,
         detectedAt: Date = Date()
     ) {
         self.id = "headphone-transfer-\(output.id)"
         self.outputID = output.id
         self.outputName = output.name
-        self.spotifyDeviceName = spotifyDeviceName
         self.activeRoomName = activeRoomName
         self.detectedAt = detectedAt
     }
 
     var title: String {
-        "Spotify is playing on \(activeRoomName). Switch it to \(outputName)?"
+        "Spotify is playing on \(activeRoomName). Switch it to this Mac?"
     }
 
     func matches(identifier: String) -> Bool {
