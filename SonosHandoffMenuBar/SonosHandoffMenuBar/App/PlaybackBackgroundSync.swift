@@ -620,10 +620,10 @@ final class PlaybackBackgroundSync {
 
         headphoneTransferSuggestionPresenter.suppress(id: suggestion.id)
         do {
-            try await environment.activePlaybackObserver.startActivePlayback(
-                spotifyURI: nil,
+            try await environment.activePlaybackObserver.transferActivePlayback(
                 deviceName: nil,
-                deviceType: "Computer"
+                deviceType: "Computer",
+                play: true
             )
             clearSelection(reason: "spotify_transferred_to_mac")
             NotificationCenter.default.post(name: .sonosHandoffRefreshOutputs, object: nil)

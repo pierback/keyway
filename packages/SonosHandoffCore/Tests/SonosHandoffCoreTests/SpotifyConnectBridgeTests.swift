@@ -390,6 +390,48 @@ struct SpotifyConnectBridgeTests {
     }
 
     @Test
+    func playbackTransferSelectsUnrestrictedDevice() async throws {
+        let applicationSupportDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sonos-handoff-bridge-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: applicationSupportDirectory)
+            SpotifyBridgeURLProtocol.reset()
+        }
+
+        try FileManager.default.createDirectory(at: applicationSupportDirectory, withIntermediateDirectories: true)
+        let tokenStore = ProjectWebAPITokenStore(applicationSupportDirectory: applicationSupportDirectory)
+        try tokenStore.save(ProjectWebAPIToken(
+            accessToken: "cached-access-token",
+            refreshToken: "refresh-token",
+            clientID: "client-id",
+            expiresAt: Int(Date().timeIntervalSince1970) + 3600
+        ))
+        SpotifyBridgeURLProtocol.setDevicesResponses([
+            .success(body: #"{"devices":[{"id":"speaker-id","is_active":true,"is_restricted":true,"name":"Kitchen","type":"Speaker"},{"id":"computer-id","is_active":false,"is_restricted":false,"name":"Mac","type":"Computer"}]}"#),
+        ])
+
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [SpotifyBridgeURLProtocol.self]
+        let bridge = SpotifyConnectBridge(
+            loginID: nil,
+            appSupport: applicationSupportDirectory,
+            urlSession: URLSession(configuration: sessionConfiguration)
+        )
+
+        try await bridge.transferPlayback(deviceName: nil, deviceType: "Computer", play: true)
+
+        let requests = SpotifyBridgeURLProtocol.recordedRequests()
+        _ = try #require(requests.first { $0.url.path == "/v1/me/player/devices" })
+        let transferRequest = try #require(requests.first { $0.url.path == "/v1/me/player" && $0.method == "PUT" })
+        #expect(transferRequest.url.query == nil)
+        let transferBody = try #require(transferRequest.body?.data(using: .utf8))
+        let transferJSON = try #require(JSONSerialization.jsonObject(with: transferBody) as? [String: Any])
+        #expect(transferJSON["device_ids"] as? [String] == ["computer-id"])
+        #expect(transferJSON["play"] as? Bool == true)
+        #expect(requests.allSatisfy { $0.url.path != "/v1/me/player/play" })
+    }
+
+    @Test
     func playbackStartFailsWhenNoUnrestrictedDeviceMatches() async throws {
         let applicationSupportDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("sonos-handoff-bridge-\(UUID().uuidString)", isDirectory: true)

@@ -86,14 +86,16 @@ expect_contains "$sync" '$0.type.caseInsensitiveCompare("Computer") == .orderedS
 expect_contains "$sync" "private func spotifyComputerPlaybackDeviceIsAvailable() async throws -> Bool"
 expect_contains "$sync" "HeadphoneTransferSuggestion("
 expect_contains "$sync" "headphoneTransferSuggestionPresenter.presentIfNeeded(suggestion)"
-expect_contains "$sync" "environment.activePlaybackObserver.startActivePlayback("
-expect_contains "$sync" "spotifyURI: nil"
+expect_contains "$sync" "environment.activePlaybackObserver.transferActivePlayback("
 expect_contains "$sync" "deviceName: nil"
 expect_contains "$sync" 'deviceType: "Computer"'
+expect_contains "$sync" "play: true"
 expect_contains "$sync" 'clearSelection(reason: "spotify_transferred_to_mac")'
 expect_contains "$sync" "headphoneTransferSuggestionPresenter.suppress(id: suggestion.id)"
 expect_contains "$sync" "Could not move Spotify playback to this Mac."
 expect_absent "$suggestion" "spotifyDeviceName"
+expect_contains "$repo_root/packages/SonosHandoffCore/Sources/SonosHandoffCore/Handoff/SpotifyConnectBridge.swift" "https://api.spotify.com/v1/me/player"
+expect_contains "$repo_root/packages/SonosHandoffCore/Sources/SonosHandoffCore/Handoff/SpotifyConnectBridge.swift" "SpotifyTransferPlaybackRequest"
 
 python3 - "$sync" <<'PY'
 import pathlib
@@ -107,8 +109,10 @@ if "roomHandoffService.transfer" in body:
     raise SystemExit("verify_headphone_transfer_suggestion_semantics: headphone CTA must not use Sonos room transfer")
 if "mediaTransportActionController.route" in body:
     raise SystemExit("verify_headphone_transfer_suggestion_semantics: headphone CTA must not route through media transport fallback")
-if "startActivePlayback(" not in body:
-    raise SystemExit("verify_headphone_transfer_suggestion_semantics: headphone CTA must transfer through Spotify active playback")
+if "startActivePlayback(" in body:
+    raise SystemExit("verify_headphone_transfer_suggestion_semantics: headphone CTA must not use Spotify play/start endpoint")
+if "transferActivePlayback(" not in body:
+    raise SystemExit("verify_headphone_transfer_suggestion_semantics: headphone CTA must transfer active Spotify playback")
 PY
 
 expect_contains "$project_file" "HeadphoneTransferSuggestion.swift"

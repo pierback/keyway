@@ -59,6 +59,7 @@ public protocol SpotifyActivePlaybackObserving: Sendable {
     func activePlaybackDeviceStatus() async throws -> SpotifyPlaybackDeviceStatus?
     func availablePlaybackDevices() async throws -> [SpotifyAvailablePlaybackDevice]
     func startActivePlayback(spotifyURI: String?, deviceName: String?, deviceType: String?) async throws
+    func transferActivePlayback(deviceName: String?, deviceType: String?, play: Bool) async throws
     func setActivePlaybackDeviceVolume(_ volume: Int) async throws -> Int
     func sendActivePlaybackCommand(_ command: SpotifyPlaybackCommand) async throws
 }

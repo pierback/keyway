@@ -21,6 +21,16 @@ private struct SpotifyPlayRequest: Encodable {
     let uris: [String]
 }
 
+private struct SpotifyTransferPlaybackRequest: Encodable {
+    let deviceIDs: [String]
+    let play: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case deviceIDs = "device_ids"
+        case play
+    }
+}
+
 private struct SpotifyAvailableDevicesResponse: Decodable {
     let devices: [SpotifyAvailableDevice]
 }
@@ -152,6 +162,20 @@ struct SpotifyConnectBridge: Sendable {
             deviceType: deviceType
         )
         try await startPlayback(spotifyURI: spotifyURI, deviceID: deviceID, accessToken: accessToken)
+    }
+
+    func transferPlayback(deviceName: String? = nil, deviceType: String? = nil, play: Bool = true) async throws {
+        let accessToken = try await projectAccessTokenProvider.accessToken()
+        let deviceID = try await playbackTargetDeviceID(
+            accessToken: accessToken,
+            deviceName: deviceName,
+            deviceType: deviceType
+        )
+        guard let deviceID else {
+            throw ConnectHandoffError(.transferVerificationFailed, "Spotify transfer requires a playback device.")
+        }
+
+        try await transferPlayback(deviceID: deviceID, play: play, accessToken: accessToken)
     }
 
     func sendPlaybackCommand(_ command: SpotifyPlaybackCommand) async throws {
@@ -405,6 +429,46 @@ struct SpotifyConnectBridge: Sendable {
         }
 
         throw ConnectHandoffError(.transferVerificationFailed, "Spotify playback request rate limited.")
+    }
+
+    private func transferPlayback(deviceID: String, play: Bool, accessToken: String) async throws {
+        var request = URLRequest(url: URL(string: "https://api.spotify.com/v1/me/player")!)
+        request.httpMethod = "PUT"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(SpotifyTransferPlaybackRequest(
+            deviceIDs: [deviceID],
+            play: play
+        ))
+        var didRefreshAccessToken = false
+
+        for attempt in 0 ... Self.maxRateLimitRetries {
+            let (_, response) = try await urlSession.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw ConnectHandoffError(.transferVerificationFailed, "Spotify transfer request returned a non-HTTP response.")
+            }
+
+            if http.statusCode == 429, attempt < Self.maxRateLimitRetries {
+                let retryAfter = http.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init) ?? 1
+                try await Task.sleep(nanoseconds: UInt64(min(retryAfter, 5) * 1_000_000_000))
+                continue
+            }
+
+            if (http.statusCode == 401 || http.statusCode == 403), !didRefreshAccessToken {
+                let refreshedAccessToken = try await projectAccessTokenProvider.refreshAccessTokenAfterAuthFailure()
+                request.setValue("Bearer \(refreshedAccessToken)", forHTTPHeaderField: "Authorization")
+                didRefreshAccessToken = true
+                continue
+            }
+
+            guard http.statusCode == 204 || (200 ..< 300).contains(http.statusCode) else {
+                throw ConnectHandoffError(.transferVerificationFailed, "Spotify transfer request failed (HTTP \(http.statusCode)).")
+            }
+
+            return
+        }
+
+        throw ConnectHandoffError(.transferVerificationFailed, "Spotify transfer request rate limited.")
     }
 
     private func sendPlaybackCommand(_ command: SpotifyPlaybackCommand, accessToken: String) async throws {

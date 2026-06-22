@@ -159,6 +159,18 @@ public final class SpotifyConnectHandoffService: RoomHandoffPerforming, SonosSpe
         )
     }
 
+    public func transferActivePlayback(
+        deviceName: String? = nil,
+        deviceType: String? = nil,
+        play: Bool = true
+    ) async throws {
+        try await runtime.transferActivePlayback(
+            deviceName: deviceName,
+            deviceType: deviceType,
+            play: play
+        )
+    }
+
     public func setActivePlaybackDeviceVolume(_ volume: Int) async throws -> Int {
         try await runtime.setActivePlaybackDeviceVolume(volume)
     }
