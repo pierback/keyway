@@ -71,11 +71,42 @@ route_input = function_body("route(\n        command:")
 assert_order(
     route_input,
     [
+        "case .commandCenter:",
+        "commandCenterFilter.noteCommandCenterInput(command: command, metadata: commandCenterMetadata)",
         "if MediaTransportCommandRules.isPlayFamily(command)",
+        "routePlayFamilyWithoutChooser(",
+        "case .userInterface:",
+    ],
+    "command-center play-family input must route without chooser before the shared chooser path"
+)
+shared_play_branch = route_input[route_input.index("        if MediaTransportCommandRules.isPlayFamily(command) {", route_input.index("case .userInterface:")):]
+assert_order(
+    shared_play_branch,
+    [
+        "if MediaTransportCommandRules.isPlayFamily(command)",
+        "shouldRoutePlayFamilyWithoutChooser(source: source, metadata: metadata)",
+        "routePlayFamilyWithoutChooser(",
         "showChooserImmediately(",
         "routeFromCache(",
     ],
-    "play-family commands must open the chooser before cache routing can guess"
+    "targeted play-family input must route without chooser before untargeted play-family commands open the chooser"
+)
+
+play_family_no_chooser = function_body("routePlayFamilyWithoutChooser")
+if "showChooser" in play_family_no_chooser:
+    fail("targeted play-family routing must not open the chooser")
+assert_order(
+    play_family_no_chooser,
+    [
+        "let targets = sortedTargets(mediaRemoteController.targets)",
+        "guard !targets.isEmpty else",
+        "targetResolver.targetedInputTarget(",
+        "send(command: command, to: target, reason: .current)",
+        "targetResolver.automaticTarget(",
+        "send(command: command, to: decision.target, reason: decision.reason)",
+        '"play_family_no_chooser_ambiguous"',
+    ],
+    "targeted play-family routing must prefer the OS target pid, then automatic resolution, and never fall through to a chooser"
 )
 
 route_targets = function_body("route(\n        command: MediaRemoteTransportCommand,\n        targets:")

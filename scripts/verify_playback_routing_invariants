@@ -35,8 +35,14 @@ fail() {
 grep -q 'commandCenterMetadata: commandCenterMetadata' "$transport" \
   || fail "Play/Pause routing must show the cached chooser immediately with input metadata"
 
-grep -q 'command_center_play_family_route_shield_ignored' "$transport" \
-  || fail "Command Center play-family input must not open the chooser"
+grep -q 'shouldRoutePlayFamilyWithoutChooser(source: source, metadata: metadata)' "$transport" \
+  || fail "targeted HID play-family input must route without opening the chooser"
+
+grep -q 'routePlayFamilyWithoutChooser(' "$transport" \
+  || fail "Command Center play-family input must route without opening the chooser"
+
+! grep -q 'command_center_play_family_route_shield_ignored' "$transport" \
+  || fail "Command Center play-family input must not be swallowed"
 
 grep -q 'guard !ChromiumBrowserExtensionTransport.isTarget(target) else' "$desktop_adapter" \
   || fail "Desktop transport must not claim exact Chromium extension rows"
@@ -115,6 +121,16 @@ automatic_body = target_resolver[
 ]
 if "recentTargetID" not in automatic_body or ".recent" not in automatic_body:
     raise SystemExit("verify_playback_routing_invariants: remembered targets must route the exact selected row automatically before falling back to chooser")
+targeted_body = target_resolver[
+    target_resolver.index("func targetedInputTarget"):
+    target_resolver.index("    private func preferredChromiumExtensionTarget")
+]
+for required in (
+    "targetUnixProcessID > 0",
+    "target(forProcessID: pid_t(targetUnixProcessID), in: targets)",
+):
+    if required not in targeted_body:
+        raise SystemExit(f"verify_playback_routing_invariants: targeted media-key input must resolve by OS target pid: {required}")
 PY
 
 if grep -q 'guard !self.chooserSession.isActive else { return }' "$transport"; then

@@ -39,6 +39,17 @@ struct MediaTransportTargetResolver {
         return nil
     }
 
+    func targetedInputTarget(
+        targetUnixProcessID: Int64,
+        from targets: [MediaRemoteTarget]
+    ) -> MediaRemoteTarget? {
+        guard targetUnixProcessID > 0 else {
+            return nil
+        }
+
+        return target(forProcessID: pid_t(targetUnixProcessID), in: targets)
+    }
+
     private func preferredChromiumExtensionTarget(command: MediaRemoteTransportCommand, from targets: [MediaRemoteTarget]) -> MediaRemoteTarget? {
         let extensionTargets = targets.filter {
             ChromiumBrowserExtensionTransport.supports(command: command, target: $0)
@@ -86,7 +97,7 @@ struct MediaTransportTargetResolver {
             if candidate.frame.width >= 80,
                candidate.frame.height >= 60,
                isProminentlyVisible(candidate.frame, aboveWindows: higherWindows),
-               let target = target(forWindowOwnerPID: candidate.ownerPID, in: targets) {
+               let target = target(forProcessID: pid_t(candidate.ownerPID), in: targets) {
                 return target
             }
 
@@ -138,11 +149,11 @@ struct MediaTransportTargetResolver {
         }
     }
 
-    private func target(forWindowOwnerPID pid: Int, in targets: [MediaRemoteTarget]) -> MediaRemoteTarget? {
-        let app = NSRunningApplication(processIdentifier: pid_t(pid))
+    private func target(forProcessID pid: pid_t, in targets: [MediaRemoteTarget]) -> MediaRemoteTarget? {
+        let app = NSRunningApplication(processIdentifier: pid)
         let bundleID = app?.bundleIdentifier ?? ""
         return targets.first { target in
-            target.pid == pid
+            target.pid == Int(pid)
                 || target.bundleIdentifier == bundleID
                 || target.parentBundleIdentifier == bundleID
                 || target.routingIdentity == bundleID

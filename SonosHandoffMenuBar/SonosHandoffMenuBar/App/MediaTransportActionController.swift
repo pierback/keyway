@@ -119,12 +119,10 @@ final class MediaTransportActionController {
             }
             commandCenterFilter.noteCommandCenterInput(command: command, metadata: commandCenterMetadata)
             if MediaTransportCommandRules.isPlayFamily(command) {
-                logger.info("MediaTransport command_center_play_family_route_shield_ignored command=\(command.rawValue, privacy: .public)")
-                trace(
-                    "input_ignored",
+                routePlayFamilyWithoutChooser(
                     command: command,
                     source: source,
-                    reason: "command_center_play_family_route_shield_ignored",
+                    metadata: metadata,
                     commandCenterMetadata: commandCenterMetadata
                 )
                 return
@@ -134,6 +132,15 @@ final class MediaTransportActionController {
         }
 
         if MediaTransportCommandRules.isPlayFamily(command) {
+            if shouldRoutePlayFamilyWithoutChooser(source: source, metadata: metadata) {
+                routePlayFamilyWithoutChooser(
+                    command: command,
+                    source: source,
+                    metadata: metadata,
+                    commandCenterMetadata: commandCenterMetadata
+                )
+                return
+            }
             logger.info("MediaTransport decision=chooser command=\(command.rawValue, privacy: .public) source=\(source.rawValue, privacy: .public)")
             trace(
                 "decision_chooser",
@@ -164,6 +171,22 @@ final class MediaTransportActionController {
             metadata: metadata,
             commandCenterMetadata: commandCenterMetadata
         )
+    }
+
+    private func shouldRoutePlayFamilyWithoutChooser(
+        source: MediaTransportRouteSource,
+        metadata: MediaTransportInputMetadata?
+    ) -> Bool {
+        if source == .commandCenter {
+            return true
+        }
+        guard source == .eventTap,
+              let metadata,
+              metadata.isPhysicalHIDSystemSource
+        else {
+            return false
+        }
+        return !metadata.isUntargetedPhysicalHIDSystemSource
     }
 
     func showChooser(command: MediaRemoteTransportCommand = .playPause) {
@@ -279,6 +302,78 @@ final class MediaTransportActionController {
             command: command,
             targets: targets,
             source: source,
+            metadata: metadata,
+            commandCenterMetadata: commandCenterMetadata
+        )
+    }
+
+    private func routePlayFamilyWithoutChooser(
+        command: MediaRemoteTransportCommand,
+        source: MediaTransportRouteSource,
+        metadata: MediaTransportInputMetadata?,
+        commandCenterMetadata: MediaCommandCenterInputMetadata?
+    ) {
+        let targets = sortedTargets(mediaRemoteController.targets)
+        guard !targets.isEmpty else {
+            mediaRemoteController.refreshSnapshot()
+            logger.info("MediaTransport play_family_no_chooser_no_target command=\(command.rawValue, privacy: .public) source=\(source.rawValue, privacy: .public)")
+            trace(
+                "play_family_no_chooser_no_target",
+                command: command,
+                source: source,
+                metadata: metadata,
+                commandCenterMetadata: commandCenterMetadata
+            )
+            return
+        }
+
+        mediaRemoteController.refreshSnapshot()
+        if let metadata,
+           let target = targetResolver.targetedInputTarget(
+               targetUnixProcessID: metadata.targetUnixProcessID,
+               from: targets
+           ) {
+            logger.info("MediaTransport decision=targeted_no_chooser command=\(command.rawValue, privacy: .public) source=\(source.rawValue, privacy: .public) target=\(target.appName, privacy: .public) targetID=\(target.id, privacy: .public)")
+            trace(
+                "decision_targeted_no_chooser",
+                command: command,
+                source: source,
+                target: target,
+                targetCount: targets.count,
+                metadata: metadata,
+                commandCenterMetadata: commandCenterMetadata
+            )
+            send(command: command, to: target, reason: .current)
+            return
+        }
+
+        if let decision = targetResolver.automaticTarget(
+            command: command,
+            from: targets,
+            recentTargetID: targetSelectionMemory.recentTargetID
+        ) {
+            logger.info("MediaTransport decision=automatic_no_chooser command=\(command.rawValue, privacy: .public) source=\(source.rawValue, privacy: .public) target=\(decision.target.appName, privacy: .public) targetID=\(decision.target.id, privacy: .public) reason=\(decision.reason.rawValue, privacy: .public)")
+            trace(
+                "decision_automatic_no_chooser",
+                command: command,
+                source: source,
+                target: decision.target,
+                reason: decision.reason.rawValue,
+                targetCount: targets.count,
+                metadata: metadata,
+                commandCenterMetadata: commandCenterMetadata
+            )
+            send(command: command, to: decision.target, reason: decision.reason)
+            return
+        }
+
+        logger.info("MediaTransport play_family_no_chooser_ambiguous command=\(command.rawValue, privacy: .public) source=\(source.rawValue, privacy: .public) targetCount=\(targets.count, privacy: .public)")
+        trace(
+            "play_family_no_chooser_ambiguous",
+            command: command,
+            source: source,
+            targets: targets,
+            targetCount: targets.count,
             metadata: metadata,
             commandCenterMetadata: commandCenterMetadata
         )
