@@ -28,7 +28,8 @@ expect_absent() {
   fi
 }
 
-ast-grep --lang swift -p 'struct MenuBarMediaSourceSection: View { $$$ }' "$source_section" >/dev/null
+ast-grep --lang swift -p '@MainActor
+struct MenuBarMediaSourceSection: View { $$$ }' "$source_section" >/dev/null
 ast-grep --lang swift -p 'func transferSpotifyPlayback(source: MediaRemoteTarget, to row: PlaybackOutputRow) { $$$ }' "$playback_controller" >/dev/null
 ast-grep --lang swift -p 'func focus(target: MediaRemoteTarget) { $$$ }' "$transport_controller" >/dev/null
 
@@ -59,6 +60,9 @@ expect_contains "$source_section" "private var openingTargets: [MediaRemoteTarge
 expect_contains "$source_section" "private func openTargetSession()"
 expect_contains "$source_section" "sessionTargets = openingTargets"
 expect_contains "$source_section" "sessionHasOpened = true"
+expect_contains "$source_section" "private func hydrateEmptySessionIfNeeded(with targets: [MediaRemoteTarget])"
+expect_contains "$source_section" "guard sessionHasOpened, sessionTargets.isEmpty, !targets.isEmpty else"
+expect_contains "$source_section" "hydrateEmptySessionIfNeeded(with: sortedTargets)"
 expect_contains "$source_section" "sessionTargets = []"
 expect_contains "$source_section" "sessionHasOpened = false"
 expect_contains "$source_section" "if targets.isEmpty, mediaRemoteController.isRefreshingSnapshot, canShowCachedTargets"

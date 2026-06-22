@@ -107,7 +107,9 @@ struct MenuBarMediaSourceSection: View {
             sessionHasOpened = false
         }
         .onReceive(mediaRemoteController.$targets) { targets in
-            rememberTargets(sortedTargets(targets))
+            let sortedTargets = sortedTargets(targets)
+            rememberTargets(sortedTargets)
+            hydrateEmptySessionIfNeeded(with: sortedTargets)
         }
     }
 
@@ -115,6 +117,13 @@ struct MenuBarMediaSourceSection: View {
         rememberTargets(freshTargets)
         sessionTargets = openingTargets
         sessionHasOpened = true
+    }
+
+    private func hydrateEmptySessionIfNeeded(with targets: [MediaRemoteTarget]) {
+        guard sessionHasOpened, sessionTargets.isEmpty, !targets.isEmpty else {
+            return
+        }
+        sessionTargets = targets
     }
 
     private func liveSessionTarget(
