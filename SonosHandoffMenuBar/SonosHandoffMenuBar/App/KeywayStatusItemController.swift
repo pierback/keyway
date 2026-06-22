@@ -11,7 +11,7 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
     private var popoverLocalDismissMonitor: Any?
     private var popoverGlobalDismissMonitor: Any?
     private var appDeactivationObserver: NSObjectProtocol?
-    private var settingsOpenInProgress = false
+    private var settingsWindow: NSWindow?
 
     init(environment: AppEnvironment) {
         self.environment = environment
@@ -81,19 +81,15 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
     }
 
     private func openSettings() {
-        guard !settingsOpenInProgress else {
-            return
-        }
-        settingsOpenInProgress = true
         closePopover()
-        DispatchQueue.main.async {
-            NSApp.setActivationPolicy(.regular)
-            _ = NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-            NSApp.activate()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                self?.settingsOpenInProgress = false
-            }
+        NSApp.setActivationPolicy(.regular)
+        let window = settingsWindow ?? makeSettingsWindow()
+        settingsWindow = window
+        if !window.isVisible {
+            window.center()
         }
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func openChooserFromPopover() {
@@ -157,6 +153,34 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
         hostingController.view.layer?.isOpaque = false
         popover.contentViewController = hostingController
         return popover
+    }
+
+    private func makeSettingsWindow() -> NSWindow {
+        let hostingController = NSHostingController(
+            rootView: SettingsFeature(
+                configStore: environment.configStore,
+                tokenStore: environment.tokenStore,
+                connectTokenStatusStore: environment.connectTokenStatusStore,
+                authCoordinator: environment.authCoordinator,
+                accessibilityAutomator: environment.accessibilityAutomator,
+                configImportService: environment.configImportService,
+                chromiumNativeMessagingHostInstaller: environment.chromiumNativeMessagingHostInstaller,
+                initialConfigImportReport: environment.configImportReport,
+                mediaRemoteController: environment.mediaRemoteController,
+                chromiumBrowserExtensionController: environment.chromiumBrowserExtensionController
+            )
+        )
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: SettingsFeature.preferredWindowSize),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = SettingsFeature.menuTitle
+        window.contentViewController = hostingController
+        window.minSize = SettingsFeature.preferredWindowSize
+        window.isReleasedWhenClosed = false
+        return window
     }
 
     private func startAppDeactivationObserver() {
