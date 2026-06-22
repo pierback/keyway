@@ -6,7 +6,8 @@ environment="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/Support/AppEnvir
 status="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutRuntimeStatus.swift"
 app="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/SonosHandoffApp.swift"
 
-ast-grep --pattern 'final class MediaRoutingProbeController { $$$ }' "$environment" --lang swift >/dev/null
+ast-grep --pattern '@MainActor
+final class MediaRoutingProbeController { $$$ }' "$environment" --lang swift >/dev/null
 ast-grep --pattern 'mediaTransportActionController.route(command: $COMMAND, to: $TARGET)' "$environment" --lang swift >/dev/null
 ast-grep --pattern 'environment.mediaRoutingProbeController.start()' "$app" --lang swift >/dev/null
 ast-grep --pattern 'DistributedNotificationCenter.default().postNotificationName($$$)' "$status" --lang swift >/dev/null

@@ -68,6 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let categoryIdentifier = response.notification.request.content.categoryIdentifier
         guard categoryIdentifier == PlaybackGroupSuggestionNotification.categoryIdentifier
                 || categoryIdentifier == PlaybackTransferSuggestionNotification.categoryIdentifier
+                || categoryIdentifier == HeadphoneTransferSuggestionNotification.categoryIdentifier
         else {
             completionHandler()
             return
@@ -96,6 +97,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 NotificationCenter.default.post(name: .sonosHandoffAcceptTransferSuggestion, object: suggestionID)
             case PlaybackTransferSuggestionNotification.ignoreActionIdentifier:
                 NotificationCenter.default.post(name: .sonosHandoffIgnoreTransferSuggestion, object: suggestionID)
+            default:
+                break
+            }
+        case HeadphoneTransferSuggestionNotification.categoryIdentifier:
+            switch actionIdentifier {
+            case HeadphoneTransferSuggestionNotification.transferActionIdentifier, UNNotificationDefaultActionIdentifier:
+                NotificationCenter.default.post(name: .sonosHandoffAcceptHeadphoneTransferSuggestion, object: suggestionID)
+            case HeadphoneTransferSuggestionNotification.ignoreActionIdentifier:
+                NotificationCenter.default.post(name: .sonosHandoffIgnoreHeadphoneTransferSuggestion, object: suggestionID)
             default:
                 break
             }

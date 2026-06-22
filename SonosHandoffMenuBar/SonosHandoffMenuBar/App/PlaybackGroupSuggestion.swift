@@ -274,6 +274,7 @@ enum PlaybackSuggestionNotificationRegistrar {
         notificationCenter.setNotificationCategories([
             PlaybackGroupSuggestionNotification.category,
             PlaybackTransferSuggestionNotification.category,
+            HeadphoneTransferSuggestionNotification.category,
         ])
     }
 }

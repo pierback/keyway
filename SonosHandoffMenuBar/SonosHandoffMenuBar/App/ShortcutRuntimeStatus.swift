@@ -301,6 +301,8 @@ extension Notification.Name {
     static let sonosHandoffIgnoreGroupSuggestion = Notification.Name("com.fpieringer.Keyway.ignoreGroupSuggestion")
     static let sonosHandoffAcceptTransferSuggestion = Notification.Name("com.fpieringer.Keyway.acceptTransferSuggestion")
     static let sonosHandoffIgnoreTransferSuggestion = Notification.Name("com.fpieringer.Keyway.ignoreTransferSuggestion")
+    static let sonosHandoffAcceptHeadphoneTransferSuggestion = Notification.Name("com.fpieringer.Keyway.acceptHeadphoneTransferSuggestion")
+    static let sonosHandoffIgnoreHeadphoneTransferSuggestion = Notification.Name("com.fpieringer.Keyway.ignoreHeadphoneTransferSuggestion")
     static let sonosHandoffRefreshOutputs = Notification.Name("com.fpieringer.Keyway.refreshOutputs")
     static let sonosHandoffApplyCachedOutputs = Notification.Name("com.fpieringer.Keyway.applyCachedOutputs")
     static let keywayMediaTransportTrace = Notification.Name("com.fpieringer.Keyway.mediaTransportTrace")

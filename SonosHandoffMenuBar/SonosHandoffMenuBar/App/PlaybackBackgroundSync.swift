@@ -11,6 +11,7 @@ final class PlaybackBackgroundSync {
     private let environment: AppEnvironment
     private let groupSuggestionPresenter: PlaybackGroupSuggestionPresenter
     private let transferSuggestionPresenter: PlaybackTransferSuggestionPresenter
+    private let headphoneTransferSuggestionPresenter: HeadphoneTransferSuggestionPresenter
     private let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "Playback")
     private let groupSuggestionTracker = SonosGroupSuggestionTracker()
     private let transferSuggestionTracker = SonosTransferSuggestionTracker()
@@ -22,16 +23,24 @@ final class PlaybackBackgroundSync {
     private var lastSeenTransferSuggestionSpeakerIDs: Set<String>?
     private var acceptingGroupSuggestionIDs: Set<String> = []
     private var acceptingTransferSuggestionIDs: Set<String> = []
+    private var acceptingHeadphoneTransferSuggestionIDs: Set<String> = []
     private var hasShownAuthPrompt = false
     private var groupSuggestionActionCancellable: AnyCancellable?
     private var groupSuggestionIgnoreCancellable: AnyCancellable?
     private var transferSuggestionActionCancellable: AnyCancellable?
     private var transferSuggestionIgnoreCancellable: AnyCancellable?
+    private var headphoneTransferSuggestionActionCancellable: AnyCancellable?
+    private var headphoneTransferSuggestionIgnoreCancellable: AnyCancellable?
+    private var macAudioOutputCancellable: AnyCancellable?
+    private var hasAudioOutputBaseline = false
+    private var lastObservedAudioOutput: MacAudioOutputDevice?
+    private var pendingHeadphoneConnectionOutputID: UInt32?
 
     init(environment: AppEnvironment) {
         self.environment = environment
         self.groupSuggestionPresenter = environment.groupSuggestionPresenter
         self.transferSuggestionPresenter = environment.transferSuggestionPresenter
+        self.headphoneTransferSuggestionPresenter = environment.headphoneTransferSuggestionPresenter
         self.groupSuggestionActionCancellable = NotificationCenter.default
             .publisher(for: .sonosHandoffAcceptGroupSuggestion)
             .sink { [weak self] notification in
@@ -76,6 +85,36 @@ final class PlaybackBackgroundSync {
                     self?.ignoreTransferSuggestion(id: suggestionID)
                 }
             }
+        self.headphoneTransferSuggestionActionCancellable = NotificationCenter.default
+            .publisher(for: .sonosHandoffAcceptHeadphoneTransferSuggestion)
+            .sink { [weak self] notification in
+                guard let suggestionID = notification.object as? String else {
+                    return
+                }
+
+                Task { @MainActor [weak self] in
+                    await self?.acceptHeadphoneTransferSuggestion(id: suggestionID)
+                }
+            }
+        self.headphoneTransferSuggestionIgnoreCancellable = NotificationCenter.default
+            .publisher(for: .sonosHandoffIgnoreHeadphoneTransferSuggestion)
+            .sink { [weak self] notification in
+                guard let suggestionID = notification.object as? String else {
+                    return
+                }
+
+                Task { @MainActor [weak self] in
+                    self?.ignoreHeadphoneTransferSuggestion(id: suggestionID)
+                }
+            }
+        self.macAudioOutputCancellable = environment.macAudioOutputMonitor.$output
+            .dropFirst()
+            .sink { [weak self] output in
+                Task { @MainActor [weak self] in
+                    self?.recordMacAudioOutputChange(output)
+                    await self?.syncOnce()
+                }
+            }
     }
 
     func start() {
@@ -83,6 +122,8 @@ final class PlaybackBackgroundSync {
             return
         }
 
+        environment.macAudioOutputMonitor.start()
+        establishMacAudioOutputBaselineIfNeeded(environment.macAudioOutputMonitor.output)
         task = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 await self?.syncOnce()
@@ -102,6 +143,7 @@ final class PlaybackBackgroundSync {
                 hasShownAuthPrompt = false
                 clearGroupSuggestions()
                 clearTransferSuggestions()
+                clearHeadphoneTransferSuggestion(currentHeadphoneOutputID: nil)
                 clearSelection(reason: "no_active_spotify_playback")
                 await refreshOutputCacheWithoutPlayback(discoveryRefreshStarted: discoveryRefreshStarted)
                 return
@@ -111,6 +153,7 @@ final class PlaybackBackgroundSync {
                 hasShownAuthPrompt = false
                 clearGroupSuggestions()
                 clearTransferSuggestions()
+                clearHeadphoneTransferSuggestion(currentHeadphoneOutputID: nil)
                 clearSelection(reason: "spotify_playback_paused")
                 await refreshOutputCacheWithoutPlayback(discoveryRefreshStarted: discoveryRefreshStarted)
                 return
@@ -129,6 +172,7 @@ final class PlaybackBackgroundSync {
                     spotifyPlaying: status.isPlaying,
                     cachedBaselineSpeakerIDs: cachedTransferBaselineSpeakerIDs
                 )
+                clearHeadphoneTransferSuggestion(currentHeadphoneOutputID: nil)
                 clearSelection(reason: "active_device_not_visible")
                 notifyOpenMenuAfterDiscoveryRefresh(
                     discoveryRefreshStarted: discoveryRefreshStarted,
@@ -147,6 +191,7 @@ final class PlaybackBackgroundSync {
                 cachedBaselineSpeakerIDs: cachedTransferBaselineSpeakerIDs
             )
             updateGroupSuggestion(refresh: refresh, selectedRoomName: selectedRoomName, spotifyPlaying: status.isPlaying)
+            try await updateHeadphoneTransferSuggestion(activeRoomName: selectedRoomName)
             notifyOpenMenuAfterDiscoveryRefresh(
                 discoveryRefreshStarted: discoveryRefreshStarted,
                 currentRoomName: selectedRoomName
@@ -157,6 +202,7 @@ final class PlaybackBackgroundSync {
             if SpotifyAuthRecovery.isAuthRequired(error) {
                 clearGroupSuggestions()
                 clearTransferSuggestions()
+                clearHeadphoneTransferSuggestion(currentHeadphoneOutputID: nil)
                 clearSelection(reason: "spotify_auth_required")
                 showAuthPromptIfNeeded(error)
                 return
@@ -164,8 +210,55 @@ final class PlaybackBackgroundSync {
 
             clearGroupSuggestions()
             clearTransferSuggestions()
+            clearHeadphoneTransferSuggestion(currentHeadphoneOutputID: nil)
             logger.info("SonosHandoffPlaybackSync state=unavailable error=\(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    private func establishMacAudioOutputBaselineIfNeeded(_ output: MacAudioOutputDevice?) {
+        guard !hasAudioOutputBaseline else {
+            return
+        }
+
+        hasAudioOutputBaseline = true
+        lastObservedAudioOutput = output
+        if let output {
+            logger.info("SonosHandoffHeadphoneTransferSuggestion state=audio_output_baseline output=\(output.name, privacy: .public) headphones=\(output.isHeadphones, privacy: .public)")
+        } else {
+            logger.info("SonosHandoffHeadphoneTransferSuggestion state=audio_output_baseline output=none")
+        }
+    }
+
+    private func recordMacAudioOutputChange(_ output: MacAudioOutputDevice?) {
+        guard hasAudioOutputBaseline else {
+            establishMacAudioOutputBaselineIfNeeded(output)
+            return
+        }
+
+        let previousOutput = lastObservedAudioOutput
+        lastObservedAudioOutput = output
+
+        guard let output else {
+            pendingHeadphoneConnectionOutputID = nil
+            headphoneTransferSuggestionPresenter.clearUnavailable(currentHeadphoneOutputID: nil)
+            logger.info("SonosHandoffHeadphoneTransferSuggestion state=audio_output_unavailable")
+            return
+        }
+
+        guard output.isHeadphones else {
+            pendingHeadphoneConnectionOutputID = nil
+            headphoneTransferSuggestionPresenter.clearUnavailable(currentHeadphoneOutputID: nil)
+            logger.info("SonosHandoffHeadphoneTransferSuggestion state=audio_output_non_headphones output=\(output.name, privacy: .public)")
+            return
+        }
+
+        headphoneTransferSuggestionPresenter.clearUnavailable(currentHeadphoneOutputID: output.id)
+        guard previousOutput?.isHeadphones != true || previousOutput?.id != output.id else {
+            return
+        }
+
+        pendingHeadphoneConnectionOutputID = output.id
+        logger.info("SonosHandoffHeadphoneTransferSuggestion state=headphones_connected output=\(output.name, privacy: .public)")
     }
 
     private func outputRefresh(currentRoomName: String, forceRefresh: Bool) async throws -> PlaybackOutputRefresh {
@@ -241,6 +334,49 @@ final class PlaybackBackgroundSync {
         }
     }
 
+    private func updateHeadphoneTransferSuggestion(activeRoomName: String) async throws {
+        guard let output = environment.macAudioOutputMonitor.output else {
+            clearHeadphoneTransferSuggestion(currentHeadphoneOutputID: nil)
+            return
+        }
+
+        guard output.isHeadphones else {
+            clearHeadphoneTransferSuggestion(currentHeadphoneOutputID: nil)
+            return
+        }
+
+        guard pendingHeadphoneConnectionOutputID == output.id else {
+            clearHeadphoneTransferSuggestion(currentHeadphoneOutputID: output.id)
+            return
+        }
+        pendingHeadphoneConnectionOutputID = nil
+
+        let devices = try await environment.activePlaybackObserver.availablePlaybackDevices()
+        guard let spotifyComputerDevice = spotifyComputerPlaybackDevice(in: devices) else {
+            headphoneTransferSuggestionPresenter.clearAll()
+            logger.info("SonosHandoffHeadphoneTransferSuggestion state=unavailable reason=no_spotify_computer_device output=\(output.name, privacy: .public)")
+            return
+        }
+
+        let suggestion = HeadphoneTransferSuggestion(
+            output: output,
+            spotifyDeviceName: spotifyComputerDevice.name,
+            activeRoomName: activeRoomName
+        )
+        if headphoneTransferSuggestionPresenter.presentIfNeeded(suggestion) {
+            logger.info("SonosHandoffHeadphoneTransferSuggestion state=prompted output=\(output.name, privacy: .public) spotifyDevice=\(spotifyComputerDevice.name, privacy: .public) room=\(activeRoomName, privacy: .public)")
+        }
+    }
+
+    private func spotifyComputerPlaybackDevice(
+        in devices: [SpotifyAvailablePlaybackDevice]
+    ) -> SpotifyAvailablePlaybackDevice? {
+        let computerDevices = devices.filter {
+            !$0.isRestricted && $0.type.caseInsensitiveCompare("Computer") == .orderedSame
+        }
+        return computerDevices.first { !$0.isActive } ?? computerDevices.first
+    }
+
     private func cachedTransferSuggestionBaselineSpeakerIDs() async -> Set<String>? {
         guard lastSeenTransferSuggestionSpeakerIDs == nil,
               let refresh = await environment.outputDirectory.cachedRefresh(currentRoomName: nil)
@@ -266,6 +402,15 @@ final class PlaybackBackgroundSync {
 
     private func clearTransferSuggestions() {
         transferSuggestionPresenter.clearAll()
+    }
+
+    private func clearHeadphoneTransferSuggestion(currentHeadphoneOutputID: UInt32?) {
+        if pendingHeadphoneConnectionOutputID != currentHeadphoneOutputID {
+            pendingHeadphoneConnectionOutputID = nil
+        }
+        headphoneTransferSuggestionPresenter.clearUnavailable(
+            currentHeadphoneOutputID: currentHeadphoneOutputID
+        )
     }
 
     private func refreshOutputCacheWithoutPlayback(discoveryRefreshStarted: Bool) async {
@@ -462,9 +607,53 @@ final class PlaybackBackgroundSync {
         logger.info("SonosHandoffTransferSuggestion result=ignored id=\(id, privacy: .public)")
     }
 
+    private func acceptHeadphoneTransferSuggestion(id: String) async {
+        guard let suggestion = environment.headphoneTransferSuggestionStore.suggestion,
+              suggestion.matches(identifier: id)
+        else {
+            return
+        }
+
+        guard acceptingHeadphoneTransferSuggestionIDs.insert(suggestion.id).inserted else {
+            logger.info("SonosHandoffHeadphoneTransferSuggestion result=ignored_duplicate_accept id=\(id, privacy: .public)")
+            return
+        }
+        defer {
+            acceptingHeadphoneTransferSuggestionIDs.remove(suggestion.id)
+        }
+
+        headphoneTransferSuggestionPresenter.suppress(id: suggestion.id)
+        do {
+            try await environment.activePlaybackObserver.startActivePlayback(
+                spotifyURI: nil,
+                deviceName: suggestion.spotifyDeviceName,
+                deviceType: "Computer"
+            )
+            clearSelection(reason: "spotify_transferred_to_headphones")
+            NotificationCenter.default.post(name: .sonosHandoffRefreshOutputs, object: nil)
+            logger.info("SonosHandoffHeadphoneTransferSuggestion result=notification_accepted output=\(suggestion.outputName, privacy: .public) spotifyDevice=\(suggestion.spotifyDeviceName, privacy: .public)")
+        } catch {
+            let message = headphoneTransferFailureMessage(suggestion: suggestion)
+            headphoneTransferSuggestionPresenter.deliverFailure(suggestion, message: message)
+            if SpotifyAuthRecovery.isAuthRequired(error) {
+                showAuthPromptIfNeeded(error)
+            }
+            logger.error("SonosHandoffHeadphoneTransferSuggestion result=notification_failure output=\(suggestion.outputName, privacy: .public) spotifyDevice=\(suggestion.spotifyDeviceName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func ignoreHeadphoneTransferSuggestion(id: String) {
+        headphoneTransferSuggestionPresenter.suppress(id: id)
+        logger.info("SonosHandoffHeadphoneTransferSuggestion result=ignored id=\(id, privacy: .public)")
+    }
+
     private func transferFailureMessage(roomName: String, message: String) -> String {
         message.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
             ?? "Could not move Spotify playback to \(roomName)."
+    }
+
+    private func headphoneTransferFailureMessage(suggestion: HeadphoneTransferSuggestion) -> String {
+        "Could not move Spotify playback to \(suggestion.outputName)."
     }
 
     private func activePlaybackRoomNameForSuggestionRefresh() async -> String? {
@@ -480,6 +669,7 @@ final class PlaybackBackgroundSync {
             if SpotifyAuthRecovery.isAuthRequired(error) {
                 clearGroupSuggestions()
                 clearTransferSuggestions()
+                clearHeadphoneTransferSuggestion(currentHeadphoneOutputID: nil)
                 clearSelection(reason: "spotify_auth_required")
                 showAuthPromptIfNeeded(error)
                 return nil

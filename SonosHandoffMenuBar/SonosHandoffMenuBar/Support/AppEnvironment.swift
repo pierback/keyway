@@ -22,6 +22,10 @@ struct AppEnvironment: @unchecked Sendable {
     let transferSuggestionStore: PlaybackTransferSuggestionStore
     let transferSuggestionNotifier: PlaybackTransferSuggestionNotifier
     let transferSuggestionPresenter: PlaybackTransferSuggestionPresenter
+    let headphoneTransferSuggestionStore: HeadphoneTransferSuggestionStore
+    let headphoneTransferSuggestionNotifier: HeadphoneTransferSuggestionNotifier
+    let headphoneTransferSuggestionPresenter: HeadphoneTransferSuggestionPresenter
+    let macAudioOutputMonitor: MacAudioOutputMonitor
     let chromiumNativeMessagingHostInstaller: ChromiumNativeMessagingHostInstaller
     let chromiumBrowserExtensionController: ChromiumBrowserExtensionController
     let mediaRemoteController: MediaRemoteController
@@ -57,6 +61,13 @@ struct AppEnvironment: @unchecked Sendable {
             store: transferSuggestionStore,
             notifier: transferSuggestionNotifier
         )
+        let headphoneTransferSuggestionStore = HeadphoneTransferSuggestionStore()
+        let headphoneTransferSuggestionNotifier = HeadphoneTransferSuggestionNotifier()
+        let headphoneTransferSuggestionPresenter = HeadphoneTransferSuggestionPresenter(
+            store: headphoneTransferSuggestionStore,
+            notifier: headphoneTransferSuggestionNotifier
+        )
+        let macAudioOutputMonitor = MacAudioOutputMonitor()
         let chromiumNativeMessagingHostInstaller = ChromiumNativeMessagingHostInstaller()
         _ = try! chromiumNativeMessagingHostInstaller.install()
         let chromiumBrowserExtensionController = ChromiumBrowserExtensionController()
@@ -115,6 +126,10 @@ struct AppEnvironment: @unchecked Sendable {
             transferSuggestionStore: transferSuggestionStore,
             transferSuggestionNotifier: transferSuggestionNotifier,
             transferSuggestionPresenter: transferSuggestionPresenter,
+            headphoneTransferSuggestionStore: headphoneTransferSuggestionStore,
+            headphoneTransferSuggestionNotifier: headphoneTransferSuggestionNotifier,
+            headphoneTransferSuggestionPresenter: headphoneTransferSuggestionPresenter,
+            macAudioOutputMonitor: macAudioOutputMonitor,
             chromiumNativeMessagingHostInstaller: chromiumNativeMessagingHostInstaller,
             chromiumBrowserExtensionController: chromiumBrowserExtensionController,
             mediaRemoteController: mediaRemoteController,
