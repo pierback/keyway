@@ -1,0 +1,329 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+build_dir="$repo_root/.build/probes"
+source_file="$build_dir/airpods_camera_presence_probe.swift"
+binary_file="$build_dir/airpods_camera_presence_probe"
+
+mkdir -p "$build_dir"
+
+cat >"$source_file" <<'SWIFT'
+@preconcurrency import AppKit
+@preconcurrency import AVFoundation
+import Foundation
+import Vision
+
+private let systemDefinedEventType = CGEventType(rawValue: 14)!
+private let mediaKeySubtype = 8
+private let keyDownState = 0x0A
+private let playPauseKeyCode = 16
+
+private func printLine(_ value: String) {
+    FileHandle.standardOutput.write(Data((value + "\n").utf8))
+}
+
+private func milliseconds(from start: UInt64, to end: UInt64) -> Double {
+    Double(end - start) / 1_000_000
+}
+
+private enum ProbeFailure: Error, CustomStringConvertible {
+    case noCamera
+    case cannotAddInput
+    case cannotAddOutput
+    case timeout
+
+    var description: String {
+        switch self {
+        case .noCamera:
+            return "no_camera"
+        case .cannotAddInput:
+            return "cannot_add_camera_input"
+        case .cannotAddOutput:
+            return "cannot_add_camera_output"
+        case .timeout:
+            return "camera_timeout"
+        }
+    }
+}
+
+private struct CameraFrame {
+    let sampleBuffer: CMSampleBuffer
+    let cameraMilliseconds: Double
+}
+
+private final class OneFrameCameraCapture: NSObject, @unchecked Sendable, AVCaptureVideoDataOutputSampleBufferDelegate {
+    private let lock = NSLock()
+    private var session: AVCaptureSession?
+    private var continuation: CheckedContinuation<CameraFrame, Error>?
+    private var timeoutTimer: DispatchSourceTimer?
+    private var captureStartedAt: UInt64 = 0
+
+    func capture(timeoutNanoseconds: UInt64 = 5_000_000_000) async throws -> CameraFrame {
+        try await withCheckedThrowingContinuation { continuation in
+            lock.lock()
+            self.continuation = continuation
+            lock.unlock()
+
+            DispatchQueue.global(qos: .userInitiated).async {
+                self.start(timeoutNanoseconds: timeoutNanoseconds)
+            }
+        }
+    }
+
+    private func start(timeoutNanoseconds: UInt64) {
+        do {
+            let startedAt = DispatchTime.now().uptimeNanoseconds
+            let session = AVCaptureSession()
+            session.sessionPreset = .vga640x480
+
+            guard let device = AVCaptureDevice.default(for: .video) else {
+                finish(.failure(ProbeFailure.noCamera))
+                return
+            }
+
+            let input = try AVCaptureDeviceInput(device: device)
+            guard session.canAddInput(input) else {
+                finish(.failure(ProbeFailure.cannotAddInput))
+                return
+            }
+            session.addInput(input)
+
+            let output = AVCaptureVideoDataOutput()
+            output.alwaysDiscardsLateVideoFrames = true
+            output.videoSettings = [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            ]
+            output.setSampleBufferDelegate(
+                self,
+                queue: DispatchQueue(label: "com.fpieringer.Keyway.camera-presence-probe.video")
+            )
+            guard session.canAddOutput(output) else {
+                finish(.failure(ProbeFailure.cannotAddOutput))
+                return
+            }
+            session.addOutput(output)
+
+            lock.lock()
+            self.session = session
+            captureStartedAt = startedAt
+            lock.unlock()
+
+            armTimeout(timeoutNanoseconds: timeoutNanoseconds)
+            session.startRunning()
+        } catch {
+            finish(.failure(error))
+        }
+    }
+
+    func captureOutput(
+        _ output: AVCaptureOutput,
+        didOutput sampleBuffer: CMSampleBuffer,
+        from connection: AVCaptureConnection
+    ) {
+        let now = DispatchTime.now().uptimeNanoseconds
+
+        lock.lock()
+        let cameraMilliseconds = milliseconds(from: captureStartedAt, to: now)
+        lock.unlock()
+
+        finish(.success(CameraFrame(
+            sampleBuffer: sampleBuffer,
+            cameraMilliseconds: cameraMilliseconds
+        )))
+    }
+
+    private func armTimeout(timeoutNanoseconds: UInt64) {
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .userInitiated))
+        timer.schedule(deadline: .now() + .nanoseconds(Int(timeoutNanoseconds)))
+        timer.setEventHandler { [weak self] in
+            self?.finish(.failure(ProbeFailure.timeout))
+        }
+        lock.lock()
+        timeoutTimer = timer
+        lock.unlock()
+        timer.resume()
+    }
+
+    private func finish(_ result: Result<CameraFrame, Error>) {
+        lock.lock()
+        guard let continuation else {
+            lock.unlock()
+            return
+        }
+
+        self.continuation = nil
+        let session = self.session
+        self.session = nil
+        let timeoutTimer = self.timeoutTimer
+        self.timeoutTimer = nil
+        lock.unlock()
+
+        timeoutTimer?.cancel()
+        if session?.isRunning == true {
+            DispatchQueue.global(qos: .utility).async {
+                session?.stopRunning()
+            }
+        }
+
+        switch result {
+        case .success(let frame):
+            continuation.resume(returning: frame)
+        case .failure(let error):
+            continuation.resume(throwing: error)
+        }
+    }
+}
+
+private final class PresenceProbe: @unchecked Sendable {
+    static let shared = PresenceProbe()
+
+    private let queue = DispatchQueue(label: "com.fpieringer.Keyway.camera-presence-probe.state")
+    private var inFlight = false
+
+    func trigger(reason: String) {
+        queue.async {
+            guard !self.inFlight else {
+                printLine("busy ignored_trigger=\(reason)")
+                return
+            }
+            self.inFlight = true
+
+            Task {
+                await self.detect(reason: reason)
+                self.queue.async {
+                    self.inFlight = false
+                }
+            }
+        }
+    }
+
+    func detect(reason: String) async {
+        let totalStartedAt = DispatchTime.now().uptimeNanoseconds
+        let granted = await cameraAccessGranted()
+        guard granted else {
+            printLine("camera_permission_denied")
+            return
+        }
+
+        do {
+            let frame = try await OneFrameCameraCapture().capture()
+
+            let visionStartedAt = DispatchTime.now().uptimeNanoseconds
+            let request = VNDetectFaceRectanglesRequest()
+            let handler = VNImageRequestHandler(cmSampleBuffer: frame.sampleBuffer, options: [:])
+            try handler.perform([request])
+            let visionEndedAt = DispatchTime.now().uptimeNanoseconds
+            let totalEndedAt = DispatchTime.now().uptimeNanoseconds
+
+            let faceCount = request.results?.count ?? 0
+            let label = faceCount > 0 ? "human" : "no_human"
+            printLine(
+                "\(label) reason=\(reason) faces=\(faceCount) total_ms=\(String(format: "%.1f", milliseconds(from: totalStartedAt, to: totalEndedAt))) camera_ms=\(String(format: "%.1f", frame.cameraMilliseconds)) vision_ms=\(String(format: "%.1f", milliseconds(from: visionStartedAt, to: visionEndedAt)))"
+            )
+        } catch {
+            let totalEndedAt = DispatchTime.now().uptimeNanoseconds
+            printLine(
+                "error reason=\(reason) total_ms=\(String(format: "%.1f", milliseconds(from: totalStartedAt, to: totalEndedAt))) message=\(error)"
+            )
+        }
+    }
+
+    private func cameraAccessGranted() async -> Bool {
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized:
+            return true
+        case .notDetermined:
+            return await withCheckedContinuation { continuation in
+                AVCaptureDevice.requestAccess(for: .video) { granted in
+                    continuation.resume(returning: granted)
+                }
+            }
+        case .denied, .restricted:
+            return false
+        @unknown default:
+            return false
+        }
+    }
+}
+
+private func isPlayPauseKeyDown(type: CGEventType, event: CGEvent) -> Bool {
+    guard type == systemDefinedEventType,
+          let nsEvent = NSEvent(cgEvent: event),
+          nsEvent.subtype.rawValue == mediaKeySubtype
+    else {
+        return false
+    }
+
+    let keyCode = (nsEvent.data1 & 0xFFFF_0000) >> 16
+    let keyState = (nsEvent.data1 & 0x0000_FF00) >> 8
+    return keyCode == playPauseKeyCode && keyState == keyDownState
+}
+
+private func eventTapCallback(
+    proxy: CGEventTapProxy,
+    type: CGEventType,
+    event: CGEvent,
+    refcon: UnsafeMutableRawPointer?
+) -> Unmanaged<CGEvent>? {
+    if isPlayPauseKeyDown(type: type, event: event) {
+        PresenceProbe.shared.trigger(reason: "play_pause")
+    }
+    return Unmanaged.passUnretained(event)
+}
+
+@main
+private struct Main {
+    static func main() async {
+        let arguments = Set(CommandLine.arguments.dropFirst())
+        if arguments.contains("--once") {
+            await PresenceProbe.shared.detect(reason: "manual")
+            return
+        }
+
+        listenForMediaKeys()
+    }
+
+    private static func listenForMediaKeys() {
+        if !CGPreflightListenEventAccess() {
+            printLine("input_monitoring_permission_missing requesting=true")
+            _ = CGRequestListenEventAccess()
+        }
+
+        let mask = CGEventMask(1 << systemDefinedEventType.rawValue)
+        guard let eventTap = CGEvent.tapCreate(
+            tap: .cghidEventTap,
+            place: .headInsertEventTap,
+            options: .listenOnly,
+            eventsOfInterest: mask,
+            callback: eventTapCallback,
+            userInfo: nil
+        ) else {
+            printLine("event_tap_unavailable enable_input_monitoring_or_accessibility=true")
+            exit(1)
+        }
+
+        let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
+        CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
+        CGEvent.tapEnable(tap: eventTap, enable: true)
+
+        printLine("listening press_airpods_or_media_play_pause=true mode=one_camera_frame_per_press")
+        CFRunLoopRun()
+    }
+}
+SWIFT
+
+/usr/bin/swiftc \
+  -parse-as-library \
+  "$source_file" \
+  -framework AppKit \
+  -framework AVFoundation \
+  -framework Vision \
+  -o "$binary_file"
+
+if [[ "${1:-}" == "--build-only" ]]; then
+  printf '%s\n' "$binary_file"
+  exit 0
+fi
+
+exec "$binary_file" "$@"

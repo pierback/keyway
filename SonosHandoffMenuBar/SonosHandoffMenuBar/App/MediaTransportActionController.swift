@@ -367,13 +367,19 @@ final class MediaTransportActionController {
             return
         }
 
-        logger.info("MediaTransport play_family_no_chooser_ambiguous command=\(command.rawValue, privacy: .public) source=\(source.rawValue, privacy: .public) targetCount=\(targets.count, privacy: .public)")
+        logger.info("MediaTransport play_family_direct_route_ambiguous command=\(command.rawValue, privacy: .public) source=\(source.rawValue, privacy: .public) targetCount=\(targets.count, privacy: .public)")
         trace(
-            "play_family_no_chooser_ambiguous",
+            "play_family_direct_route_ambiguous",
             command: command,
             source: source,
             targets: targets,
             targetCount: targets.count,
+            metadata: metadata,
+            commandCenterMetadata: commandCenterMetadata
+        )
+        showChooserImmediately(
+            command: command,
+            source: source,
             metadata: metadata,
             commandCenterMetadata: commandCenterMetadata
         )
