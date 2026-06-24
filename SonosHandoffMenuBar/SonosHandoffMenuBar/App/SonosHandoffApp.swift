@@ -121,8 +121,7 @@ struct KeywayApp: App {
                 chromiumNativeMessagingHostInstaller: environment.chromiumNativeMessagingHostInstaller,
                 initialConfigImportReport: environment.configImportReport,
                 mediaRemoteController: environment.mediaRemoteController,
-                chromiumBrowserExtensionController: environment.chromiumBrowserExtensionController,
-                mediaPresenceSettings: environment.mediaPresenceSettings
+                chromiumBrowserExtensionController: environment.chromiumBrowserExtensionController
             )
                 .frame(width: SettingsFeature.preferredWindowSize.width)
                 .frame(minHeight: SettingsFeature.preferredWindowSize.height)

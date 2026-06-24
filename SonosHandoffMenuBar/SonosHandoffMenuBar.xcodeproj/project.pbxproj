@@ -55,8 +55,6 @@
 		E60634C7B17354403E4D470D /* ShortcutRuntimeStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B482DB08C6119B821127AC0 /* ShortcutRuntimeStatus.swift */; };
 		E9AD0EF7DEB6882F0937503C /* MediaTransportRouteSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02C0EF2E15BEC3BA22E52890 /* MediaTransportRouteSource.swift */; };
 		E9FEB0AC31F4B748243F1AE6 /* MediaAudioControlController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0E0B0B37F19F05C7284CC55 /* MediaAudioControlController.swift */; };
-		EA449FB700F40D68C5F28E30 /* MediaPresenceGateSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA449FB5D04F3E29523258D7 /* MediaPresenceGateSettings.swift */; };
-		EA449FB8176D4979C87451CB /* MediaPresenceProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA449FB6EABCF2D8D1F1DBF8 /* MediaPresenceProbe.swift */; };
 		EC247FEB97F28E45984E2C2F /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1B326BD729809CA8BEB40CF8 /* Cocoa.framework */; };
 		F004F395ED6759CD05EC205C /* SourceFocusActionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAC03A513B07DA66F5F83CFC /* SourceFocusActionController.swift */; };
 		F15454336A9A59D5CD35E9F5 /* MediaTransportActionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6487808CF66EB7748C40F51B /* MediaTransportActionController.swift */; };
@@ -119,8 +117,6 @@
 		E1669D73367CD8CBA4B62398 /* HeadphoneTransferSuggestion.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HeadphoneTransferSuggestion.swift; sourceTree = "<group>"; };
 		E880EAC55BB28810766DAC2B /* MacAudioOutputMonitor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MacAudioOutputMonitor.swift; sourceTree = "<group>"; };
 		EAC78157B16A2BCACEF15162 /* KeywayStatusItemController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = KeywayStatusItemController.swift; sourceTree = "<group>"; };
-		EA449FB5D04F3E29523258D7 /* MediaPresenceGateSettings.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaPresenceGateSettings.swift; sourceTree = "<group>"; };
-		EA449FB6EABCF2D8D1F1DBF8 /* MediaPresenceProbe.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaPresenceProbe.swift; sourceTree = "<group>"; };
 		EE0181FA70D5F2B9B8D5A8EF /* MediaRemoteModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaRemoteModels.swift; sourceTree = "<group>"; };
 		EE6E757DA3D59C71629EE9E1 /* MediaTransportTargetResolver.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaTransportTargetResolver.swift; sourceTree = "<group>"; };
 		F1F8AAD4F32AFF8745F27C4E /* ChromiumBrowserExtensionTransport.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ChromiumBrowserExtensionTransport.swift; sourceTree = "<group>"; };
@@ -216,8 +212,6 @@
 				B6BC73490DDBA787052D3482 /* MediaRemoteHelperProcess.swift */,
 				EE0181FA70D5F2B9B8D5A8EF /* MediaRemoteModels.swift */,
 				09A70F306FE2F7B27D2B527E /* MediaRemoteSnapshotRefreshGate.swift */,
-				EA449FB5D04F3E29523258D7 /* MediaPresenceGateSettings.swift */,
-				EA449FB6EABCF2D8D1F1DBF8 /* MediaPresenceProbe.swift */,
 				0F99C82CF438B208159DD666 /* MediaRouteStatus.swift */,
 				D75E47ED7B98C17F9035651B /* MediaTargetOverlayController.swift */,
 				C125F95317A9849DAB0D7DAA /* MediaTargetOverlayKeyboardAction.swift */,
@@ -439,8 +433,6 @@
 				909DC5BA5BBCD2904448EDDD /* MediaRemoteHelperProcess.swift in Sources */,
 				C40C77527492B13C14C6B4D5 /* MediaRemoteModels.swift in Sources */,
 				C7B735C10B15FADA41C7D911 /* MediaRemoteSnapshotRefreshGate.swift in Sources */,
-				EA449FB700F40D68C5F28E30 /* MediaPresenceGateSettings.swift in Sources */,
-				EA449FB8176D4979C87451CB /* MediaPresenceProbe.swift in Sources */,
 				106B236DD4BAFD203212FD89 /* MediaRouteStatus.swift in Sources */,
 				82550CC9C26D2DD9F27FC9CF /* MediaTargetOverlayController.swift in Sources */,
 				BC593565380FEE4FC935A73B /* MediaTargetOverlayKeyboardAction.swift in Sources */,

@@ -32,8 +32,6 @@ struct AppEnvironment: @unchecked Sendable {
     let mediaAudioControlController: MediaAudioControlController
     let mediaTargetOverlayController: MediaTargetOverlayController
     let sourceFocusActionController: SourceFocusActionController
-    let mediaPresenceSettings: MediaPresenceGateSettings
-    let mediaPresenceProbe: MediaPresenceProbe
     let mediaTransportActionController: MediaTransportActionController
     let mediaRoutingProbeController: MediaRoutingProbeController
 
@@ -74,8 +72,6 @@ struct AppEnvironment: @unchecked Sendable {
         _ = try! chromiumNativeMessagingHostInstaller.install()
         let chromiumBrowserExtensionController = ChromiumBrowserExtensionController()
         let targetSelectionMemory = MediaTargetSelectionMemory()
-        let mediaPresenceSettings = MediaPresenceGateSettings()
-        let mediaPresenceProbe = MediaPresenceProbe()
         let mediaRemoteController = MediaRemoteController(
             chromiumBrowserExtensionController: chromiumBrowserExtensionController
         )
@@ -99,9 +95,7 @@ struct AppEnvironment: @unchecked Sendable {
             spotifyPlaybackController: spotifyConnectService,
             chromiumBrowserExtensionController: chromiumBrowserExtensionController,
             sourceFocusActionController: sourceFocusActionController,
-            targetSelectionMemory: targetSelectionMemory,
-            mediaPresenceSettings: mediaPresenceSettings,
-            mediaPresenceProbe: mediaPresenceProbe
+            targetSelectionMemory: targetSelectionMemory
         )
         let mediaRoutingProbeController = MediaRoutingProbeController(
             mediaRemoteController: mediaRemoteController,
@@ -142,8 +136,6 @@ struct AppEnvironment: @unchecked Sendable {
             mediaAudioControlController: mediaAudioControlController,
             mediaTargetOverlayController: mediaTargetOverlayController,
             sourceFocusActionController: sourceFocusActionController,
-            mediaPresenceSettings: mediaPresenceSettings,
-            mediaPresenceProbe: mediaPresenceProbe,
             mediaTransportActionController: mediaTransportActionController,
             mediaRoutingProbeController: mediaRoutingProbeController
         )
