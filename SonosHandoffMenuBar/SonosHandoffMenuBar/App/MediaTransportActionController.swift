@@ -118,15 +118,6 @@ final class MediaTransportActionController {
                 return
             }
             commandCenterFilter.noteCommandCenterInput(command: command, metadata: commandCenterMetadata)
-            if MediaTransportCommandRules.isPlayFamily(command) {
-                routePlayFamilyWithoutChooser(
-                    command: command,
-                    source: source,
-                    metadata: metadata,
-                    commandCenterMetadata: commandCenterMetadata
-                )
-                return
-            }
         case .userInterface:
             break
         }
@@ -177,9 +168,6 @@ final class MediaTransportActionController {
         source: MediaTransportRouteSource,
         metadata: MediaTransportInputMetadata?
     ) -> Bool {
-        if source == .commandCenter {
-            return true
-        }
         guard source == .eventTap,
               let metadata,
               metadata.isPhysicalHIDSystemSource

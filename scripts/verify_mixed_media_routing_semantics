@@ -73,12 +73,17 @@ assert_order(
     [
         "case .commandCenter:",
         "commandCenterFilter.noteCommandCenterInput(command: command, metadata: commandCenterMetadata)",
-        "if MediaTransportCommandRules.isPlayFamily(command)",
-        "routePlayFamilyWithoutChooser(",
         "case .userInterface:",
+        "if MediaTransportCommandRules.isPlayFamily(command)",
     ],
-    "command-center play-family input must route without chooser before the shared chooser path"
+    "command-center input must enter the shared play-family chooser path after duplicate filtering"
 )
+command_center_branch = route_input[
+    route_input.index("case .commandCenter:"):
+    route_input.index("case .userInterface:")
+]
+if "routePlayFamilyWithoutChooser(" in command_center_branch:
+    fail("command-center play-family input must not bypass the chooser through direct routing")
 shared_play_branch = route_input[route_input.index("        if MediaTransportCommandRules.isPlayFamily(command) {", route_input.index("case .userInterface:")):]
 assert_order(
     shared_play_branch,

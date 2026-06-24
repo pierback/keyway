@@ -39,7 +39,7 @@ grep -q 'shouldRoutePlayFamilyWithoutChooser(source: source, metadata: metadata)
   || fail "targeted HID play-family input must route without opening the chooser"
 
 grep -q 'routePlayFamilyWithoutChooser(' "$transport" \
-  || fail "Command Center play-family input must route without opening the chooser"
+  || fail "targeted HID play-family input must retain the direct route branch"
 
 ! grep -q 'command_center_play_family_route_shield_ignored' "$transport" \
   || fail "Command Center play-family input must not be swallowed"
@@ -558,24 +558,15 @@ command_center_end = route_body.index("        case .userInterface:", command_ce
 command_center_body = route_body[command_center_start:command_center_end]
 if "commandCenterFilter.noteCommandCenterInput(command: command, metadata: commandCenterMetadata)" not in command_center_body:
     raise SystemExit("verify_playback_routing_invariants: routed Command Center inputs must arm duplicate shadow state")
-note_index = command_center_body.index("commandCenterFilter.noteCommandCenterInput(command: command, metadata: commandCenterMetadata)")
-play_family = "if MediaTransportCommandRules.isPlayFamily(command)"
-if play_family not in command_center_body:
-    raise SystemExit("verify_playback_routing_invariants: accepted Command Center play-family inputs must be route-shielded before chooser routing")
-play_family_index = command_center_body.index(play_family)
-if play_family_index < note_index:
-    raise SystemExit("verify_playback_routing_invariants: Command Center play-family shield must arm duplicate shadow state before returning")
-reason = "command_center_play_family_route_shield_ignored"
-if reason not in command_center_body:
-    raise SystemExit("verify_playback_routing_invariants: Command Center play-family shield must be visible in traces")
-shield_tail = command_center_body[command_center_body.index(reason):]
-if "return" not in shield_tail:
-    raise SystemExit("verify_playback_routing_invariants: Command Center play-family input must return before shared chooser routing")
+if "routePlayFamilyWithoutChooser(" in command_center_body:
+    raise SystemExit("verify_playback_routing_invariants: Command Center play-family input must not bypass the chooser")
+if "showChooserImmediately(" in command_center_body:
+    raise SystemExit("verify_playback_routing_invariants: Command Center play-family input must use the shared chooser path, not a command-center-only presentation branch")
 shared_route_tail = route_body[command_center_end:]
 if "if MediaTransportCommandRules.isPlayFamily(command)" not in shared_route_tail:
-    raise SystemExit("verify_playback_routing_invariants: physical media-key and UI play-family inputs must use shared chooser-first routing")
+    raise SystemExit("verify_playback_routing_invariants: Command Center, physical media-key, and UI play-family inputs must use shared chooser-first routing")
 if shared_route_tail.index("if MediaTransportCommandRules.isPlayFamily(command)") > shared_route_tail.index("routeFromCache("):
-    raise SystemExit("verify_playback_routing_invariants: physical media-key and UI play-family chooser routing must run before cache routing")
+    raise SystemExit("verify_playback_routing_invariants: Command Center, physical media-key, and UI play-family chooser routing must run before cache routing")
 PY
 
 grep -q 'noteGeneratedMediaKeyIgnored(command: command, metadata: metadata)' "$hotkeys" \
