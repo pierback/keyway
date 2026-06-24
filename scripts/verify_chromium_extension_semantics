@@ -1025,10 +1025,16 @@ expect(
 for forbidden in ["legacyChromiumFallbackTarget", '"chromium_extension_fallback"']:
     if forbidden in action_controller:
         raise SystemExit("verify_chromium_extension_semantics: Chromium extension failures must not retain legacy browser fallback hooks")
+overlay_view = repo_root.joinpath("SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTargetOverlayView.swift").read_text()
 expect(
-    repo_root.joinpath("SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTargetOverlayView.swift").read_text(),
+    overlay_view,
     "target.routeSourceLabel",
     "chooser rows must display route provenance for browser targets",
+)
+expect(
+    overlay_view,
+    ".focusable(false)",
+    "chooser row buttons must not draw the system blue focus ring; overlay selection is model-owned",
 )
 expect(
     repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),

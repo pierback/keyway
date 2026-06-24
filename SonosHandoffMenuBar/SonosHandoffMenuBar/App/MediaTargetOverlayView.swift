@@ -182,6 +182,7 @@ struct MediaTargetOverlayView: View {
             }
         }
         .buttonStyle(.plain)
+        .focusable(false)
         .accessibilityIdentifier("mediaTargetOverlay.target.\(target.id)")
     }
 
