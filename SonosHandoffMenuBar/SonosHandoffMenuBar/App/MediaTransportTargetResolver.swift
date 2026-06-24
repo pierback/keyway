@@ -39,6 +39,17 @@ struct MediaTransportTargetResolver {
         return nil
     }
 
+    func targetedInputTarget(
+        targetUnixProcessID: Int64,
+        from targets: [MediaRemoteTarget]
+    ) -> MediaRemoteTarget? {
+        guard targetUnixProcessID > 0 else {
+            return nil
+        }
+
+        return target(forProcessID: pid_t(targetUnixProcessID), in: targets)
+    }
+
     private func preferredChromiumExtensionTarget(command: MediaRemoteTransportCommand, from targets: [MediaRemoteTarget]) -> MediaRemoteTarget? {
         let extensionTargets = targets.filter {
             ChromiumBrowserExtensionTransport.supports(command: command, target: $0)
