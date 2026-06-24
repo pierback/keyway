@@ -272,7 +272,7 @@ struct SettingsFeature: View {
                 Text("Presence-gated Play/Pause")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.primary.opacity(0.9))
-                Text("Uses one camera frame after Play/Pause; no detected face opens the Media Target Chooser.")
+                Text("Uses one camera frame after Play/Pause; a detected face opens the Media Target Chooser.")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(2)

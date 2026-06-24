@@ -52,16 +52,53 @@ grep -q 'source == .eventTap || source == .commandCenter' "$controller" \
 grep -q 'mediaPresenceSettings.playPauseGateEnabled' "$controller" \
   || fail "presence gate must be opt-in from settings"
 grep -q 'case .human:' "$controller" \
-  || fail "human detection must preserve the direct routing path"
-grep -q 'routePlayFamilyWithoutChooser' "$controller" \
-  || fail "human detection must route the original command directly"
+  || fail "human detection must be explicit"
+grep -q 'showChooserImmediately' "$controller" \
+  || fail "human detection must open the chooser"
 grep -q 'case .noHuman, .unavailable:' "$controller" \
   || fail "no-human and unavailable results must be explicit"
-grep -q 'showChooserImmediately' "$controller" \
-  || fail "no-human/unavailable results must open the chooser"
+grep -q 'routePlayFamilyWithoutChooser' "$controller" \
+  || fail "no-human/unavailable results must route the original command directly"
+python3 - "$controller" <<'PY'
+import pathlib
+import re
+import sys
+
+controller = pathlib.Path(sys.argv[1]).read_text()
+match = re.search(
+    r"switch result \{(?P<body>.*?)\n\s*\}\n\s*\}\n\s*\}",
+    controller,
+    re.S,
+)
+if match is None:
+    print("verify_presence_gate_semantics: missing presence result switch", file=sys.stderr)
+    raise SystemExit(1)
+body = match.group("body")
+human = re.search(r"case \.human:(?P<body>.*?)(?=\n\s*case )", body, re.S)
+no_human = re.search(r"case \.noHuman, \.unavailable:(?P<body>.*)", body, re.S)
+if human is None or no_human is None:
+    print("verify_presence_gate_semantics: presence result cases are incomplete", file=sys.stderr)
+    raise SystemExit(1)
+if "showChooserImmediately" not in human.group("body"):
+    print("verify_presence_gate_semantics: human detection must open the chooser", file=sys.stderr)
+    raise SystemExit(1)
+if "routePlayFamilyWithoutChooser" in human.group("body"):
+    print("verify_presence_gate_semantics: human detection must not route directly", file=sys.stderr)
+    raise SystemExit(1)
+if "routePlayFamilyWithoutChooser" not in no_human.group("body"):
+    print("verify_presence_gate_semantics: no-human/unavailable must route directly", file=sys.stderr)
+    raise SystemExit(1)
+if "showChooserImmediately" in no_human.group("body"):
+    print("verify_presence_gate_semantics: no-human/unavailable must not open the chooser", file=sys.stderr)
+    raise SystemExit(1)
+PY
 
 grep -q 'Presence-gated Play/Pause' "$settings" \
   || fail "settings UI must expose the presence gate"
+grep -q 'a detected face opens the Media Target Chooser' "$settings" \
+  || fail "settings UI must describe the presence-gated chooser rule"
+! grep -q 'no detected face opens the Media Target Chooser' "$settings" \
+  || fail "settings UI must not describe the old inverted chooser rule"
 grep -q 'mediaPresenceSettings.setPlayPauseGateEnabled' "$settings" \
   || fail "settings UI must toggle the persisted setting"
 grep -q 'AVCaptureDevice.authorizationStatus(for: .video)' "$settings" \

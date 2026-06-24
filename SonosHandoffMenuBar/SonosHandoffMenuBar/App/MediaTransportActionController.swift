@@ -273,14 +273,14 @@ final class MediaTransportActionController {
 
             switch result {
             case .human:
-                self.routePlayFamilyWithoutChooser(
+                self.showChooserImmediately(
                     command: command,
                     source: source,
                     metadata: metadata,
                     commandCenterMetadata: commandCenterMetadata
                 )
             case .noHuman, .unavailable:
-                self.showChooserImmediately(
+                self.routePlayFamilyWithoutChooser(
                     command: command,
                     source: source,
                     metadata: metadata,
