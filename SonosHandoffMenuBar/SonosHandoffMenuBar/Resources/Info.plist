@@ -26,6 +26,8 @@
     <true/>
     <key>NSAppleEventsUsageDescription</key>
     <string>Keyway sends playback commands to selected media apps after you choose them.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>Keyway can inspect one camera frame after Play/Pause when presence-gated routing is enabled.</string>
     <key>NSUserNotificationAlertStyle</key>
     <string>banner</string>
     <key>NSPrincipalClass</key>

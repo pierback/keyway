@@ -12,6 +12,7 @@ final class MediaTransportActionController {
     private static let chooserTargetedMediaKeyEchoWindow: TimeInterval = 1.25
     private static let programmaticDispatchFallbackDelayNanoseconds: UInt64 = 250_000_000
     private static let selectedRowDispatchRouteShieldReleaseDelayNanoseconds: UInt64 = 180_000_000
+    private static let presenceGateDuplicateWindow: TimeInterval = 1.25
 
     private let logger = Logger(subsystem: AppIdentity.loggerSubsystem, category: "MediaTransport")
     private let mediaRemoteController: MediaRemoteController
@@ -22,11 +23,15 @@ final class MediaTransportActionController {
     private let chromiumBrowserExtensionController: ChromiumBrowserExtensionController
     private let sourceFocusActionController: SourceFocusActionController
     private let targetSelectionMemory: MediaTargetSelectionMemory
+    private let mediaPresenceSettings: MediaPresenceGateSettings
+    private let mediaPresenceProbe: any MediaPresenceDetecting
     private let traceRecorder = MediaTransportTraceRecorder()
     private let chooserSession = MediaChooserSessionGuard()
     private let targetResolver = MediaTransportTargetResolver()
     var relaxRouteShield: ((String) -> Void)?
     private var programmaticDispatches: [UUID: MediaTransportPendingDispatchEcho] = [:]
+    private var presenceGateInFlight = false
+    private var lastPresenceGateAcceptedAt: TimeInterval = 0
 
     init(
         mediaRemoteController: MediaRemoteController,
@@ -34,7 +39,9 @@ final class MediaTransportActionController {
         spotifyPlaybackController: any SpotifyActivePlaybackObserving,
         chromiumBrowserExtensionController: ChromiumBrowserExtensionController = ChromiumBrowserExtensionController(),
         sourceFocusActionController: SourceFocusActionController,
-        targetSelectionMemory: MediaTargetSelectionMemory
+        targetSelectionMemory: MediaTargetSelectionMemory,
+        mediaPresenceSettings: MediaPresenceGateSettings = MediaPresenceGateSettings(),
+        mediaPresenceProbe: any MediaPresenceDetecting = MediaPresenceProbe()
     ) {
         self.mediaRemoteController = mediaRemoteController
         self.overlayController = overlayController
@@ -42,6 +49,8 @@ final class MediaTransportActionController {
         self.chromiumBrowserExtensionController = chromiumBrowserExtensionController
         self.sourceFocusActionController = sourceFocusActionController
         self.targetSelectionMemory = targetSelectionMemory
+        self.mediaPresenceSettings = mediaPresenceSettings
+        self.mediaPresenceProbe = mediaPresenceProbe
         self.commandCenterFilter = MediaTransportCommandCenterFilter(
             mediaKeyShadowInterval: Self.commandCenterMediaKeyShadowInterval,
             commandCenterInputShadowInterval: Self.commandCenterInputShadowInterval,
@@ -118,6 +127,15 @@ final class MediaTransportActionController {
                 return
             }
             commandCenterFilter.noteCommandCenterInput(command: command, metadata: commandCenterMetadata)
+            if shouldGatePlayPauseByPresence(command: command, source: source) {
+                routePlayPauseAfterPresenceGate(
+                    command: command,
+                    source: source,
+                    metadata: metadata,
+                    commandCenterMetadata: commandCenterMetadata
+                )
+                return
+            }
             if MediaTransportCommandRules.isPlayFamily(command) {
                 routePlayFamilyWithoutChooser(
                     command: command,
@@ -129,6 +147,16 @@ final class MediaTransportActionController {
             }
         case .userInterface:
             break
+        }
+
+        if shouldGatePlayPauseByPresence(command: command, source: source) {
+            routePlayPauseAfterPresenceGate(
+                command: command,
+                source: source,
+                metadata: metadata,
+                commandCenterMetadata: commandCenterMetadata
+            )
+            return
         }
 
         if MediaTransportCommandRules.isPlayFamily(command) {
@@ -187,6 +215,79 @@ final class MediaTransportActionController {
             return false
         }
         return !metadata.isUntargetedPhysicalHIDSystemSource
+    }
+
+    private func shouldGatePlayPauseByPresence(
+        command: MediaRemoteTransportCommand,
+        source: MediaTransportRouteSource
+    ) -> Bool {
+        mediaPresenceSettings.playPauseGateEnabled
+            && command == .playPause
+            && (source == .eventTap || source == .commandCenter)
+    }
+
+    private func routePlayPauseAfterPresenceGate(
+        command: MediaRemoteTransportCommand,
+        source: MediaTransportRouteSource,
+        metadata: MediaTransportInputMetadata?,
+        commandCenterMetadata: MediaCommandCenterInputMetadata?
+    ) {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard !presenceGateInFlight,
+              now - lastPresenceGateAcceptedAt >= Self.presenceGateDuplicateWindow
+        else {
+            logger.info("MediaTransport presence_gate_duplicate_ignored command=\(command.rawValue, privacy: .public) source=\(source.rawValue, privacy: .public)")
+            trace(
+                "presence_gate_duplicate_ignored",
+                command: command,
+                source: source,
+                metadata: metadata,
+                commandCenterMetadata: commandCenterMetadata
+            )
+            return
+        }
+
+        presenceGateInFlight = true
+        lastPresenceGateAcceptedAt = now
+        logger.info("MediaTransport presence_gate_started command=\(command.rawValue, privacy: .public) source=\(source.rawValue, privacy: .public)")
+        trace(
+            "presence_gate_started",
+            command: command,
+            source: source,
+            metadata: metadata,
+            commandCenterMetadata: commandCenterMetadata
+        )
+
+        Task { @MainActor [weak self, mediaPresenceProbe] in
+            guard let self else { return }
+            let result = await mediaPresenceProbe.detectPresence()
+            self.presenceGateInFlight = false
+            self.logger.info("MediaTransport presence_gate_result command=\(command.rawValue, privacy: .public) source=\(source.rawValue, privacy: .public) result=\(result.rawValue, privacy: .public)")
+            self.trace(
+                "presence_gate_result_\(result.rawValue)",
+                command: command,
+                source: source,
+                metadata: metadata,
+                commandCenterMetadata: commandCenterMetadata
+            )
+
+            switch result {
+            case .human:
+                self.routePlayFamilyWithoutChooser(
+                    command: command,
+                    source: source,
+                    metadata: metadata,
+                    commandCenterMetadata: commandCenterMetadata
+                )
+            case .noHuman, .unavailable:
+                self.showChooserImmediately(
+                    command: command,
+                    source: source,
+                    metadata: metadata,
+                    commandCenterMetadata: commandCenterMetadata
+                )
+            }
+        }
     }
 
     func showChooser(command: MediaRemoteTransportCommand = .playPause) {

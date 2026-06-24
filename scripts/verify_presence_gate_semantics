@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+app_dir="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar"
+settings="$app_dir/Features/SettingsFeature.swift"
+controller="$app_dir/App/MediaTransportActionController.swift"
+gate_settings="$app_dir/App/MediaPresenceGateSettings.swift"
+probe="$app_dir/App/MediaPresenceProbe.swift"
+environment="$app_dir/Support/AppEnvironment.swift"
+app="$app_dir/App/SonosHandoffApp.swift"
+plist="$app_dir/Resources/Info.plist"
+project="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar.xcodeproj/project.pbxproj"
+
+fail() {
+  printf 'verify_presence_gate_semantics: %s\n' "$*" >&2
+  exit 1
+}
+
+for path in "$settings" "$controller" "$gate_settings" "$probe" "$environment" "$app" "$plist" "$project"; do
+  [[ -f "$path" ]] || fail "missing required file: $path"
+done
+
+grep -q 'playPauseGateEnabledKey = "mediaPresenceGate.playPauseEnabled"' "$gate_settings" \
+  || fail "presence gate setting must persist behind a stable UserDefaults key"
+grep -q '@Published private(set) var playPauseGateEnabled' "$gate_settings" \
+  || fail "presence gate setting must be observable but mutated through its setter"
+grep -q 'func setPlayPauseGateEnabled(_ enabled: Bool)' "$gate_settings" \
+  || fail "presence gate setting must have an explicit setter"
+
+grep -q 'AVCaptureDevice.requestAccess(for: .video)' "$probe" \
+  || fail "presence probe must request camera permission through AVFoundation"
+grep -q 'VNDetectFaceRectanglesRequest' "$probe" \
+  || fail "presence probe must use Vision face detection"
+grep -q 'capturePresence(timeoutNanoseconds:' "$probe" \
+  || fail "presence probe must capture a single bounded frame"
+grep -q 'private func classify(sampleBuffer: CMSampleBuffer)' "$probe" \
+  || fail "presence probe must classify the camera frame before crossing async boundaries"
+grep -q 'session.sessionPreset = .vga640x480' "$probe" \
+  || fail "presence probe should use a small camera frame"
+grep -q 'timeoutNanoseconds: UInt64 = 3_000_000_000' "$probe" \
+  || fail "presence probe must have a bounded timeout"
+
+grep -q 'presenceGateDuplicateWindow' "$controller" \
+  || fail "media routing must coalesce duplicate media-key events"
+grep -q 'private func shouldGatePlayPauseByPresence' "$controller" \
+  || fail "media routing must centralize the presence-gate predicate"
+grep -q 'command == .playPause' "$controller" \
+  || fail "presence gate must only apply to play/pause"
+grep -q 'source == .eventTap || source == .commandCenter' "$controller" \
+  || fail "presence gate must only apply to media-key/command-center sources"
+grep -q 'mediaPresenceSettings.playPauseGateEnabled' "$controller" \
+  || fail "presence gate must be opt-in from settings"
+grep -q 'case .human:' "$controller" \
+  || fail "human detection must preserve the direct routing path"
+grep -q 'routePlayFamilyWithoutChooser' "$controller" \
+  || fail "human detection must route the original command directly"
+grep -q 'case .noHuman, .unavailable:' "$controller" \
+  || fail "no-human and unavailable results must be explicit"
+grep -q 'showChooserImmediately' "$controller" \
+  || fail "no-human/unavailable results must open the chooser"
+
+grep -q 'Presence-gated Play/Pause' "$settings" \
+  || fail "settings UI must expose the presence gate"
+grep -q 'mediaPresenceSettings.setPlayPauseGateEnabled' "$settings" \
+  || fail "settings UI must toggle the persisted setting"
+grep -q 'AVCaptureDevice.authorizationStatus(for: .video)' "$settings" \
+  || fail "settings UI must report camera permission state"
+grep -q 'AVCaptureDevice.requestAccess(for: .video)' "$settings" \
+  || fail "settings UI must be able to request camera permission"
+
+grep -q 'mediaPresenceSettings: mediaPresenceSettings' "$environment" \
+  || fail "app environment must share one presence setting instance"
+grep -q 'mediaPresenceProbe: mediaPresenceProbe' "$environment" \
+  || fail "app environment must own the app-layer probe"
+grep -q 'mediaPresenceSettings: environment.mediaPresenceSettings' "$app" \
+  || fail "settings window must receive the shared presence setting instance"
+
+grep -q 'NSCameraUsageDescription' "$plist" \
+  || fail "Info.plist must declare camera usage"
+grep -q 'MediaPresenceGateSettings.swift' "$project" \
+  || fail "Xcode project must include MediaPresenceGateSettings.swift"
+grep -q 'MediaPresenceProbe.swift' "$project" \
+  || fail "Xcode project must include MediaPresenceProbe.swift"
+
+printf 'verify_presence_gate_semantics=ok\n'

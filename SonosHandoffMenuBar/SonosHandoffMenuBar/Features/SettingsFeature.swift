@@ -1,4 +1,5 @@
 import AppKit
+@preconcurrency import AVFoundation
 import os
 import SonosHandoffCore
 import SwiftUI
@@ -13,6 +14,7 @@ struct SettingsFeature: View {
         .joined(separator: "\n")
     private static let panelCornerRadius: CGFloat = 12
     private let accessibilitySettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
+    private let cameraSettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera")!
     private let notificationSettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.notifications")!
     private let chromiumExtensionsURL = URL(string: "chrome://extensions")!
     private let heliumBundleIdentifier = "net.imput.helium"
@@ -26,6 +28,7 @@ struct SettingsFeature: View {
     private let chromiumNativeMessagingHostInstaller: ChromiumNativeMessagingHostInstaller
     @ObservedObject private var mediaRemoteController: MediaRemoteController
     @ObservedObject private var chromiumBrowserExtensionController: ChromiumBrowserExtensionController
+    @ObservedObject private var mediaPresenceSettings: MediaPresenceGateSettings
 
     @State private var spotifyClientID = ""
     @State private var isSpotifyAuthenticated = false
@@ -45,6 +48,8 @@ struct SettingsFeature: View {
     @State private var isRequestingNotifications = false
     @State private var notificationSettingsFallbackAvailable = false
     @State private var notificationMessage: String?
+    @State private var cameraAuthorizationStatus: AVAuthorizationStatus = .notDetermined
+    @State private var isRequestingCameraPermission = false
     @State private var configImportReport: ConfigImportReport?
     @State private var chromiumBridgeMessage: String?
 
@@ -58,7 +63,8 @@ struct SettingsFeature: View {
         chromiumNativeMessagingHostInstaller: ChromiumNativeMessagingHostInstaller = ChromiumNativeMessagingHostInstaller(),
         initialConfigImportReport: ConfigImportReport? = nil,
         mediaRemoteController: MediaRemoteController = MediaRemoteController(),
-        chromiumBrowserExtensionController: ChromiumBrowserExtensionController = ChromiumBrowserExtensionController()
+        chromiumBrowserExtensionController: ChromiumBrowserExtensionController = ChromiumBrowserExtensionController(),
+        mediaPresenceSettings: MediaPresenceGateSettings = MediaPresenceGateSettings()
     ) {
         self.configStore = configStore
         self.tokenStore = tokenStore
@@ -74,6 +80,7 @@ struct SettingsFeature: View {
         _configImportReport = State(initialValue: initialConfigImportReport)
         _mediaRemoteController = ObservedObject(wrappedValue: mediaRemoteController)
         _chromiumBrowserExtensionController = ObservedObject(wrappedValue: chromiumBrowserExtensionController)
+        _mediaPresenceSettings = ObservedObject(wrappedValue: mediaPresenceSettings)
     }
 
     @State private var selectedSection: String = "General"
@@ -249,9 +256,40 @@ struct SettingsFeature: View {
                 }
                 .controlSize(.small)
             }
+            Divider()
+                .opacity(0.45)
+            presenceGateSettingsRow
             Text("Routing policy: Focused Target, Pinned Target, Recent Target, chooser.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    private var presenceGateSettingsRow: some View {
+        HStack(alignment: .center, spacing: 10) {
+            StatusDot(available: mediaPresenceSettings.playPauseGateEnabled && cameraAuthorizationAllowsCapture, size: 7)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Presence-gated Play/Pause")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.primary.opacity(0.9))
+                Text("Uses one camera frame after Play/Pause; no detected face opens the Media Target Chooser.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            .layoutPriority(1)
+            Spacer()
+            Toggle(
+                "Enabled",
+                isOn: Binding(
+                    get: { mediaPresenceSettings.playPauseGateEnabled },
+                    set: { enabled in
+                        setPresenceGateEnabled(enabled)
+                    }
+                )
+            )
+            .toggleStyle(.switch)
+            .controlSize(.small)
         }
     }
 
@@ -470,6 +508,43 @@ struct SettingsFeature: View {
                         NSWorkspace.shared.open(accessibilitySettingsURL)
                     }
                     .controlSize(.small)
+                }
+
+                HStack(alignment: .center, spacing: 10) {
+                    StatusBadge(
+                        title: cameraPermissionBadgeTitle,
+                        available: cameraAuthorizationAllowsCapture
+                    )
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Camera")
+                            .font(.system(size: 13, weight: .medium))
+                        Text(cameraPermissionDetailText)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                    .layoutPriority(1)
+
+                    Spacer()
+
+                    Button("Refresh") {
+                        refreshCameraState()
+                    }
+                    .controlSize(.small)
+                    .disabled(isRequestingCameraPermission)
+
+                    if cameraAuthorizationStatus == .notDetermined {
+                        Button(isRequestingCameraPermission ? "Enabling..." : "Enable") {
+                            requestCameraPermission()
+                        }
+                        .controlSize(.small)
+                        .disabled(isRequestingCameraPermission)
+                    } else if !cameraAuthorizationAllowsCapture {
+                        Button("Open Settings") {
+                            NSWorkspace.shared.open(cameraSettingsURL)
+                        }
+                        .controlSize(.small)
+                    }
                 }
 
                 HStack(alignment: .center, spacing: 10) {
@@ -728,6 +803,36 @@ struct SettingsFeature: View {
         notificationPermissionViewState == .enabled
     }
 
+    private var cameraAuthorizationAllowsCapture: Bool {
+        cameraAuthorizationStatus == .authorized
+    }
+
+    private var cameraPermissionBadgeTitle: String {
+        switch cameraAuthorizationStatus {
+        case .authorized:
+            return "Enabled"
+        case .notDetermined:
+            return "Not Asked"
+        case .denied, .restricted:
+            return "Required"
+        @unknown default:
+            return "Unknown"
+        }
+    }
+
+    private var cameraPermissionDetailText: String {
+        switch cameraAuthorizationStatus {
+        case .authorized:
+            return "Presence-gated Play/Pause can inspect one camera frame after a press."
+        case .notDetermined:
+            return "Enable camera access before using presence-gated Play/Pause."
+        case .denied, .restricted:
+            return "Enable Camera for Keyway in System Settings."
+        @unknown default:
+            return "Camera permission is unavailable."
+        }
+    }
+
     private var notificationBadgeTitle: String {
         switch notificationPermissionViewState {
         case .checking:
@@ -809,6 +914,7 @@ struct SettingsFeature: View {
 
     private func reloadState() async {
         refreshAccessibilityState()
+        refreshCameraState()
         refreshNotificationState()
         await reloadSpotifyAuthState()
 
@@ -872,6 +978,28 @@ struct SettingsFeature: View {
     private func refreshShortcutState() {
         refreshAccessibilityState()
         NotificationCenter.default.post(name: .sonosHandoffRefreshHotkeys, object: nil)
+    }
+
+    private func refreshCameraState() {
+        cameraAuthorizationStatus = AVCaptureDevice.authorizationStatus(for: .video)
+    }
+
+    private func setPresenceGateEnabled(_ enabled: Bool) {
+        mediaPresenceSettings.setPlayPauseGateEnabled(enabled)
+        refreshCameraState()
+        if enabled, cameraAuthorizationStatus == .notDetermined {
+            requestCameraPermission()
+        }
+    }
+
+    private func requestCameraPermission() {
+        isRequestingCameraPermission = true
+        AVCaptureDevice.requestAccess(for: .video) { _ in
+            Task { @MainActor in
+                isRequestingCameraPermission = false
+                refreshCameraState()
+            }
+        }
     }
 
     private func refreshNotificationState() {
