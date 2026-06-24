@@ -351,7 +351,7 @@ final class PlaybackBackgroundSync {
         }
         pendingHeadphoneConnectionOutputID = nil
 
-        guard try await spotifyComputerPlaybackDeviceIsAvailable() else {
+        guard let spotifyDeviceName = try await localSpotifyComputerPlaybackDeviceName() else {
             headphoneTransferSuggestionPresenter.clearAll()
             logger.info("SonosHandoffHeadphoneTransferSuggestion state=unavailable reason=no_spotify_computer_device output=\(output.name, privacy: .public)")
             return
@@ -362,15 +362,49 @@ final class PlaybackBackgroundSync {
             activeRoomName: activeRoomName
         )
         if headphoneTransferSuggestionPresenter.presentIfNeeded(suggestion) {
-            logger.info("SonosHandoffHeadphoneTransferSuggestion state=prompted output=\(output.name, privacy: .public) spotifyDeviceType=Computer room=\(activeRoomName, privacy: .public)")
+            logger.info("SonosHandoffHeadphoneTransferSuggestion state=prompted output=\(output.name, privacy: .public) spotifyDeviceName=\(spotifyDeviceName, privacy: .public) room=\(activeRoomName, privacy: .public)")
         }
     }
 
-    private func spotifyComputerPlaybackDeviceIsAvailable() async throws -> Bool {
-        let devices = try await environment.activePlaybackObserver.availablePlaybackDevices()
-        return devices.contains {
-            !$0.isRestricted && $0.type.caseInsensitiveCompare("Computer") == .orderedSame
+    private func localSpotifyComputerPlaybackDeviceName() async throws -> String? {
+        let localNames = Self.localSpotifyComputerDeviceNames()
+        guard !localNames.isEmpty else {
+            return nil
         }
+
+        let devices = try await environment.activePlaybackObserver.availablePlaybackDevices()
+        return devices.first { device in
+            !device.isRestricted
+                && device.type.caseInsensitiveCompare("Computer") == .orderedSame
+                && localNames.contains { Self.normalizedSpotifyDeviceName($0) == Self.normalizedSpotifyDeviceName(device.name) }
+        }?.name
+    }
+
+    private static func localSpotifyComputerDeviceNames() -> [String] {
+        let host = Host.current()
+        let hostName = ProcessInfo.processInfo.hostName
+        let rawCandidates = [
+            host.localizedName,
+            host.name,
+            hostName,
+            hostName.split(separator: ".").first.map(String.init),
+        ]
+        var seenNames = Set<String>()
+        return rawCandidates.compactMap { candidate in
+            guard let name = candidate?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty else {
+                return nil
+            }
+            guard seenNames.insert(normalizedSpotifyDeviceName(name)).inserted else {
+                return nil
+            }
+            return name
+        }
+    }
+
+    private static func normalizedSpotifyDeviceName(_ name: String) -> String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil)
+            .lowercased()
     }
 
     private func cachedTransferSuggestionBaselineSpeakerIDs() async -> Set<String>? {
@@ -620,21 +654,27 @@ final class PlaybackBackgroundSync {
 
         headphoneTransferSuggestionPresenter.suppress(id: suggestion.id)
         do {
+            guard let deviceName = try await localSpotifyComputerPlaybackDeviceName() else {
+                let message = headphoneTransferFailureMessage(suggestion: suggestion)
+                headphoneTransferSuggestionPresenter.deliverFailure(suggestion, message: message)
+                logger.error("SonosHandoffHeadphoneTransferSuggestion result=notification_failure output=\(suggestion.outputName, privacy: .public) reason=local_spotify_computer_unavailable")
+                return
+            }
             try await environment.activePlaybackObserver.transferActivePlayback(
-                deviceName: nil,
+                deviceName: deviceName,
                 deviceType: "Computer",
                 play: true
             )
             clearSelection(reason: "spotify_transferred_to_mac")
             NotificationCenter.default.post(name: .sonosHandoffRefreshOutputs, object: nil)
-            logger.info("SonosHandoffHeadphoneTransferSuggestion result=notification_accepted output=\(suggestion.outputName, privacy: .public) spotifyDeviceType=Computer")
+            logger.info("SonosHandoffHeadphoneTransferSuggestion result=notification_accepted output=\(suggestion.outputName, privacy: .public) spotifyDeviceName=\(deviceName, privacy: .public)")
         } catch {
             let message = headphoneTransferFailureMessage(suggestion: suggestion)
             headphoneTransferSuggestionPresenter.deliverFailure(suggestion, message: message)
             if SpotifyAuthRecovery.isAuthRequired(error) {
                 showAuthPromptIfNeeded(error)
             }
-            logger.error("SonosHandoffHeadphoneTransferSuggestion result=notification_failure output=\(suggestion.outputName, privacy: .public) spotifyDeviceType=Computer error=\(error.localizedDescription, privacy: .public)")
+            logger.error("SonosHandoffHeadphoneTransferSuggestion result=notification_failure output=\(suggestion.outputName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
         }
     }
 

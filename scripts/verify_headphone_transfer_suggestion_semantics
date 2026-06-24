@@ -37,9 +37,9 @@ expect_contains "$monitor" "@Published private(set) var output: MacAudioOutputDe
 expect_contains "$monitor" "kAudioHardwarePropertyDefaultOutputDevice"
 expect_contains "$monitor" "AudioObjectAddPropertyListenerBlock"
 expect_contains "$monitor" "kAudioDevicePropertyTransportType"
-expect_contains "$monitor" "isHeadphoneOutput(name: name, transportType: transportType)"
-expect_contains "$monitor" "kAudioDeviceTransportTypeBluetooth?"
-expect_contains "$monitor" "kAudioDeviceTransportTypeBluetoothLE?"
+expect_contains "$monitor" "isHeadphoneOutput(name: name)"
+expect_absent "$monitor" "kAudioDeviceTransportTypeBluetooth?"
+expect_absent "$monitor" "kAudioDeviceTransportTypeBluetoothLE?"
 expect_contains "$monitor" "airpods"
 expect_contains "$monitor" "headphone"
 
@@ -82,12 +82,17 @@ expect_contains "$sync" "guard output.isHeadphones else"
 expect_contains "$sync" "guard pendingHeadphoneConnectionOutputID == output.id else"
 expect_contains "$sync" "pendingHeadphoneConnectionOutputID = nil"
 expect_contains "$sync" "environment.activePlaybackObserver.availablePlaybackDevices()"
-expect_contains "$sync" '$0.type.caseInsensitiveCompare("Computer") == .orderedSame'
-expect_contains "$sync" "private func spotifyComputerPlaybackDeviceIsAvailable() async throws -> Bool"
+expect_contains "$sync" 'device.type.caseInsensitiveCompare("Computer") == .orderedSame'
+expect_contains "$sync" "private func localSpotifyComputerPlaybackDeviceName() async throws -> String?"
+expect_contains "$sync" "private static func localSpotifyComputerDeviceNames() -> [String]"
+expect_contains "$sync" "Host.current()"
+expect_contains "$sync" "ProcessInfo.processInfo.hostName"
+expect_contains "$sync" "normalizedSpotifyDeviceName"
 expect_contains "$sync" "HeadphoneTransferSuggestion("
 expect_contains "$sync" "headphoneTransferSuggestionPresenter.presentIfNeeded(suggestion)"
 expect_contains "$sync" "environment.activePlaybackObserver.transferActivePlayback("
-expect_contains "$sync" "deviceName: nil"
+expect_contains "$sync" "guard let deviceName = try await localSpotifyComputerPlaybackDeviceName() else"
+expect_contains "$sync" "deviceName: deviceName"
 expect_contains "$sync" 'deviceType: "Computer"'
 expect_contains "$sync" "play: true"
 expect_contains "$sync" 'clearSelection(reason: "spotify_transferred_to_mac")'

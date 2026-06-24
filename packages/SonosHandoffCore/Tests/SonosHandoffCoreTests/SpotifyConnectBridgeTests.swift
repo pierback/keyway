@@ -432,6 +432,46 @@ struct SpotifyConnectBridgeTests {
     }
 
     @Test
+    func playbackTransferRejectsAmbiguousComputerTypeOnlyTarget() async throws {
+        let applicationSupportDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sonos-handoff-bridge-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: applicationSupportDirectory)
+            SpotifyBridgeURLProtocol.reset()
+        }
+
+        try FileManager.default.createDirectory(at: applicationSupportDirectory, withIntermediateDirectories: true)
+        let tokenStore = ProjectWebAPITokenStore(applicationSupportDirectory: applicationSupportDirectory)
+        try tokenStore.save(ProjectWebAPIToken(
+            accessToken: "cached-access-token",
+            refreshToken: "refresh-token",
+            clientID: "client-id",
+            expiresAt: Int(Date().timeIntervalSince1970) + 3600
+        ))
+        SpotifyBridgeURLProtocol.setDevicesResponses([
+            .success(body: #"{"devices":[{"id":"this-mac-id","is_active":false,"is_restricted":false,"name":"This Mac","type":"Computer"},{"id":"other-mac-id","is_active":false,"is_restricted":false,"name":"Studio Mac","type":"Computer"}]}"#),
+        ])
+
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [SpotifyBridgeURLProtocol.self]
+        let bridge = SpotifyConnectBridge(
+            loginID: nil,
+            appSupport: applicationSupportDirectory,
+            urlSession: URLSession(configuration: sessionConfiguration)
+        )
+
+        do {
+            try await bridge.transferPlayback(deviceName: nil, deviceType: "Computer", play: true)
+            Issue.record("Expected ambiguous Spotify computer transfer to fail.")
+        } catch let error as ConnectHandoffError {
+            #expect(error.message.contains("multiple unrestricted Computer playback devices"))
+        }
+
+        let requests = SpotifyBridgeURLProtocol.recordedRequests()
+        #expect(!requests.contains { $0.url.path == "/v1/me/player" && $0.method == "PUT" })
+    }
+
+    @Test
     func playbackStartFailsWhenNoUnrestrictedDeviceMatches() async throws {
         let applicationSupportDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("sonos-handoff-bridge-\(UUID().uuidString)", isDirectory: true)

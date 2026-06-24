@@ -159,7 +159,8 @@ struct SpotifyConnectBridge: Sendable {
         let deviceID = try await playbackTargetDeviceID(
             accessToken: accessToken,
             deviceName: deviceName,
-            deviceType: deviceType
+            deviceType: deviceType,
+            rejectAmbiguousTypeOnlyTarget: false
         )
         try await startPlayback(spotifyURI: spotifyURI, deviceID: deviceID, accessToken: accessToken)
     }
@@ -169,7 +170,8 @@ struct SpotifyConnectBridge: Sendable {
         let deviceID = try await playbackTargetDeviceID(
             accessToken: accessToken,
             deviceName: deviceName,
-            deviceType: deviceType
+            deviceType: deviceType,
+            rejectAmbiguousTypeOnlyTarget: true
         )
         guard let deviceID else {
             throw ConnectHandoffError(.transferVerificationFailed, "Spotify transfer requires a playback device.")
@@ -319,7 +321,12 @@ struct SpotifyConnectBridge: Sendable {
         }
     }
 
-    private func playbackTargetDeviceID(accessToken: String, deviceName: String?, deviceType: String?) async throws -> String? {
+    private func playbackTargetDeviceID(
+        accessToken: String,
+        deviceName: String?,
+        deviceType: String?,
+        rejectAmbiguousTypeOnlyTarget: Bool
+    ) async throws -> String? {
         guard deviceName != nil || deviceType != nil else {
             return nil
         }
@@ -339,8 +346,16 @@ struct SpotifyConnectBridge: Sendable {
             return id
         }
 
-        guard let deviceID = matchingTypeDevices.first(where: { $0.isActive && !$0.isRestricted && $0.id != nil })?.id
-            ?? matchingTypeDevices.first(where: { !$0.isRestricted && $0.id != nil })?.id
+        let unrestrictedDevices = matchingTypeDevices.filter { !$0.isRestricted && $0.id != nil }
+        if rejectAmbiguousTypeOnlyTarget, unrestrictedDevices.count > 1 {
+            if let deviceType {
+                throw ConnectHandoffError(.transferVerificationFailed, "Spotify exposes multiple unrestricted \(deviceType) playback devices; choose one by name.")
+            }
+            throw ConnectHandoffError(.transferVerificationFailed, "Spotify exposes multiple unrestricted playback devices; choose one by name.")
+        }
+
+        guard let deviceID = unrestrictedDevices.first(where: \.isActive)?.id
+            ?? unrestrictedDevices.first?.id
         else {
             if let deviceType {
                 throw ConnectHandoffError(.transferVerificationFailed, "Spotify exposes no unrestricted \(deviceType) playback device for priming.")

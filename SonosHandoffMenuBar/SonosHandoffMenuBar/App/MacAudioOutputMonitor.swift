@@ -61,7 +61,7 @@ final class MacAudioOutputMonitor: ObservableObject {
             id: UInt32(deviceID),
             name: name,
             transportType: transportType,
-            isHeadphones: Self.isHeadphoneOutput(name: name, transportType: transportType)
+            isHeadphones: Self.isHeadphoneOutput(name: name)
         )
 
         guard output != nextOutput else {
@@ -148,7 +148,7 @@ final class MacAudioOutputMonitor: ObservableObject {
         return transportType
     }
 
-    private static func isHeadphoneOutput(name: String, transportType: UInt32?) -> Bool {
+    private static func isHeadphoneOutput(name: String) -> Bool {
         let normalizedName = name
             .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil)
             .lowercased()
@@ -156,6 +156,7 @@ final class MacAudioOutputMonitor: ObservableObject {
             "headphone",
             "headset",
             "airpods",
+            "earphone",
             "earbuds",
             "buds",
             "beats",
@@ -170,14 +171,6 @@ final class MacAudioOutputMonitor: ObservableObject {
         let nameLooksLikeHeadphones = headphoneNameMarkers.contains {
             normalizedName.contains($0)
         }
-
-        switch transportType {
-        case kAudioDeviceTransportTypeBluetooth?, kAudioDeviceTransportTypeBluetoothLE?:
-            return true
-        case kAudioDeviceTransportTypeUSB?:
-            return nameLooksLikeHeadphones
-        default:
-            return nameLooksLikeHeadphones
-        }
+        return nameLooksLikeHeadphones
     }
 }
