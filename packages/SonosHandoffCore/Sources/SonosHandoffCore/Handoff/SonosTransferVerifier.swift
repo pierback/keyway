@@ -22,6 +22,14 @@ struct SonosTransferVerifierTiming: Equatable, Sendable {
         playbackPollDelayNanoseconds: 150_000_000
     )
 
+    static let connectOnly = SonosTransferVerifierTiming(
+        activationDelayNanoseconds: 250_000_000,
+        activationPollAttempts: 8,
+        activationPollDelayNanoseconds: 150_000_000,
+        playbackPollAttempts: 1,
+        playbackPollDelayNanoseconds: 0
+    )
+
     let activationDelayNanoseconds: UInt64
     let activationPollAttempts: Int
     let activationPollDelayNanoseconds: UInt64

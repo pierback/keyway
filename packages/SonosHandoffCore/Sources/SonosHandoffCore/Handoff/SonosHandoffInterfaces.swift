@@ -53,6 +53,7 @@ public protocol RoomHandoffPerforming: Sendable {
 public enum RoomHandoffVerificationMode: Equatable, Sendable {
     case full
     case coordinatorMigration
+    case connectOnly
 }
 
 public protocol SpotifyActivePlaybackObserving: Sendable {

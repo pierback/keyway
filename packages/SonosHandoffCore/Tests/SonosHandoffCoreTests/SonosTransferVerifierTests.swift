@@ -10,6 +10,11 @@ struct SonosTransferVerifierTests {
     }
 
     @Test
+    func connectOnlyTimingStaysUnderTwoSeconds() {
+        #expect(SonosTransferVerifierTiming.connectOnly.maximumScheduledDelayNanoseconds < 2_000_000_000)
+    }
+
+    @Test
     func acceptsSpotifyConnectMediaInfo() async throws {
         let router = TransferVerifierRouter()
         router.setResponses([

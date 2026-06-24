@@ -35,4 +35,16 @@ struct SpotifyConnectTransferReadinessPolicyTests {
             readiness: .spotifyConnectModeOnly
         ) == .acceptSonosReadiness)
     }
+
+    @Test
+    func connectOnlyAcceptsSonosReadinessWithoutActivePlaybackVerification() {
+        #expect(policy.action(
+            verification: .connectOnly,
+            readiness: .transportStarted
+        ) == .acceptSonosReadiness)
+        #expect(policy.action(
+            verification: .connectOnly,
+            readiness: .spotifyConnectModeOnly
+        ) == .acceptSonosReadiness)
+    }
 }

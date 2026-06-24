@@ -164,21 +164,33 @@ struct MenuBarMediaSourceSection: View {
     }
 
     private var emptyRow: some View {
-        HStack(spacing: 9) {
-            Image(systemName: "play.rectangle")
-                .font(.system(size: 16, weight: .regular))
-                .foregroundStyle(.white.opacity(0.38))
-                .frame(width: 26, height: 26)
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 9) {
+                Image(systemName: "play.rectangle")
+                    .font(.system(size: 16, weight: .regular))
+                    .foregroundStyle(.white.opacity(0.38))
+                    .frame(width: 26, height: 26)
 
-            VStack(alignment: .leading, spacing: 1) {
-                Text("No active media sources")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.82))
-                Text(mediaRemoteController.health.badgeTitle)
-                    .font(.system(size: 11, weight: .regular))
-                    .foregroundStyle(.white.opacity(0.48))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("No active media sources")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.82))
+                    Text(mediaRemoteController.health.badgeTitle)
+                        .font(.system(size: 11, weight: .regular))
+                        .foregroundStyle(.white.opacity(0.48))
+                }
+                Spacer(minLength: 0)
             }
-            Spacer(minLength: 0)
+
+            if !playback.outputRows.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(playback.outputRows) { row in
+                            idleSpotifyConnectButton(row)
+                        }
+                    }
+                }
+            }
         }
         .frame(minHeight: 34)
         .accessibilityIdentifier("source-row-empty")
@@ -298,7 +310,7 @@ struct MenuBarMediaSourceSection: View {
     }
 
     private func spotifyRouteButton(_ row: PlaybackOutputRow, source: MediaRemoteTarget) -> some View {
-        let selected = row.contains(roomName: playback.selectedRoomName)
+        let selected = playback.hasActiveSpotifyConnection(to: row)
         let loading = row.coordinator.roomName == playback.loadingRoomName
         let disabled = playback.loadingRoomName != nil
             || playback.groupLoadingRoomName != nil
@@ -330,6 +342,41 @@ struct MenuBarMediaSourceSection: View {
         .help("Send Spotify playback to \(row.displayName)")
         .accessibilityIdentifier("source-\(source.id)-route-spotify-to-\(row.coordinator.roomName)")
         .accessibilityLabel("Send Spotify to \(row.displayName)")
+    }
+
+    private func idleSpotifyConnectButton(_ row: PlaybackOutputRow) -> some View {
+        let selected = playback.hasActiveSpotifyConnection(to: row)
+        let loading = row.coordinator.roomName == playback.loadingRoomName
+        let disabled = playback.loadingRoomName != nil
+            || playback.groupLoadingRoomName != nil
+            || playback.volumeState.isBusy
+
+        return Button {
+            playback.connectSpotify(to: row)
+        } label: {
+            HStack(spacing: 4) {
+                if loading {
+                    ProgressView()
+                        .controlSize(.small)
+                        .scaleEffect(0.50)
+                } else {
+                    Image(systemName: selected ? "checkmark.circle.fill" : "hifispeaker")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                Text(selected ? "\(row.displayName) connected" : "Connect to \(row.displayName)")
+                    .lineLimit(1)
+            }
+            .font(.system(size: 10, weight: .semibold))
+            .padding(.horizontal, 7)
+            .frame(height: Self.routeButtonHeight)
+            .background(selected ? Self.accentColor.opacity(0.28) : .white.opacity(0.08), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.white.opacity(disabled ? 0.34 : 0.78))
+        .disabled(disabled)
+        .help("Connect Spotify to \(row.displayName)")
+        .accessibilityIdentifier("source-empty-connect-spotify-to-\(row.coordinator.roomName)")
+        .accessibilityLabel("Connect Spotify to \(row.displayName)")
     }
 
     private func supports(_ command: MediaRemoteTransportCommand, target: MediaRemoteTarget) -> Bool {

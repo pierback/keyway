@@ -31,6 +31,7 @@ expect_absent() {
 ast-grep --lang swift -p '@MainActor
 struct MenuBarMediaSourceSection: View { $$$ }' "$source_section" >/dev/null
 ast-grep --lang swift -p 'func transferSpotifyPlayback(source: MediaRemoteTarget, to row: PlaybackOutputRow) { $$$ }' "$playback_controller" >/dev/null
+ast-grep --lang swift -p 'func connectSpotify(to row: PlaybackOutputRow) { $$$ }' "$playback_controller" >/dev/null
 ast-grep --lang swift -p 'func focus(target: MediaRemoteTarget) { $$$ }' "$transport_controller" >/dev/null
 
 expect_contains "$status_controller" "MenuBarMediaSourceSection("
@@ -70,6 +71,10 @@ expect_contains "$source_section" ".animation(MenuBarMotion.rowUpdate, value: ta
 expect_absent "$source_section" ".animation(MenuBarMotion.rowUpdate, value: targets)"
 expect_contains "$source_section" "ForEach(displayTargets)"
 expect_contains "$source_section" 'Text("No active media sources")'
+expect_contains "$source_section" "idleSpotifyConnectButton(row)"
+expect_contains "$source_section" "playback.connectSpotify(to: row)"
+expect_contains "$source_section" 'Text(selected ? "\(row.displayName) connected" : "Connect to \(row.displayName)")'
+expect_contains "$source_section" 'accessibilityIdentifier("source-empty-connect-spotify-to-\(row.coordinator.roomName)")'
 expect_absent "$source_section" "if displayTargets.isEmpty, mediaRemoteController.isRefreshingSnapshot"
 expect_absent "$source_section" 'Text(mediaRemoteController.isRefreshingSnapshot ? "Refreshing..." : "No active media sources")'
 expect_contains "$source_section" "mediaTransportActions.route(command: command, to: target)"
@@ -77,6 +82,7 @@ expect_absent "$source_section" "mediaTransportActions.route(command: command)"
 expect_contains "$source_section" "mediaTransportActions.focus(target: target)"
 expect_contains "$source_section" "if target.isSpotify"
 expect_contains "$source_section" "playback.transferSpotifyPlayback(source: source, to: row)"
+expect_contains "$source_section" "playback.hasActiveSpotifyConnection(to: row)"
 expect_contains "$source_section" "ChromiumBrowserExtensionTransport.supports(command: command, target: target)"
 expect_contains "$source_section" "if target.isChromiumBrowserLike"
 expect_contains "$source_section" "return false"
@@ -86,6 +92,9 @@ expect_absent "$source_section" "Sonos routing not supported"
 
 expect_contains "$playback_controller" "func transferSpotifyPlayback(source: MediaRemoteTarget, to row: PlaybackOutputRow)"
 expect_contains "$playback_controller" "guard source.isSpotify, groupLoadingRoomName == nil else"
+expect_contains "$playback_controller" "func connectSpotify(to row: PlaybackOutputRow)"
+expect_contains "$playback_controller" "transfer(to: row.coordinator, verification: .connectOnly)"
+expect_contains "$playback_controller" "func hasActiveSpotifyConnection(to row: PlaybackOutputRow) -> Bool"
 expect_contains "$playback_controller" "func selectSpeaker(row: PlaybackOutputRow)"
 
 expect_contains "$output_section" "playback.selectSpeaker(row: row)"

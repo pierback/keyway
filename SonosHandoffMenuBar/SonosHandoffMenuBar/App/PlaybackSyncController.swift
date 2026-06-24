@@ -135,6 +135,13 @@ final class PlaybackSyncController: ObservableObject {
         objectWillChange.send()
     }
 
+    func hasActiveSpotifyConnection(to row: PlaybackOutputRow) -> Bool {
+        guard let activeSpotifyRoomName else {
+            return false
+        }
+        return row.contains(roomName: activeSpotifyRoomName)
+    }
+
     func setMemberVolumeFromSlider(rowID: String, locationX: CGFloat, width: CGFloat) {
         memberVolumeController.setMemberVolumeFromSlider(rowID: rowID, locationX: locationX, width: width)
         objectWillChange.send()
@@ -478,6 +485,13 @@ final class PlaybackSyncController: ObservableObject {
         transfer(to: row.coordinator)
     }
 
+    func connectSpotify(to row: PlaybackOutputRow) {
+        guard groupLoadingRoomName == nil else {
+            return
+        }
+        transfer(to: row.coordinator, verification: .connectOnly)
+    }
+
     func selectSpeaker(row: PlaybackOutputRow) {
         let roomName = row.coordinator.roomName
         selectRoomName(roomName)
@@ -533,7 +547,7 @@ final class PlaybackSyncController: ObservableObject {
         objectWillChange.send()
     }
 
-    private func transfer(to speaker: SonosSpeaker) {
+    private func transfer(to speaker: SonosSpeaker, verification: RoomHandoffVerificationMode = .full) {
         let roomName = speaker.roomName
         loadingRoomName = roomName
         menuMessage = nil
@@ -544,7 +558,7 @@ final class PlaybackSyncController: ObservableObject {
                 return
             }
 
-            let outcome = await transferActions.transfer(to: speaker)
+            let outcome = await transferActions.transfer(to: speaker, verification: verification)
             guard isCurrentTransferOperation(ticket) else {
                 return
             }

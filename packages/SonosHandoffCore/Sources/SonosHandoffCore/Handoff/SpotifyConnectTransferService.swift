@@ -7,6 +7,7 @@ final class SpotifyConnectTransferService: @unchecked Sendable {
     private let zeroconfClient: SonosSpotifyZeroconfClient
     private let transferVerifier: SonosTransferVerifier
     private let coordinatorMigrationTransferVerifier: SonosTransferVerifier
+    private let connectOnlyTransferVerifier: SonosTransferVerifier
     private let readinessPolicy = SpotifyConnectTransferReadinessPolicy()
 
     init(
@@ -15,7 +16,8 @@ final class SpotifyConnectTransferService: @unchecked Sendable {
         spotifyPlayback: SpotifyPlaybackService,
         zeroconfClient: SonosSpotifyZeroconfClient,
         transferVerifier: SonosTransferVerifier,
-        coordinatorMigrationTransferVerifier: SonosTransferVerifier
+        coordinatorMigrationTransferVerifier: SonosTransferVerifier,
+        connectOnlyTransferVerifier: SonosTransferVerifier
     ) {
         self.directory = directory
         self.spotifyBridge = spotifyBridge
@@ -23,6 +25,7 @@ final class SpotifyConnectTransferService: @unchecked Sendable {
         self.zeroconfClient = zeroconfClient
         self.transferVerifier = transferVerifier
         self.coordinatorMigrationTransferVerifier = coordinatorMigrationTransferVerifier
+        self.connectOnlyTransferVerifier = connectOnlyTransferVerifier
     }
 
     func transferToRoom(named roomName: String, verification: RoomHandoffVerificationMode) async throws {
@@ -61,6 +64,10 @@ final class SpotifyConnectTransferService: @unchecked Sendable {
     ) async throws {
         let verifier = transferVerifier(for: verification)
         try await verifier.waitForSpotifyConnectMode(on: target)
+        if verification == .connectOnly {
+            return
+        }
+
         let readiness = try await verifier.playAndVerifyReadiness(on: target)
         switch readinessPolicy.action(verification: verification, readiness: readiness) {
         case .verifyIfAvailable:
@@ -78,6 +85,8 @@ final class SpotifyConnectTransferService: @unchecked Sendable {
             return transferVerifier
         case .coordinatorMigration:
             return coordinatorMigrationTransferVerifier
+        case .connectOnly:
+            return connectOnlyTransferVerifier
         }
     }
 }
@@ -100,6 +109,9 @@ struct SpotifyConnectTransferReadinessPolicy: Sendable {
             return .verifyRequired
         case (.coordinatorMigration, .transportStarted),
              (.coordinatorMigration, .spotifyConnectModeOnly):
+            return .acceptSonosReadiness
+        case (.connectOnly, .transportStarted),
+             (.connectOnly, .spotifyConnectModeOnly):
             return .acceptSonosReadiness
         }
     }
