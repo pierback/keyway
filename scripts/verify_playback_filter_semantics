@@ -187,34 +187,50 @@ struct FilterSemantics {
         let lateEchoFilter = MediaTransportCommandCenterFilter(
             mediaKeyShadowInterval: 0.15,
             commandCenterInputShadowInterval: 0.15,
-            programmaticCommandCenterEchoWindow: 0.25,
+            programmaticCommandCenterEchoWindow: 1.25,
             programmaticGeneratedMediaKeyCallbackWindow: 0.25,
             physicalMediaKeyReboundWindow: 0.15,
             chooserTargetedMediaKeyEchoWindow: 0.75
         )
         lateEchoFilter.beginProgrammaticDispatch(command: .pause)
-        try? await Task.sleep(nanoseconds: 300_000_000)
-        expectNil(
+        try? await Task.sleep(nanoseconds: 800_000_000)
+        expectEqual(
             lateEchoFilter.ignoreReasonForCommandCenter(command: .playPause),
-            "programmatic Command Center echo suppression must expire before it becomes a visible cooldown"
+            .programmaticEcho,
+            "programmatic Command Center echo suppression must cover late macOS rebounds"
         )
         expectNil(
-            lateEchoFilter.ignoreReasonForMediaKey(command: .playPause),
+            lateEchoFilter.ignoreReasonForMediaKey(
+                command: .playPause,
+                metadata: MediaTransportInputMetadata(
+                    sourceUnixProcessID: 0,
+                    sourceStateID: 1,
+                    sourceUserData: 0,
+                    targetUnixProcessID: 456,
+                    eventTimestamp: 300
+                )
+            ),
             "programmatic Command Center echo suppression must not swallow a fresh physical media key"
+        )
+        try? await Task.sleep(nanoseconds: 600_000_000)
+        expectNil(
+            lateEchoFilter.ignoreReasonForCommandCenter(command: .playPause),
+            "programmatic Command Center echo suppression must still expire"
         )
         let delayedOSEchoFilter = MediaTransportCommandCenterFilter(
             mediaKeyShadowInterval: 0.15,
             commandCenterInputShadowInterval: 0.15,
-            programmaticCommandCenterEchoWindow: 0.25,
+            programmaticCommandCenterEchoWindow: 1.25,
             programmaticGeneratedMediaKeyCallbackWindow: 0.25,
             physicalMediaKeyReboundWindow: 0.15,
             chooserTargetedMediaKeyEchoWindow: 1.25
         )
         delayedOSEchoFilter.beginProgrammaticDispatch(command: .pause)
-        try? await Task.sleep(nanoseconds: 300_000_000)
-        expectNil(
+        try? await Task.sleep(nanoseconds: 800_000_000)
+        expectEqual(
             delayedOSEchoFilter.ignoreReasonForCommandCenter(command: .playPause),
-            "programmatic dispatch must not hide delayed Command Center input"
+            .programmaticEcho,
+            "programmatic dispatch must hide delayed Command Center rebounds"
         )
         let delayedChooserCommandCenterEchoFilter = MediaTransportCommandCenterFilter(
             mediaKeyShadowInterval: 0.15,

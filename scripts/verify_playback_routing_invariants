@@ -131,6 +131,23 @@ for required in (
 ):
     if required not in targeted_body:
         raise SystemExit(f"verify_playback_routing_invariants: targeted media-key input must resolve by OS target pid: {required}")
+play_family_no_chooser = text[
+    text.index("    private func routePlayFamilyWithoutChooser"):
+    text.index("    private func route(\n        command: MediaRemoteTransportCommand,\n        targets:")
+]
+for required in (
+    "metadata.targetUnixProcessID > 0",
+    '"play_family_targeted_route_unresolved"',
+    "showChooserImmediately(",
+):
+    if required not in play_family_no_chooser:
+        raise SystemExit(f"verify_playback_routing_invariants: unresolved targeted media-key input must fail closed to chooser before automatic fallback: {required}")
+targeted_unresolved = play_family_no_chooser[
+    play_family_no_chooser.index("metadata.targetUnixProcessID > 0"):
+    play_family_no_chooser.index("if let decision = targetResolver.automaticTarget")
+]
+if "send(command:" in targeted_unresolved:
+    raise SystemExit("verify_playback_routing_invariants: unresolved targeted media-key input must not send a command before chooser selection")
 PY
 
 if grep -q 'guard !self.chooserSession.isActive else { return }' "$transport"; then
@@ -511,8 +528,8 @@ if "chooserSession.isDispatching" in route_body or "chooser_dispatch_input_ignor
 programmatic_command_center = re.search(r'programmaticCommandCenterEchoWindow: TimeInterval = ([0-9.]+)', text)
 if not programmatic_command_center:
     raise SystemExit("verify_playback_routing_invariants: programmatic Command Center echoes must have an explicit bounded window")
-if float(programmatic_command_center.group(1)) > 0.25:
-    raise SystemExit("verify_playback_routing_invariants: programmatic Command Center echo window must stay below visible cooldown territory")
+if float(programmatic_command_center.group(1)) > 1.25:
+    raise SystemExit("verify_playback_routing_invariants: programmatic Command Center echo window must stay bounded to late macOS rebound territory")
 selected_row_command_center = re.search(r'selectedRowCommandCenterEchoWindow: TimeInterval = ([0-9.]+)', text)
 if selected_row_command_center:
     raise SystemExit("verify_playback_routing_invariants: selected-row Command Center echoes must not use a separate hidden window")
@@ -637,8 +654,8 @@ fi
 grep -q 'noteMediaKey(command: command, metadata: metadata)' "$transport" \
   || fail "accepted event-tap media-key routing must remember the source event timestamp"
 
-grep -q 'private static let programmaticCommandCenterEchoWindow: TimeInterval = 0.25' "$transport" \
-  || fail "programmatic Command Center echo suppression must not become a hidden input delay"
+grep -q 'private static let programmaticCommandCenterEchoWindow: TimeInterval = 1.25' "$transport" \
+  || fail "programmatic Command Center echo suppression must cover late macOS Command Center rebounds without hiding physical HID input"
 
 if grep -q 'selectedRowCommandCenterEchoWindow' "$transport"; then
   fail "selected-row Command Center rebound suppression must use the bounded programmatic echo path, not a separate cooldown"
@@ -1359,7 +1376,7 @@ import sys
 text = pathlib.Path(sys.argv[1]).read_text()
 for name, value in re.findall(r'private static let (\w*(?:Callback|Echo|Rebound|Shadow|Suppression)\w*(?:Interval|Window)): TimeInterval = ([0-9.]+)', text):
     if name == "programmaticCommandCenterEchoWindow":
-        low, high = 0.0, 0.25
+        low, high = 0.0, 1.25
     elif name == "programmaticGeneratedMediaKeyCallbackWindow":
         low, high = 0.0, 0.25
     elif name == "physicalMediaKeyReboundWindow":

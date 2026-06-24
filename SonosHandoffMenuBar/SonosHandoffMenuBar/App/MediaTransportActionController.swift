@@ -6,7 +6,7 @@ import SonosHandoffCore
 final class MediaTransportActionController {
     private static let commandCenterMediaKeyShadowInterval: TimeInterval = 0.25
     private static let commandCenterInputShadowInterval: TimeInterval = 0.15
-    private static let programmaticCommandCenterEchoWindow: TimeInterval = 0.25
+    private static let programmaticCommandCenterEchoWindow: TimeInterval = 1.25
     private static let programmaticGeneratedMediaKeyCallbackWindow: TimeInterval = 0.25
     private static let physicalMediaKeyReboundWindow: TimeInterval = 0.25
     private static let chooserTargetedMediaKeyEchoWindow: TimeInterval = 1.25
@@ -332,6 +332,27 @@ final class MediaTransportActionController {
                 commandCenterMetadata: commandCenterMetadata
             )
             send(command: command, to: target, reason: .current)
+            return
+        }
+
+        if let metadata,
+           metadata.targetUnixProcessID > 0 {
+            logger.info("MediaTransport play_family_targeted_route_unresolved command=\(command.rawValue, privacy: .public) source=\(source.rawValue, privacy: .public) targetPID=\(metadata.targetUnixProcessID, privacy: .public) targetCount=\(targets.count, privacy: .public)")
+            trace(
+                "play_family_targeted_route_unresolved",
+                command: command,
+                source: source,
+                targets: targets,
+                targetCount: targets.count,
+                metadata: metadata,
+                commandCenterMetadata: commandCenterMetadata
+            )
+            showChooserImmediately(
+                command: command,
+                source: source,
+                metadata: metadata,
+                commandCenterMetadata: commandCenterMetadata
+            )
             return
         }
 
