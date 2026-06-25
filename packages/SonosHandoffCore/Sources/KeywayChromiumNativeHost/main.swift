@@ -25,15 +25,15 @@ struct HostBrowserIdentity {
         "\(chromiumTargetIDPrefix)\(family):\(instanceID):"
     }
 
-    static func current() -> HostBrowserIdentity? {
+    static func current() -> HostBrowserIdentity {
         let parentPID = getppid()
         guard let app = NSRunningApplication(processIdentifier: pid_t(parentPID)) else {
-            return nil
+            preconditionFailure("Chromium native host could not resolve parent browser process \(parentPID).")
         }
         let bundleIdentifier = app.bundleIdentifier ?? ""
         let appName = app.localizedName ?? ""
         guard let family = browserFamily(bundleIdentifier: bundleIdentifier, displayName: appName) else {
-            return nil
+            preconditionFailure("Chromium native host parent is not a supported browser: \(bundleIdentifier) \(appName)")
         }
 
         return HostBrowserIdentity(
@@ -152,19 +152,13 @@ func writeNativeMessage(_ payload: String) {
 }
 
 func payloadByAddingHostBrowserIdentity(_ payload: String) -> String {
-    guard let hostBrowserIdentity else {
-        return payload
-    }
     let data = Data(payload.utf8)
     var root = try! JSONSerialization.jsonObject(with: data) as! [String: Any]
-    guard var targets = root["targets"] as? [[String: Any]] else {
-        return payload
-    }
+    var targets = root["targets"] as! [[String: Any]]
 
     for index in targets.indices {
-        if let rawTargetID = targets[index]["id"] as? String {
-            targets[index]["id"] = hostBrowserIdentity.publicTargetID(rawTargetID: rawTargetID)
-        }
+        let rawTargetID = targets[index]["id"] as! String
+        targets[index]["id"] = hostBrowserIdentity.publicTargetID(rawTargetID: rawTargetID)
         targets[index]["browserFamily"] = hostBrowserIdentity.family
         targets[index]["browserDisplayName"] = hostBrowserIdentity.displayName
         targets[index]["browserBundleIdentifier"] = hostBrowserIdentity.bundleIdentifier
@@ -178,14 +172,9 @@ func payloadByAddingHostBrowserIdentity(_ payload: String) -> String {
 }
 
 func payloadByRestoringRawTargetIdentity(_ payload: String) -> String? {
-    guard let hostBrowserIdentity else {
-        return payload
-    }
     let data = Data(payload.utf8)
     var root = try! JSONSerialization.jsonObject(with: data) as! [String: Any]
-    guard let publicTargetID = root["targetID"] as? String else {
-        return payload
-    }
+    let publicTargetID = root["targetID"] as! String
     guard let rawTargetID = hostBrowserIdentity.rawTargetID(publicTargetID: publicTargetID) else {
         return nil
     }
@@ -196,14 +185,9 @@ func payloadByRestoringRawTargetIdentity(_ payload: String) -> String? {
 }
 
 func payloadByRestoringPublicTargetIdentity(_ payload: String) -> String {
-    guard let hostBrowserIdentity else {
-        return payload
-    }
     let data = Data(payload.utf8)
     var root = try! JSONSerialization.jsonObject(with: data) as! [String: Any]
-    guard let rawTargetID = root["targetID"] as? String else {
-        return payload
-    }
+    let rawTargetID = root["targetID"] as! String
     root["targetID"] = hostBrowserIdentity.publicTargetID(rawTargetID: rawTargetID)
 
     let routed = try! JSONSerialization.data(withJSONObject: root)

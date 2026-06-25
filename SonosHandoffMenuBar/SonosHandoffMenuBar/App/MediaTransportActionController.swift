@@ -122,35 +122,9 @@ final class MediaTransportActionController {
             break
         }
 
-        if MediaTransportCommandRules.isPlayFamily(command) {
-            if shouldRoutePlayFamilyWithoutChooser(source: source, metadata: metadata) {
-                routePlayFamilyWithoutChooser(
-                    command: command,
-                    source: source,
-                    metadata: metadata,
-                    commandCenterMetadata: commandCenterMetadata
-                )
-                return
-            }
-            logger.info("MediaTransport decision=chooser command=\(command.rawValue, privacy: .public) source=\(source.rawValue, privacy: .public)")
-            trace(
-                "decision_chooser",
-                command: command,
-                source: source,
-                metadata: metadata,
-                commandCenterMetadata: commandCenterMetadata
-            )
-            showChooserImmediately(
-                command: command,
-                source: source,
-                metadata: metadata,
-                commandCenterMetadata: commandCenterMetadata
-            )
-            return
-        }
-        logger.info("MediaTransport decision=cache_route command=\(command.rawValue, privacy: .public) source=\(source.rawValue, privacy: .public)")
+        logger.info("MediaTransport decision=current_targets command=\(command.rawValue, privacy: .public) source=\(source.rawValue, privacy: .public)")
         trace(
-            "decision_cache_route",
+            "decision_current_targets",
             command: command,
             source: source,
             metadata: metadata,
@@ -162,19 +136,6 @@ final class MediaTransportActionController {
             metadata: metadata,
             commandCenterMetadata: commandCenterMetadata
         )
-    }
-
-    private func shouldRoutePlayFamilyWithoutChooser(
-        source: MediaTransportRouteSource,
-        metadata: MediaTransportInputMetadata?
-    ) -> Bool {
-        guard source == .eventTap,
-              let metadata,
-              metadata.isPhysicalHIDSystemSource
-        else {
-            return false
-        }
-        return !metadata.isUntargetedPhysicalHIDSystemSource
     }
 
     func showChooser(command: MediaRemoteTransportCommand = .playPause) {
@@ -295,105 +256,6 @@ final class MediaTransportActionController {
         )
     }
 
-    private func routePlayFamilyWithoutChooser(
-        command: MediaRemoteTransportCommand,
-        source: MediaTransportRouteSource,
-        metadata: MediaTransportInputMetadata?,
-        commandCenterMetadata: MediaCommandCenterInputMetadata?
-    ) {
-        let targets = sortedTargets(mediaRemoteController.targets)
-        guard !targets.isEmpty else {
-            mediaRemoteController.refreshSnapshot()
-            logger.info("MediaTransport play_family_no_chooser_no_target command=\(command.rawValue, privacy: .public) source=\(source.rawValue, privacy: .public)")
-            trace(
-                "play_family_no_chooser_no_target",
-                command: command,
-                source: source,
-                metadata: metadata,
-                commandCenterMetadata: commandCenterMetadata
-            )
-            return
-        }
-
-        mediaRemoteController.refreshSnapshot()
-        if let metadata,
-           let target = targetResolver.targetedInputTarget(
-               targetUnixProcessID: metadata.targetUnixProcessID,
-               from: targets
-           ) {
-            logger.info("MediaTransport decision=targeted_no_chooser command=\(command.rawValue, privacy: .public) source=\(source.rawValue, privacy: .public) target=\(target.appName, privacy: .public) targetID=\(target.id, privacy: .public)")
-            trace(
-                "decision_targeted_no_chooser",
-                command: command,
-                source: source,
-                target: target,
-                targetCount: targets.count,
-                metadata: metadata,
-                commandCenterMetadata: commandCenterMetadata
-            )
-            send(command: command, to: target, reason: .current)
-            return
-        }
-
-        if let metadata,
-           metadata.targetUnixProcessID > 0 {
-            logger.info("MediaTransport play_family_targeted_route_unresolved command=\(command.rawValue, privacy: .public) source=\(source.rawValue, privacy: .public) targetPID=\(metadata.targetUnixProcessID, privacy: .public) targetCount=\(targets.count, privacy: .public)")
-            trace(
-                "play_family_targeted_route_unresolved",
-                command: command,
-                source: source,
-                targets: targets,
-                targetCount: targets.count,
-                metadata: metadata,
-                commandCenterMetadata: commandCenterMetadata
-            )
-            showChooserImmediately(
-                command: command,
-                source: source,
-                metadata: metadata,
-                commandCenterMetadata: commandCenterMetadata
-            )
-            return
-        }
-
-        if let decision = targetResolver.automaticTarget(
-            command: command,
-            from: targets,
-            recentTargetID: targetSelectionMemory.recentTargetID
-        ) {
-            logger.info("MediaTransport decision=automatic_no_chooser command=\(command.rawValue, privacy: .public) source=\(source.rawValue, privacy: .public) target=\(decision.target.appName, privacy: .public) targetID=\(decision.target.id, privacy: .public) reason=\(decision.reason.rawValue, privacy: .public)")
-            trace(
-                "decision_automatic_no_chooser",
-                command: command,
-                source: source,
-                target: decision.target,
-                reason: decision.reason.rawValue,
-                targetCount: targets.count,
-                metadata: metadata,
-                commandCenterMetadata: commandCenterMetadata
-            )
-            send(command: command, to: decision.target, reason: decision.reason)
-            return
-        }
-
-        logger.info("MediaTransport play_family_direct_route_ambiguous command=\(command.rawValue, privacy: .public) source=\(source.rawValue, privacy: .public) targetCount=\(targets.count, privacy: .public)")
-        trace(
-            "play_family_direct_route_ambiguous",
-            command: command,
-            source: source,
-            targets: targets,
-            targetCount: targets.count,
-            metadata: metadata,
-            commandCenterMetadata: commandCenterMetadata
-        )
-        showChooserImmediately(
-            command: command,
-            source: source,
-            metadata: metadata,
-            commandCenterMetadata: commandCenterMetadata
-        )
-    }
-
     private func route(
         command: MediaRemoteTransportCommand,
         targets: [MediaRemoteTarget],
@@ -401,12 +263,8 @@ final class MediaTransportActionController {
         metadata: MediaTransportInputMetadata?,
         commandCenterMetadata: MediaCommandCenterInputMetadata?
     ) {
-        if let decision = targetResolver.automaticTarget(
-            command: command,
-            from: targets,
-            recentTargetID: targetSelectionMemory.recentTargetID
-        ) {
-            send(command: command, to: decision.target, reason: decision.reason)
+        if targets.count == 1 {
+            send(command: command, to: targets[0], reason: .single)
             return
         }
 
@@ -528,15 +386,29 @@ final class MediaTransportActionController {
         targetSelectionMemory.remember(target)
     }
 
+    private enum MediaTransportDispatchContext {
+        case programmatic(reason: MediaTransportRoutingReason)
+        case chooser
+    }
+
     private func send(command: MediaRemoteTransportCommand, to target: MediaRemoteTarget, reason: MediaTransportRoutingReason) {
         logger.info("MediaTransport dispatch command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) targetID=\(target.id, privacy: .public) reason=\(reason.rawValue, privacy: .public)")
         rememberTarget(target)
         let dispatchID = beginBoundedProgrammaticDispatch(command: command)
+        send(command: command, to: target, dispatchID: dispatchID, context: .programmatic(reason: reason))
+    }
+
+    private func send(
+        command: MediaRemoteTransportCommand,
+        to target: MediaRemoteTarget,
+        dispatchID: UUID,
+        context: MediaTransportDispatchContext
+    ) {
         if let result = desktopTransport.submit(command: command, target: target) {
             trace(result: result, transportBackend: result.backend)
             if shouldFallbackFromUnsupportedDesktopResult(target: target),
                result.unsupported,
-               sendProgrammaticSpotifyWebAPI(command: command, to: target, dispatchID: dispatchID, reason: reason) {
+               sendSpotifyWebAPI(command: command, to: target, dispatchID: dispatchID, context: context) {
                 trace(
                     "desktop_transport_fallback",
                     command: command,
@@ -548,7 +420,7 @@ final class MediaTransportActionController {
             }
             if shouldFallbackFromUnsupportedDesktopResult(target: target),
                result.unsupported,
-               sendProgrammaticMediaRemote(command: command, to: target, dispatchID: dispatchID, reason: reason) {
+               sendMediaRemote(command: command, to: target, dispatchID: dispatchID, context: context) {
                 trace(
                     "desktop_transport_fallback",
                     command: command,
@@ -558,26 +430,20 @@ final class MediaTransportActionController {
                 )
                 return
             }
-            finishProgrammaticDispatch(
-                id: dispatchID,
-                fallback: false
-            )
+            finishDispatch(id: dispatchID, fallback: false)
             mediaRemoteController.refreshSnapshot()
             showCommandFailureIfNeeded(result: result, target: target)
-            logger.info("MediaTransport route command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) reason=\(reason.rawValue, privacy: .public) transport=\(result.backend ?? "desktop", privacy: .public)")
+            logDispatch(command: command, target: target, context: context, transport: result.backend ?? "desktop")
             return
         }
         if let sent = chromiumBrowserExtensionController.submit(command: command, target: target, onResult: { [weak self] result in
             guard let self else { return }
             self.trace(result: result, transportBackend: result.backend)
-            self.finishProgrammaticDispatch(
-                id: dispatchID,
-                fallback: false
-            )
+            self.finishDispatch(id: dispatchID, fallback: false)
             self.showCommandFailureIfNeeded(result: result, target: target)
         }) {
             guard sent else {
-                finishProgrammaticDispatch(id: dispatchID, fallback: true)
+                finishDispatch(id: dispatchID, fallback: true)
                 StatusHUD.shared.finish(
                     title: "Media Command Failed",
                     message: "Keyway could not reach \(target.appName).",
@@ -585,25 +451,25 @@ final class MediaTransportActionController {
                 )
                 return
             }
-            logger.info("MediaTransport route command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) reason=\(reason.rawValue, privacy: .public) transport=chromium_extension")
+            logDispatch(command: command, target: target, context: context, transport: "chromium_extension")
             return
         }
-        fallbackProgrammaticMediaRemote(command: command, to: target, dispatchID: dispatchID, reason: reason)
+        fallbackMediaRemote(command: command, to: target, dispatchID: dispatchID, context: context)
     }
 
-    private func fallbackProgrammaticMediaRemote(
+    private func fallbackMediaRemote(
         command: MediaRemoteTransportCommand,
         to target: MediaRemoteTarget,
         dispatchID: UUID,
-        reason: MediaTransportRoutingReason
+        context: MediaTransportDispatchContext
     ) {
         guard canUseMediaRemotePlayerPath(command: command, target: target) else {
-            finishProgrammaticDispatch(id: dispatchID, fallback: true)
+            finishDispatch(id: dispatchID, fallback: true)
             return
         }
-        guard sendProgrammaticMediaRemote(command: command, to: target, dispatchID: dispatchID, reason: reason) else {
-            finishProgrammaticDispatch(id: dispatchID, fallback: true)
-            logger.error("MediaTransport route_failed command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) reason=\(reason.rawValue, privacy: .public)")
+        guard sendMediaRemote(command: command, to: target, dispatchID: dispatchID, context: context) else {
+            finishDispatch(id: dispatchID, fallback: true)
+            logDispatchFailure(command: command, target: target, context: context)
             StatusHUD.shared.finish(
                 title: "Media Command Failed",
                 message: "Keyway could not reach \(target.appName).",
@@ -614,11 +480,11 @@ final class MediaTransportActionController {
 
     }
 
-    private func sendProgrammaticSpotifyWebAPI(
+    private func sendSpotifyWebAPI(
         command: MediaRemoteTransportCommand,
         to target: MediaRemoteTarget,
         dispatchID: UUID,
-        reason: MediaTransportRoutingReason
+        context: MediaTransportDispatchContext
     ) -> Bool {
         guard let spotifyCommand = spotifyPlaybackCommand(command: command, target: target) else {
             return false
@@ -634,10 +500,7 @@ final class MediaTransportActionController {
                     message: "submitted Spotify Web API \(spotifyCommand.rawValue)"
                 )
                 self.trace(result: result, transportBackend: Self.spotifyWebAPIBackend)
-                self.finishProgrammaticDispatch(
-                    id: dispatchID,
-                    fallback: false
-                )
+                self.finishDispatch(id: dispatchID, fallback: false)
                 self.mediaRemoteController.refreshSnapshot()
             } catch {
                 let result = Self.spotifyWebAPIResult(
@@ -647,7 +510,7 @@ final class MediaTransportActionController {
                     message: error.localizedDescription
                 )
                 self.trace(result: result, transportBackend: Self.spotifyWebAPIBackend)
-                if self.sendProgrammaticMediaRemote(command: command, to: target, dispatchID: dispatchID, reason: reason) {
+                if self.sendMediaRemote(command: command, to: target, dispatchID: dispatchID, context: context) {
                     self.trace(
                         "spotify_webapi_fallback",
                         command: command,
@@ -657,22 +520,19 @@ final class MediaTransportActionController {
                     )
                     return
                 }
-                self.finishProgrammaticDispatch(
-                    id: dispatchID,
-                    fallback: false
-                )
+                self.finishDispatch(id: dispatchID, fallback: false)
                 self.showCommandFailureIfNeeded(result: result, target: target)
             }
         }
-        logger.info("MediaTransport route command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) reason=\(reason.rawValue, privacy: .public) transport=\(Self.spotifyWebAPIBackend, privacy: .public)")
+        logDispatch(command: command, target: target, context: context, transport: Self.spotifyWebAPIBackend)
         return true
     }
 
-    private func sendProgrammaticMediaRemote(
+    private func sendMediaRemote(
         command: MediaRemoteTransportCommand,
         to target: MediaRemoteTarget,
         dispatchID: UUID,
-        reason: MediaTransportRoutingReason
+        context: MediaTransportDispatchContext
     ) -> Bool {
         guard canUseMediaRemotePlayerPath(command: command, target: target) else {
             return false
@@ -680,14 +540,11 @@ final class MediaTransportActionController {
 
         let sent = mediaRemoteController.submit(command: command, targetID: target.id) { [weak self] result in
             self?.trace(result: result, transportBackend: Self.mediaRemotePlayerPathBackend)
-            self?.finishProgrammaticDispatch(
-                id: dispatchID,
-                fallback: false
-            )
+            self?.finishDispatch(id: dispatchID, fallback: false)
             self?.showCommandFailureIfNeeded(result: result, target: target)
         }
         if sent {
-            logger.info("MediaTransport route command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) reason=\(reason.rawValue, privacy: .public) transport=\(Self.mediaRemotePlayerPathBackend, privacy: .public)")
+            logDispatch(command: command, target: target, context: context, transport: Self.mediaRemotePlayerPathBackend)
         }
         return sent
     }
@@ -726,161 +583,34 @@ final class MediaTransportActionController {
         to target: MediaRemoteTarget,
         dispatchID: UUID
     ) {
-        if let result = desktopTransport.submit(command: command, target: target) {
-            trace(result: result, transportBackend: result.backend)
-            if shouldFallbackFromUnsupportedDesktopResult(target: target),
-               result.unsupported,
-               sendChooserSpotifyWebAPI(command: command, to: target, dispatchID: dispatchID) {
-                trace(
-                    "desktop_transport_fallback",
-                    command: command,
-                    target: target,
-                    reason: "unsupported",
-                    transportBackend: result.backend
-                )
-                return
-            }
-            if shouldFallbackFromUnsupportedDesktopResult(target: target),
-               result.unsupported,
-               sendChooserMediaRemote(command: command, to: target, dispatchID: dispatchID) {
-                trace(
-                    "desktop_transport_fallback",
-                    command: command,
-                    target: target,
-                    reason: "unsupported",
-                    transportBackend: result.backend
-                )
-                return
-            }
-            finishChooserDispatch(
-                id: dispatchID,
-                fallback: false
-            )
-            mediaRemoteController.refreshSnapshot()
-            showCommandFailureIfNeeded(result: result, target: target)
-            logger.info("MediaTransport chooser command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) transport=\(result.backend ?? "desktop", privacy: .public)")
-            return
-        }
-        if let sent = chromiumBrowserExtensionController.submit(command: command, target: target, onResult: { [weak self] result in
-            guard let self else { return }
-            self.trace(result: result, transportBackend: result.backend)
-            self.finishChooserDispatch(
-                id: dispatchID,
-                fallback: false
-            )
-            self.showCommandFailureIfNeeded(result: result, target: target)
-        }) {
-            guard sent else {
-                finishChooserDispatch(id: dispatchID, fallback: true)
-                StatusHUD.shared.finish(
-                    title: "Media Command Failed",
-                    message: "Keyway could not reach \(target.appName).",
-                    dismissAfter: 2.2
-                )
-                return
-            }
-            logger.info("MediaTransport chooser command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) transport=chromium_extension")
-            return
-        }
-        fallbackChooserMediaRemote(command: command, to: target, dispatchID: dispatchID)
+        send(command: command, to: target, dispatchID: dispatchID, context: .chooser)
     }
 
-    private func fallbackChooserMediaRemote(
+    private func logDispatch(
         command: MediaRemoteTransportCommand,
-        to target: MediaRemoteTarget,
-        dispatchID: UUID
+        target: MediaRemoteTarget,
+        context: MediaTransportDispatchContext,
+        transport: String
     ) {
-        guard canUseMediaRemotePlayerPath(command: command, target: target) else {
-            finishChooserDispatch(id: dispatchID, fallback: true)
-            return
+        switch context {
+        case .programmatic(let reason):
+            logger.info("MediaTransport route command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) reason=\(reason.rawValue, privacy: .public) transport=\(transport, privacy: .public)")
+        case .chooser:
+            logger.info("MediaTransport chooser command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) transport=\(transport, privacy: .public)")
         }
-        guard sendChooserMediaRemote(command: command, to: target, dispatchID: dispatchID) else {
-            finishChooserDispatch(id: dispatchID, fallback: true)
+    }
+
+    private func logDispatchFailure(
+        command: MediaRemoteTransportCommand,
+        target: MediaRemoteTarget,
+        context: MediaTransportDispatchContext
+    ) {
+        switch context {
+        case .programmatic(let reason):
+            logger.error("MediaTransport route_failed command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) reason=\(reason.rawValue, privacy: .public)")
+        case .chooser:
             logger.error("MediaTransport chooser_failed command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public)")
-            StatusHUD.shared.finish(
-                title: "Media Command Failed",
-                message: "Keyway could not reach \(target.appName).",
-                dismissAfter: 2.2
-            )
-            return
         }
-
-    }
-
-    private func sendChooserSpotifyWebAPI(
-        command: MediaRemoteTransportCommand,
-        to target: MediaRemoteTarget,
-        dispatchID: UUID
-    ) -> Bool {
-        guard let spotifyCommand = spotifyPlaybackCommand(command: command, target: target) else {
-            return false
-        }
-        Task { @MainActor [weak self, spotifyPlaybackController] in
-            guard let self else { return }
-            do {
-                try await spotifyPlaybackController.sendActivePlaybackCommand(spotifyCommand)
-                let result = Self.spotifyWebAPIResult(
-                    command: command,
-                    target: target,
-                    ok: true,
-                    message: "submitted Spotify Web API \(spotifyCommand.rawValue)"
-                )
-                self.trace(result: result, transportBackend: Self.spotifyWebAPIBackend)
-                self.finishChooserDispatch(
-                    id: dispatchID,
-                    fallback: false
-                )
-                self.mediaRemoteController.refreshSnapshot()
-            } catch {
-                let result = Self.spotifyWebAPIResult(
-                    command: command,
-                    target: target,
-                    ok: false,
-                    message: error.localizedDescription
-                )
-                self.trace(result: result, transportBackend: Self.spotifyWebAPIBackend)
-                if self.sendChooserMediaRemote(command: command, to: target, dispatchID: dispatchID) {
-                    self.trace(
-                        "spotify_webapi_fallback",
-                        command: command,
-                        target: target,
-                        reason: "failed",
-                        transportBackend: Self.spotifyWebAPIBackend
-                    )
-                    return
-                }
-                self.finishChooserDispatch(
-                    id: dispatchID,
-                    fallback: false
-                )
-                self.showCommandFailureIfNeeded(result: result, target: target)
-            }
-        }
-        logger.info("MediaTransport chooser command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) transport=\(Self.spotifyWebAPIBackend, privacy: .public)")
-        return true
-    }
-
-    private func sendChooserMediaRemote(
-        command: MediaRemoteTransportCommand,
-        to target: MediaRemoteTarget,
-        dispatchID: UUID
-    ) -> Bool {
-        guard canUseMediaRemotePlayerPath(command: command, target: target) else {
-            return false
-        }
-
-        let sent = mediaRemoteController.submit(command: command, targetID: target.id) { [weak self] result in
-            self?.trace(result: result, transportBackend: Self.mediaRemotePlayerPathBackend)
-            self?.finishChooserDispatch(
-                id: dispatchID,
-                fallback: false
-            )
-            self?.showCommandFailureIfNeeded(result: result, target: target)
-        }
-        if sent {
-            logger.info("MediaTransport chooser command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) transport=\(Self.mediaRemotePlayerPathBackend, privacy: .public)")
-        }
-        return sent
     }
 
     private func canUseMediaRemotePlayerPath(
@@ -1006,22 +736,19 @@ final class MediaTransportActionController {
         return id
     }
 
-    private func finishProgrammaticDispatch(id: UUID, fallback: Bool) {
+    private func finishDispatch(id: UUID, fallback: Bool) {
         guard let pending = programmaticDispatches.removeValue(forKey: id) else {
             return
         }
         let command = pending.command
-        logger.info("MediaTransport programmatic_echo_window_closed command=\(command.rawValue, privacy: .public) fallback=\(fallback, privacy: .public)")
-        trace("programmatic_echo_window_closed", command: command, reason: fallback ? "fallback" : "helper")
-    }
-
-    private func finishChooserDispatch(id: UUID, fallback: Bool) {
-        guard let pending = programmaticDispatches.removeValue(forKey: id) else {
-            return
+        switch pending.kind {
+        case .automatic:
+            logger.info("MediaTransport programmatic_echo_window_closed command=\(command.rawValue, privacy: .public) fallback=\(fallback, privacy: .public)")
+            trace("programmatic_echo_window_closed", command: command, reason: fallback ? "fallback" : "helper")
+        case .chooser:
+            logger.info("MediaTransport chooser_echo_window_closed command=\(command.rawValue, privacy: .public) fallback=\(fallback, privacy: .public)")
+            trace("chooser_echo_window_closed", command: command, reason: fallback ? "fallback" : "helper")
         }
-        let command = pending.command
-        logger.info("MediaTransport chooser_echo_window_closed command=\(command.rawValue, privacy: .public) fallback=\(fallback, privacy: .public)")
-        trace("chooser_echo_window_closed", command: command, reason: fallback ? "fallback" : "helper")
     }
 
     private func scheduleProgrammaticDispatchFallback(id: UUID) {

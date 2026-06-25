@@ -41,20 +41,32 @@ end
 
 def add_mediaremote_helper_build_phase(target)
   phase = target.new_shell_script_build_phase('Build MediaRemote Helper')
+  phase.shell_path = '/bin/bash'
   phase.shell_script = <<~SH
     set -euo pipefail
 
     HELPER_SRC="$SRCROOT/../MediaRemoteHelper"
     HELPER_DEST="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/MediaRemoteHelper"
+    HELPER_LIB="$HELPER_DEST/libkeyway_mediaremote.dylib"
+    TARGET_ARCHS="${ARCHS:?ARCHS must be set}"
+    ARCH_OUTPUTS=()
 
     mkdir -p "$HELPER_DEST"
-    /usr/bin/clang \\
-      -dynamiclib \\
-      -fobjc-arc \\
-      -fblocks \\
-      "$HELPER_SRC/KeywayMediaRemoteShim.m" \\
-      -framework Foundation \\
-      -o "$HELPER_DEST/libkeyway_mediaremote.dylib"
+    for ARCH in $TARGET_ARCHS; do
+      ARCH_OUTPUT="$HELPER_DEST/libkeyway_mediaremote.$ARCH.dylib"
+      /usr/bin/clang \\
+        -dynamiclib \\
+        -fobjc-arc \\
+        -fblocks \\
+        -arch "$ARCH" \\
+        "$HELPER_SRC/KeywayMediaRemoteShim.m" \\
+        -framework Foundation \\
+        -o "$ARCH_OUTPUT"
+      ARCH_OUTPUTS+=("$ARCH_OUTPUT")
+    done
+
+    /usr/bin/xcrun lipo -create "${ARCH_OUTPUTS[@]}" -output "$HELPER_LIB"
+    rm -f "${ARCH_OUTPUTS[@]}"
 
     cp "$HELPER_SRC/keyway-mediaremote-helper.pl" "$HELPER_DEST/keyway-mediaremote-helper.pl"
     chmod +x "$HELPER_DEST/keyway-mediaremote-helper.pl"

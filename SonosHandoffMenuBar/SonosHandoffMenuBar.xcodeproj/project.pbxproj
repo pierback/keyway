@@ -409,8 +409,8 @@
 				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/MediaRemoteHelper/keyway-mediaremote-helper.pl",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "set -euo pipefail\n\nHELPER_SRC=\"$SRCROOT/../MediaRemoteHelper\"\nHELPER_DEST=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/MediaRemoteHelper\"\n\nmkdir -p \"$HELPER_DEST\"\n/usr/bin/clang \\\n  -dynamiclib \\\n  -fobjc-arc \\\n  -fblocks \\\n  \"$HELPER_SRC/KeywayMediaRemoteShim.m\" \\\n  -framework Foundation \\\n  -o \"$HELPER_DEST/libkeyway_mediaremote.dylib\"\n\ncp \"$HELPER_SRC/keyway-mediaremote-helper.pl\" \"$HELPER_DEST/keyway-mediaremote-helper.pl\"\nchmod +x \"$HELPER_DEST/keyway-mediaremote-helper.pl\"\n";
+			shellPath = /bin/bash;
+			shellScript = "set -euo pipefail\n\nHELPER_SRC=\"$SRCROOT/../MediaRemoteHelper\"\nHELPER_DEST=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/MediaRemoteHelper\"\nHELPER_LIB=\"$HELPER_DEST/libkeyway_mediaremote.dylib\"\nTARGET_ARCHS=\"${ARCHS:?ARCHS must be set}\"\nARCH_OUTPUTS=()\n\nmkdir -p \"$HELPER_DEST\"\nfor ARCH in $TARGET_ARCHS; do\n  ARCH_OUTPUT=\"$HELPER_DEST/libkeyway_mediaremote.$ARCH.dylib\"\n  /usr/bin/clang \\\n    -dynamiclib \\\n    -fobjc-arc \\\n    -fblocks \\\n    -arch \"$ARCH\" \\\n    \"$HELPER_SRC/KeywayMediaRemoteShim.m\" \\\n    -framework Foundation \\\n    -o \"$ARCH_OUTPUT\"\n  ARCH_OUTPUTS+=(\"$ARCH_OUTPUT\")\ndone\n\n/usr/bin/xcrun lipo -create \"${ARCH_OUTPUTS[@]}\" -output \"$HELPER_LIB\"\nrm -f \"${ARCH_OUTPUTS[@]}\"\n\ncp \"$HELPER_SRC/keyway-mediaremote-helper.pl\" \"$HELPER_DEST/keyway-mediaremote-helper.pl\"\nchmod +x \"$HELPER_DEST/keyway-mediaremote-helper.pl\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

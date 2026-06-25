@@ -13,6 +13,16 @@ enum ChromiumBrowserExtensionTransport {
     static let commandResultNotificationName = Notification.Name("com.fpieringer.keyway.chromium.commandResult")
     static let focusResultNotificationName = Notification.Name("com.fpieringer.keyway.chromium.focusResult")
     static let commandNotificationName = Notification.Name("com.fpieringer.keyway.chromium.command")
+    private static let browserFamilyIdentityMatchers: [(family: String, keywords: [String])] = [
+        ("helium", ["helium"]),
+        ("arc", ["arc"]),
+        ("brave", ["brave"]),
+        ("edge", ["edge", "microsoft"]),
+        ("opera", ["opera"]),
+        ("vivaldi", ["vivaldi"]),
+        ("chromium", ["chromium"]),
+        ("chrome", ["chrome", "google"]),
+    ]
 
     static func isTarget(_ target: MediaRemoteTarget) -> Bool {
         target.mediaType == mediaType || target.id.hasPrefix(targetIDPrefix)
@@ -31,31 +41,7 @@ enum ChromiumBrowserExtensionTransport {
         }
 
         let identities = [target.bundleIdentifier, target.parentBundleIdentifier, target.displayName].map { $0.lowercased() }
-        if identities.contains(where: { $0.contains("helium") }) {
-            return "helium"
-        }
-        if identities.contains(where: { $0.contains("arc") }) {
-            return "arc"
-        }
-        if identities.contains(where: { $0.contains("brave") }) {
-            return "brave"
-        }
-        if identities.contains(where: { $0.contains("edge") || $0.contains("microsoft") }) {
-            return "edge"
-        }
-        if identities.contains(where: { $0.contains("opera") }) {
-            return "opera"
-        }
-        if identities.contains(where: { $0.contains("vivaldi") }) {
-            return "vivaldi"
-        }
-        if identities.contains(where: { $0.contains("chromium") }) {
-            return "chromium"
-        }
-        if identities.contains(where: { $0.contains("chrome") || $0.contains("google") }) {
-            return "chrome"
-        }
-        return nil
+        return browserFamily(identities: identities)
     }
 
     static func shadowsLegacyTarget(extensionTarget: MediaRemoteTarget, legacyTarget: MediaRemoteTarget) -> Bool {
@@ -70,6 +56,14 @@ enum ChromiumBrowserExtensionTransport {
 
         let extensionTitle = normalizedMediaTitle(extensionTarget.title)
         return !extensionTitle.isEmpty && extensionTitle == normalizedMediaTitle(legacyTarget.title)
+    }
+
+    private static func browserFamily(identities: [String]) -> String? {
+        for matcher in browserFamilyIdentityMatchers
+            where identities.contains(where: { identity in matcher.keywords.contains { identity.contains($0) } }) {
+            return matcher.family
+        }
+        return nil
     }
 
     private static func normalizedMediaTitle(_ title: String) -> String {
@@ -518,8 +512,8 @@ final class ChromiumBrowserExtensionController: ObservableObject {
 
     func targetsIncludingBrowserExtensionTargets(_ mediaRemoteTargets: [MediaRemoteTarget]) -> [MediaRemoteTarget] {
         let visibleMediaRemoteTargets = mediaRemoteTargets.filter { target in
-            !targets.contains { extensionTarget in
-                ChromiumBrowserExtensionTransport.shadowsLegacyTarget(extensionTarget: extensionTarget, legacyTarget: target)
+            !targets.contains {
+                ChromiumBrowserExtensionTransport.shadowsLegacyTarget(extensionTarget: $0, legacyTarget: target)
             }
         }
 

@@ -74,9 +74,10 @@ assert_order(
         "case .commandCenter:",
         "commandCenterFilter.noteCommandCenterInput(command: command, metadata: commandCenterMetadata)",
         "case .userInterface:",
-        "if MediaTransportCommandRules.isPlayFamily(command)",
+        '"decision_current_targets"',
+        "routeFromCache(",
     ],
-    "command-center input must enter the shared play-family chooser path after duplicate filtering"
+    "command-center input must enter the shared current-target gate after duplicate filtering"
 )
 command_center_branch = route_input[
     route_input.index("case .commandCenter:"):
@@ -84,54 +85,28 @@ command_center_branch = route_input[
 ]
 if "routePlayFamilyWithoutChooser(" in command_center_branch:
     fail("command-center play-family input must not bypass the chooser through direct routing")
-shared_play_branch = route_input[route_input.index("        if MediaTransportCommandRules.isPlayFamily(command) {", route_input.index("case .userInterface:")):]
+if "shouldRoutePlayFamilyWithoutChooser" in route_input or "routePlayFamilyWithoutChooser(" in route_input:
+    fail("non-UI media input must not bypass the chooser through a targeted HID/PID route")
 assert_order(
-    shared_play_branch,
+    route_input,
     [
-        "if MediaTransportCommandRules.isPlayFamily(command)",
-        "shouldRoutePlayFamilyWithoutChooser(source: source, metadata: metadata)",
-        "routePlayFamilyWithoutChooser(",
-        "showChooserImmediately(",
+        '"decision_current_targets"',
         "routeFromCache(",
     ],
-    "targeted play-family input must route without chooser before untargeted play-family commands open the chooser"
+    "media-key and command-center input must use the shared current-target ambiguity gate"
 )
-
-play_family_no_chooser = function_body("routePlayFamilyWithoutChooser")
-assert_order(
-    play_family_no_chooser,
-    [
-        "let targets = sortedTargets(mediaRemoteController.targets)",
-        "guard !targets.isEmpty else",
-        "targetResolver.targetedInputTarget(",
-        "send(command: command, to: target, reason: .current)",
-        "metadata.targetUnixProcessID > 0",
-        '"play_family_targeted_route_unresolved"',
-        "targetResolver.automaticTarget(",
-        "send(command: command, to: decision.target, reason: decision.reason)",
-        '"play_family_direct_route_ambiguous"',
-    ],
-    "targeted play-family routing must prefer the OS target pid, fail closed to the chooser when unresolved, then reserve automatic resolution for untargeted input"
-)
-targeted_unresolved_branch = play_family_no_chooser[
-    play_family_no_chooser.index("metadata.targetUnixProcessID > 0"):
-    play_family_no_chooser.index("if let decision = targetResolver.automaticTarget")
-]
-if "showChooserImmediately(" not in targeted_unresolved_branch:
-    fail("unresolved targeted play-family routing must show the chooser before any automatic fallback")
-if "send(command:" in targeted_unresolved_branch:
-    fail("unresolved targeted play-family routing must not send any command before chooser selection")
 
 route_targets = function_body("route(\n        command: MediaRemoteTransportCommand,\n        targets:")
+if "targetResolver.automaticTarget(" in route_targets:
+    fail("multi-target media-key routing must not auto-send through focused/current/recent/PID resolver state")
 assert_order(
     route_targets,
     [
-        "if let decision = targetResolver.automaticTarget(",
-        "recentTargetID: targetSelectionMemory.recentTargetID",
-        "send(command: command, to: decision.target, reason: decision.reason)",
+        "if targets.count == 1",
+        "send(command: command, to: targets[0], reason: .single)",
         "showChooserOverlay(",
     ],
-    "ambiguous multi-target routing must fall through to the chooser"
+    "non-row media input must direct-route only a single visible source and show the chooser for multiple sources"
 )
 
 chooser_immediate = function_body("showChooserImmediately")
@@ -186,121 +161,74 @@ assert_order(
     "automatic routing must prefer exactly one playing Chromium extension target for supported commands"
 )
 
-send = function_body("send(command:")
+send = function_body("send(\n        command: MediaRemoteTransportCommand,\n        to target: MediaRemoteTarget,\n        dispatchID: UUID,")
 assert_order(
     send,
     [
         "desktopTransport.submit(command: command, target: target)",
         "shouldFallbackFromUnsupportedDesktopResult(target: target)",
-        "sendProgrammaticSpotifyWebAPI(command: command, to: target, dispatchID: dispatchID, reason: reason)",
+        "sendSpotifyWebAPI(command: command, to: target, dispatchID: dispatchID, context: context)",
         '"desktop_transport_fallback"',
-        "sendProgrammaticMediaRemote(command: command, to: target, dispatchID: dispatchID, reason: reason)",
+        "sendMediaRemote(command: command, to: target, dispatchID: dispatchID, context: context)",
         "chromiumBrowserExtensionController.submit(command: command, target: target",
-        "fallbackProgrammaticMediaRemote(command: command, to: target, dispatchID: dispatchID, reason: reason)",
+        "fallbackMediaRemote(command: command, to: target, dispatchID: dispatchID, context: context)",
     ],
-    "programmatic dispatch must prefer desktop adapters, gate unsupported desktop fallback, then use Chromium extension exactly before MediaRemote fallback"
+    "shared dispatch must prefer desktop adapters, gate unsupported desktop fallback, then use Chromium extension exactly before MediaRemote fallback"
 )
 if "legacyChromiumFallbackTarget" in send or '"chromium_extension_fallback"' in send:
     fail("Chromium extension command failures must not fall back to legacy browser rows")
 
-programmatic_mediaremote_fallback = function_body("fallbackProgrammaticMediaRemote")
-if "desktopTransport.submit(command: command, target: target)" in programmatic_mediaremote_fallback:
-    fail("programmatic MediaRemote fallback must not retry desktop dispatch after the primary chain already tried it")
+mediaremote_fallback = function_body("fallbackMediaRemote")
+if "desktopTransport.submit(command: command, target: target)" in mediaremote_fallback:
+    fail("MediaRemote fallback must not retry desktop dispatch after the primary chain already tried it")
 assert_order(
-    programmatic_mediaremote_fallback,
+    mediaremote_fallback,
     [
         "canUseMediaRemotePlayerPath(command: command, target: target)",
-        "guard sendProgrammaticMediaRemote(command: command, to: target, dispatchID: dispatchID, reason: reason)",
+        "guard sendMediaRemote(command: command, to: target, dispatchID: dispatchID, context: context)",
     ],
-    "programmatic MediaRemote fallback must gate the player path before dispatch"
+    "MediaRemote fallback must gate the player path before dispatch"
 )
 
-programmatic_spotify_webapi = function_body("sendProgrammaticSpotifyWebAPI")
+spotify_webapi = function_body("sendSpotifyWebAPI")
 assert_order(
-    programmatic_spotify_webapi,
+    spotify_webapi,
     [
         "spotifyPlaybackCommand(command: command, target: target)",
         "spotifyPlaybackController.sendActivePlaybackCommand(spotifyCommand)",
         "Self.spotifyWebAPIResult(",
         "Self.spotifyWebAPIBackend",
-        "finishProgrammaticDispatch(",
-        "sendProgrammaticMediaRemote(command: command, to: target, dispatchID: dispatchID, reason: reason)",
+        "finishDispatch(id: dispatchID, fallback: false)",
+        "sendMediaRemote(command: command, to: target, dispatchID: dispatchID, context: context)",
         '"spotify_webapi_fallback"',
         "showCommandFailureIfNeeded(result: result, target: target)",
     ],
-    "programmatic Spotify Web API fallback must use the shared Spotify command service and fall through to MediaRemote on command failure"
+    "Spotify Web API fallback must use the shared Spotify command service and fall through to MediaRemote on command failure"
 )
 
-programmatic_mediaremote = function_body("sendProgrammaticMediaRemote")
+mediaremote = function_body("sendMediaRemote")
 assert_order(
-    programmatic_mediaremote,
+    mediaremote,
     [
         "canUseMediaRemotePlayerPath(command: command, target: target)",
         "mediaRemoteController.submit(command: command, targetID: target.id)",
         "Self.mediaRemotePlayerPathBackend",
-        "finishProgrammaticDispatch(",
+        "finishDispatch(id: dispatchID, fallback: false)",
         "showCommandFailureIfNeeded(result: result, target: target)",
     ],
-    "programmatic MediaRemote fallback must use the player path and preserve async result handling"
+    "MediaRemote fallback must use the player path and preserve async result handling"
 )
 
 chooser_send = function_body("sendFromChooser")
 assert_order(
     chooser_send,
     [
-        "desktopTransport.submit(command: command, target: target)",
-        "shouldFallbackFromUnsupportedDesktopResult(target: target)",
-        "sendChooserSpotifyWebAPI(command: command, to: target, dispatchID: dispatchID)",
-        '"desktop_transport_fallback"',
-        "sendChooserMediaRemote(command: command, to: target, dispatchID: dispatchID)",
-        "chromiumBrowserExtensionController.submit(command: command, target: target",
-        "fallbackChooserMediaRemote(command: command, to: target, dispatchID: dispatchID)",
+        "send(command: command, to: target, dispatchID: dispatchID, context: .chooser)",
     ],
-    "chooser dispatch must prefer desktop adapters, gate unsupported desktop fallback, then use Chromium extension exactly before MediaRemote fallback"
+    "chooser dispatch must use the shared adapter-aware selected-row path"
 )
 if "legacyChromiumFallbackTarget" in chooser_send or '"chromium_extension_fallback"' in chooser_send:
     fail("Chooser Chromium extension command failures must not fall back to legacy browser rows")
-
-chooser_mediaremote_fallback = function_body("fallbackChooserMediaRemote")
-if "desktopTransport.submit(command: command, target: target)" in chooser_mediaremote_fallback:
-    fail("chooser MediaRemote fallback must not retry desktop dispatch after the primary chain already tried it")
-assert_order(
-    chooser_mediaremote_fallback,
-    [
-        "canUseMediaRemotePlayerPath(command: command, target: target)",
-        "guard sendChooserMediaRemote(command: command, to: target, dispatchID: dispatchID)",
-    ],
-    "chooser MediaRemote fallback must gate the player path before dispatch"
-)
-
-chooser_spotify_webapi = function_body("sendChooserSpotifyWebAPI")
-assert_order(
-    chooser_spotify_webapi,
-    [
-        "spotifyPlaybackCommand(command: command, target: target)",
-        "spotifyPlaybackController.sendActivePlaybackCommand(spotifyCommand)",
-        "Self.spotifyWebAPIResult(",
-        "Self.spotifyWebAPIBackend",
-        "finishChooserDispatch(",
-        "sendChooserMediaRemote(command: command, to: target, dispatchID: dispatchID)",
-        '"spotify_webapi_fallback"',
-        "showCommandFailureIfNeeded(result: result, target: target)",
-    ],
-    "chooser Spotify Web API fallback must use the shared Spotify command service and fall through to MediaRemote on command failure"
-)
-
-chooser_mediaremote = function_body("sendChooserMediaRemote")
-assert_order(
-    chooser_mediaremote,
-    [
-        "canUseMediaRemotePlayerPath(command: command, target: target)",
-        "mediaRemoteController.submit(command: command, targetID: target.id)",
-        "Self.mediaRemotePlayerPathBackend",
-        "finishChooserDispatch(",
-        "showCommandFailureIfNeeded(result: result, target: target)",
-    ],
-    "chooser MediaRemote fallback must use the player path and preserve async result handling"
-)
 
 mediaremote_gate = function_body("canUseMediaRemotePlayerPath")
 assert_order(

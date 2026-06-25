@@ -25,12 +25,7 @@ final class PlaybackBackgroundSync {
     private var acceptingTransferSuggestionIDs: Set<String> = []
     private var acceptingHeadphoneTransferSuggestionIDs: Set<String> = []
     private var hasShownAuthPrompt = false
-    private var groupSuggestionActionCancellable: AnyCancellable?
-    private var groupSuggestionIgnoreCancellable: AnyCancellable?
-    private var transferSuggestionActionCancellable: AnyCancellable?
-    private var transferSuggestionIgnoreCancellable: AnyCancellable?
-    private var headphoneTransferSuggestionActionCancellable: AnyCancellable?
-    private var headphoneTransferSuggestionIgnoreCancellable: AnyCancellable?
+    private var suggestionActionCancellables: [AnyCancellable] = []
     private var macAudioOutputCancellable: AnyCancellable?
     private var hasAudioOutputBaseline = false
     private var lastObservedAudioOutput: MacAudioOutputDevice?
@@ -41,78 +36,50 @@ final class PlaybackBackgroundSync {
         self.groupSuggestionPresenter = environment.groupSuggestionPresenter
         self.transferSuggestionPresenter = environment.transferSuggestionPresenter
         self.headphoneTransferSuggestionPresenter = environment.headphoneTransferSuggestionPresenter
-        self.groupSuggestionActionCancellable = NotificationCenter.default
-            .publisher(for: .sonosHandoffAcceptGroupSuggestion)
-            .sink { [weak self] notification in
-                guard let suggestionID = notification.object as? String else {
-                    return
-                }
-
-                Task { @MainActor [weak self] in
-                    await self?.acceptGroupSuggestion(id: suggestionID)
-                }
-            }
-        self.groupSuggestionIgnoreCancellable = NotificationCenter.default
-            .publisher(for: .sonosHandoffIgnoreGroupSuggestion)
-            .sink { [weak self] notification in
-                guard let suggestionID = notification.object as? String else {
-                    return
-                }
-
-                Task { @MainActor [weak self] in
-                    self?.ignoreGroupSuggestion(id: suggestionID)
-                }
-            }
-        self.transferSuggestionActionCancellable = NotificationCenter.default
-            .publisher(for: .sonosHandoffAcceptTransferSuggestion)
-            .sink { [weak self] notification in
-                guard let suggestionID = notification.object as? String else {
-                    return
-                }
-
-                Task { @MainActor [weak self] in
-                    await self?.acceptTransferSuggestion(id: suggestionID)
-                }
-            }
-        self.transferSuggestionIgnoreCancellable = NotificationCenter.default
-            .publisher(for: .sonosHandoffIgnoreTransferSuggestion)
-            .sink { [weak self] notification in
-                guard let suggestionID = notification.object as? String else {
-                    return
-                }
-
-                Task { @MainActor [weak self] in
-                    self?.ignoreTransferSuggestion(id: suggestionID)
-                }
-            }
-        self.headphoneTransferSuggestionActionCancellable = NotificationCenter.default
-            .publisher(for: .sonosHandoffAcceptHeadphoneTransferSuggestion)
-            .sink { [weak self] notification in
-                guard let suggestionID = notification.object as? String else {
-                    return
-                }
-
-                Task { @MainActor [weak self] in
-                    await self?.acceptHeadphoneTransferSuggestion(id: suggestionID)
-                }
-            }
-        self.headphoneTransferSuggestionIgnoreCancellable = NotificationCenter.default
-            .publisher(for: .sonosHandoffIgnoreHeadphoneTransferSuggestion)
-            .sink { [weak self] notification in
-                guard let suggestionID = notification.object as? String else {
-                    return
-                }
-
-                Task { @MainActor [weak self] in
-                    self?.ignoreHeadphoneTransferSuggestion(id: suggestionID)
-                }
-            }
+        self.suggestionActionCancellables = [
+            bindSuggestionAction(.sonosHandoffAcceptGroupSuggestion) { sync, suggestionID in
+                await sync.acceptGroupSuggestion(id: suggestionID)
+            },
+            bindSuggestionAction(.sonosHandoffIgnoreGroupSuggestion) { sync, suggestionID in
+                sync.ignoreGroupSuggestion(id: suggestionID)
+            },
+            bindSuggestionAction(.sonosHandoffAcceptTransferSuggestion) { sync, suggestionID in
+                await sync.acceptTransferSuggestion(id: suggestionID)
+            },
+            bindSuggestionAction(.sonosHandoffIgnoreTransferSuggestion) { sync, suggestionID in
+                sync.ignoreTransferSuggestion(id: suggestionID)
+            },
+            bindSuggestionAction(.sonosHandoffAcceptHeadphoneTransferSuggestion) { sync, suggestionID in
+                await sync.acceptHeadphoneTransferSuggestion(id: suggestionID)
+            },
+            bindSuggestionAction(.sonosHandoffIgnoreHeadphoneTransferSuggestion) { sync, suggestionID in
+                sync.ignoreHeadphoneTransferSuggestion(id: suggestionID)
+            },
+        ]
         self.macAudioOutputCancellable = environment.macAudioOutputMonitor.$output
             .dropFirst()
             .sink { [weak self] output in
                 Task { @MainActor [weak self] in
                     self?.recordMacAudioOutputChange(output)
                     await self?.syncOnce()
+                }
+            }
+    }
+
+    private func bindSuggestionAction(
+        _ notificationName: Notification.Name,
+        action: @escaping (PlaybackBackgroundSync, String) async -> Void
+    ) -> AnyCancellable {
+        NotificationCenter.default
+            .publisher(for: notificationName)
+            .sink { [weak self] notification in
+                let suggestionID = notification.object as! String
+
+                Task { @MainActor [weak self] in
+                    guard let self else {
+                        return
+                    }
+                    await action(self, suggestionID)
                 }
             }
     }
@@ -141,9 +108,7 @@ final class PlaybackBackgroundSync {
                   let activeRoomName = SonosRoomName.normalized(status.deviceName)
             else {
                 hasShownAuthPrompt = false
-                clearGroupSuggestions()
-                clearTransferSuggestions()
-                clearHeadphoneTransferSuggestion(currentHeadphoneOutputID: nil)
+                clearSuggestions(currentHeadphoneOutputID: nil)
                 clearSelection(reason: "no_active_spotify_playback")
                 await refreshOutputCacheWithoutPlayback(discoveryRefreshStarted: discoveryRefreshStarted)
                 return
@@ -151,9 +116,7 @@ final class PlaybackBackgroundSync {
 
             guard status.isPlaying else {
                 hasShownAuthPrompt = false
-                clearGroupSuggestions()
-                clearTransferSuggestions()
-                clearHeadphoneTransferSuggestion(currentHeadphoneOutputID: nil)
+                clearSuggestions(currentHeadphoneOutputID: nil)
                 clearSelection(reason: "spotify_playback_paused")
                 await refreshOutputCacheWithoutPlayback(discoveryRefreshStarted: discoveryRefreshStarted)
                 return
@@ -200,17 +163,13 @@ final class PlaybackBackgroundSync {
             logger.info("SonosHandoffPlaybackSync state=selected room=\(selectedRoomName, privacy: .public) spotifyVolume=\(status.volumePercent ?? -1, privacy: .public)")
         } catch {
             if SpotifyAuthRecovery.isAuthRequired(error) {
-                clearGroupSuggestions()
-                clearTransferSuggestions()
-                clearHeadphoneTransferSuggestion(currentHeadphoneOutputID: nil)
+                clearSuggestions(currentHeadphoneOutputID: nil)
                 clearSelection(reason: "spotify_auth_required")
                 showAuthPromptIfNeeded(error)
                 return
             }
 
-            clearGroupSuggestions()
-            clearTransferSuggestions()
-            clearHeadphoneTransferSuggestion(currentHeadphoneOutputID: nil)
+            clearSuggestions(currentHeadphoneOutputID: nil)
             logger.info("SonosHandoffPlaybackSync state=unavailable error=\(error.localizedDescription, privacy: .public)")
         }
     }
@@ -424,6 +383,12 @@ final class PlaybackBackgroundSync {
         }
 
         NotificationCenter.default.post(name: .sonosHandoffApplyCachedOutputs, object: currentRoomName)
+    }
+
+    private func clearSuggestions(currentHeadphoneOutputID: UInt32?) {
+        clearGroupSuggestions()
+        clearTransferSuggestions()
+        clearHeadphoneTransferSuggestion(currentHeadphoneOutputID: currentHeadphoneOutputID)
     }
 
     private func clearGroupSuggestions() {
@@ -703,9 +668,7 @@ final class PlaybackBackgroundSync {
             return SonosRoomName.normalized(status.deviceName)
         } catch {
             if SpotifyAuthRecovery.isAuthRequired(error) {
-                clearGroupSuggestions()
-                clearTransferSuggestions()
-                clearHeadphoneTransferSuggestion(currentHeadphoneOutputID: nil)
+                clearSuggestions(currentHeadphoneOutputID: nil)
                 clearSelection(reason: "spotify_auth_required")
                 showAuthPromptIfNeeded(error)
                 return nil

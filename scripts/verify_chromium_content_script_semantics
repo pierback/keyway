@@ -1,0 +1,303 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+node --check "$repo_root/ChromiumExtension/content_script.js" >/dev/null
+
+node - "$repo_root/ChromiumExtension/content_script.js" <<'NODE'
+const fs = require("fs");
+const vm = require("vm");
+
+const contentScriptPath = process.argv[2];
+const code = fs.readFileSync(contentScriptPath, "utf8");
+
+function makeContext(options = {}) {
+  const sentMessages = [];
+  const intervals = [];
+  const clearedIntervals = [];
+  const events = new Map();
+  const eventListenerCounts = new Map();
+  let mutationCallback = null;
+  let observerDisconnected = false;
+  let runtimeMessageListener = null;
+  let sendMessageThrows = false;
+  let clearIntervalThrows = false;
+  let domTraversalInvalidated = false;
+  let playbackButtonClickCount = 0;
+
+  const video = {
+    ended: Boolean(options.initiallyEnded),
+    currentSrc: "https://media.example.test/video.mp4",
+    src: "",
+    paused: options.initiallyPaused === undefined ? false : options.initiallyPaused,
+    muted: false,
+    volume: 0.5,
+    duration: 120,
+    currentTime: 10,
+    dataset: {},
+    querySelector() {
+      return null;
+    },
+    getAttribute() {
+      return "";
+    },
+    getBoundingClientRect() {
+      return { width: 100, height: 100 };
+    },
+    addEventListener(name, listener) {
+      eventListenerCounts.set(name, (eventListenerCounts.get(name) || 0) + 1);
+      events.set(name, listener);
+    },
+    play() {
+      if (!options.directCommandsDoNothing) {
+        this.paused = false;
+        this.ended = false;
+      }
+      return Promise.resolve();
+    },
+    pause() {
+      if (!options.directCommandsDoNothing) {
+        this.paused = true;
+      }
+    },
+  };
+
+  const playbackButton = {
+    disabled: false,
+    getAttribute(name) {
+      if (name === "aria-disabled") return "false";
+      if (name === "aria-label") return video.paused || video.ended ? "Play" : "Pause";
+      return "";
+    },
+    getBoundingClientRect() {
+      return { width: 44, height: 44 };
+    },
+    click() {
+      playbackButtonClickCount += 1;
+      video.paused = !video.paused;
+      video.ended = false;
+    },
+  };
+
+  function selectorMatchesPlaybackButton(selector) {
+    if (!options.withPlaybackButton) return false;
+    const normalized = selector.toLowerCase();
+    if (normalized.includes("playbacktoggle")) return true;
+    return video.paused || video.ended
+      ? normalized.includes("play") || normalized.includes("abspielen")
+      : normalized.includes("pause") || normalized.includes("pausieren");
+  }
+
+  const shadowHost = {
+    get shadowRoot() {
+      if (domTraversalInvalidated) {
+        throw new Error("Extension context invalidated.");
+      }
+      return null;
+    },
+  };
+
+  const document = {
+    title: "Magenta TV",
+    documentElement: {},
+    querySelector(selector) {
+      if (selectorMatchesPlaybackButton(selector)) return playbackButton;
+      return null;
+    },
+    querySelectorAll(selector) {
+      if (selector === "video,audio") return [video];
+      if (selector === "*" && options.withShadowHost) return [shadowHost];
+      if (selector === "*") return [];
+      return [];
+    },
+  };
+
+  const runtime = options.withRuntime === false
+    ? undefined
+    : {
+        id: "extensionid",
+        sendMessage(message) {
+          if (sendMessageThrows) {
+            throw new Error("Extension context invalidated.");
+          }
+          sentMessages.push(message);
+        },
+        onMessage: {
+          addListener(listener) {
+            runtimeMessageListener = listener;
+          },
+        },
+      };
+
+  const context = {
+    console,
+    crypto: { randomUUID: () => "doc-main" },
+    location: { href: "https://www.magentatv.de/watch" },
+    navigator: { mediaSession: { metadata: { title: "Live TV", artist: "Magenta", album: "" } } },
+    document,
+    chrome: { runtime },
+    setInterval(callback, delay) {
+      intervals.push({ callback, delay });
+      return `interval-${intervals.length}`;
+    },
+    clearInterval(id) {
+      if (clearIntervalThrows) {
+        throw new Error("Extension context invalidated.");
+      }
+      clearedIntervals.push(id);
+    },
+    MutationObserver: function MutationObserver(callback) {
+      mutationCallback = callback;
+      this.observe = () => {};
+      this.disconnect = () => {
+        observerDisconnected = true;
+      };
+    },
+  };
+
+  return {
+    context,
+    sentMessages,
+    intervals,
+    clearedIntervals,
+    events,
+    eventListenerCounts,
+    get mutationCallback() {
+      return mutationCallback;
+    },
+    get observerDisconnected() {
+      return observerDisconnected;
+    },
+    get runtimeMessageListener() {
+      return runtimeMessageListener;
+    },
+    video,
+    get playbackButtonClickCount() {
+      return playbackButtonClickCount;
+    },
+    invalidateRuntime() {
+      sendMessageThrows = true;
+    },
+    invalidateTimerRuntime() {
+      clearIntervalThrows = true;
+    },
+    invalidateDomTraversal() {
+      domTraversalInvalidated = true;
+    },
+  };
+}
+
+async function sendCommand(fixture, command) {
+  let response = null;
+  fixture.runtimeMessageListener(
+    {
+      type: "keywayCommand",
+      documentID: "doc-main",
+      mediaId: "media-1",
+      command,
+    },
+    {},
+    value => {
+      response = value;
+    }
+  );
+  await Promise.resolve();
+  await Promise.resolve();
+  return response;
+}
+
+(async () => {
+  const live = makeContext();
+  vm.runInNewContext(code, live.context, { filename: contentScriptPath });
+  assertEqual(live.intervals.length, 1, "content script must publish one heartbeat while the runtime is valid");
+  assert(typeof live.runtimeMessageListener === "function", "content script must register runtime message listener when runtime is valid");
+  assertEqual(live.sentMessages.at(-1).type, "keywayMediaState", "content script must publish initial media state");
+  live.mutationCallback();
+  assert(typeof live.events.get("timeupdate") === "function", "content script must observe media events after discovery");
+  assertEqual(live.video.dataset.keywayObserved, undefined, "content script must keep extension observation state out of the page DOM");
+  live.mutationCallback();
+  assertEqual(live.eventListenerCounts.get("timeupdate"), 1, "content script must not register duplicate media listeners");
+  live.invalidateRuntime();
+  live.invalidateTimerRuntime();
+  live.events.get("timeupdate")();
+  const sentMessageCountAfterRetire = live.sentMessages.length;
+  live.intervals[0].callback();
+  assertEqual(live.clearedIntervals.length, 0, "invalidated extension context must not call clearInterval after the browser world is gone");
+  assertEqual(live.sentMessages.length, sentMessageCountAfterRetire, "retired extension heartbeat must not keep publishing media state");
+  assert(live.observerDisconnected, "invalidated extension context must disconnect the DOM observer");
+
+  const staleDomTraversal = makeContext({ withShadowHost: true });
+  vm.runInNewContext(code, staleDomTraversal.context, { filename: contentScriptPath });
+  staleDomTraversal.mutationCallback();
+  assert(typeof staleDomTraversal.events.get("timeupdate") === "function", "stale DOM traversal fixture must observe media before invalidation");
+  staleDomTraversal.invalidateDomTraversal();
+  staleDomTraversal.intervals[0].callback();
+  assert(staleDomTraversal.observerDisconnected, "invalidated extension context during DOM traversal must disconnect the DOM observer");
+  const sentMessageCountAfterDomRetire = staleDomTraversal.sentMessages.length;
+  staleDomTraversal.events.get("timeupdate")();
+  assertEqual(staleDomTraversal.sentMessages.length, sentMessageCountAfterDomRetire, "retired DOM traversal bridge must not keep publishing media state");
+
+  const magentaPlaying = makeContext({
+    withPlaybackButton: true,
+    directCommandsDoNothing: true,
+    initiallyPaused: false,
+  });
+  vm.runInNewContext(code, magentaPlaying.context, { filename: contentScriptPath });
+  const magentaToggleResponse = await sendCommand(magentaPlaying, "playPause");
+  assertEqual(magentaPlaying.playbackButtonClickCount, 1, "Magenta-style playPause must click the page playback control");
+  assertEqual(magentaPlaying.video.paused, true, "Magenta-style page playback control must pause the selected media");
+  assertEqual(magentaToggleResponse.message, "paused", "Magenta-style playPause must report the requested toggle result");
+
+  const magentaAlreadyPlaying = makeContext({
+    withPlaybackButton: true,
+    directCommandsDoNothing: true,
+    initiallyPaused: false,
+  });
+  vm.runInNewContext(code, magentaAlreadyPlaying.context, { filename: contentScriptPath });
+  const alreadyPlayingResponse = await sendCommand(magentaAlreadyPlaying, "play");
+  assertEqual(magentaAlreadyPlaying.playbackButtonClickCount, 0, "explicit play must not click a toggle control when media is already playing");
+  assertEqual(magentaAlreadyPlaying.video.paused, false, "explicit play must not pause an already-playing page");
+  assertEqual(alreadyPlayingResponse.message, "already playing", "explicit play must report already-playing state without toggling");
+
+  const magentaPaused = makeContext({
+    withPlaybackButton: true,
+    directCommandsDoNothing: true,
+    initiallyPaused: true,
+  });
+  vm.runInNewContext(code, magentaPaused.context, { filename: contentScriptPath });
+  const magentaPlayResponse = await sendCommand(magentaPaused, "play");
+  assertEqual(magentaPaused.playbackButtonClickCount, 1, "Magenta-style play must click the page playback control when paused");
+  assertEqual(magentaPaused.video.paused, false, "Magenta-style page playback control must start the selected media");
+  assertEqual(magentaPlayResponse.message, "playing", "Magenta-style play must report playing");
+
+  const directMedia = makeContext({ initiallyPaused: true });
+  vm.runInNewContext(code, directMedia.context, { filename: contentScriptPath });
+  const directResponse = await sendCommand(directMedia, "playPause");
+  assertEqual(directMedia.playbackButtonClickCount, 0, "direct media pages must not require a page playback control");
+  assertEqual(directMedia.video.paused, false, "direct media playPause must still use HTML media methods");
+  assertEqual(directResponse.message, "playing", "direct media playPause must report playing");
+
+  const missingRuntime = makeContext({ withRuntime: false });
+  vm.runInNewContext(code, missingRuntime.context, { filename: contentScriptPath });
+  assertEqual(missingRuntime.intervals.length, 0, "content script must not start heartbeat without chrome.runtime");
+  assertEqual(missingRuntime.runtimeMessageListener, null, "content script must not register onMessage without chrome.runtime");
+  assert(missingRuntime.observerDisconnected, "content script must retire immediately without chrome.runtime");
+
+  console.log("verify_chromium_content_script_lifecycle=ok");
+})().catch(error => {
+  console.error(error);
+  process.exit(1);
+});
+
+function assert(condition, message) {
+  if (!condition) {
+    console.error(`verify_chromium_extension_semantics: ${message}`);
+    process.exit(1);
+  }
+}
+
+function assertEqual(actual, expected, message) {
+  assert(actual === expected, `${message}: expected ${expected}, got ${actual}`);
+}
+NODE

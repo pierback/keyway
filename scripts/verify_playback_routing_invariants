@@ -35,11 +35,14 @@ fail() {
 grep -q 'commandCenterMetadata: commandCenterMetadata' "$transport" \
   || fail "Play/Pause routing must show the cached chooser immediately with input metadata"
 
-grep -q 'shouldRoutePlayFamilyWithoutChooser(source: source, metadata: metadata)' "$transport" \
-  || fail "targeted HID play-family input must route without opening the chooser"
+! grep -q 'shouldRoutePlayFamilyWithoutChooser' "$transport" \
+  || fail "targeted HID input must not bypass the chooser"
 
-grep -q 'routePlayFamilyWithoutChooser(' "$transport" \
-  || fail "targeted HID play-family input must retain the direct route branch"
+! grep -q 'routePlayFamilyWithoutChooser' "$transport" \
+  || fail "targeted HID input must not retain a direct route branch"
+
+grep -q 'decision_current_targets' "$transport" \
+  || fail "media transport input must enter the shared current-target ambiguity gate"
 
 ! grep -q 'command_center_play_family_route_shield_ignored' "$transport" \
   || fail "Command Center play-family input must not be swallowed"
@@ -59,13 +62,18 @@ grep -q 'cachedTargetsGraceInterval' "$menu_bar_media_sources" \
 grep -q 'canShowCachedTargets' "$menu_bar_media_sources" \
   || fail "menu bar source cache must expire cached rows when refresh gets stuck"
 
-python3 - "$project_file" <<'PY'
+python3 - "$project_file" "$repo_root/scripts/generate_xcode_projects.rb" <<'PY'
 import pathlib
 import re
 import sys
+import textwrap
 
 text = pathlib.Path(sys.argv[1]).read_text()
-phase = text[text.index("Build MediaRemote Helper"): text.index("/* End PBXShellScriptBuildPhase section */")]
+generator = pathlib.Path(sys.argv[2]).read_text()
+marker = "/* Build MediaRemote Helper */ = {"
+start = text.index(marker)
+end = text.index("\n\t\t};", start) + len("\n\t\t};")
+phase = text[start:end]
 if "shellPath = /bin/bash;" not in phase:
     raise SystemExit("verify_playback_routing_invariants: MediaRemote helper build phase must use bash for architecture arrays")
 match = re.search(r'shellScript = "(.*)";', phase)
@@ -81,6 +89,18 @@ for required in (
 ):
     if required not in script:
         raise SystemExit(f"verify_playback_routing_invariants: MediaRemote helper dylib must be built for every target architecture: {required}")
+generator_body = generator[
+    generator.index("def add_mediaremote_helper_build_phase(target)"):
+    generator.index("def add_chromium_native_host_build_phase(target)")
+]
+if "phase.shell_path = '/bin/bash'" not in generator_body:
+    raise SystemExit("verify_playback_routing_invariants: project generator must emit the bash MediaRemote helper build phase")
+generator_match = re.search(r'phase\.shell_script = <<~SH\n(.*?)\n  SH', generator_body, re.S)
+if not generator_match:
+    raise SystemExit("verify_playback_routing_invariants: project generator MediaRemote helper script is missing")
+generator_script = textwrap.dedent(generator_match.group(1)).replace("\\\\", "\\")
+if script.rstrip() != generator_script.rstrip():
+    raise SystemExit("verify_playback_routing_invariants: committed MediaRemote helper build phase must match the project generator")
 PY
 
 python3 - "$transport" "$target_resolver" <<'PY'
@@ -121,33 +141,23 @@ automatic_body = target_resolver[
 ]
 if "recentTargetID" not in automatic_body or ".recent" not in automatic_body:
     raise SystemExit("verify_playback_routing_invariants: remembered targets must route the exact selected row automatically before falling back to chooser")
-targeted_body = target_resolver[
-    target_resolver.index("func targetedInputTarget"):
-    target_resolver.index("    private func preferredChromiumExtensionTarget")
+if "func targetedInputTarget" in target_resolver:
+    raise SystemExit("verify_playback_routing_invariants: target Unix process id must not be a routing authority")
+if "decision_targeted_no_chooser" in text:
+    raise SystemExit("verify_playback_routing_invariants: targeted media-key input must not direct-route without the chooser")
+targets_route = text[
+    text.index("    private func route(\n        command: MediaRemoteTransportCommand,\n        targets:"):
+    text.index("    private func showChooserOverlay")
 ]
 for required in (
-    "targetUnixProcessID > 0",
-    "target(forProcessID: pid_t(targetUnixProcessID), in: targets)",
+    "if targets.count == 1",
+    "send(command: command, to: targets[0], reason: .single)",
+    "showChooserOverlay(",
 ):
-    if required not in targeted_body:
-        raise SystemExit(f"verify_playback_routing_invariants: targeted media-key input must resolve by OS target pid: {required}")
-play_family_no_chooser = text[
-    text.index("    private func routePlayFamilyWithoutChooser"):
-    text.index("    private func route(\n        command: MediaRemoteTransportCommand,\n        targets:")
-]
-for required in (
-    "metadata.targetUnixProcessID > 0",
-    '"play_family_targeted_route_unresolved"',
-    "showChooserImmediately(",
-):
-    if required not in play_family_no_chooser:
-        raise SystemExit(f"verify_playback_routing_invariants: unresolved targeted media-key input must fail closed to chooser before automatic fallback: {required}")
-targeted_unresolved = play_family_no_chooser[
-    play_family_no_chooser.index("metadata.targetUnixProcessID > 0"):
-    play_family_no_chooser.index("if let decision = targetResolver.automaticTarget")
-]
-if "send(command:" in targeted_unresolved:
-    raise SystemExit("verify_playback_routing_invariants: unresolved targeted media-key input must not send a command before chooser selection")
+    if required not in targets_route:
+        raise SystemExit(f"verify_playback_routing_invariants: non-row input must route only a single source and show chooser for multiple sources: {required}")
+if "targetResolver.automaticTarget(" in targets_route:
+    raise SystemExit("verify_playback_routing_invariants: multi-source media input must not bypass the chooser through automatic target resolution")
 PY
 
 if grep -q 'guard !self.chooserSession.isActive else { return }' "$transport"; then
@@ -324,8 +334,8 @@ if "commandCompletionTimeoutNanoseconds" in submit_command:
     raise SystemExit("verify_playback_routing_invariants: selected-row command dispatch must not keep a hidden completion timeout")
 PY
 
-grep -q 'isPlayFamily(command)' "$transport" "$command_rules" \
-  || fail "play, pause, and play/pause commands must share chooser-first routing"
+grep -q 'decision_current_targets' "$transport" \
+  || fail "play, pause, play/pause, previous, and next must share current-target ambiguity routing"
 
 grep -q 'MediaTransportCommandRules.rowScopedCommand(command, for: target)' "$transport" \
   || fail "chooser Play/Pause must resolve normal targets from the selected row state, not a post-key refreshed target state"
@@ -511,8 +521,8 @@ if "await mediaRemoteController.send" in text:
     raise SystemExit("verify_playback_routing_invariants: UI routing must not await helper command acknowledgement")
 if "mediaRemoteController.submit(command: command, targetID: target.id)" not in text:
     raise SystemExit("verify_playback_routing_invariants: automatic routing must submit commands without request/response latency")
-if "mediaRemoteController.submit(command: command, targetID: target.id)" not in send_from_chooser:
-    raise SystemExit("verify_playback_routing_invariants: chooser routing must submit commands without request/response latency")
+if "send(command: command, to: target, dispatchID: dispatchID, context: .chooser)" not in send_from_chooser:
+    raise SystemExit("verify_playback_routing_invariants: chooser routing must submit through the adapter-aware selected-row path without request/response latency")
 if "Routed by chooser" in send_from_chooser:
     raise SystemExit("verify_playback_routing_invariants: chooser success must not leave a 1.35s HUD after row selection")
 send_body = text[text.index("private func send(command:"):text.index("private func dispatchFromChooser")]
@@ -576,14 +586,14 @@ command_center_body = route_body[command_center_start:command_center_end]
 if "commandCenterFilter.noteCommandCenterInput(command: command, metadata: commandCenterMetadata)" not in command_center_body:
     raise SystemExit("verify_playback_routing_invariants: routed Command Center inputs must arm duplicate shadow state")
 if "routePlayFamilyWithoutChooser(" in command_center_body:
-    raise SystemExit("verify_playback_routing_invariants: Command Center play-family input must not bypass the chooser")
+    raise SystemExit("verify_playback_routing_invariants: Command Center media input must not bypass the chooser")
 if "showChooserImmediately(" in command_center_body:
-    raise SystemExit("verify_playback_routing_invariants: Command Center play-family input must use the shared chooser path, not a command-center-only presentation branch")
+    raise SystemExit("verify_playback_routing_invariants: Command Center media input must use the shared current-target path, not a command-center-only presentation branch")
 shared_route_tail = route_body[command_center_end:]
-if "if MediaTransportCommandRules.isPlayFamily(command)" not in shared_route_tail:
-    raise SystemExit("verify_playback_routing_invariants: Command Center, physical media-key, and UI play-family inputs must use shared chooser-first routing")
-if shared_route_tail.index("if MediaTransportCommandRules.isPlayFamily(command)") > shared_route_tail.index("routeFromCache("):
-    raise SystemExit("verify_playback_routing_invariants: Command Center, physical media-key, and UI play-family chooser routing must run before cache routing")
+if '"decision_current_targets"' not in shared_route_tail:
+    raise SystemExit("verify_playback_routing_invariants: Command Center, physical media-key, and UI media inputs must use shared current-target routing")
+if shared_route_tail.index('"decision_current_targets"') > shared_route_tail.index("routeFromCache("):
+    raise SystemExit("verify_playback_routing_invariants: Command Center, physical media-key, and UI media routing must trace the current-target gate before cache routing")
 PY
 
 grep -q 'noteGeneratedMediaKeyIgnored(command: command, metadata: metadata)' "$hotkeys" \

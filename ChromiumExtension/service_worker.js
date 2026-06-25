@@ -5,8 +5,7 @@ let reconnectTimer = null;
 let heartbeatTimer = null;
 let cachedBrowserInfo = null;
 const sources = new Map();
-const targetStaleAfterMs = 3500;
-const recentlyActiveAfterMs = 15000;
+const targetStaleAfterMs = 15000;
 
 function connectNativeHost() {
   if (nativePort) return;
@@ -107,7 +106,7 @@ function publishSnapshot() {
 function isVisibleTarget(target) {
   if (isAudiblePlayback(target)) return true;
   if (target.hasMediaSessionMetadata) return true;
-  return Date.now() - target.lastActiveAt <= recentlyActiveAfterMs;
+  return target.hasPlaybackActivity;
 }
 
 function isAudiblePlayback(target) {
@@ -184,6 +183,7 @@ function upsertCandidate(browser, tab, frameId, message) {
     duration: Number.isFinite(message.duration) ? message.duration : null,
     elapsedTime: Number.isFinite(message.elapsedTime) ? message.elapsedTime : null,
     hasMediaSessionMetadata: Boolean(message.hasMediaSessionMetadata),
+    hasPlaybackActivity: Boolean(message.hasPlaybackActivity),
     supportedCommands: Array.isArray(message.supportedCommands)
       ? message.supportedCommands
       : ["play", "pause", "playPause", "mute", "volumeDelta"],
@@ -194,6 +194,9 @@ function upsertCandidate(browser, tab, frameId, message) {
   candidate.lastActiveAt = isAudiblePlayback(candidate)
     ? now
     : existingCandidate?.lastActiveAt || 0;
+  candidate.hasPlaybackActivity = candidate.hasPlaybackActivity
+    || Boolean(existingCandidate?.hasPlaybackActivity)
+    || candidate.lastActiveAt > 0;
   source.browser = browser.name;
   source.browserFamily = browser.family;
   source.browserRuntimeID = browser.runtimeID;
@@ -263,7 +266,7 @@ function bestCandidate(source, predicate, current, now) {
 
 function isStickyCandidate(candidate, now) {
   return now - candidate.updatedAt <= targetStaleAfterMs
-    && (candidate.playing || (candidate.lastActiveAt > 0 && now - candidate.lastActiveAt <= recentlyActiveAfterMs));
+    && (candidate.playing || candidate.hasPlaybackActivity);
 }
 
 function compareCandidates(left, right, current, now) {
@@ -283,7 +286,7 @@ function candidateScore(candidate, current, now) {
     score += 1000;
   }
   if (current?.candidateKey === candidate.candidateKey && isStickyCandidate(candidate, now)) score += 75000;
-  if (candidate.lastActiveAt > 0 && now - candidate.lastActiveAt <= recentlyActiveAfterMs) score += 20000;
+  if (candidate.hasPlaybackActivity) score += 20000;
   if (candidate.duration !== null && candidate.duration > 0) score += 500;
   if (candidate.hasMediaSessionMetadata) score += 100;
   score += Math.max(0, 100 - Math.floor((now - candidate.updatedAt) / 100));
@@ -315,6 +318,7 @@ function materializeSource(source) {
     duration: selected.duration,
     elapsedTime: selected.elapsedTime,
     hasMediaSessionMetadata: selected.hasMediaSessionMetadata,
+    hasPlaybackActivity: selected.hasPlaybackActivity,
     supportedCommands: selected.supportedCommands,
     updatedAt: source.updatedAt,
     lastActiveAt: source.lastActiveAt,

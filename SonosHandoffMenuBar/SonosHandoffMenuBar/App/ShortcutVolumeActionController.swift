@@ -23,30 +23,16 @@ final class ShortcutVolumeActionController {
         }
     }
 
-    private struct SpotifyVolumeState {
-        let deviceName: String
-        var desiredVolume: Int
-        var updatedAt: CFAbsoluteTime
-    }
-
     private let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "Hotkeys")
     private let volumeService: any SpeakerVolumeAdjusting
     private let outputSelection: PlaybackOutputSelection
-    private let activePlaybackObserver: any SpotifyActivePlaybackObserving
     private let volumeCommands: SpeakerVolumeCommandQueue
+    private let spotifyVolumeController: SpotifyActiveDeviceVolumeController
     private let step = SpeakerVolumeControlDefaults.step
-    private let spotifyVolumeStateTTL: CFTimeInterval = 4.0
 
     private var volumeAdjustmentInFlight = false
     private var queuedVolumeAdjustment: QueuedVolumeAdjustment?
-    private var muteToggleInFlight = false
-    private var spotifyMuteRestoreVolume: Int?
-    private var spotifyMuteRestoreDeviceName: String?
-    private var spotifyVolumeState: SpotifyVolumeState?
-    private var spotifyVolumeBootstrapInFlight = false
-    private var spotifyVolumeBootstrapDelta = 0
-    private var spotifyVolumeWriteInFlight = false
-    private var spotifyVolumeWritePending = false
+    private var sonosMuteToggleInFlight = false
 
     init(
         volumeService: any SpeakerVolumeAdjusting,
@@ -56,8 +42,11 @@ final class ShortcutVolumeActionController {
     ) {
         self.volumeService = volumeService
         self.outputSelection = outputSelection
-        self.activePlaybackObserver = activePlaybackObserver
         self.volumeCommands = volumeCommands
+        self.spotifyVolumeController = SpotifyActiveDeviceVolumeController(
+            activePlaybackObserver: activePlaybackObserver,
+            step: SpeakerVolumeControlDefaults.step
+        )
     }
 
     func adjustVolume(direction: VolumeDirection) {
@@ -69,7 +58,7 @@ final class ShortcutVolumeActionController {
         case let .sonos(roomName, scope):
             adjustSonosVolume(direction: direction, roomName: roomName, scope: scope)
         case .spotify:
-            adjustSpotifyVolume(direction: direction)
+            spotifyVolumeController.adjustVolume(direction: direction)
         }
     }
 
@@ -131,77 +120,23 @@ final class ShortcutVolumeActionController {
         }
     }
 
-    private func adjustSpotifyVolume(direction: VolumeDirection) {
-        let delta = direction.delta(step: step)
-        if let state = freshSpotifyVolumeState() {
-            applySpotifyDesiredVolume(deviceName: state.deviceName, volume: state.desiredVolume + delta)
-            logger.info("SonosHandoffHotkeys action=volume_\(direction.logName, privacy: .public) state=optimistic target=spotify_active_device")
-            return
-        }
-
-        spotifyVolumeBootstrapDelta += delta
-        guard !spotifyVolumeBootstrapInFlight else {
-            logger.info("SonosHandoffHotkeys action=volume_\(direction.logName, privacy: .public) state=bootstrap_queued target=spotify_active_device")
-            return
-        }
-
-        spotifyVolumeBootstrapInFlight = true
-        let logger = logger
-        Task.detached(priority: .userInitiated) { [activePlaybackObserver, logger, step] in
-            do {
-                guard let status = try await activePlaybackObserver.activePlaybackDeviceStatus(),
-                      let currentVolume = status.volumePercent
-                else {
-                    await MainActor.run {
-                        self.spotifyVolumeBootstrapInFlight = false
-                        self.spotifyVolumeBootstrapDelta = 0
-                        logger.info("SonosHandoffHotkeys action=volume_\(direction.logName, privacy: .public) ignored reason=no_active_spotify_device")
-                        StatusHUD.shared.finish(
-                            title: "Spotify Volume Unavailable",
-                            message: "Spotify has no active device volume.",
-                            dismissAfter: 2.0
-                        )
-                    }
-                    return
-                }
-
-                await MainActor.run {
-                    let requestedVolume = currentVolume + self.spotifyVolumeBootstrapDelta
-                    self.spotifyVolumeBootstrapInFlight = false
-                    self.spotifyVolumeBootstrapDelta = 0
-                    self.applySpotifyDesiredVolume(deviceName: status.deviceName, volume: requestedVolume)
-                    logger.info("SonosHandoffHotkeys result=bootstrapped action=volume_\(direction.logName, privacy: .public) target=spotify_active_device device=\(status.deviceName, privacy: .public)")
-                }
-            } catch {
-                logger.error("SonosHandoffHotkeys result=failure action=volume_\(direction.logName, privacy: .public) target=spotify_active_device step=\(step, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
-                await MainActor.run {
-                    self.spotifyVolumeBootstrapInFlight = false
-                    self.spotifyVolumeBootstrapDelta = 0
-                    StatusHUD.shared.finish(title: "Spotify Volume Failed", message: error.localizedDescription)
-                }
-            }
-        }
-    }
-
     func clearQueuedVolumeAdjustment() {
         queuedVolumeAdjustment = nil
     }
 
     func toggleMute() {
         clearQueuedVolumeAdjustment()
-        guard !muteToggleInFlight else {
-            logger.info("SonosHandoffHotkeys action=mute_toggle state=ignored reason=in_flight")
-            return
-        }
-
         let target = selectedVolumeTarget()
-
-        muteToggleInFlight = true
         switch target {
         case let .sonos(roomName, scope):
+            guard !sonosMuteToggleInFlight else {
+                logger.info("SonosHandoffHotkeys action=mute_toggle state=ignored reason=in_flight")
+                return
+            }
+            sonosMuteToggleInFlight = true
             toggleSonosMute(roomName: roomName, scope: scope)
         case .spotify:
-            toggleSpotifyMute()
+            spotifyVolumeController.toggleMute()
         }
     }
 
@@ -221,7 +156,7 @@ final class ShortcutVolumeActionController {
                 await MainActor.run {
                     SonosVolumeMonitor.shared.noteLocalChange(roomName: roomName, muted: muted)
                     StatusHUD.shared.showMute(roomName: roomName, muted: muted)
-                    self.muteToggleInFlight = false
+                    self.sonosMuteToggleInFlight = false
                 }
             } catch {
                 logger.error("SonosHandoffHotkeys result=failure action=mute_toggle room=\(roomName, privacy: .public) scope=\(scope.logName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
@@ -230,139 +165,10 @@ final class ShortcutVolumeActionController {
                         title: "\(roomName) Mute Failed",
                         message: error.localizedDescription
                     )
-                    self.muteToggleInFlight = false
+                    self.sonosMuteToggleInFlight = false
                 }
             }
         }
-    }
-
-    private func toggleSpotifyMute() {
-        if let state = freshSpotifyVolumeState() {
-            let requestedVolume = spotifyMuteToggleVolume(deviceName: state.deviceName, currentVolume: state.desiredVolume)
-            applySpotifyDesiredVolume(deviceName: state.deviceName, volume: requestedVolume)
-            muteToggleInFlight = false
-            return
-        }
-
-        let logger = logger
-        Task.detached(priority: .userInitiated) { [activePlaybackObserver, logger] in
-            do {
-                guard let status = try await activePlaybackObserver.activePlaybackDeviceStatus(),
-                      let currentVolume = status.volumePercent
-                else {
-                    await MainActor.run {
-                        logger.info("SonosHandoffHotkeys action=mute_toggle ignored reason=no_active_spotify_device")
-                        StatusHUD.shared.finish(
-                            title: "Spotify Mute Unavailable",
-                            message: "Spotify has no active device volume.",
-                            dismissAfter: 2.0
-                        )
-                        self.muteToggleInFlight = false
-                    }
-                    return
-                }
-
-                await MainActor.run {
-                    let requestedVolume = self.spotifyMuteToggleVolume(deviceName: status.deviceName, currentVolume: currentVolume)
-                    self.applySpotifyDesiredVolume(deviceName: status.deviceName, volume: requestedVolume)
-                    logger.info("SonosHandoffHotkeys result=bootstrapped action=mute_toggle target=spotify_active_device device=\(status.deviceName, privacy: .public) volume=\(requestedVolume, privacy: .public)")
-                    self.muteToggleInFlight = false
-                }
-            } catch {
-                logger.error("SonosHandoffHotkeys result=failure action=mute_toggle target=spotify_active_device error=\(error.localizedDescription, privacy: .public)")
-                await MainActor.run {
-                    StatusHUD.shared.finish(title: "Spotify Mute Failed", message: error.localizedDescription)
-                    self.muteToggleInFlight = false
-                }
-            }
-        }
-    }
-
-    private func spotifyMuteToggleVolume(deviceName: String, currentVolume: Int) -> Int {
-        if currentVolume == 0 {
-            let restoreVolume = spotifyMuteRestoreVolume
-            let restoringSameDevice = deviceName == spotifyMuteRestoreDeviceName
-            spotifyMuteRestoreVolume = nil
-            spotifyMuteRestoreDeviceName = nil
-            return restoringSameDevice ? restoreVolume ?? step : step
-        }
-
-        spotifyMuteRestoreVolume = currentVolume
-        spotifyMuteRestoreDeviceName = deviceName
-        return 0
-    }
-
-    private func freshSpotifyVolumeState() -> SpotifyVolumeState? {
-        guard let state = spotifyVolumeState,
-              CFAbsoluteTimeGetCurrent() - state.updatedAt <= spotifyVolumeStateTTL
-        else {
-            return nil
-        }
-        return state
-    }
-
-    private func applySpotifyDesiredVolume(deviceName: String, volume: Int) {
-        let requestedVolume = clampedVolume(volume)
-        spotifyVolumeState = SpotifyVolumeState(
-            deviceName: deviceName,
-            desiredVolume: requestedVolume,
-            updatedAt: CFAbsoluteTimeGetCurrent()
-        )
-        StatusHUD.shared.showVolume(roomName: deviceName, volume: requestedVolume, dismissAfter: 1.2)
-        scheduleSpotifyVolumeWrite()
-    }
-
-    private func scheduleSpotifyVolumeWrite() {
-        guard !spotifyVolumeWriteInFlight else {
-            spotifyVolumeWritePending = true
-            return
-        }
-        guard let state = spotifyVolumeState else {
-            spotifyVolumeWritePending = false
-            return
-        }
-
-        spotifyVolumeWritePending = false
-        spotifyVolumeWriteInFlight = true
-        let requestedVolume = state.desiredVolume
-        let logger = logger
-        Task.detached(priority: .userInitiated) { [activePlaybackObserver, logger] in
-            do {
-                let confirmedVolume = try await activePlaybackObserver.setActivePlaybackDeviceVolume(requestedVolume)
-                logger.info("SonosHandoffHotkeys result=success action=spotify_volume_write target=spotify_active_device requested_volume=\(requestedVolume, privacy: .public) confirmed_volume=\(confirmedVolume, privacy: .public)")
-                await MainActor.run {
-                    self.finishSpotifyVolumeWrite(requestedVolume: requestedVolume, confirmedVolume: confirmedVolume)
-                }
-            } catch {
-                logger.error("SonosHandoffHotkeys result=failure action=spotify_volume_write target=spotify_active_device requested_volume=\(requestedVolume, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
-                await MainActor.run {
-                    self.spotifyVolumeWriteInFlight = false
-                    self.spotifyVolumeWritePending = false
-                    self.spotifyVolumeState = nil
-                    StatusHUD.shared.finish(title: "Spotify Volume Failed", message: error.localizedDescription)
-                }
-            }
-        }
-    }
-
-    private func finishSpotifyVolumeWrite(requestedVolume: Int, confirmedVolume: Int) {
-        spotifyVolumeWriteInFlight = false
-        let shouldWriteAgain = spotifyVolumeWritePending
-        spotifyVolumeWritePending = false
-
-        if !shouldWriteAgain, var state = spotifyVolumeState, state.desiredVolume == requestedVolume {
-            state.desiredVolume = confirmedVolume
-            state.updatedAt = CFAbsoluteTimeGetCurrent()
-            spotifyVolumeState = state
-        }
-
-        if shouldWriteAgain {
-            scheduleSpotifyVolumeWrite()
-        }
-    }
-
-    private func clampedVolume(_ volume: Int) -> Int {
-        min(max(volume, 0), 100)
     }
 
     private func finishVolumeAdjustment(shouldRunQueued: Bool) {
@@ -393,6 +199,221 @@ final class ShortcutVolumeActionController {
         }
 
         return .group
+    }
+}
+
+@MainActor
+private final class SpotifyActiveDeviceVolumeController {
+    private struct SpotifyVolumeState {
+        let deviceName: String
+        var desiredVolume: Int
+        var updatedAt: CFAbsoluteTime
+    }
+
+    private let activePlaybackObserver: any SpotifyActivePlaybackObserving
+    private let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "Hotkeys")
+    private let step: Int
+    private let spotifyVolumeStateTTL: CFTimeInterval = 4.0
+
+    private var muteRestoreVolume: Int?
+    private var muteRestoreDeviceName: String?
+    private var volumeState: SpotifyVolumeState?
+    private var volumeBootstrapInFlight = false
+    private var volumeBootstrapDelta = 0
+    private var volumeWriteInFlight = false
+    private var volumeWritePending = false
+    private var muteToggleInFlight = false
+
+    init(activePlaybackObserver: any SpotifyActivePlaybackObserving, step: Int) {
+        self.activePlaybackObserver = activePlaybackObserver
+        self.step = step
+    }
+
+    func adjustVolume(direction: VolumeDirection) {
+        let delta = direction.delta(step: step)
+        if let state = freshVolumeState() {
+            applyDesiredVolume(deviceName: state.deviceName, volume: state.desiredVolume + delta)
+            logger.info("SonosHandoffHotkeys action=volume_\(direction.logName, privacy: .public) state=optimistic target=spotify_active_device")
+            return
+        }
+
+        volumeBootstrapDelta += delta
+        guard !volumeBootstrapInFlight else {
+            logger.info("SonosHandoffHotkeys action=volume_\(direction.logName, privacy: .public) state=bootstrap_queued target=spotify_active_device")
+            return
+        }
+
+        volumeBootstrapInFlight = true
+        let logger = logger
+        Task.detached(priority: .userInitiated) { [activePlaybackObserver, logger, step] in
+            do {
+                guard let status = try await activePlaybackObserver.activePlaybackDeviceStatus(),
+                      let currentVolume = status.volumePercent
+                else {
+                    await MainActor.run {
+                        self.volumeBootstrapInFlight = false
+                        self.volumeBootstrapDelta = 0
+                        logger.info("SonosHandoffHotkeys action=volume_\(direction.logName, privacy: .public) ignored reason=no_active_spotify_device")
+                        StatusHUD.shared.finish(
+                            title: "Spotify Volume Unavailable",
+                            message: "Spotify has no active device volume.",
+                            dismissAfter: 2.0
+                        )
+                    }
+                    return
+                }
+
+                await MainActor.run {
+                    let requestedVolume = currentVolume + self.volumeBootstrapDelta
+                    self.volumeBootstrapInFlight = false
+                    self.volumeBootstrapDelta = 0
+                    self.applyDesiredVolume(deviceName: status.deviceName, volume: requestedVolume)
+                    logger.info("SonosHandoffHotkeys result=bootstrapped action=volume_\(direction.logName, privacy: .public) target=spotify_active_device device=\(status.deviceName, privacy: .public)")
+                }
+            } catch {
+                logger.error("SonosHandoffHotkeys result=failure action=volume_\(direction.logName, privacy: .public) target=spotify_active_device step=\(step, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+                await MainActor.run {
+                    self.volumeBootstrapInFlight = false
+                    self.volumeBootstrapDelta = 0
+                    StatusHUD.shared.finish(title: "Spotify Volume Failed", message: error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    func toggleMute() {
+        guard !muteToggleInFlight else {
+            logger.info("SonosHandoffHotkeys action=mute_toggle state=ignored reason=in_flight")
+            return
+        }
+
+        muteToggleInFlight = true
+        if let state = freshVolumeState() {
+            let requestedVolume = muteToggleVolume(deviceName: state.deviceName, currentVolume: state.desiredVolume)
+            applyDesiredVolume(deviceName: state.deviceName, volume: requestedVolume)
+            muteToggleInFlight = false
+            return
+        }
+
+        let logger = logger
+        Task.detached(priority: .userInitiated) { [activePlaybackObserver, logger] in
+            do {
+                guard let status = try await activePlaybackObserver.activePlaybackDeviceStatus(),
+                      let currentVolume = status.volumePercent
+                else {
+                    await MainActor.run {
+                        logger.info("SonosHandoffHotkeys action=mute_toggle ignored reason=no_active_spotify_device")
+                        StatusHUD.shared.finish(
+                            title: "Spotify Mute Unavailable",
+                            message: "Spotify has no active device volume.",
+                            dismissAfter: 2.0
+                        )
+                        self.muteToggleInFlight = false
+                    }
+                    return
+                }
+
+                await MainActor.run {
+                    let requestedVolume = self.muteToggleVolume(deviceName: status.deviceName, currentVolume: currentVolume)
+                    self.applyDesiredVolume(deviceName: status.deviceName, volume: requestedVolume)
+                    logger.info("SonosHandoffHotkeys result=bootstrapped action=mute_toggle target=spotify_active_device device=\(status.deviceName, privacy: .public) volume=\(requestedVolume, privacy: .public)")
+                    self.muteToggleInFlight = false
+                }
+            } catch {
+                logger.error("SonosHandoffHotkeys result=failure action=mute_toggle target=spotify_active_device error=\(error.localizedDescription, privacy: .public)")
+                await MainActor.run {
+                    StatusHUD.shared.finish(title: "Spotify Mute Failed", message: error.localizedDescription)
+                    self.muteToggleInFlight = false
+                }
+            }
+        }
+    }
+
+    private func muteToggleVolume(deviceName: String, currentVolume: Int) -> Int {
+        if currentVolume == 0 {
+            let restoreVolume = muteRestoreVolume
+            let restoringSameDevice = deviceName == muteRestoreDeviceName
+            muteRestoreVolume = nil
+            muteRestoreDeviceName = nil
+            return restoringSameDevice ? restoreVolume ?? step : step
+        }
+
+        muteRestoreVolume = currentVolume
+        muteRestoreDeviceName = deviceName
+        return 0
+    }
+
+    private func freshVolumeState() -> SpotifyVolumeState? {
+        guard let state = volumeState,
+              CFAbsoluteTimeGetCurrent() - state.updatedAt <= spotifyVolumeStateTTL
+        else {
+            return nil
+        }
+        return state
+    }
+
+    private func applyDesiredVolume(deviceName: String, volume: Int) {
+        let requestedVolume = clampedVolume(volume)
+        volumeState = SpotifyVolumeState(
+            deviceName: deviceName,
+            desiredVolume: requestedVolume,
+            updatedAt: CFAbsoluteTimeGetCurrent()
+        )
+        StatusHUD.shared.showVolume(roomName: deviceName, volume: requestedVolume, dismissAfter: 1.2)
+        scheduleVolumeWrite()
+    }
+
+    private func scheduleVolumeWrite() {
+        guard !volumeWriteInFlight else {
+            volumeWritePending = true
+            return
+        }
+        guard let state = volumeState else {
+            volumeWritePending = false
+            return
+        }
+
+        volumeWritePending = false
+        volumeWriteInFlight = true
+        let requestedVolume = state.desiredVolume
+        let logger = logger
+        Task.detached(priority: .userInitiated) { [activePlaybackObserver, logger] in
+            do {
+                let confirmedVolume = try await activePlaybackObserver.setActivePlaybackDeviceVolume(requestedVolume)
+                logger.info("SonosHandoffHotkeys result=success action=spotify_volume_write target=spotify_active_device requested_volume=\(requestedVolume, privacy: .public) confirmed_volume=\(confirmedVolume, privacy: .public)")
+                await MainActor.run {
+                    self.finishVolumeWrite(requestedVolume: requestedVolume, confirmedVolume: confirmedVolume)
+                }
+            } catch {
+                logger.error("SonosHandoffHotkeys result=failure action=spotify_volume_write target=spotify_active_device requested_volume=\(requestedVolume, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+                await MainActor.run {
+                    self.volumeWriteInFlight = false
+                    self.volumeWritePending = false
+                    self.volumeState = nil
+                    StatusHUD.shared.finish(title: "Spotify Volume Failed", message: error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    private func finishVolumeWrite(requestedVolume: Int, confirmedVolume: Int) {
+        volumeWriteInFlight = false
+        let shouldWriteAgain = volumeWritePending
+        volumeWritePending = false
+
+        if !shouldWriteAgain, var state = volumeState, state.desiredVolume == requestedVolume {
+            state.desiredVolume = confirmedVolume
+            state.updatedAt = CFAbsoluteTimeGetCurrent()
+            volumeState = state
+        }
+
+        if shouldWriteAgain {
+            scheduleVolumeWrite()
+        }
+    }
+
+    private func clampedVolume(_ volume: Int) -> Int {
+        min(max(volume, 0), 100)
     }
 }
 

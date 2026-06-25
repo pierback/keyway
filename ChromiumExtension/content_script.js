@@ -225,6 +225,9 @@ function publishElement(element) {
 
     const metadata = navigator.mediaSession?.metadata;
     const hasMediaSessionMetadata = Boolean(metadata && (metadata.title || metadata.artist || metadata.album));
+    const hasPlaybackActivity = hasMediaSessionMetadata
+      || (!element.paused && !element.ended)
+      || (Number.isFinite(element.currentTime) && element.currentTime > 0);
     sendRuntimeMessage({
       type: "keywayMediaState",
       documentID,
@@ -240,6 +243,7 @@ function publishElement(element) {
       duration: element.duration,
       elapsedTime: element.currentTime,
       hasMediaSessionMetadata,
+      hasPlaybackActivity,
       supportedCommands: supportedCommands(),
     });
   });
