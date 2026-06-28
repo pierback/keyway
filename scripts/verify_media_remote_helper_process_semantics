@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+helper="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaRemoteHelperProcess.swift"
+
+fail() {
+  printf 'verify_media_remote_helper_process_semantics: %s\n' "$*" >&2
+  exit 1
+}
+
+python3 - "$helper" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+
+for required in (
+    "private var activeRunID: UUID?",
+    "private var outputPipe: Pipe?",
+    "private var errorPipe: Pipe?",
+    "self.activeRunID = runID",
+    "self.activeRunID == runID || self.ownsStopped(terminatedProcess)",
+    "guard let self, self.activeRunID == runID else {",
+):
+    if required not in text:
+        raise SystemExit(f"verify_media_remote_helper_process_semantics: missing helper run-ownership guard: {required}")
+
+start = text.index("    func stop() {")
+end = text.index("\n    @discardableResult", start)
+body = text[start:end]
+for required in (
+    "outputPipe?.fileHandleForReading.readabilityHandler = nil",
+    "errorPipe?.fileHandleForReading.readabilityHandler = nil",
+    "activeRunID = nil",
+    "outputPipe = nil",
+    "errorPipe = nil",
+):
+    if required not in body:
+        raise SystemExit(f"verify_media_remote_helper_process_semantics: stop() must clear helper IO ownership: {required}")
+
+start = text.index("    func retire(_ candidate: Process) {")
+end = text.index("\n    private func environment()", start)
+body = text[start:end]
+for required in (
+    "outputPipe?.fileHandleForReading.readabilityHandler = nil",
+    "errorPipe?.fileHandleForReading.readabilityHandler = nil",
+    "activeRunID = nil",
+    "outputPipe = nil",
+    "errorPipe = nil",
+    "outputBuffer.removeAll()",
+):
+    if required not in body:
+        raise SystemExit(f"verify_media_remote_helper_process_semantics: retire() must detach old helper pipes before a restart: {required}")
+PY
+
+printf 'verify_media_remote_helper_process_semantics=ok\n'

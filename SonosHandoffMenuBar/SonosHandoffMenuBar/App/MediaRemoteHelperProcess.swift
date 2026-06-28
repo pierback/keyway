@@ -12,9 +12,12 @@ final class MediaRemoteHelperProcess {
 
     private let role: MediaRemoteHelperRole
     private let logger: Logger
+    private var activeRunID: UUID?
     private var process: Process?
     private var stoppedProcesses: [Process] = []
     private var inputPipe: Pipe?
+    private var outputPipe: Pipe?
+    private var errorPipe: Pipe?
     private var outputBuffer = Data()
 
     init(role: MediaRemoteHelperRole, logger: Logger) {
@@ -41,6 +44,7 @@ final class MediaRemoteHelperProcess {
         let inputPipe = Pipe()
         let outputPipe = Pipe()
         let errorPipe = Pipe()
+        let runID = UUID()
 
         process.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
         process.arguments = [script.path, dylib.path]
@@ -48,8 +52,13 @@ final class MediaRemoteHelperProcess {
         process.standardInput = inputPipe
         process.standardOutput = outputPipe
         process.standardError = errorPipe
-        process.terminationHandler = { terminatedProcess in
+        process.terminationHandler = { [weak self] terminatedProcess in
             Task { @MainActor in
+                guard let self,
+                      self.activeRunID == runID || self.ownsStopped(terminatedProcess)
+                else {
+                    return
+                }
                 onTermination(terminatedProcess, terminatedProcess.terminationStatus)
             }
         }
@@ -60,7 +69,10 @@ final class MediaRemoteHelperProcess {
                 return
             }
             Task { @MainActor [weak self] in
-                self?.handleOutput(data, onLine: onLine, onFailure: onFailure)
+                guard let self, self.activeRunID == runID else {
+                    return
+                }
+                self.handleOutput(data, onLine: onLine, onFailure: onFailure)
             }
         }
         errorPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
@@ -69,23 +81,34 @@ final class MediaRemoteHelperProcess {
                 return
             }
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard let self, self.activeRunID == runID else { return }
                 self.logger.error("MediaRemoteHelper role=\(self.role.rawValue, privacy: .public) stderr=\(message, privacy: .public)")
             }
         }
 
-        try process.run()
+        self.activeRunID = runID
         self.process = process
         self.inputPipe = inputPipe
+        self.outputPipe = outputPipe
+        self.errorPipe = errorPipe
+        try process.run()
     }
 
     func stop() {
-        if let process {
+        let process = self.process
+        if let process, process.isRunning {
             stoppedProcesses.append(process)
         }
+        outputPipe?.fileHandleForReading.readabilityHandler = nil
+        errorPipe?.fileHandleForReading.readabilityHandler = nil
+        activeRunID = nil
         inputPipe = nil
-        process?.terminate()
-        process = nil
+        outputPipe = nil
+        errorPipe = nil
+        if process?.isRunning == true {
+            process?.terminate()
+        }
+        self.process = nil
         outputBuffer.removeAll()
     }
 
@@ -115,8 +138,14 @@ final class MediaRemoteHelperProcess {
 
     func retire(_ candidate: Process) {
         if process === candidate {
+            outputPipe?.fileHandleForReading.readabilityHandler = nil
+            errorPipe?.fileHandleForReading.readabilityHandler = nil
+            activeRunID = nil
             process = nil
             inputPipe = nil
+            outputPipe = nil
+            errorPipe = nil
+            outputBuffer.removeAll()
         }
         stoppedProcesses.removeAll { $0 === candidate }
     }
