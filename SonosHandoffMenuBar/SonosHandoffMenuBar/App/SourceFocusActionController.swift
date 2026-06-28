@@ -120,12 +120,16 @@ final class SourceFocusActionController {
 
 private struct SourceFocusNativeAppActivator {
     func focus(target: MediaRemoteTarget) -> SourceFocusResult {
+        let bundleIdentifiers = [target.bundleIdentifier, target.parentBundleIdentifier]
+            .filter { !$0.isEmpty }
         if target.pid > 0,
-           let app = NSRunningApplication(processIdentifier: pid_t(target.pid)) {
+           let app = NSRunningApplication(processIdentifier: pid_t(target.pid)),
+           let bundleIdentifier = app.bundleIdentifier,
+           bundleIdentifiers.contains(bundleIdentifier) {
             return activate(app, target: target)
         }
 
-        for bundleID in [target.bundleIdentifier, target.parentBundleIdentifier] where !bundleID.isEmpty {
+        for bundleID in bundleIdentifiers {
             if let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first {
                 return activate(app, target: target)
             }

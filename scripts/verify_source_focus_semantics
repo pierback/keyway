@@ -10,6 +10,9 @@ cp \
   "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTargetOverlayKeyboardAction.swift" \
   "$workdir/"
 
+perl -0pi -e 's/NSRunningApplication/SourceFocusRunningApplication/g' \
+  "$workdir/SourceFocusActionController.swift"
+
 cat >"$workdir/Stubs.swift" <<'SWIFT'
 import AppKit
 import Foundation
@@ -103,6 +106,51 @@ final class ShortcutRuntimeStatus {
 
     func recordMediaTransportEvent(_ event: String, fields: [String: Any]) {
         events.append((event, fields))
+    }
+}
+
+struct SourceFocusRunningApplication {
+    let pid: pid_t
+    let bundleIdentifier: String?
+    private let activationResult: Bool
+
+    private(set) static var appsByPID: [pid_t: SourceFocusRunningApplication] = [:]
+    private(set) static var appsByBundleIdentifier: [String: [SourceFocusRunningApplication]] = [:]
+    private(set) static var activationPIDs: [pid_t] = []
+
+    init(pid: pid_t, bundleIdentifier: String?, activationResult: Bool = true) {
+        self.pid = pid
+        self.bundleIdentifier = bundleIdentifier
+        self.activationResult = activationResult
+    }
+
+    init?(processIdentifier: pid_t) {
+        guard let app = Self.appsByPID[processIdentifier] else {
+            return nil
+        }
+        self = app
+    }
+
+    static func reset() {
+        appsByPID = [:]
+        appsByBundleIdentifier = [:]
+        activationPIDs = []
+    }
+
+    static func register(_ app: SourceFocusRunningApplication) {
+        appsByPID[app.pid] = app
+        if let bundleIdentifier = app.bundleIdentifier {
+            appsByBundleIdentifier[bundleIdentifier, default: []].append(app)
+        }
+    }
+
+    static func runningApplications(withBundleIdentifier bundleIdentifier: String) -> [SourceFocusRunningApplication] {
+        appsByBundleIdentifier[bundleIdentifier] ?? []
+    }
+
+    func activate(options: NSApplication.ActivationOptions) -> Bool {
+        Self.activationPIDs.append(pid)
+        return activationResult
     }
 }
 SWIFT
@@ -284,6 +332,45 @@ struct Semantics {
         expectEqual(mediaRemote.refreshCount, 2, "Missing app focus must refresh stale targets")
         expectEqual(StatusHUD.shared.finishes.count, 2, "Missing app focus must fail visibly")
 
+        let nativeMediaRemote = MediaRemoteController()
+        let nativeChromium = ChromiumBrowserExtensionController()
+        let nativeMemory = MediaTargetSelectionMemory()
+        let nativeController = SourceFocusActionController(
+            mediaRemoteController: nativeMediaRemote,
+            chromiumBrowserExtensionController: nativeChromium,
+            targetSelectionMemory: nativeMemory
+        )
+
+        SourceFocusRunningApplication.reset()
+        SourceFocusRunningApplication.register(
+            SourceFocusRunningApplication(pid: 303, bundleIdentifier: "com.fpieringer.keyway.reused-pid")
+        )
+        SourceFocusRunningApplication.register(
+            SourceFocusRunningApplication(pid: 404, bundleIdentifier: "com.spotify.client")
+        )
+        ShortcutRuntimeStatus.shared.events = []
+        StatusHUD.shared.finishes = []
+        let stalePIDTarget = appTarget(
+            id: "stale-pid-row",
+            bundleIdentifier: "com.spotify.client",
+            displayName: "Spotify",
+            pid: 303
+        )
+        nativeController.focus(target: stalePIDTarget)
+        expectEqual(
+            SourceFocusRunningApplication.activationPIDs,
+            [404],
+            "Stale pid focus must skip the reused process and fall back to the matching bundle identifier"
+        )
+        expectEqual(nativeMemory.recentTargetID, stalePIDTarget.id, "Native app focus must remember the selected target")
+        expectEqual(
+            ShortcutRuntimeStatus.shared.events.map(\.0),
+            ["source_focus_requested", "source_focus_succeeded"],
+            "Fallback app focus must still emit exactly one terminal success trace"
+        )
+        expectEqual(nativeMediaRemote.refreshCount, 0, "Fallback app focus must not refresh stale targets")
+        expectEqual(StatusHUD.shared.finishes.count, 0, "Fallback app focus must not show a failure HUD")
+
         print("activation_events_from_media_key=0")
         print("verify_source_focus_semantics=ok")
     }
@@ -385,6 +472,8 @@ for event in ("source_focus_requested", "source_focus_succeeded", "source_focus_
     expect(source_focus, event, f"source focus must trace {event}")
 expect(source_focus, "NSRunningApplication(processIdentifier:", "app focus must prefer pid activation")
 expect(source_focus, "NSRunningApplication.runningApplications(withBundleIdentifier:", "app focus must fall back to bundle identifier activation")
+expect(source_focus, "let bundleIdentifiers = [target.bundleIdentifier, target.parentBundleIdentifier]", "app focus must validate stale pid activation against selected bundle identities")
+expect(source_focus, "bundleIdentifiers.contains(bundleIdentifier)", "app focus must reject reused pids that no longer match the selected source")
 expect(source_focus, "SourceFocusDestination", "source focus must expose a testable destination model")
 
 for forbidden in (
