@@ -303,10 +303,10 @@ Example command response:
 ```text
 Up/Down      Select target
 Enter        Dispatch Pending Command to selected target
+Cmd+Enter    Focus selected target without routing
 Escape       Cancel Pending Command
 Tab          Toggle Expanded Controls
 1-9          Compact mode: dispatch to visible target number
-P            Pin/unpin selected target
 Cmd+Up/Down  Expanded mode: adjust supported selected-target volume
 ```
 
