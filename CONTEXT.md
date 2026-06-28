@@ -56,6 +56,10 @@ _Avoid_: Best-effort preservation
 An app-level media session that macOS exposes through Now Playing and can plausibly receive media commands.
 _Avoid_: Audio source, browser tab, output stream
 
+**Current Media Target**:
+The only actively playing Media Target when exactly one target is playing, used for automatic routing before focus or recent fallback.
+_Avoid_: Default player, active app
+
 **Focused Target**:
 The Media Target most likely intended by the user because its app or window currently has foreground attention.
 _Avoid_: Frontmost media app, active screen app
@@ -68,10 +72,6 @@ _Avoid_: Active app
 A Media Target whose window is visibly prominent on the active display when no Foreground App Target exists.
 _Avoid_: Visible app, active screen app
 
-**Pinned Target**:
-A user-selected Media Target that should be preferred when there is no stronger immediate focus signal.
-_Avoid_: Default app, sticky target
-
 **Recent Target**:
 The most recently selected Media Target that remains available for routing future ambiguous commands.
 _Avoid_: Sticky target, default app
@@ -79,10 +79,6 @@ _Avoid_: Sticky target, default app
 **Target Selection Policy**:
 The ordered decision process that chooses a Media Target before falling back to the chooser.
 _Avoid_: Heuristic, routing guess
-
-**Primary Target**:
-The Media Target that the router would choose automatically at the moment the Media Overlay appears.
-_Avoid_: Active row, default selection
 
 **Pending Command**:
 A hardware media command being held until the router chooses or receives a Media Target.
@@ -126,16 +122,12 @@ _Avoid_: Active screen
 - The **Media Overlay** uses a **Command Palette Overlay** visual direction rather than an Alcove-style notch surface.
 - The **Command Palette Overlay** does not include search; it uses a **Command Header** instead.
 - A **Media Target** is included because it is visible to Now Playing, not because it is merely producing audio.
-- The **Target Selection Policy** prefers a single **Media Target**, then a **Focused Target**, then a **Pinned Target**, then a **Recent Target**, then the **Media Target Chooser**.
-- The **Primary Target** is shown as the first target in the **Media Overlay**.
-- The **Media Overlay** orders targets as **Primary Target**, **Pinned Target** if different, other playing targets, then inactive targets.
-- **Recent Target** is not displayed as its own group; it may explain why a target is the **Primary Target**.
-- A **Pinned Target** is set explicitly by the user and is used only while it remains a valid **Media Target**.
-- A **Recent Target** is automatic: selecting a target updates it, and it expires when that target disappears.
-- Pinning solves background ambiguity; it does not override a clear **Focused Target**.
-- A **Recent Target** is weaker than a **Pinned Target** and exists to avoid repeated choices when no pin has been set.
-- The selected target is pinned or unpinned with `P` in the **Media Overlay**.
-- A **Pinned Target** is persisted by bundle identifier and ignored while unavailable rather than forgotten.
+- The **Target Selection Policy** prefers a single **Media Target**, then a **Current Media Target** when exactly one target is actively playing, then a **Focused Target**, then a **Recent Target**, then the **Media Target Chooser**.
+- A **Current Media Target** is automatic when exactly one target is actively playing.
+- A new **Media Target Chooser** session starts with row 1 selected.
+- The **Media Overlay** lists currently playing targets before inactive targets, and **Recent Target** memory can lift a target ahead of peers with the same playback state.
+- **Recent Target** is not displayed as its own group; it may explain why a target appears earlier in the list.
+- A **Recent Target** is automatic within the current Keyway run: selecting or focusing a target updates it, and it is used only while that exact **Media Target** remains available.
 - A **Focused Target** is first resolved as a **Foreground App Target**, then as a **Prominent Window Target**.
 - A **Media Target Chooser** resolves a **Pending Command**; selecting a target dispatches that command to the target.
 - Cancelling the **Media Target Chooser** discards the **Pending Command**.
@@ -177,17 +169,17 @@ _Avoid_: Active screen
 > **Dev:** "Spotify was selected last, but QuickTime is the foreground app. Which receives play/pause?"
 > **Domain expert:** "QuickTime, because the **Focused Target** wins before the **Recent Target**."
 
-> **Dev:** "Can the user pin Spotify as the permanent target?"
-> **Domain expert:** "Yes, as a **Pinned Target**, but it still does not override a clear **Focused Target**."
+> **Dev:** "Spotify is the only actively playing target, but QuickTime is frontmost and paused. Which receives next?"
+> **Domain expert:** "Spotify, because the **Current Media Target** wins before **Focused Target** or **Recent Target** when exactly one target is actively playing."
 
-> **Dev:** "If nothing is pinned, should the router remember that Spotify was chosen last?"
+> **Dev:** "If nothing is actively playing, should the router remember that Spotify was chosen last?"
 > **Domain expert:** "Yes, as a weak **Recent Target** fallback."
 
-> **Dev:** "What should row 1 mean in the overlay?"
-> **Domain expert:** "Row 1 is the **Primary Target**, meaning the target the router would choose automatically right now."
+> **Dev:** "What row is selected when the chooser opens?"
+> **Domain expert:** "A new chooser session starts with row 1 selected."
 
-> **Dev:** "What happens if pinned Spotify is closed?"
-> **Domain expert:** "The **Pinned Target** is ignored while unavailable and becomes usable again when Spotify returns."
+> **Dev:** "What happens if the remembered Spotify target disappears?"
+> **Domain expert:** "The **Recent Target** is used only while that exact **Media Target** remains available."
 
 > **Dev:** "Do we intercept volume keys too?"
 > **Domain expert:** "No. v1 owns **Transport Keys** only; volume and mute keys remain system behavior."

@@ -33,7 +33,7 @@ Keyway is a polished local macOS menu bar utility that routes play/pause, next, 
 
 1. User presses play/pause, next, or previous.
 2. Keyway suppresses the original transport-key event.
-3. Keyway resolves the Primary Target using the Target Selection Policy.
+3. Keyway resolves the command target automatically using the Target Selection Policy.
 4. Keyway dispatches the command to the target.
 5. If no chooser was needed, Keyway posts a native macOS notification naming the target and command.
 
@@ -154,7 +154,7 @@ The current verification record is maintained in `docs/verification-log.md`.
 
 - [ ] Media Targets are Now Playing clients, not arbitrary audio sources.
 - [ ] Target Selection Policy resolves single target, Current Media Target, Focused Target, Recent Target, then chooser for non-play-family commands.
-- [ ] Primary Target is row 1 in the overlay.
+- [ ] A new chooser session starts with row 1 selected.
 - [ ] Current Media Target is automatic when exactly one target is actively playing.
 - [ ] Recent Target is automatic within the current Keyway run.
 - [ ] Focused Target beats Recent Target when focus is clear.
