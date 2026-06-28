@@ -67,8 +67,12 @@ struct MediaRemoteTarget: Equatable, Identifiable {
 }
 
 enum ChromiumBrowserExtensionTransport {
+    static func isTarget(_ target: MediaRemoteTarget) -> Bool {
+        target.id.hasPrefix("chromium-")
+    }
+
     static func supports(command: MediaRemoteTransportCommand, target: MediaRemoteTarget) -> Bool {
-        false
+        command == .playPause || target.id.hasPrefix("chromium-supported:")
     }
 }
 
@@ -200,6 +204,71 @@ struct Semantics {
             "Focused routing must not match pid-only targets when the live process has no bundle identifier"
         )
 
+        let supportedChromiumDecision = resolver.automaticTarget(
+            command: .next,
+            from: [
+                target(
+                    id: "chromium-supported:tab-1",
+                    bundleIdentifier: "com.google.Chrome",
+                    pid: 0,
+                    playbackRate: "1"
+                ),
+                target(id: "spotify-paused", bundleIdentifier: "com.spotify.client", pid: 909),
+            ],
+            recentTargetID: nil
+        )
+        expectEqual(
+            supportedChromiumDecision?.target.id,
+            "chromium-supported:tab-1",
+            "Automatic routing must still select a single supported playing Chromium target"
+        )
+        expectEqual(
+            supportedChromiumDecision?.reason,
+            .current,
+            "A single supported playing Chromium target must still report current-target routing"
+        )
+
+        let mixedPlayingDecision = resolver.automaticTarget(
+            command: .next,
+            from: [
+                target(
+                    id: "chromium-supported:tab-1",
+                    bundleIdentifier: "com.google.Chrome",
+                    pid: 0,
+                    playbackRate: "1"
+                ),
+                target(
+                    id: "spotify-playing",
+                    bundleIdentifier: "com.spotify.client",
+                    pid: 909,
+                    playbackRate: "1"
+                ),
+            ],
+            recentTargetID: nil
+        )
+        expectNil(
+            mixedPlayingDecision,
+            "Automatic routing must treat mixed playing Chromium and non-Chromium targets as ambiguous"
+        )
+
+        let unsupportedChromiumDecision = resolver.automaticTarget(
+            command: .next,
+            from: [
+                target(
+                    id: "chromium-unsupported:tab-1",
+                    bundleIdentifier: "com.google.Chrome",
+                    pid: 0,
+                    playbackRate: "1"
+                ),
+                target(id: "spotify-paused", bundleIdentifier: "com.spotify.client", pid: 909),
+            ],
+            recentTargetID: nil
+        )
+        expectNil(
+            unsupportedChromiumDecision,
+            "Automatic routing must not direct-route a single Chromium target that does not support the command"
+        )
+
         ResolverWorkspace.shared.frontmostApplication = ResolverRunningApplication(
             processIdentifier: 707,
             bundleIdentifier: "com.google.Chrome"
@@ -243,7 +312,8 @@ struct Semantics {
     private static func target(
         id: String,
         bundleIdentifier: String,
-        pid: Int
+        pid: Int,
+        playbackRate: String = "0"
     ) -> MediaRemoteTarget {
         MediaRemoteTarget(
             id: id,
@@ -251,7 +321,7 @@ struct Semantics {
             parentBundleIdentifier: "",
             displayName: bundleIdentifier,
             pid: pid,
-            playbackRate: "0",
+            playbackRate: playbackRate,
             title: id
         )
     }
@@ -314,6 +384,26 @@ expect(
 )
 expect(
     resolver,
+    "let playingTargets = targets.filter(\\.isCurrentlyPlaying)",
+    "resolver must evaluate the global playing-target set before focused and recent fallbacks"
+)
+expect(
+    resolver,
+    "ChromiumBrowserExtensionTransport.isTarget(playingTarget)",
+    "resolver must identify Chromium extension targets on the single-playing path"
+)
+expect(
+    resolver,
+    "!ChromiumBrowserExtensionTransport.supports(command: command, target: playingTarget)",
+    "resolver must reject automatic routing when a single playing Chromium target does not support the command"
+)
+expect(
+    resolver,
+    "if playingTargets.count > 1 {\n            return nil\n        }",
+    "resolver must treat mixed playing state as ambiguous before focused or recent fallback"
+)
+expect(
+    resolver,
     "let routingIdentityMatches = targets.filter { $0.matchesRoutingIdentity(liveBundleIdentifier) }",
     "resolver must gather bundle-identity matches after exact pid validation"
 )
@@ -341,6 +431,8 @@ if 'bundleIdentifier ?? ""' in resolver:
     fail("resolver must not treat missing bundle identifiers as empty-string matches")
 if "target.pid == pid" in resolver or "target.pid == Int(pid)\n                ||" in resolver:
     fail("resolver must not accept pid matches before validating the live bundle identity")
+if "preferredChromiumExtensionTarget(" in resolver:
+    fail("resolver must not bypass mixed-playing ambiguity through a Chromium-specific pre-check")
 if "return targets.first { $0.matchesRoutingIdentity(liveBundleIdentifier) }" in resolver:
     fail("resolver must not arbitrarily select the first bundle-only match")
 

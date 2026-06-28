@@ -13,10 +13,6 @@ struct MediaTransportTargetResolver {
         from targets: [MediaRemoteTarget],
         recentTargetID: String?
     ) -> (target: MediaRemoteTarget, reason: MediaTransportRoutingReason)? {
-        if let extensionTarget = preferredChromiumExtensionTarget(command: command, from: targets) {
-            return (extensionTarget, .current)
-        }
-
         if targets.count == 1, let target = targets.first {
             return (target, .single)
         }
@@ -24,7 +20,15 @@ struct MediaTransportTargetResolver {
         let playingTargets = targets.filter(\.isCurrentlyPlaying)
 
         if playingTargets.count == 1, let playingTarget = playingTargets.first {
+            if ChromiumBrowserExtensionTransport.isTarget(playingTarget),
+               !ChromiumBrowserExtensionTransport.supports(command: command, target: playingTarget) {
+                return nil
+            }
             return (playingTarget, .current)
+        }
+
+        if playingTargets.count > 1 {
+            return nil
         }
 
         if let focusedTarget = focusedTarget(in: targets) {
@@ -37,17 +41,6 @@ struct MediaTransportTargetResolver {
         }
 
         return nil
-    }
-
-    private func preferredChromiumExtensionTarget(command: MediaRemoteTransportCommand, from targets: [MediaRemoteTarget]) -> MediaRemoteTarget? {
-        let extensionTargets = targets.filter {
-            ChromiumBrowserExtensionTransport.supports(command: command, target: $0)
-        }
-        let playingExtensionTargets = extensionTargets.filter(\.isCurrentlyPlaying)
-        guard playingExtensionTargets.count == 1 else {
-            return nil
-        }
-        return playingExtensionTargets[0]
     }
 
     private func focusedTarget(in targets: [MediaRemoteTarget]) -> MediaRemoteTarget? {

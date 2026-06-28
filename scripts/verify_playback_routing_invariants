@@ -166,10 +166,20 @@ for required in (
         raise SystemExit(f"verify_playback_routing_invariants: ambiguous cache routing must pass chooser metadata: {required}")
 automatic_body = target_resolver[
     target_resolver.index("func automaticTarget"):
-    target_resolver.index("    private func preferredChromiumExtensionTarget")
+    target_resolver.index("    private func focusedTarget")
 ]
 if "recentTargetID" not in automatic_body or ".recent" not in automatic_body:
     raise SystemExit("verify_playback_routing_invariants: remembered targets must route the exact selected row automatically before falling back to chooser")
+for required in (
+    "let playingTargets = targets.filter(\\.isCurrentlyPlaying)",
+    "if playingTargets.count > 1 {",
+    "ChromiumBrowserExtensionTransport.isTarget(playingTarget)",
+    "!ChromiumBrowserExtensionTransport.supports(command: command, target: playingTarget)",
+):
+    if required not in automatic_body:
+        raise SystemExit(f"verify_playback_routing_invariants: automatic target selection is missing required mixed-playing guard behavior: {required}")
+if "preferredChromiumExtensionTarget(" in automatic_body:
+    raise SystemExit("verify_playback_routing_invariants: automatic target selection must not bypass mixed playing ambiguity through a Chromium-specific pre-check")
 if "func targetedInputTarget" in target_resolver:
     raise SystemExit("verify_playback_routing_invariants: target Unix process id must not be a routing authority")
 if "decision_targeted_no_chooser" in text:
