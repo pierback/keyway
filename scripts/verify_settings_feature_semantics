@@ -51,6 +51,9 @@ if 'return "Config import has not run yet. Keyway will copy old Sonos Handoff co
 if 'private let heliumBundleIdentifier = "net.imput.helium"' not in text:
     raise SystemExit("verify_settings_feature_semantics: Chromium extension setup must know Helium's bundle identifier")
 
+if 'chromiumBridgeMessage = "Installed native host manifests in \\(state.manifestPaths.count) supported Chromium-family locations."' not in text:
+    raise SystemExit("verify_settings_feature_semantics: Chromium bridge repair status must describe supported manifest locations, not detected browser installs")
+
 start = text.index("    private func openChromiumExtensionsPage()")
 end = text.index("\n    private func reloadSpotifyAuthState()", start)
 body = text[start:end]

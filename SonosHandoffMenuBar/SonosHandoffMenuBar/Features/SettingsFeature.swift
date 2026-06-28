@@ -837,7 +837,7 @@ struct SettingsFeature: View {
 
     private func installChromiumNativeBridge() {
         let state = try! chromiumNativeMessagingHostInstaller.install()
-        chromiumBridgeMessage = "Installed native host for \(state.manifestPaths.count) Chromium browsers."
+        chromiumBridgeMessage = "Installed native host manifests in \(state.manifestPaths.count) supported Chromium-family locations."
     }
 
     private func revealChromiumExtension() {
