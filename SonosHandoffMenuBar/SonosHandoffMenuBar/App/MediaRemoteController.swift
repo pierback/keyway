@@ -336,7 +336,8 @@ final class MediaRemoteController: ObservableObject {
                 logger.info("MediaRemoteHelper ignored event=\(envelope.type, privacy: .public)")
             }
         } catch {
-            logger.error("MediaRemoteHelper parse_error=\(error.localizedDescription, privacy: .public)")
+            logger.error("MediaRemoteHelper role=\(role.rawValue, privacy: .public) parse_error=\(error.localizedDescription, privacy: .public)")
+            markFailed("MediaRemote \(role.rawValue) helper emitted invalid JSON.")
         }
     }
 

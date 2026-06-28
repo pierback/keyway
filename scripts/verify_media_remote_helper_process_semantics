@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 helper="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaRemoteHelperProcess.swift"
+controller="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaRemoteController.swift"
 
 fail() {
   printf 'verify_media_remote_helper_process_semantics: %s\n' "$*" >&2
@@ -52,6 +53,20 @@ for required in (
 ):
     if required not in body:
         raise SystemExit(f"verify_media_remote_helper_process_semantics: retire() must detach old helper pipes before a restart: {required}")
+PY
+
+python3 - "$controller" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+start = text.index("    private func handleLine(_ line: Data, role: MediaRemoteHelperRole) {")
+end = text.index("\n    private func drainPendingRefreshIfNeeded()", start)
+body = text[start:end]
+if 'logger.error("MediaRemoteHelper role=\\(role.rawValue, privacy: .public) parse_error=' not in body:
+    raise SystemExit("verify_media_remote_helper_process_semantics: parse errors must log the helper role before restart")
+if 'markFailed("MediaRemote \\(role.rawValue) helper emitted invalid JSON.")' not in body:
+    raise SystemExit("verify_media_remote_helper_process_semantics: malformed helper frames must fail the active helper session")
 PY
 
 printf 'verify_media_remote_helper_process_semantics=ok\n'
