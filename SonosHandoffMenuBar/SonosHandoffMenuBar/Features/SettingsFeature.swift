@@ -831,7 +831,7 @@ struct SettingsFeature: View {
     private func runConfigImport() {
         configImportReport = configImportService.importLegacyState()
         Task {
-            await reloadSpotifyAuthState()
+            await reloadState()
         }
     }
 

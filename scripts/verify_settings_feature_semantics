@@ -48,6 +48,14 @@ if "!configImportReport.hasFailures && !configImportReport.hasConflicts" not in 
 if 'return "Config import has not run yet. Keyway will copy old Sonos Handoff config and token files into its own support directory."' not in text:
     raise SystemExit("verify_settings_feature_semantics: config import summary must describe the pending state before import runs")
 
+start = text.index("    private func runConfigImport()")
+end = text.index("\n    private func installChromiumNativeBridge()", start)
+body = text[start:end]
+if "await reloadState()" not in body:
+    raise SystemExit("verify_settings_feature_semantics: config import must reload the bound settings state after copying legacy config")
+if "await reloadSpotifyAuthState()" in body:
+    raise SystemExit("verify_settings_feature_semantics: config import must not leave the Spotify Client ID field on stale auth-only refresh")
+
 if 'private let heliumBundleIdentifier = "net.imput.helium"' not in text:
     raise SystemExit("verify_settings_feature_semantics: Chromium extension setup must know Helium's bundle identifier")
 
