@@ -187,26 +187,46 @@ final class MediaTransportActionController {
         showChooserImmediately(command: command, source: .userInterface)
     }
 
+    private func chooserReentryBlocked(
+        command: MediaRemoteTransportCommand?,
+        source: MediaTransportRouteSource,
+        metadata: MediaTransportInputMetadata?,
+        commandCenterMetadata: MediaCommandCenterInputMetadata?
+    ) -> Bool {
+        guard overlayController.isVisible || chooserSession.isActive else {
+            return false
+        }
+
+        let commandName = command?.rawValue ?? "none"
+        let chooserState = overlayController.isVisible ? "visible" : chooserSession.stateName
+        logger.info("MediaTransport chooser_reentry_ignored command=\(commandName, privacy: .public) source=\(source.rawValue, privacy: .public) state=\(chooserState, privacy: .public)")
+        trace(
+            "chooser_reentry_ignored",
+            command: command,
+            source: source,
+            reason: chooserState,
+            metadata: metadata,
+            commandCenterMetadata: commandCenterMetadata
+        )
+        return true
+    }
+
     private func showChooserImmediately(
         command: MediaRemoteTransportCommand?,
         source: MediaTransportRouteSource,
         metadata: MediaTransportInputMetadata? = nil,
         commandCenterMetadata: MediaCommandCenterInputMetadata? = nil
     ) {
-        let commandName = command?.rawValue ?? "none"
-        if overlayController.isVisible || chooserSession.isActive {
-            let chooserState = chooserSession.stateName
-            logger.info("MediaTransport chooser_reentry_ignored command=\(commandName, privacy: .public) source=\(source.rawValue, privacy: .public) state=\(chooserState, privacy: .public)")
-            trace(
-                "chooser_reentry_ignored",
-                command: command,
-                source: source,
-                reason: chooserState,
-                metadata: metadata,
-                commandCenterMetadata: commandCenterMetadata
-            )
+        if chooserReentryBlocked(
+            command: command,
+            source: source,
+            metadata: metadata,
+            commandCenterMetadata: commandCenterMetadata
+        ) {
             return
         }
+
+        let commandName = command?.rawValue ?? "none"
         let cached = sortedTargets(mediaRemoteController.targets)
         let refreshQueued = mediaRemoteController.refreshSnapshot()
 
@@ -304,6 +324,15 @@ final class MediaTransportActionController {
         metadata: MediaTransportInputMetadata? = nil,
         commandCenterMetadata: MediaCommandCenterInputMetadata? = nil
     ) {
+        if chooserReentryBlocked(
+            command: command,
+            source: source,
+            metadata: metadata,
+            commandCenterMetadata: commandCenterMetadata
+        ) {
+            return
+        }
+
         let chooserID = chooserSession.begin(command: command)
 
         overlayController.show(

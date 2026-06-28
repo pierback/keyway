@@ -22,6 +22,7 @@ run "$ROOT_DIR/scripts/verify_media_remote_helper_process_semantics"
 run "$ROOT_DIR/scripts/verify_chromium_extension_transport_semantics"
 run "$ROOT_DIR/scripts/verify_chromium_extension_semantics"
 run "$ROOT_DIR/scripts/verify_source_focus_semantics"
+run "$ROOT_DIR/scripts/verify_playback_routing_invariants"
 run "$ROOT_DIR/scripts/verify_mixed_media_routing_semantics"
 run "$ROOT_DIR/scripts/verify_media_routing_probe_semantics"
 run bash -n \

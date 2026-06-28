@@ -125,6 +125,35 @@ for required in (
 ):
     if required not in cache_body:
         raise SystemExit(f"verify_playback_routing_invariants: routeFromCache must thread chooser input metadata: {required}")
+chooser_reentry_helper = text[
+    text.index("    private func chooserReentryBlocked("):
+    text.index("    private func showChooserImmediately(")
+]
+show_chooser_immediately = text[
+    text.index("    private func showChooserImmediately("):
+    text.index("    private func routeFromCache(")
+]
+show_chooser_overlay = text[
+    text.index("    private func showChooserOverlay("):
+    text.index("    private func sortedTargets(")
+]
+for required in (
+    "overlayController.isVisible || chooserSession.isActive",
+    '"chooser_reentry_ignored"',
+    "reason: chooserState",
+    "commandCenterMetadata: commandCenterMetadata",
+    'overlayController.isVisible ? "visible" : chooserSession.stateName',
+):
+    if required not in chooser_reentry_helper:
+        raise SystemExit(f"verify_playback_routing_invariants: chooser reentry helper is missing required behavior: {required}")
+if "chooserReentryBlocked(" not in show_chooser_immediately:
+    raise SystemExit("verify_playback_routing_invariants: direct chooser entry must check reentry before refreshing cached targets")
+if show_chooser_immediately.index("chooserReentryBlocked(") > show_chooser_immediately.index("let cached = sortedTargets(mediaRemoteController.targets)"):
+    raise SystemExit("verify_playback_routing_invariants: direct chooser entry must block reentry before refreshing cached targets")
+if "chooserReentryBlocked(" not in show_chooser_overlay:
+    raise SystemExit("verify_playback_routing_invariants: chooser presentation path must guard reentry")
+if show_chooser_overlay.index("chooserReentryBlocked(") > show_chooser_overlay.index("let chooserID = chooserSession.begin(command: command)"):
+    raise SystemExit("verify_playback_routing_invariants: chooser presentation path must block reentry before opening a new session")
 targets_route = text[text.index("    private func route(\n        command: MediaRemoteTransportCommand,\n        targets:"):text.index("    private func showChooserOverlay")]
 if "showChooserOverlay(" not in targets_route:
     raise SystemExit("verify_playback_routing_invariants: ambiguous cache routing must open the chooser")
@@ -160,10 +189,6 @@ for required in (
     if required not in targets_route:
         raise SystemExit(f"verify_playback_routing_invariants: multi-target routing contract is missing required behavior: {required}")
 PY
-
-if grep -q 'guard !self.chooserSession.isActive else { return }' "$transport"; then
-  fail "visible active choosers must receive refreshed MediaRemote targets"
-fi
 
 if grep -q 'cgSessionEventTap\|case session' "$event_tap"; then
   fail "Play/Pause interception must fail closed instead of falling back to a non-cghid event tap"
