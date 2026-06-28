@@ -55,14 +55,11 @@ struct MediaTransportTargetResolver {
             return prominentWindowTarget(in: targets)
         }
 
-        let bundleID = app.bundleIdentifier ?? ""
-        let pid = Int(app.processIdentifier)
-        if let foregroundTarget = targets.first(where: { target in
-            target.pid == pid
-                || target.bundleIdentifier == bundleID
-                || target.parentBundleIdentifier == bundleID
-                || target.routingIdentity == bundleID
-        }) {
+        if let foregroundTarget = target(
+            matchingProcessID: app.processIdentifier,
+            liveBundleIdentifier: app.bundleIdentifier,
+            in: targets
+        ) {
             return foregroundTarget
         }
 
@@ -140,13 +137,30 @@ struct MediaTransportTargetResolver {
 
     private func target(forProcessID pid: pid_t, in targets: [MediaRemoteTarget]) -> MediaRemoteTarget? {
         let app = NSRunningApplication(processIdentifier: pid)
-        let bundleID = app?.bundleIdentifier ?? ""
-        return targets.first { target in
-            target.pid == Int(pid)
-                || target.bundleIdentifier == bundleID
-                || target.parentBundleIdentifier == bundleID
-                || target.routingIdentity == bundleID
+        return target(
+            matchingProcessID: pid,
+            liveBundleIdentifier: app?.bundleIdentifier,
+            in: targets
+        )
+    }
+
+    private func target(
+        matchingProcessID pid: pid_t,
+        liveBundleIdentifier: String?,
+        in targets: [MediaRemoteTarget]
+    ) -> MediaRemoteTarget? {
+        guard let liveBundleIdentifier, !liveBundleIdentifier.isEmpty else {
+            return nil
         }
+
+        let processID = Int(pid)
+        if let exactTarget = targets.first(where: { target in
+            target.pid == processID && target.matchesRoutingIdentity(liveBundleIdentifier)
+        }) {
+            return exactTarget
+        }
+
+        return targets.first { $0.matchesRoutingIdentity(liveBundleIdentifier) }
     }
 
     private func screenContainingMouse() -> NSScreen? {

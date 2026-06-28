@@ -1,0 +1,319 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+workdir="$(mktemp -d)"
+trap 'rm -rf "$workdir"' EXIT
+
+cp "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportTargetResolver.swift" "$workdir/"
+
+perl -0pi -e 's/NSWorkspace/ResolverWorkspace/g' "$workdir/MediaTransportTargetResolver.swift"
+perl -0pi -e 's/NSRunningApplication/ResolverRunningApplication/g' "$workdir/MediaTransportTargetResolver.swift"
+perl -0pi -e 's/NSScreen/ResolverScreen/g' "$workdir/MediaTransportTargetResolver.swift"
+perl -0pi -e 's/NSEvent/ResolverEvent/g' "$workdir/MediaTransportTargetResolver.swift"
+perl -0pi -e 's/CGWindowListCopyWindowInfo/ResolverWindowListCopyWindowInfo/g' "$workdir/MediaTransportTargetResolver.swift"
+perl -0pi -e 's/CGDisplayBounds/ResolverDisplayBounds/g' "$workdir/MediaTransportTargetResolver.swift"
+perl -0pi -e 's/private func target\(forProcessID/func target(forProcessID/' "$workdir/MediaTransportTargetResolver.swift"
+
+cat >"$workdir/Stubs.swift" <<'SWIFT'
+import AppKit
+import Foundation
+
+enum MediaRemoteTransportCommand: String {
+    case playPause
+    case next
+    case previous
+}
+
+enum MediaTransportRoutingReason: Equatable {
+    case current
+    case single
+    case focused
+    case recent
+}
+
+struct MediaRemoteTarget: Equatable, Identifiable {
+    let id: String
+    let bundleIdentifier: String
+    let parentBundleIdentifier: String
+    let displayName: String
+    let pid: Int
+    let playbackRate: String
+    let title: String
+
+    var isCurrentlyPlaying: Bool {
+        playbackRate == "1"
+    }
+
+    var routingIdentity: String {
+        if !parentBundleIdentifier.isEmpty {
+            return parentBundleIdentifier
+        }
+        if !bundleIdentifier.isEmpty {
+            return bundleIdentifier
+        }
+        return id
+    }
+
+    func matchesRoutingIdentity(_ identity: String?) -> Bool {
+        guard let identity, !identity.isEmpty else {
+            return false
+        }
+        return id == identity
+            || routingIdentity == identity
+            || bundleIdentifier == identity
+            || parentBundleIdentifier == identity
+    }
+}
+
+enum ChromiumBrowserExtensionTransport {
+    static func supports(command: MediaRemoteTransportCommand, target: MediaRemoteTarget) -> Bool {
+        false
+    }
+}
+
+enum MediaTransportCommandRules {
+    static func sortedTargets(_ targets: [MediaRemoteTarget], preferredTargetID: String?) -> [MediaRemoteTarget] {
+        targets
+    }
+}
+
+struct ResolverRunningApplication {
+    let processIdentifier: pid_t
+    let bundleIdentifier: String?
+
+    private(set) static var appsByPID: [pid_t: ResolverRunningApplication] = [:]
+
+    init(processIdentifier: pid_t, bundleIdentifier: String?) {
+        self.processIdentifier = processIdentifier
+        self.bundleIdentifier = bundleIdentifier
+    }
+
+    init?(processIdentifier: pid_t) {
+        guard let app = Self.appsByPID[processIdentifier] else {
+            return nil
+        }
+        self = app
+    }
+
+    static func reset() {
+        appsByPID = [:]
+    }
+
+    static func register(_ app: ResolverRunningApplication) {
+        appsByPID[app.processIdentifier] = app
+    }
+}
+
+final class ResolverWorkspace {
+    static let shared = ResolverWorkspace()
+    var frontmostApplication: ResolverRunningApplication?
+}
+
+struct ResolverScreen {
+    let frame: CGRect
+    let deviceDescription: [NSDeviceDescriptionKey: Any]
+
+    static var screens: [ResolverScreen] = []
+    static var main: ResolverScreen? {
+        screens.first
+    }
+}
+
+enum ResolverEvent {
+    static var mouseLocation = CGPoint.zero
+}
+
+var resolverWindowInfo: [[String: Any]] = []
+var resolverDisplayBounds: [CGDirectDisplayID: CGRect] = [:]
+
+func ResolverWindowListCopyWindowInfo(_ option: CGWindowListOption, _ relativeToWindow: CGWindowID) -> CFArray? {
+    resolverWindowInfo as CFArray
+}
+
+func ResolverDisplayBounds(_ displayID: CGDirectDisplayID) -> CGRect {
+    resolverDisplayBounds[displayID] ?? .zero
+}
+SWIFT
+
+cat >"$workdir/Semantics.swift" <<'SWIFT'
+import AppKit
+import Foundation
+
+@main
+struct Semantics {
+    @MainActor
+    static func main() {
+        let resolver = MediaTransportTargetResolver()
+
+        let staleSpotify = target(
+            id: "spotify-stale",
+            bundleIdentifier: "com.spotify.client",
+            pid: 303
+        )
+        let liveMusic = target(
+            id: "music-live",
+            bundleIdentifier: "com.apple.Music",
+            pid: 404
+        )
+        ResolverWorkspace.shared.frontmostApplication = ResolverRunningApplication(
+            processIdentifier: 303,
+            bundleIdentifier: "com.apple.Music"
+        )
+        let focusedDecision = resolver.automaticTarget(
+            command: .next,
+            from: [staleSpotify, liveMusic],
+            recentTargetID: nil
+        )
+        expectEqual(
+            focusedDecision?.target.id,
+            liveMusic.id,
+            "Focused routing must reject a reused pid when the live app bundle no longer matches the stale target"
+        )
+        expectEqual(
+            focusedDecision?.reason,
+            .focused,
+            "Focused routing must still report a focused decision after it falls back to the matching live bundle identity"
+        )
+
+        let pidOnlyTarget = target(
+            id: "pid-only",
+            bundleIdentifier: "",
+            pid: 303
+        )
+        let unrelatedTarget = target(
+            id: "unrelated",
+            bundleIdentifier: "com.apple.TV",
+            pid: 505
+        )
+        ResolverWorkspace.shared.frontmostApplication = ResolverRunningApplication(
+            processIdentifier: 303,
+            bundleIdentifier: nil
+        )
+        let emptyBundleDecision = resolver.automaticTarget(
+            command: .next,
+            from: [pidOnlyTarget, unrelatedTarget],
+            recentTargetID: nil
+        )
+        expectNil(
+            emptyBundleDecision,
+            "Focused routing must not match pid-only targets when the live process has no bundle identifier"
+        )
+
+        ResolverRunningApplication.reset()
+        ResolverRunningApplication.register(
+            ResolverRunningApplication(
+                processIdentifier: 505,
+                bundleIdentifier: "com.apple.Music"
+            )
+        )
+        let windowTarget = resolver.target(
+            forProcessID: 505,
+            in: [
+                target(id: "window-stale", bundleIdentifier: "com.spotify.client", pid: 505),
+                target(id: "window-live", bundleIdentifier: "com.apple.Music", pid: 606),
+            ]
+        )
+        expectEqual(
+            windowTarget?.id,
+            "window-live",
+            "Window prominence routing must validate the live window owner bundle before accepting a pid match"
+        )
+
+        print("verify_media_transport_target_resolver_semantics=ok")
+    }
+
+    private static func target(
+        id: String,
+        bundleIdentifier: String,
+        pid: Int
+    ) -> MediaRemoteTarget {
+        MediaRemoteTarget(
+            id: id,
+            bundleIdentifier: bundleIdentifier,
+            parentBundleIdentifier: "",
+            displayName: bundleIdentifier,
+            pid: pid,
+            playbackRate: "0",
+            title: id
+        )
+    }
+
+    private static func expectEqual<T: Equatable>(_ actual: T, _ expected: T, _ message: String) {
+        guard actual == expected else {
+            fail("\(message): expected \(expected), got \(actual)")
+        }
+    }
+
+    private static func expectNil<T>(_ actual: T?, _ message: String) {
+        guard actual == nil else {
+            fail("\(message): expected nil, got \(String(describing: actual))")
+        }
+    }
+
+    private static func fail(_ message: String) -> Never {
+        FileHandle.standardError.write(Data("verify_media_transport_target_resolver_semantics: \(message)\n".utf8))
+        exit(1)
+    }
+}
+SWIFT
+
+swiftc \
+  "$workdir/Stubs.swift" \
+  "$workdir/MediaTransportTargetResolver.swift" \
+  "$workdir/Semantics.swift" \
+  -o "$workdir/verify_media_transport_target_resolver_semantics"
+
+"$workdir/verify_media_transport_target_resolver_semantics"
+
+python3 - "$repo_root" <<'PY'
+import pathlib
+import sys
+
+repo_root = pathlib.Path(sys.argv[1])
+resolver = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportTargetResolver.swift").read_text()
+
+def fail(message):
+    raise SystemExit(f"verify_media_transport_target_resolver_semantics: {message}")
+
+def expect(text, needle, message):
+    if needle not in text:
+        fail(message)
+
+expect(
+    resolver,
+    "matchingProcessID pid: pid_t,\n        liveBundleIdentifier: String?,\n        in targets: [MediaRemoteTarget]",
+    "resolver must centralize live-process target matching"
+)
+expect(
+    resolver,
+    "guard let liveBundleIdentifier, !liveBundleIdentifier.isEmpty else",
+    "resolver must reject empty live bundle identities before matching targets"
+)
+expect(
+    resolver,
+    "target.pid == processID && target.matchesRoutingIdentity(liveBundleIdentifier)",
+    "resolver must only trust pid matches after validating the live bundle identity"
+)
+expect(
+    resolver,
+    "return targets.first { $0.matchesRoutingIdentity(liveBundleIdentifier) }",
+    "resolver must fall back to bundle identity matching after exact pid validation"
+)
+expect(
+    resolver,
+    "liveBundleIdentifier: app.bundleIdentifier",
+    "frontmost-app routing must use the shared validated live bundle matcher"
+)
+expect(
+    resolver,
+    "liveBundleIdentifier: app?.bundleIdentifier",
+    "window-owner routing must use the shared validated live bundle matcher"
+)
+if 'bundleIdentifier ?? ""' in resolver:
+    fail("resolver must not treat missing bundle identifiers as empty-string matches")
+if "target.pid == pid" in resolver or "target.pid == Int(pid)\n                ||" in resolver:
+    fail("resolver must not accept pid matches before validating the live bundle identity")
+
+print("verify_media_transport_target_resolver_static_semantics=ok")
+PY
