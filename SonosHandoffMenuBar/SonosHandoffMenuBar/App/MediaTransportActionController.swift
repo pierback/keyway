@@ -268,6 +268,26 @@ final class MediaTransportActionController {
             return
         }
 
+        if MediaTransportCommandRules.isPlayFamily(command) {
+            showChooserOverlay(
+                command: command,
+                targets: targets,
+                source: source,
+                metadata: metadata,
+                commandCenterMetadata: commandCenterMetadata
+            )
+            return
+        }
+
+        if let decision = targetResolver.automaticTarget(
+            command: command,
+            from: targets,
+            recentTargetID: targetSelectionMemory.recentTargetID
+        ) {
+            send(command: command, to: decision.target, reason: decision.reason)
+            return
+        }
+
         showChooserOverlay(
             command: command,
             targets: targets,

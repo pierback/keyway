@@ -97,17 +97,34 @@ assert_order(
 )
 
 route_targets = function_body("route(\n        command: MediaRemoteTransportCommand,\n        targets:")
-if "targetResolver.automaticTarget(" in route_targets:
-    fail("multi-target media-key routing must not auto-send through focused/current/recent/PID resolver state")
 assert_order(
     route_targets,
     [
         "if targets.count == 1",
         "send(command: command, to: targets[0], reason: .single)",
-        "showChooserOverlay(",
     ],
-    "non-row media input must direct-route only a single visible source and show the chooser for multiple sources"
+    "non-row media input must still direct-route a single visible source"
 )
+assert_contains(
+    route_targets,
+    "if MediaTransportCommandRules.isPlayFamily(command)",
+    "ambiguous play-family routing must stay chooser-first"
+)
+assert_contains(
+    route_targets,
+    "if let decision = targetResolver.automaticTarget(",
+    "non-play-family routing must restore automatic target selection after the chooser regression"
+)
+assert_contains(
+    route_targets,
+    "send(command: command, to: decision.target, reason: decision.reason)",
+    "automatic target selection must dispatch through the shared send path"
+)
+play_family_index = route_targets.index("if MediaTransportCommandRules.isPlayFamily(command)")
+automatic_index = route_targets.index("if let decision = targetResolver.automaticTarget(")
+final_chooser_index = route_targets.rfind("showChooserOverlay(")
+if not play_family_index < automatic_index < final_chooser_index:
+    fail("route ordering must be single-target first, chooser-first for play-family commands, automatic routing next, then chooser fallback")
 
 chooser_immediate = function_body("showChooserImmediately")
 if "helper_not_running" in chooser_immediate or "MediaRemote helper is not running" in chooser_immediate:
