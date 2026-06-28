@@ -127,9 +127,9 @@ Last updated: 2026-06-17
   - `Volume disabled without browser extension`
 - User rejected the custom top-of-screen status popups. Keyway now routes status feedback through native macOS notifications with `UNUserNotificationCenter`; the legacy custom HUD panel source files have been removed.
 - Gemini UI pass flagged notification-card stacking as the concrete risk in the notification approach. Keyway status notifications now reuse `identifier=keyway.status` and clear matching pending/delivered notifications before delivery, so repeated confirmations replace instead of stacking unique cards.
-- `scripts/smoke_transport_routing_confirmation`: passed against the installed app with QuickTime Player as the safe pinned target. The smoke posts synthetic Previous, Play/Pause, and Next media-key events through the HID event tap and verifies:
+- `scripts/smoke_transport_routing_confirmation`: passed against the installed app with QuickTime Player as the safe focused target. The smoke posts synthetic Previous, Play/Pause, and Next media-key events through the HID event tap and verifies:
   - Keyway intercepts the media-key down event.
-  - Keyway routes each command by `pinned target`.
+  - Keyway routes each command by `focused target`.
   - Keyway logs a native notification request with stable `identifier=keyway.status`.
   - No chooser or legacy custom Keyway popup window appears for automatic routing.
   - No `MediaRemoteHelper parse_error` is emitted.
@@ -138,7 +138,7 @@ Last updated: 2026-06-17
   - `NX_KEYTYPE_PLAY = 16`
   - `NX_KEYTYPE_NEXT = 17`
   - `NX_KEYTYPE_PREVIOUS = 18`
-- Focused Target routing now includes a Prominent Window Target fallback: when the global foreground app is not a Media Target, Keyway checks prominently visible, unobscured layer-0 windows on the display containing the mouse pointer before falling back to Pinned Target, Recent Target, or chooser.
+- Focused Target routing now includes a Prominent Window Target fallback: when the global foreground app is not a Media Target, Keyway checks prominently visible, unobscured layer-0 windows on the display containing the mouse pointer before falling back to Recent Target or chooser when no single current target is already active.
 - Antigravity/Gemini UI review was requested again for the popover spacing pass, but `agy --print` was blocked by Antigravity quota:
   - `RESOURCE_EXHAUSTED (code 429): Individual quota reached.`
   - Reset reported in the CLI log as roughly 162 hours.

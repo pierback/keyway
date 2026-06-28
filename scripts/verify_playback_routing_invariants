@@ -152,12 +152,13 @@ targets_route = text[
 for required in (
     "if targets.count == 1",
     "send(command: command, to: targets[0], reason: .single)",
+    "if MediaTransportCommandRules.isPlayFamily(command)",
+    "targetResolver.automaticTarget(",
+    "send(command: command, to: decision.target, reason: decision.reason)",
     "showChooserOverlay(",
 ):
     if required not in targets_route:
-        raise SystemExit(f"verify_playback_routing_invariants: non-row input must route only a single source and show chooser for multiple sources: {required}")
-if "targetResolver.automaticTarget(" in targets_route:
-    raise SystemExit("verify_playback_routing_invariants: multi-source media input must not bypass the chooser through automatic target resolution")
+        raise SystemExit(f"verify_playback_routing_invariants: multi-target routing contract is missing required behavior: {required}")
 PY
 
 if grep -q 'guard !self.chooserSession.isActive else { return }' "$transport"; then
@@ -1281,6 +1282,12 @@ fi
 
 grep -q 'reason=focused target' "$repo_root/scripts/smoke_transport_routing_confirmation" \
   || fail "transport routing smoke must assert the current focused-target route reason"
+
+if grep -Eq 'keyway\.mediaTarget\.(pinnedIdentity|recentIdentity)' \
+  "$repo_root/scripts/smoke_transport_routing_confirmation" \
+  "$repo_root/scripts/smoke_overlay_browser_controls"; then
+  fail "media routing smoke scripts must not rely on removed persisted target defaults"
+fi
 
 if grep -Eq 'lastEventTapRoute|programmaticDispatchCount|noteProgrammaticDispatch' "$transport" "$command_filter"; then
   fail "transport echo handling must not keep stale route memory or instant-only dispatch suppression"

@@ -2,9 +2,6 @@
 set -euo pipefail
 
 APP_DIR="${KEYWAY_APP:-$HOME/Applications/Keyway.app}"
-DEFAULTS_DOMAIN="com.fpieringer.Keyway"
-PINNED_KEY="keyway.mediaTarget.pinnedIdentity"
-RECENT_KEY="keyway.mediaTarget.recentIdentity"
 HELPER_SCRIPT="$APP_DIR/Contents/Resources/MediaRemoteHelper/keyway-mediaremote-helper.pl"
 HELPER_DYLIB="$APP_DIR/Contents/Resources/MediaRemoteHelper/libkeyway_mediaremote.dylib"
 TARGET_BUNDLE="${KEYWAY_ROUTING_TARGET_BUNDLE:-com.apple.QuickTimePlayerX}"
@@ -13,10 +10,6 @@ TARGET_INFO_FILE="$(mktemp -t keyway-routing-target.XXXXXX)"
 VISIBLE_STATE_FILE="$(mktemp -t keyway-routing-visible-apps.XXXXXX)"
 CREATED_TARGET_FILE=""
 SMOKE_START="$(date '+%Y-%m-%d %H:%M:%S')"
-PINNED_VALUE=""
-RECENT_VALUE=""
-PINNED_PRESENT=0
-RECENT_PRESENT=0
 INITIAL_TARGET_RATE=""
 
 if [[ ! -d "$APP_DIR" ]]; then
@@ -278,36 +271,6 @@ if [[ -z "$target_id" || -z "$target_identity" || -z "$target_app" ]]; then
   exit 1
 fi
 
-remember_default() {
-  local key="$1"
-  if value="$(defaults read "$DEFAULTS_DOMAIN" "$key" 2>/dev/null)"; then
-    printf '%s' "$value"
-    return 0
-  fi
-  return 1
-}
-
-if PINNED_VALUE="$(remember_default "$PINNED_KEY")"; then
-  PINNED_PRESENT=1
-fi
-if RECENT_VALUE="$(remember_default "$RECENT_KEY")"; then
-  RECENT_PRESENT=1
-fi
-
-restore_defaults() {
-  if [[ "$PINNED_PRESENT" == "1" ]]; then
-    defaults write "$DEFAULTS_DOMAIN" "$PINNED_KEY" "$PINNED_VALUE" >/dev/null
-  else
-    defaults delete "$DEFAULTS_DOMAIN" "$PINNED_KEY" >/dev/null 2>&1 || true
-  fi
-
-  if [[ "$RECENT_PRESENT" == "1" ]]; then
-    defaults write "$DEFAULTS_DOMAIN" "$RECENT_KEY" "$RECENT_VALUE" >/dev/null
-  else
-    defaults delete "$DEFAULTS_DOMAIN" "$RECENT_KEY" >/dev/null 2>&1 || true
-  fi
-}
-
 restore_visible_apps() {
   while IFS=$'\t' read -r bundle_id was_visible; do
     [[ -n "$bundle_id" ]] || continue
@@ -359,7 +322,6 @@ APPLESCRIPT
 cleanup() {
   close_keyway_windows
   restore_target_playback
-  restore_defaults
   restore_visible_apps
   close_created_quicktime_target
   rm -f "$TARGET_INFO_FILE"
@@ -451,7 +413,6 @@ ensure_target_ready_for_command() {
     exit 1
   fi
 
-  defaults write "$DEFAULTS_DOMAIN" "$PINNED_KEY" "$target_identity" >/dev/null
   focus_target_for_routing
 }
 
@@ -679,8 +640,6 @@ MESSAGE
 
 open "$APP_DIR"
 sleep 1.0
-defaults write "$DEFAULTS_DOMAIN" "$PINNED_KEY" "$target_identity" >/dev/null
-defaults delete "$DEFAULTS_DOMAIN" "$RECENT_KEY" >/dev/null 2>&1 || true
 focus_target_for_routing
 
 echo "target=$target_app"

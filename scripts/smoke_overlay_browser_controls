@@ -2,16 +2,9 @@
 set -euo pipefail
 
 APP_DIR="${KEYWAY_APP:-$HOME/Applications/Keyway.app}"
-DEFAULTS_DOMAIN="com.fpieringer.Keyway"
-PINNED_KEY="keyway.mediaTarget.pinnedIdentity"
-RECENT_KEY="keyway.mediaTarget.recentIdentity"
 HELPER_SCRIPT="$APP_DIR/Contents/Resources/MediaRemoteHelper/keyway-mediaremote-helper.pl"
 HELPER_DYLIB="$APP_DIR/Contents/Resources/MediaRemoteHelper/libkeyway_mediaremote.dylib"
 PHYSICAL_MEDIA_KEYS="${KEYWAY_PHYSICAL_MEDIA_KEYS:-0}"
-PINNED_VALUE=""
-RECENT_VALUE=""
-PINNED_PRESENT=0
-RECENT_PRESENT=0
 TARGET_INFO_FILE="$(mktemp -t keyway-overlay-targets.XXXXXX)"
 VISIBLE_STATE_FILE="$(mktemp -t keyway-overlay-visible-apps.XXXXXX)"
 
@@ -115,36 +108,6 @@ if [[ -z "$browser_count" || "$browser_count" -lt 1 ]]; then
   exit 1
 fi
 
-remember_default() {
-  local key="$1"
-  if value="$(defaults read "$DEFAULTS_DOMAIN" "$key" 2>/dev/null)"; then
-    printf '%s' "$value"
-    return 0
-  fi
-  return 1
-}
-
-if PINNED_VALUE="$(remember_default "$PINNED_KEY")"; then
-  PINNED_PRESENT=1
-fi
-if RECENT_VALUE="$(remember_default "$RECENT_KEY")"; then
-  RECENT_PRESENT=1
-fi
-
-restore_defaults() {
-  if [[ "$PINNED_PRESENT" == "1" ]]; then
-    defaults write "$DEFAULTS_DOMAIN" "$PINNED_KEY" "$PINNED_VALUE" >/dev/null
-  else
-    defaults delete "$DEFAULTS_DOMAIN" "$PINNED_KEY" >/dev/null 2>&1 || true
-  fi
-
-  if [[ "$RECENT_PRESENT" == "1" ]]; then
-    defaults write "$DEFAULTS_DOMAIN" "$RECENT_KEY" "$RECENT_VALUE" >/dev/null
-  else
-    defaults delete "$DEFAULTS_DOMAIN" "$RECENT_KEY" >/dev/null 2>&1 || true
-  fi
-}
-
 close_overlay() {
   osascript >/dev/null 2>&1 <<'APPLESCRIPT' || true
 tell application "System Events"
@@ -177,17 +140,11 @@ APPLESCRIPT
 
 cleanup() {
   close_overlay
-  restore_defaults
   restore_visible_apps
   rm -f "$TARGET_INFO_FILE"
   rm -f "$VISIBLE_STATE_FILE"
 }
 trap cleanup EXIT
-
-clear_routing_memory() {
-  defaults delete "$DEFAULTS_DOMAIN" "$PINNED_KEY" >/dev/null 2>&1 || true
-  defaults delete "$DEFAULTS_DOMAIN" "$RECENT_KEY" >/dev/null 2>&1 || true
-}
 
 hide_media_windows_for_chooser() {
   : >"$VISIBLE_STATE_FILE"
@@ -305,7 +262,6 @@ APPLESCRIPT
 open "$APP_DIR"
 sleep 1.0
 close_overlay
-clear_routing_memory
 hide_media_windows_for_chooser
 open -a Finder
 sleep 0.6

@@ -42,8 +42,7 @@ Keyway is a polished local macOS menu bar utility that routes play/pause, next, 
 1. User presses a Transport Key while multiple plausible targets exist.
 2. Keyway opens the centered Command Palette Overlay on the pointer display.
 3. User selects a target with arrows, Enter, or a number key.
-4. Keyway sends the Pending Command to that target, updates Recent Target, and closes.
-5. User may press `P` to pin/unpin the selected target.
+4. Keyway sends the Pending Command to that target, updates session Recent Target memory, and closes.
 
 #### User Flow: Expanded Controls
 
@@ -56,7 +55,7 @@ Keyway is a polished local macOS menu bar utility that routes play/pause, next, 
 
 1. User opens Keyway Settings from the always-visible menu bar item.
 2. Settings appears as a normal macOS window and is reachable through Cmd-Tab while visible.
-3. User reviews permissions, helper health, routing behavior, pins, overlay behavior, Sonos status, Spotify status, shortcuts, and diagnostics.
+3. User reviews permissions, helper health, routing behavior, overlay behavior, Sonos status, Spotify status, shortcuts, and diagnostics.
 
 ### Design Considerations
 
@@ -78,7 +77,7 @@ When this PRD is complete, the following will be true:
 - [ ] Keyway intercepts and suppresses play/pause, next, and previous while enabled.
 - [ ] Keyway lists MediaRemote Media Targets through a long-running helper.
 - [ ] Keyway routes Transport Keys using the resolved Target Selection Policy.
-- [ ] The Media Overlay supports compact routing, expansion, pinning, number selection, cancellation, and command dispatch.
+- [ ] The Media Overlay supports compact routing, focused-target selection, expansion, number selection, cancellation, and command dispatch.
 - [ ] Native macOS notification confirmation appears after successful automatic routing.
 - [ ] Sonos and Spotify volume controls work where supported by existing or feasible backends.
 - [ ] Browser transport routing works where exposed through Now Playing; browser volume is clearly unsupported when no no-extension backend exists.
@@ -101,7 +100,7 @@ When this PRD is complete, the following will be true:
 
 - The app can replace the current Sonos Handoff menu bar app on the user's Mac.
 - The Media Overlay feels polished enough for daily use.
-- Routing decisions are understandable through Primary Target, pinning, recency, and native notification feedback.
+- Routing decisions are understandable through current media target, focus, session recency, and native notification feedback.
 
 ## Implementation Status
 
@@ -113,7 +112,7 @@ As of 2026-05-20, the main implementation is present on branch `keyway-planning`
 - Expanded Controls browser volume disabled-state is verified by `scripts/smoke_overlay_browser_controls`, which opens the actual overlay, toggles controls with Tab, selects the browser target, and confirms the visible disabled no-extension state.
 - QuickTime target discovery has been verified with local media playback.
 - Settings normal-window behavior has been verified through the menu bar UI; System Events reports Keyway as visible and not background-only while Settings is open.
-- Focused Target routing now checks the global foreground Media Target first, then a prominently visible, unobscured Media Target window on the display containing the pointer before falling back to Pinned Target, Recent Target, or chooser.
+- Focused Target routing now checks the global foreground Media Target first, then a prominently visible, unobscured Media Target window on the display containing the pointer before falling back to Recent Target or chooser when no single current target is already active.
 - Status feedback now uses native macOS notifications through `UNUserNotificationCenter`; the legacy top-of-screen custom HUD panel implementation has been removed from the app, and status notifications reuse a stable identifier so repeated route confirmations replace instead of stacking.
 - `scripts/smoke_transport_routing_confirmation` verifies focused-target automatic routing for Previous and Next, absence of chooser/legacy custom popup windows during automatic routing, and clean MediaRemote helper command parsing. Play/Pause is chooser-first and is covered by playback chooser probes/HITL checks.
 - Spotify Active Device Volume still needs a run against an unrestricted Spotify active device; the current active device is Sonos `Port`, which Spotify reports as `restricted=true`.
@@ -154,11 +153,11 @@ The current verification record is maintained in `docs/verification-log.md`.
 ### Target Selection and Routing
 
 - [ ] Media Targets are Now Playing clients, not arbitrary audio sources.
-- [ ] Target Selection Policy resolves single target, Focused Target, Pinned Target, Recent Target, then chooser.
+- [ ] Target Selection Policy resolves single target, Current Media Target, Focused Target, Recent Target, then chooser for non-play-family commands.
 - [ ] Primary Target is row 1 in the overlay.
-- [ ] Pinned Target is explicitly set/unset with `P`.
-- [ ] Recent Target is automatic and weaker than Pinned Target.
-- [ ] Focused Target beats Pinned Target when focus is clear.
+- [ ] Current Media Target is automatic when exactly one target is actively playing.
+- [ ] Recent Target is automatic within the current Keyway run.
+- [ ] Focused Target beats Recent Target when focus is clear.
 - [ ] Transport Keys are always suppressed and re-dispatched deliberately while routing is enabled.
 - [ ] Hardware volume and mute keys are not intercepted.
 
@@ -167,7 +166,7 @@ The current verification record is maintained in `docs/verification-log.md`.
 - [ ] Overlay appears centered on the display containing the mouse pointer.
 - [ ] Overlay has a Raycast-like command palette style with no search input.
 - [ ] Command Header names the pending routing action.
-- [ ] Compact mode supports up/down, Enter, Escape, Tab, number quick-select, and `P`.
+- [ ] Compact mode supports up/down, Enter, Escape, Tab, number quick-select, and Command-Enter focus.
 - [ ] Expanded Controls show target-specific volume/mute controls where supported.
 - [ ] Unsupported browser volume is visible as unsupported rather than silently absent.
 - [ ] Overlay closes after dispatch or cancellation.
@@ -212,7 +211,7 @@ The current verification record is maintained in `docs/verification-log.md`.
 
 - New Keyway app support directory.
 - One-time copied config/token files from old Sonos Handoff directory.
-- New persisted Keyway state for Pinned Target and Recent Target.
+- Shared in-memory Keyway state for Recent Target recall.
 - Runtime Keyway state for overlay expansion and helper diagnostics.
 
 ---

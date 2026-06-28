@@ -65,8 +65,8 @@ Keyway is complete only when this runbook passes on a fresh local install withou
 - [ ] Confirm next is intercepted and suppressed, then re-dispatched by Keyway.
 - [ ] Confirm previous is intercepted and suppressed, then re-dispatched by Keyway.
 - [ ] Confirm routing policy: single target.
+- [ ] Confirm routing policy: Current Media Target when exactly one target is actively playing.
 - [ ] Confirm routing policy: Focused Target, including foreground Media Target and prominent Media Target window on the pointer display.
-- [ ] Confirm routing policy: Pinned Target.
 - [ ] Confirm routing policy: Recent Target.
 - [ ] Confirm routing policy: chooser when ambiguous.
 - [ ] Confirm hardware volume and mute keys are not intercepted.
@@ -84,7 +84,7 @@ Keyway is complete only when this runbook passes on a fresh local install withou
 - [ ] Confirm Escape cancels the Pending Command.
 - [ ] Confirm Tab toggles Expanded Controls.
 - [ ] Confirm number keys quick-select targets in compact mode.
-- [ ] Confirm `P` pins and unpins the selected target.
+- [ ] Confirm Command-Enter focuses the selected target without routing a command.
 
 ## 7A. Menu Bar Daily Controls
 
@@ -93,7 +93,7 @@ Keyway is complete only when this runbook passes on a fresh local install withou
 - [ ] Confirm the route tile shows the current routing state, target identity, compact metadata, Play/Pause, Previous, Next, and a compact Change control.
 - [ ] Confirm Change opens the centered media target overlay and dismisses the popover.
 - [ ] Confirm the Sonos tile includes the selected/fallback room, Sonos volume, mute, and output/group controls.
-- [ ] Confirm the compact media target strip shows alternate Now Playing targets and pin/unpin state when available.
+- [ ] Confirm the compact media target strip shows alternate Now Playing targets when available.
 - [ ] Confirm right-clicking the Keyway menu bar item opens the native utility menu.
 - [ ] Confirm no search field appears in the menu bar popover.
 
