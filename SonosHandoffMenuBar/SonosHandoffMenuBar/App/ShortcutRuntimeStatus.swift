@@ -284,14 +284,12 @@ final class ShortcutRuntimeStatus {
             payload["mediaTransportTrace"] = mediaTransportTrace
         }
 
-        do {
-            try FileManager.default.createDirectory(
-                at: ConfigPaths.applicationSupportDirectory,
-                withIntermediateDirectories: true
-            )
-            let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
-            try data.write(to: Self.persistenceURL, options: .atomic)
-        } catch {}
+        try! FileManager.default.createDirectory(
+            at: ConfigPaths.applicationSupportDirectory,
+            withIntermediateDirectories: true
+        )
+        let data = try! JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+        try! data.write(to: Self.persistenceURL, options: .atomic)
     }
 }
 

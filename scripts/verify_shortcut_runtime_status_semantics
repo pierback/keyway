@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+status_file="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutRuntimeStatus.swift"
+
+python3 - "$status_file" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+start = text.index("    private func persistSnapshot()")
+end = text.index("\n}\n\nextension Notification.Name", start)
+body = text[start:end]
+
+required = (
+    "try! FileManager.default.createDirectory(",
+    "let data = try! JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])",
+    "try! data.write(to: Self.persistenceURL, options: .atomic)",
+)
+for needle in required:
+    if needle not in body:
+        raise SystemExit(f"verify_shortcut_runtime_status_semantics: persistSnapshot must fail loud for runtime-status persistence: {needle}")
+
+for forbidden in ("do {", "} catch {", "} catch {}", "try FileManager.default.createDirectory(", "let data = try JSONSerialization.data(", "try data.write("):
+    if forbidden in body:
+        raise SystemExit(f"verify_shortcut_runtime_status_semantics: persistSnapshot must not swallow or soften runtime-status persistence failures: {forbidden}")
+PY
+
+printf 'verify_shortcut_runtime_status_semantics=ok\n'
