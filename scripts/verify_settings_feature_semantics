@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 settings="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/Features/SettingsFeature.swift"
+controller="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaRemoteController.swift"
 
 fail() {
   printf 'verify_settings_feature_semantics: %s\n' "$*" >&2
@@ -15,11 +16,12 @@ grep -q 'private func saveSpotifyClientID(showMessage: Bool) -> Bool' "$settings
 grep -q 'return false' "$settings" \
   || fail "Spotify Client ID validation and persistence failures must stop dependent flows"
 
-python3 - "$settings" <<'PY'
+python3 - "$settings" "$controller" <<'PY'
 import pathlib
 import sys
 
 text = pathlib.Path(sys.argv[1]).read_text()
+controller = pathlib.Path(sys.argv[2]).read_text()
 start = text.index("    private func startSpotifySignIn()")
 end = text.index("    private func signOutSpotify()", start)
 body = text[start:end]
@@ -73,6 +75,14 @@ for required in (
 ):
     if required not in body:
         raise SystemExit(f"verify_settings_feature_semantics: Chromium extension setup must prefer opening Helium extensions: {required}")
+
+mark_failed = controller[controller.index("    private func markFailed"):controller.index("    private func schedulePeriodicRecovery")]
+if "pid: nil" not in mark_failed:
+    raise SystemExit("verify_settings_feature_semantics: helper failure status must clear the dead MediaRemote pid before Settings renders it")
+
+schedule_recovery = controller[controller.index("    private func schedulePeriodicRecovery"):controller.index("    private func cancelRecoveryTimer")]
+if "pid: nil" not in schedule_recovery:
+    raise SystemExit("verify_settings_feature_semantics: helper recovery status must not preserve a dead MediaRemote pid in Settings")
 PY
 
 printf 'verify_settings_feature_semantics=ok\n'

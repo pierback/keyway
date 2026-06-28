@@ -476,7 +476,7 @@ final class MediaRemoteController: ObservableObject {
         health = MediaRemoteHelperHealth(
             state: .failed,
             message: message,
-            pid: health.pid,
+            pid: nil,
             lastSnapshotAt: health.lastSnapshotAt,
             targetCount: targets.count
         )
@@ -490,7 +490,7 @@ final class MediaRemoteController: ObservableObject {
         health = MediaRemoteHelperHealth(
             state: .failed,
             message: "\(health.message) Keyway will retry the helper every \(Int(Self.periodicRecoveryInterval)) seconds.",
-            pid: health.pid,
+            pid: nil,
             lastSnapshotAt: health.lastSnapshotAt,
             targetCount: targets.count
         )
