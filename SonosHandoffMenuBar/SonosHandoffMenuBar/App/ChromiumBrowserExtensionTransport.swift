@@ -264,6 +264,21 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         let targets: [MediaRemoteTarget]
     }
 
+    private struct ChromiumBrowserExtensionSnapshotEnvelope: Decodable {
+        let protocolVersion: Int
+        let browserInstanceID: String
+    }
+
+    private struct ChromiumBrowserExtensionCommandResultEnvelope: Decodable {
+        let protocolVersion: Int
+        let requestID: String
+    }
+
+    private struct ChromiumBrowserExtensionFocusResultEnvelope: Decodable {
+        let protocolVersion: Int
+        let requestID: String
+    }
+
     @Published private(set) var connected = false
     @Published private(set) var targets: [MediaRemoteTarget] = []
 
@@ -294,7 +309,8 @@ final class ChromiumBrowserExtensionController: ObservableObject {
             queue: .main
         ) { [weak self] notification in
             guard let payload = notification.userInfo?["payload"] as? String else {
-                preconditionFailure("Chromium native host snapshot notifications must include a payload.")
+                self?.logger.error("Ignoring Chromium extension snapshot notification without payload")
+                return
             }
             Task { @MainActor [weak self, payload] in
                 self?.handleSnapshotPayload(payload)
@@ -307,7 +323,8 @@ final class ChromiumBrowserExtensionController: ObservableObject {
             queue: .main
         ) { [weak self] notification in
             guard let payload = notification.userInfo?["payload"] as? String else {
-                preconditionFailure("Chromium native host command-result notifications must include a payload.")
+                self?.logger.error("Ignoring Chromium extension command-result notification without payload")
+                return
             }
             Task { @MainActor [weak self, payload] in
                 self?.handleCommandResultPayload(payload)
@@ -320,7 +337,8 @@ final class ChromiumBrowserExtensionController: ObservableObject {
             queue: .main
         ) { [weak self] notification in
             guard let payload = notification.userInfo?["payload"] as? String else {
-                preconditionFailure("Chromium native host focus-result notifications must include a payload.")
+                self?.logger.error("Ignoring Chromium extension focus-result notification without payload")
+                return
             }
             Task { @MainActor [weak self, payload] in
                 self?.handleFocusResultPayload(payload)
@@ -535,12 +553,26 @@ final class ChromiumBrowserExtensionController: ObservableObject {
 
     private func handleSnapshotPayload(_ payload: String) {
         guard let data = payload.data(using: .utf8) else {
-            preconditionFailure("Chromium native host snapshot notifications must include UTF-8 JSON.")
+            logger.error("Ignoring Chromium extension snapshot with non-UTF-8 payload")
+            return
         }
-        let snapshot = try! decoder.decode(ChromiumBrowserExtensionSnapshotPayload.self, from: data)
-        guard snapshot.protocolVersion == ChromiumBrowserExtensionTransport.protocolVersion else {
-            logger.error("Ignoring Chromium extension snapshot protocol=\(snapshot.protocolVersion, privacy: .public)")
-            markConnected(browserInstanceID: snapshot.browserInstanceID, targets: [])
+        let snapshotEnvelope: ChromiumBrowserExtensionSnapshotEnvelope
+        do {
+            snapshotEnvelope = try decoder.decode(ChromiumBrowserExtensionSnapshotEnvelope.self, from: data)
+        } catch {
+            logger.error("Ignoring Chromium extension snapshot envelope decode failure error=\(String(describing: error), privacy: .public)")
+            return
+        }
+        guard snapshotEnvelope.protocolVersion == ChromiumBrowserExtensionTransport.protocolVersion else {
+            logger.error("Ignoring Chromium extension snapshot protocol=\(snapshotEnvelope.protocolVersion, privacy: .public)")
+            markConnected(browserInstanceID: snapshotEnvelope.browserInstanceID, targets: [])
+            return
+        }
+        let snapshot: ChromiumBrowserExtensionSnapshotPayload
+        do {
+            snapshot = try decoder.decode(ChromiumBrowserExtensionSnapshotPayload.self, from: data)
+        } catch {
+            logger.error("Ignoring Chromium extension snapshot payload decode failure error=\(String(describing: error), privacy: .public)")
             return
         }
         markConnected(
@@ -551,9 +583,41 @@ final class ChromiumBrowserExtensionController: ObservableObject {
 
     private func handleCommandResultPayload(_ payload: String) {
         guard let data = payload.data(using: .utf8) else {
-            preconditionFailure("Chromium native host command-result notifications must include UTF-8 JSON.")
+            logger.error("Ignoring Chromium extension command-result with non-UTF-8 payload")
+            return
         }
-        let result = try! decoder.decode(MediaRemoteCommandResultEvent.self, from: data)
+        let commandEnvelope: ChromiumBrowserExtensionCommandResultEnvelope
+        do {
+            commandEnvelope = try decoder.decode(ChromiumBrowserExtensionCommandResultEnvelope.self, from: data)
+        } catch {
+            logger.error("Ignoring Chromium extension command-result envelope decode failure error=\(String(describing: error), privacy: .public)")
+            return
+        }
+        guard commandEnvelope.protocolVersion == ChromiumBrowserExtensionTransport.protocolVersion else {
+            logger.error("Ignoring Chromium extension command-result protocol=\(commandEnvelope.protocolVersion, privacy: .public) requestID=\(commandEnvelope.requestID, privacy: .public)")
+            guard let pending = pendingCommands.removeValue(forKey: commandEnvelope.requestID) else {
+                return
+            }
+            commandResultTimeouts.removeValue(forKey: commandEnvelope.requestID)?.cancel()
+            pending.resultHandler(MediaRemoteCommandResultEvent(
+                type: "commandResult",
+                requestID: commandEnvelope.requestID,
+                targetID: pending.targetID,
+                command: pending.commandName,
+                ok: false,
+                message: "Chromium extension protocol mismatch.",
+                backend: ChromiumBrowserExtensionTransport.backendName,
+                unsupported: true
+            ))
+            return
+        }
+        let result: MediaRemoteCommandResultEvent
+        do {
+            result = try decoder.decode(MediaRemoteCommandResultEvent.self, from: data)
+        } catch {
+            logger.error("Ignoring Chromium extension command-result payload decode failure requestID=\(commandEnvelope.requestID, privacy: .public) error=\(String(describing: error), privacy: .public)")
+            return
+        }
         guard let requestID = result.requestID,
               let pending = pendingCommands.removeValue(forKey: requestID)
         else {
@@ -567,9 +631,39 @@ final class ChromiumBrowserExtensionController: ObservableObject {
 
     private func handleFocusResultPayload(_ payload: String) {
         guard let data = payload.data(using: .utf8) else {
-            preconditionFailure("Chromium native host focus-result notifications must include UTF-8 JSON.")
+            logger.error("Ignoring Chromium extension focus-result with non-UTF-8 payload")
+            return
         }
-        let result = try! decoder.decode(SourceFocusResult.self, from: data)
+        let focusEnvelope: ChromiumBrowserExtensionFocusResultEnvelope
+        do {
+            focusEnvelope = try decoder.decode(ChromiumBrowserExtensionFocusResultEnvelope.self, from: data)
+        } catch {
+            logger.error("Ignoring Chromium extension focus-result envelope decode failure error=\(String(describing: error), privacy: .public)")
+            return
+        }
+        guard focusEnvelope.protocolVersion == ChromiumBrowserExtensionTransport.protocolVersion else {
+            logger.error("Ignoring Chromium extension focus-result protocol=\(focusEnvelope.protocolVersion, privacy: .public) requestID=\(focusEnvelope.requestID, privacy: .public)")
+            guard let pending = pendingFocusRequests.removeValue(forKey: focusEnvelope.requestID) else {
+                return
+            }
+            focusResultTimeouts.removeValue(forKey: focusEnvelope.requestID)?.cancel()
+            pending.resultHandler(SourceFocusResult(
+                requestID: focusEnvelope.requestID,
+                targetID: pending.targetID,
+                ok: false,
+                message: "Chromium extension protocol mismatch.",
+                backend: ChromiumBrowserExtensionTransport.backendName,
+                failureReason: .chromiumExtensionProtocolMismatch
+            ))
+            return
+        }
+        let result: SourceFocusResult
+        do {
+            result = try decoder.decode(SourceFocusResult.self, from: data)
+        } catch {
+            logger.error("Ignoring Chromium extension focus-result payload decode failure requestID=\(focusEnvelope.requestID, privacy: .public) error=\(String(describing: error), privacy: .public)")
+            return
+        }
         guard let requestID = result.requestID,
               let pending = pendingFocusRequests.removeValue(forKey: requestID)
         else {
