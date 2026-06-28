@@ -83,6 +83,11 @@ if "pid: nil" not in mark_failed:
 schedule_recovery = controller[controller.index("    private func schedulePeriodicRecovery"):controller.index("    private func cancelRecoveryTimer")]
 if "pid: nil" not in schedule_recovery:
     raise SystemExit("verify_settings_feature_semantics: helper recovery status must not preserve a dead MediaRemote pid in Settings")
+
+if 'Text("Up/Down, Enter, Command+Enter, Escape, Tab, 1-9")' not in text:
+    raise SystemExit("verify_settings_feature_semantics: overlay shortcut legend must advertise Command+Enter focus and remove nonexistent shortcuts")
+if 'Text("Up/Down, Enter, Escape, Tab, 1-9, P")' in text:
+    raise SystemExit("verify_settings_feature_semantics: overlay shortcut legend must not advertise the removed P shortcut")
 PY
 
 printf 'verify_settings_feature_semantics=ok\n'

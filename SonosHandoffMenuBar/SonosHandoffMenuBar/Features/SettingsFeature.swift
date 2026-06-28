@@ -263,7 +263,7 @@ struct SettingsFeature: View {
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text("Up/Down, Enter, Escape, Tab, 1-9, P")
+                Text("Up/Down, Enter, Command+Enter, Escape, Tab, 1-9")
                     .font(.system(size: 12, design: .monospaced))
                     .foregroundStyle(.secondary)
             }
