@@ -160,7 +160,11 @@ struct MediaTransportTargetResolver {
             return exactTarget
         }
 
-        return targets.first { $0.matchesRoutingIdentity(liveBundleIdentifier) }
+        let routingIdentityMatches = targets.filter { $0.matchesRoutingIdentity(liveBundleIdentifier) }
+        guard routingIdentityMatches.count == 1 else {
+            return nil
+        }
+        return routingIdentityMatches[0]
     }
 
     private func screenContainingMouse() -> NSScreen? {
