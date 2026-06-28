@@ -233,6 +233,52 @@ struct Semantics {
             [target.id, heliumLegacy.id, second.id],
             "Merging browser extension targets must hide same-family and same-media legacy rows while preserving unrelated browser fallbacks"
         )
+        let braveTarget = chromiumTarget(
+            id: "chromium-extension:brave:chromium-extension:runtime:44",
+            title: "Brave Video",
+            browserFamily: "brave",
+            browserDisplayName: "Brave",
+            browserBundleIdentifier: "com.brave.Browser",
+            browserInstanceID: "brave-profile-b"
+        )
+        let multiBrowserController = ChromiumBrowserExtensionController()
+        multiBrowserController.markConnected(
+            browserInstanceID: "chromium-profile-a",
+            targets: [target, second]
+        )
+        multiBrowserController.markConnected(
+            browserInstanceID: "brave-profile-b",
+            targets: [braveTarget]
+        )
+        expectEqual(
+            multiBrowserController.targets.map(\.id),
+            [braveTarget.id, target.id, second.id],
+            "Chromium extension snapshots must merge targets across browser instances instead of replacing the previous browser snapshot"
+        )
+        multiBrowserController.markConnected(
+            browserInstanceID: "chromium-profile-a",
+            targets: []
+        )
+        expectEqual(
+            multiBrowserController.targets.map(\.id),
+            [braveTarget.id],
+            "An empty snapshot must clear only the browser instance that reported it"
+        )
+        let staleSourceController = ChromiumBrowserExtensionController()
+        staleSourceController.markConnected(
+            browserInstanceID: "stale-browser",
+            targets: [target],
+            now: Date(timeIntervalSinceNow: -5)
+        )
+        staleSourceController.markConnected(
+            browserInstanceID: "live-browser",
+            targets: [braveTarget]
+        )
+        expectEqual(
+            staleSourceController.targets.map(\.id),
+            [braveTarget.id],
+            "Stale Chromium browser snapshots must expire independently when another browser stays connected"
+        )
         expectEqual(
             ChromiumBrowserExtensionTransport.legacyBrowserFamily(target: heliumLegacy),
             "helium",
@@ -282,14 +328,18 @@ struct Semantics {
     private static func chromiumTarget(
         id: String,
         title: String,
-        supportedCommands: [MediaRemoteTransportCommand]? = [.play, .pause, .playPause, .next, .previous]
+        supportedCommands: [MediaRemoteTransportCommand]? = [.play, .pause, .playPause, .next, .previous],
+        browserFamily: String = "chromium",
+        browserDisplayName: String = "Chromium",
+        browserBundleIdentifier: String = "org.chromium.Chromium",
+        browserInstanceID: String = "chromium-profile-a"
     ) -> MediaRemoteTarget {
         MediaRemoteTarget(
             id: id,
             bundleIdentifier: ChromiumBrowserExtensionTransport.nativeMessagingHostName,
             parentBundleIdentifier: "",
             displayName: ChromiumBrowserExtensionTransport.targetDisplayName(
-                browser: "Chromium",
+                browser: browserDisplayName,
                 pageTitle: title
             ),
             pid: 0,
@@ -303,10 +353,10 @@ struct Semantics {
             elapsedTime: 10,
             elapsedTimestamp: 0,
             supportedCommands: supportedCommands,
-            browserFamily: "chromium",
-            browserDisplayName: "Chromium",
-            browserBundleIdentifier: "org.chromium.Chromium",
-            browserInstanceID: "chromium-profile-a"
+            browserFamily: browserFamily,
+            browserDisplayName: browserDisplayName,
+            browserBundleIdentifier: browserBundleIdentifier,
+            browserInstanceID: browserInstanceID
         )
     }
 
@@ -370,3 +420,17 @@ swiftc \
   -o "$workdir/verify_chromium_extension_transport_semantics"
 
 "$workdir/verify_chromium_extension_transport_semantics"
+
+rg -n 'root\["browserInstanceID"\] = hostBrowserIdentity.instanceID' \
+  "$repo_root/packages/SonosHandoffCore/Sources/KeywayChromiumNativeHost/main.swift" >/dev/null \
+  || {
+    echo "verify_chromium_extension_transport_semantics: native host snapshots must carry browserInstanceID at the payload root" >&2
+    exit 1
+  }
+
+rg -n 'markConnected\(browserInstanceID: snapshot.browserInstanceID' \
+  "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionTransport.swift" >/dev/null \
+  || {
+    echo "verify_chromium_extension_transport_semantics: snapshot handling must key extension state by browserInstanceID" >&2
+    exit 1
+  }

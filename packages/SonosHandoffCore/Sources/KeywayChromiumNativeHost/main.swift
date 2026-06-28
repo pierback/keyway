@@ -165,6 +165,7 @@ func payloadByAddingHostBrowserIdentity(_ payload: String) -> String {
         targets[index]["browserInstanceID"] = hostBrowserIdentity.instanceID
         targets[index]["browser"] = hostBrowserIdentity.displayName
     }
+    root["browserInstanceID"] = hostBrowserIdentity.instanceID
     root["targets"] = targets
 
     let enriched = try! JSONSerialization.data(withJSONObject: root)

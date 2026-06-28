@@ -259,6 +259,11 @@ final class ChromiumBrowserExtensionController: ObservableObject {
     private static let disconnectInterval: TimeInterval = 2
     private static let commandResultTimeoutNanoseconds: UInt64 = 350_000_000
 
+    private struct SnapshotSource {
+        let lastSnapshotAt: Date
+        let targets: [MediaRemoteTarget]
+    }
+
     @Published private(set) var connected = false
     @Published private(set) var targets: [MediaRemoteTarget] = []
 
@@ -268,7 +273,7 @@ final class ChromiumBrowserExtensionController: ObservableObject {
     private var commandResultObserver: NSObjectProtocol?
     private var focusResultObserver: NSObjectProtocol?
     private var disconnectTimer: Timer?
-    private var lastMessageAt: Date?
+    private var snapshotSourcesByBrowserInstanceID: [String: SnapshotSource] = [:]
     private var pendingCommands: [String: ChromiumBrowserExtensionPendingCommand] = [:]
     private var commandResultTimeouts: [String: Task<Void, Never>] = [:]
     private var pendingFocusRequests: [String: ChromiumBrowserExtensionPendingFocus] = [:]
@@ -353,16 +358,22 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         markDisconnected()
     }
 
-    func markConnected(targets: [MediaRemoteTarget]) {
-        lastMessageAt = Date()
-        self.connected = true
-        self.targets = targets.filter(ChromiumBrowserExtensionTransport.isTarget)
+    func markConnected(
+        browserInstanceID: String = "direct",
+        targets: [MediaRemoteTarget],
+        now: Date = Date()
+    ) {
+        snapshotSourcesByBrowserInstanceID[browserInstanceID] = SnapshotSource(
+            lastSnapshotAt: now,
+            targets: targets.filter(ChromiumBrowserExtensionTransport.isTarget)
+        )
+        rebuildConnectionState(now: now)
     }
 
     func markDisconnected() {
+        snapshotSourcesByBrowserInstanceID = [:]
         connected = false
         targets = []
-        lastMessageAt = nil
     }
 
     func backendName(for target: MediaRemoteTarget) -> String? {
@@ -529,10 +540,13 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         let snapshot = try! decoder.decode(ChromiumBrowserExtensionSnapshotPayload.self, from: data)
         guard snapshot.protocolVersion == ChromiumBrowserExtensionTransport.protocolVersion else {
             logger.error("Ignoring Chromium extension snapshot protocol=\(snapshot.protocolVersion, privacy: .public)")
-            markConnected(targets: [])
+            markConnected(browserInstanceID: snapshot.browserInstanceID, targets: [])
             return
         }
-        markConnected(targets: snapshot.targets.map(\.mediaRemoteTarget))
+        markConnected(
+            browserInstanceID: snapshot.browserInstanceID,
+            targets: snapshot.targets.map(\.mediaRemoteTarget)
+        )
     }
 
     private func handleCommandResultPayload(_ payload: String) {
@@ -546,7 +560,6 @@ final class ChromiumBrowserExtensionController: ObservableObject {
             return
         }
         commandResultTimeouts.removeValue(forKey: requestID)?.cancel()
-        lastMessageAt = Date()
         let elapsed = ProcessInfo.processInfo.systemUptime - pending.startedAt
         logger.info("ChromiumExtension command_result requestID=\(requestID, privacy: .public) command=\(result.command, privacy: .public) target=\(result.targetID, privacy: .public) ok=\(result.ok, privacy: .public) elapsedMs=\(Int((elapsed * 1000).rounded()), privacy: .public)")
         pending.resultHandler(result)
@@ -563,20 +576,27 @@ final class ChromiumBrowserExtensionController: ObservableObject {
             return
         }
         focusResultTimeouts.removeValue(forKey: requestID)?.cancel()
-        lastMessageAt = Date()
         let elapsed = ProcessInfo.processInfo.systemUptime - pending.startedAt
         logger.info("ChromiumExtension focus_result requestID=\(requestID, privacy: .public) target=\(result.targetID, privacy: .public) ok=\(result.ok, privacy: .public) elapsedMs=\(Int((elapsed * 1000).rounded()), privacy: .public)")
         pending.resultHandler(result)
     }
 
     private func markDisconnectedIfStale(now: Date) {
-        guard let lastMessageAt else {
-            return
+        rebuildConnectionState(now: now)
+    }
+
+    private func rebuildConnectionState(now: Date) {
+        snapshotSourcesByBrowserInstanceID = snapshotSourcesByBrowserInstanceID.filter {
+            now.timeIntervalSince($0.value.lastSnapshotAt) <= Self.disconnectInterval
         }
-        guard now.timeIntervalSince(lastMessageAt) > Self.disconnectInterval else {
-            return
+        connected = !snapshotSourcesByBrowserInstanceID.isEmpty
+
+        var seenTargetIDs: Set<String> = []
+        targets = snapshotSourcesByBrowserInstanceID.keys.sorted().flatMap { browserInstanceID in
+            snapshotSourcesByBrowserInstanceID[browserInstanceID]?.targets ?? []
+        }.filter { target in
+            seenTargetIDs.insert(target.id).inserted
         }
-        markDisconnected()
     }
 
     private func armCommandResultTimeout(requestID: String) {
@@ -658,6 +678,7 @@ private struct ChromiumBrowserExtensionFocusPayload: Encodable {
 
 private struct ChromiumBrowserExtensionSnapshotPayload: Decodable {
     let protocolVersion: Int
+    let browserInstanceID: String
     let targets: [ChromiumBrowserExtensionTargetPayload]
 }
 
