@@ -31,6 +31,23 @@ if required not in body:
 if body.index(required) > body.index("authCoordinator.login()"):
     raise SystemExit("verify_settings_feature_semantics: Spotify sign-in must validate the Client ID before login")
 
+if "available: configImportBadgeAvailable" not in text:
+    raise SystemExit("verify_settings_feature_semantics: config import badge must route through explicit pending/imported/failure status")
+
+start = text.index("    private var configImportBadgeAvailable: Bool")
+end = text.index("    private var configImportSummary: String", start)
+body = text[start:end]
+required = """guard let configImportReport else {
+            return false
+        }"""
+if required not in body:
+    raise SystemExit("verify_settings_feature_semantics: config import badge must stay unavailable until import runs")
+if "!configImportReport.hasFailures && !configImportReport.hasConflicts" not in body:
+    raise SystemExit("verify_settings_feature_semantics: config import badge must only show healthy after a conflict-free report")
+
+if 'return "Config import has not run yet. Keyway will copy old Sonos Handoff config and token files into its own support directory."' not in text:
+    raise SystemExit("verify_settings_feature_semantics: config import summary must describe the pending state before import runs")
+
 if 'private let heliumBundleIdentifier = "net.imput.helium"' not in text:
     raise SystemExit("verify_settings_feature_semantics: Chromium extension setup must know Helium's bundle identifier")
 

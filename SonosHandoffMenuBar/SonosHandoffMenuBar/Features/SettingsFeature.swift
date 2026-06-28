@@ -179,7 +179,7 @@ struct SettingsFeature: View {
                 HStack(alignment: .top, spacing: 10) {
                     StatusBadge(
                         title: configImportBadgeTitle,
-                        available: !(configImportReport?.hasFailures ?? false) && !(configImportReport?.hasConflicts ?? false)
+                        available: configImportBadgeAvailable
                     )
 
                     VStack(alignment: .leading, spacing: 2) {
@@ -686,9 +686,17 @@ struct SettingsFeature: View {
         return configImportReport.copiedCount > 0 ? "Imported" : "Ready"
     }
 
+    private var configImportBadgeAvailable: Bool {
+        guard let configImportReport else {
+            return false
+        }
+
+        return !configImportReport.hasFailures && !configImportReport.hasConflicts
+    }
+
     private var configImportSummary: String {
         guard let configImportReport else {
-            return "Keyway will copy old Sonos Handoff config and token files into its own support directory."
+            return "Config import has not run yet. Keyway will copy old Sonos Handoff config and token files into its own support directory."
         }
 
         if configImportReport.hasConflicts {
