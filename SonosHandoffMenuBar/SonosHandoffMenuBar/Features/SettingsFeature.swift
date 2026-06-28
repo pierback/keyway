@@ -249,7 +249,7 @@ struct SettingsFeature: View {
                 }
                 .controlSize(.small)
             }
-            Text("Routing policy: Focused Target, Pinned Target, Recent Target, chooser.")
+            Text("Routing policy: Single Target, Current Media Target, Focused Target, Recent Target, chooser.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
         }
