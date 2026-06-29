@@ -126,7 +126,7 @@ func readExact(_ byteCount: Int) -> Data? {
     return data
 }
 
-func readNativeMessage() -> String? {
+func readNativeMessage() -> Data? {
     guard let lengthData = readExact(4) else {
         return nil
     }
@@ -135,29 +135,32 @@ func readNativeMessage() -> String? {
         | UInt32(bytes[1]) << 8
         | UInt32(bytes[2]) << 16
         | UInt32(bytes[3]) << 24
-    guard let payload = readExact(Int(length)) else {
-        return nil
-    }
-    return String(data: payload, encoding: .utf8)
+    return readExact(Int(length))
 }
 
-func writeNativeMessage(_ payload: String) {
-    let data = Data(payload.utf8)
-    var length = UInt32(data.count).littleEndian
+func writeNativeMessage(_ payload: Data) {
+    var length = UInt32(payload.count).littleEndian
     let lengthData = Data(bytes: &length, count: 4)
     writeLock.lock()
     FileHandle.standardOutput.write(lengthData)
-    FileHandle.standardOutput.write(data)
+    FileHandle.standardOutput.write(payload)
     writeLock.unlock()
 }
 
-func payloadByAddingHostBrowserIdentity(_ payload: String) -> String {
-    let data = Data(payload.utf8)
-    var root = try! JSONSerialization.jsonObject(with: data) as! [String: Any]
-    var targets = root["targets"] as! [[String: Any]]
+func payloadByAddingHostBrowserIdentity(_ payload: Data) -> String? {
+    guard let rootObject = try? JSONSerialization.jsonObject(with: payload),
+          var root = rootObject as? [String: Any],
+          var targets = root["targets"] as? [[String: Any]]
+    else {
+        fputs("Keyway Chromium native host: ignoring malformed snapshot payload.\n", stderr)
+        return nil
+    }
 
     for index in targets.indices {
-        let rawTargetID = targets[index]["id"] as! String
+        guard let rawTargetID = targets[index]["id"] as? String else {
+            fputs("Keyway Chromium native host: ignoring snapshot target without id.\n", stderr)
+            return nil
+        }
         targets[index]["id"] = hostBrowserIdentity.publicTargetID(rawTargetID: rawTargetID)
         targets[index]["browserFamily"] = hostBrowserIdentity.family
         targets[index]["browserDisplayName"] = hostBrowserIdentity.displayName
@@ -168,31 +171,53 @@ func payloadByAddingHostBrowserIdentity(_ payload: String) -> String {
     root["browserInstanceID"] = hostBrowserIdentity.instanceID
     root["targets"] = targets
 
-    let enriched = try! JSONSerialization.data(withJSONObject: root)
-    return String(data: enriched, encoding: .utf8)!
+    guard let enriched = try? JSONSerialization.data(withJSONObject: root),
+          let payload = String(data: enriched, encoding: .utf8)
+    else {
+        fputs("Keyway Chromium native host: ignoring snapshot payload rewrite failure.\n", stderr)
+        return nil
+    }
+    return payload
 }
 
-func payloadByRestoringRawTargetIdentity(_ payload: String) -> String? {
-    let data = Data(payload.utf8)
-    var root = try! JSONSerialization.jsonObject(with: data) as! [String: Any]
-    let publicTargetID = root["targetID"] as! String
+func payloadByRestoringRawTargetIdentity(_ payload: String) -> Data? {
+    guard let data = payload.data(using: .utf8),
+          let rootObject = try? JSONSerialization.jsonObject(with: data),
+          var root = rootObject as? [String: Any],
+          let publicTargetID = root["targetID"] as? String
+    else {
+        fputs("Keyway Chromium native host: ignoring malformed command payload.\n", stderr)
+        return nil
+    }
     guard let rawTargetID = hostBrowserIdentity.rawTargetID(publicTargetID: publicTargetID) else {
         return nil
     }
     root["targetID"] = rawTargetID
 
-    let routed = try! JSONSerialization.data(withJSONObject: root)
-    return String(data: routed, encoding: .utf8)!
+    guard let routed = try? JSONSerialization.data(withJSONObject: root) else {
+        fputs("Keyway Chromium native host: ignoring command payload rewrite failure.\n", stderr)
+        return nil
+    }
+    return routed
 }
 
-func payloadByRestoringPublicTargetIdentity(_ payload: String) -> String {
-    let data = Data(payload.utf8)
-    var root = try! JSONSerialization.jsonObject(with: data) as! [String: Any]
-    let rawTargetID = root["targetID"] as! String
+func payloadByRestoringPublicTargetIdentity(_ payload: Data) -> String? {
+    guard let rootObject = try? JSONSerialization.jsonObject(with: payload),
+          var root = rootObject as? [String: Any],
+          let rawTargetID = root["targetID"] as? String
+    else {
+        fputs("Keyway Chromium native host: ignoring malformed result payload.\n", stderr)
+        return nil
+    }
     root["targetID"] = hostBrowserIdentity.publicTargetID(rawTargetID: rawTargetID)
 
-    let routed = try! JSONSerialization.data(withJSONObject: root)
-    return String(data: routed, encoding: .utf8)!
+    guard let routed = try? JSONSerialization.data(withJSONObject: root),
+          let payload = String(data: routed, encoding: .utf8)
+    else {
+        fputs("Keyway Chromium native host: ignoring result payload rewrite failure.\n", stderr)
+        return nil
+    }
+    return payload
 }
 
 let commandObserver = DistributedNotificationCenter.default().addObserver(
@@ -201,7 +226,8 @@ let commandObserver = DistributedNotificationCenter.default().addObserver(
     queue: .main
 ) { notification in
     guard let payload = notification.userInfo?["payload"] as? String else {
-        preconditionFailure("Keyway command notifications must include a payload.")
+        fputs("Keyway Chromium native host: ignoring command notification without payload.\n", stderr)
+        return
     }
     guard let routedPayload = payloadByRestoringRawTargetIdentity(payload) else {
         return
@@ -209,19 +235,24 @@ let commandObserver = DistributedNotificationCenter.default().addObserver(
     writeNativeMessage(routedPayload)
 }
 
-func postNativeMessage(_ payload: String) {
-    let data = Data(payload.utf8)
-    let envelope = try! JSONDecoder().decode(NativeMessageEnvelope.self, from: data)
-    precondition(
-        envelope.type == "snapshot" || envelope.type == "hello" || envelope.type == "commandResult" || envelope.type == "focusResult",
-        "Unknown Chromium native message type: \(envelope.type)"
-    )
+func postNativeMessage(_ payload: Data) {
+    guard let envelope = try? JSONDecoder().decode(NativeMessageEnvelope.self, from: payload) else {
+        fputs("Keyway Chromium native host: ignoring undecodable native message envelope.\n", stderr)
+        return
+    }
+    guard envelope.type == "snapshot" || envelope.type == "hello" || envelope.type == "commandResult" || envelope.type == "focusResult" else {
+        fputs("Keyway Chromium native host: ignoring unknown native message type.\n", stderr)
+        return
+    }
     guard envelope.type == "snapshot" || envelope.type == "commandResult" || envelope.type == "focusResult" else {
         return
     }
     let postedPayload = envelope.type == "snapshot"
         ? payloadByAddingHostBrowserIdentity(payload)
         : payloadByRestoringPublicTargetIdentity(payload)
+    guard let postedPayload else {
+        return
+    }
     DistributedNotificationCenter.default().postNotificationName(
         envelope.type == "snapshot" ? snapshotNotificationName : envelope.type == "commandResult" ? commandResultNotificationName : focusResultNotificationName,
         object: hostName,
