@@ -62,8 +62,7 @@ final class MediaDesktopTransportAdapter {
                 command: command.rawValue,
                 ok: false,
                 message: "Spotify AppleScript status failed: \(beforeStatus.error ?? "unknown")",
-                backend: MediaDesktopTransportBackend.spotifyAppleEvent.rawValue,
-                unsupported: true
+                backend: MediaDesktopTransportBackend.spotifyAppleEvent.rawValue
             )
         }
         guard let beforeState = beforeStatus.state,
@@ -78,8 +77,7 @@ final class MediaDesktopTransportAdapter {
                 command: command.rawValue,
                 ok: false,
                 message: "Spotify has no current desktop track; state=\(beforeStatus.state ?? "unknown").",
-                backend: MediaDesktopTransportBackend.spotifyAppleEvent.rawValue,
-                unsupported: true
+                backend: MediaDesktopTransportBackend.spotifyAppleEvent.rawValue
             )
         }
 
@@ -90,20 +88,6 @@ final class MediaDesktopTransportAdapter {
             eventID: eventID
         )
         let ok = status == noErr
-        if ok, let expectedState = Self.expectedSpotifyState(command: command, beforeState: beforeState),
-           !Self.waitForSpotifyState(expectedState) {
-            let afterStatus = Self.spotifyPlaybackStatus()
-            return MediaRemoteCommandResultEvent(
-                type: "commandResult",
-                requestID: UUID().uuidString,
-                targetID: target.id,
-                command: command.rawValue,
-                ok: false,
-                message: "Spotify AppleEvent did not reach \(expectedState); state=\(afterStatus.state ?? "unknown").",
-                backend: MediaDesktopTransportBackend.spotifyAppleEvent.rawValue
-            )
-        }
-
         return MediaRemoteCommandResultEvent(
             type: "commandResult",
             requestID: UUID().uuidString,
@@ -139,30 +123,6 @@ final class MediaDesktopTransportAdapter {
         case .previous:
             return "Prev"
         }
-    }
-
-    private static func expectedSpotifyState(command: MediaRemoteTransportCommand, beforeState: String) -> String? {
-        switch command {
-        case .play:
-            return "playing"
-        case .pause:
-            return "paused"
-        case .playPause:
-            return beforeState == "playing" ? "paused" : "playing"
-        case .next, .previous:
-            return nil
-        }
-    }
-
-    private static func waitForSpotifyState(_ expectedState: String) -> Bool {
-        let deadline = Date().addingTimeInterval(1.5)
-        while Date() < deadline {
-            if spotifyPlaybackStatus().state == expectedState {
-                return true
-            }
-            Thread.sleep(forTimeInterval: 0.1)
-        }
-        return false
     }
 
     private static func spotifyPlaybackStatus() -> (state: String?, track: String?, error: String?) {

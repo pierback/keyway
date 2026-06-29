@@ -239,11 +239,19 @@ assert_order(
         "beforeStatus.error == nil",
         "Spotify has no current desktop track",
         "Self.sendAppleEvent(",
-        "Self.expectedSpotifyState(command: command, beforeState: beforeState)",
-        "!Self.waitForSpotifyState(expectedState)",
     ],
     "Spotify AppleEvent transport must preflight desktop track state before sending and verify observable state changes",
 )
+
+for forbidden in [
+    "expectedSpotifyState",
+    "waitForSpotifyState",
+    "Thread.sleep",
+    "did not reach",
+    "unsupported: true",
+]:
+    if forbidden in source:
+        fail("Spotify AppleEvent transport must return terminal non-polling results without misclassifying desktop availability failures as unsupported")
 
 for needle in [
     'tell application id "com.spotify.client"',
@@ -251,8 +259,9 @@ for needle in [
     'case .play:',
     'case .pause:',
     'case .playPause:',
-    'case .next, .previous:',
+    'case .next:',
+    'case .previous:',
 ]:
     if needle not in source:
-        fail("Spotify AppleEvent transport must model play/pause/playPause verification while leaving next/previous as submit-only")
+        fail("Spotify AppleEvent transport must keep the explicit Spotify command mapping for every routed desktop command")
 PY
