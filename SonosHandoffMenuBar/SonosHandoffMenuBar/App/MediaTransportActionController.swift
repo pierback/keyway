@@ -18,7 +18,6 @@ final class MediaTransportActionController {
     private let overlayController: MediaTargetOverlayController
     private let commandCenterFilter: MediaTransportCommandCenterFilter
     private let desktopTransport = MediaDesktopTransportAdapter()
-    private let spotifyPlaybackController: any SpotifyActivePlaybackObserving
     private let chromiumBrowserExtensionController: ChromiumBrowserExtensionController
     private let sourceFocusActionController: SourceFocusActionController
     private let targetSelectionMemory: MediaTargetSelectionMemory
@@ -31,14 +30,12 @@ final class MediaTransportActionController {
     init(
         mediaRemoteController: MediaRemoteController,
         overlayController: MediaTargetOverlayController,
-        spotifyPlaybackController: any SpotifyActivePlaybackObserving,
         chromiumBrowserExtensionController: ChromiumBrowserExtensionController = ChromiumBrowserExtensionController(),
         sourceFocusActionController: SourceFocusActionController,
         targetSelectionMemory: MediaTargetSelectionMemory
     ) {
         self.mediaRemoteController = mediaRemoteController
         self.overlayController = overlayController
-        self.spotifyPlaybackController = spotifyPlaybackController
         self.chromiumBrowserExtensionController = chromiumBrowserExtensionController
         self.sourceFocusActionController = sourceFocusActionController
         self.targetSelectionMemory = targetSelectionMemory
@@ -457,30 +454,6 @@ final class MediaTransportActionController {
     ) {
         if let result = desktopTransport.submit(command: command, target: target) {
             trace(result: result, transportBackend: result.backend)
-            if shouldFallbackFromUnsupportedDesktopResult(target: target),
-               result.unsupported,
-               sendSpotifyWebAPI(command: command, to: target, dispatchID: dispatchID, context: context) {
-                trace(
-                    "desktop_transport_fallback",
-                    command: command,
-                    target: target,
-                    reason: "unsupported",
-                    transportBackend: result.backend
-                )
-                return
-            }
-            if shouldFallbackFromUnsupportedDesktopResult(target: target),
-               result.unsupported,
-               sendMediaRemote(command: command, to: target, dispatchID: dispatchID, context: context) {
-                trace(
-                    "desktop_transport_fallback",
-                    command: command,
-                    target: target,
-                    reason: "unsupported",
-                    transportBackend: result.backend
-                )
-                return
-            }
             finishDispatch(id: dispatchID, fallback: false)
             mediaRemoteController.refreshSnapshot()
             showCommandFailureIfNeeded(result: result, target: target)
@@ -528,55 +501,6 @@ final class MediaTransportActionController {
             )
             return
         }
-
-    }
-
-    private func sendSpotifyWebAPI(
-        command: MediaRemoteTransportCommand,
-        to target: MediaRemoteTarget,
-        dispatchID: UUID,
-        context: MediaTransportDispatchContext
-    ) -> Bool {
-        guard let spotifyCommand = spotifyPlaybackCommand(command: command, target: target) else {
-            return false
-        }
-        Task { @MainActor [weak self, spotifyPlaybackController] in
-            guard let self else { return }
-            do {
-                try await spotifyPlaybackController.sendActivePlaybackCommand(spotifyCommand)
-                let result = Self.spotifyWebAPIResult(
-                    command: command,
-                    target: target,
-                    ok: true,
-                    message: "submitted Spotify Web API \(spotifyCommand.rawValue)"
-                )
-                self.trace(result: result, transportBackend: Self.spotifyWebAPIBackend)
-                self.finishDispatch(id: dispatchID, fallback: false)
-                self.mediaRemoteController.refreshSnapshot()
-            } catch {
-                let result = Self.spotifyWebAPIResult(
-                    command: command,
-                    target: target,
-                    ok: false,
-                    message: error.localizedDescription
-                )
-                self.trace(result: result, transportBackend: Self.spotifyWebAPIBackend)
-                if self.sendMediaRemote(command: command, to: target, dispatchID: dispatchID, context: context) {
-                    self.trace(
-                        "spotify_webapi_fallback",
-                        command: command,
-                        target: target,
-                        reason: "failed",
-                        transportBackend: Self.spotifyWebAPIBackend
-                    )
-                    return
-                }
-                self.finishDispatch(id: dispatchID, fallback: false)
-                self.showCommandFailureIfNeeded(result: result, target: target)
-            }
-        }
-        logDispatch(command: command, target: target, context: context, transport: Self.spotifyWebAPIBackend)
-        return true
     }
 
     private func sendMediaRemote(
@@ -692,10 +616,6 @@ final class MediaTransportActionController {
         return true
     }
 
-    private func shouldFallbackFromUnsupportedDesktopResult(target: MediaRemoteTarget) -> Bool {
-        !target.isChromiumBrowserLike
-    }
-
     private func chooserScopedCommand(
         _ command: MediaRemoteTransportCommand,
         for target: MediaRemoteTarget
@@ -710,50 +630,11 @@ final class MediaTransportActionController {
     }
 
     private static let mediaRemotePlayerPathBackend = "mediaremote_player_path"
-    private static let spotifyWebAPIBackend = "spotify_web_api"
 
     private func transportBackendName(command: MediaRemoteTransportCommand, target: MediaRemoteTarget) -> String {
         desktopTransport.backendName(command: command, target: target)
             ?? chromiumBrowserExtensionController.backendName(command: command, target: target)
             ?? Self.mediaRemotePlayerPathBackend
-    }
-
-    private func spotifyPlaybackCommand(
-        command: MediaRemoteTransportCommand,
-        target: MediaRemoteTarget
-    ) -> SpotifyPlaybackCommand? {
-        guard target.isSpotify else {
-            return nil
-        }
-        switch command {
-        case .play:
-            return .play
-        case .pause:
-            return .pause
-        case .playPause:
-            return .playPause
-        case .next:
-            return .next
-        case .previous:
-            return .previous
-        }
-    }
-
-    private static func spotifyWebAPIResult(
-        command: MediaRemoteTransportCommand,
-        target: MediaRemoteTarget,
-        ok: Bool,
-        message: String
-    ) -> MediaRemoteCommandResultEvent {
-        MediaRemoteCommandResultEvent(
-            type: "commandResult",
-            requestID: UUID().uuidString,
-            targetID: target.id,
-            command: command.rawValue,
-            ok: ok,
-            message: message,
-            backend: Self.spotifyWebAPIBackend
-        )
     }
 
     private func desktopTransportName(target: MediaRemoteTarget) -> String? {
@@ -865,6 +746,14 @@ final class MediaTransportActionController {
         }
 
         logger.error("MediaTransport async_route_failed command=\(result.command, privacy: .public) target=\(target.appName, privacy: .public) targetID=\(result.targetID, privacy: .public) message=\(result.message, privacy: .public)")
+        if result.message.contains("-1743") {
+            StatusHUD.shared.finish(
+                title: "Media Command Failed",
+                message: "Allow Keyway to control \(target.appName) in System Settings > Privacy & Security > Automation, then retry.",
+                dismissAfter: 2.2
+            )
+            return
+        }
         if result.unsupported {
             StatusHUD.shared.finish(
                 title: "Command Unsupported",
@@ -875,9 +764,7 @@ final class MediaTransportActionController {
         }
         StatusHUD.shared.finish(
             title: "Media Command Failed",
-            message: result.message.contains("-1743")
-                ? "Allow Keyway to control \(target.appName) in System Settings > Privacy & Security > Automation, then retry."
-                : "Keyway could not reach \(target.appName).",
+            message: "Keyway could not reach \(target.appName).",
             dismissAfter: 2.2
         )
     }

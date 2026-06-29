@@ -50,6 +50,12 @@ grep -q 'decision_current_targets' "$transport" \
 grep -q 'guard !ChromiumBrowserExtensionTransport.isTarget(target) else' "$desktop_adapter" \
   || fail "Desktop transport must not claim exact Chromium extension rows"
 
+! grep -q 'spotifyPlaybackController' "$transport" \
+  || fail "Spotify desktop transport must not keep the removed Web API controller fallback"
+
+! grep -q 'spotifyPlaybackController:' "$app_environment" \
+  || fail "AppEnvironment must not wire the removed Spotify Web API fallback dependency"
+
 ! grep -q 'net.imput.helium' "$desktop_adapter" \
   || fail "Helium must not have a desktop JavaScript fallback; it is extension-owned"
 
@@ -195,9 +201,48 @@ for required in (
     "targetResolver.automaticTarget(",
     "send(command: command, to: decision.target, reason: decision.reason)",
     "showChooserOverlay(",
+    ):
+        if required not in targets_route:
+            raise SystemExit(f"verify_playback_routing_invariants: multi-target routing contract is missing required behavior: {required}")
+
+send_body = text[
+    text.index("    private func send(\n        command: MediaRemoteTransportCommand,"):
+    text.index("    private func fallbackMediaRemote(")
+]
+desktop_block = send_body[
+    send_body.index("if let result = desktopTransport.submit(command: command, target: target) {"):
+    send_body.index("if let sent = chromiumBrowserExtensionController.submit")
+]
+for forbidden in (
+    "sendSpotifyWebAPI(",
+    "sendMediaRemote(",
+    "shouldFallbackFromUnsupportedDesktopResult(",
+    "desktop_transport_fallback",
 ):
-    if required not in targets_route:
-        raise SystemExit(f"verify_playback_routing_invariants: multi-target routing contract is missing required behavior: {required}")
+    if forbidden in desktop_block:
+        raise SystemExit(f"verify_playback_routing_invariants: desktop transport results must be terminal after submit(): {forbidden}")
+for forbidden in (
+    "sendSpotifyWebAPI(",
+    "spotifyPlaybackCommand(",
+    "spotifyWebAPIResult(",
+    "spotifyWebAPIBackend",
+    "spotify_webapi_fallback",
+    "shouldFallbackFromUnsupportedDesktopResult(",
+):
+    if forbidden in text:
+        raise SystemExit(f"verify_playback_routing_invariants: hard-cutover must remove the obsolete Spotify fallback surface: {forbidden}")
+failure_body = text[
+    text.index("    private func showCommandFailureIfNeeded(result: MediaRemoteCommandResultEvent, target: MediaRemoteTarget) {"):
+    text.index("\n    }\n\n}", text.index("    private func showCommandFailureIfNeeded(result: MediaRemoteCommandResultEvent, target: MediaRemoteTarget) {"))
+]
+automation_check = 'if result.message.contains("-1743") {'
+unsupported_check = "if result.unsupported {"
+if automation_check not in failure_body:
+    raise SystemExit("verify_playback_routing_invariants: Automation denial hint must be handled explicitly")
+if unsupported_check not in failure_body:
+    raise SystemExit("verify_playback_routing_invariants: generic unsupported HUD branch is missing")
+if failure_body.index(automation_check) > failure_body.index(unsupported_check):
+    raise SystemExit("verify_playback_routing_invariants: Automation denial hint must be checked before the generic unsupported branch")
 PY
 
 if grep -q 'cgSessionEventTap\|case session' "$event_tap"; then

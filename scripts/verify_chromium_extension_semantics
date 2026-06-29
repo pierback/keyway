@@ -128,19 +128,39 @@ expect(
 )
 if "preferredChromiumExtensionTarget(" in target_resolver:
     raise SystemExit("verify_chromium_extension_semantics: automatic routing must not bypass mixed playing ambiguity through a Chromium-specific pre-check")
-expect(
-    action_controller,
-    "private func shouldFallbackFromUnsupportedDesktopResult(target: MediaRemoteTarget) -> Bool",
-    "routing must gate unsupported desktop fallthrough by target kind",
-)
-expect(
-    action_controller,
-    "!target.isChromiumBrowserLike",
-    "browser automation unsupported commands must not fall through to Spotify or MediaRemote",
-)
-for forbidden in ["legacyChromiumFallbackTarget", '"chromium_extension_fallback"']:
+send_body = action_controller[
+    action_controller.index("    private func send(\n        command: MediaRemoteTransportCommand,"):
+    action_controller.index("    private func fallbackMediaRemote(")
+]
+desktop_block = send_body[
+    send_body.index("if let result = desktopTransport.submit(command: command, target: target) {"):
+    send_body.index("if let sent = chromiumBrowserExtensionController.submit")
+]
+for forbidden in [
+    "shouldFallbackFromUnsupportedDesktopResult(",
+    "sendSpotifyWebAPI(",
+    "sendMediaRemote(",
+    "desktop_transport_fallback",
+    "spotify_webapi_fallback",
+]:
+    if forbidden in desktop_block:
+        raise SystemExit(
+            f"verify_chromium_extension_semantics: desktop transport results must be terminal before Chromium routing: {forbidden}"
+        )
+for forbidden in [
+    "shouldFallbackFromUnsupportedDesktopResult(",
+    "sendSpotifyWebAPI(",
+    "spotifyPlaybackCommand(",
+    "spotifyWebAPIResult(",
+    "spotifyWebAPIBackend",
+    "spotify_webapi_fallback",
+    "legacyChromiumFallbackTarget",
+    '"chromium_extension_fallback"',
+]:
     if forbidden in action_controller:
-        raise SystemExit("verify_chromium_extension_semantics: Chromium extension failures must not retain legacy browser fallback hooks")
+        raise SystemExit(
+            f"verify_chromium_extension_semantics: Chromium and desktop routing must not retain obsolete fallback hooks: {forbidden}"
+        )
 overlay_view = repo_root.joinpath("SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTargetOverlayView.swift").read_text()
 expect(
     overlay_view,

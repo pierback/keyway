@@ -188,15 +188,35 @@ assert_order(
     send,
     [
         "desktopTransport.submit(command: command, target: target)",
-        "shouldFallbackFromUnsupportedDesktopResult(target: target)",
-        "sendSpotifyWebAPI(command: command, to: target, dispatchID: dispatchID, context: context)",
-        '"desktop_transport_fallback"',
-        "sendMediaRemote(command: command, to: target, dispatchID: dispatchID, context: context)",
         "chromiumBrowserExtensionController.submit(command: command, target: target",
         "fallbackMediaRemote(command: command, to: target, dispatchID: dispatchID, context: context)",
     ],
-    "shared dispatch must prefer desktop adapters, gate unsupported desktop fallback, then use Chromium extension exactly before MediaRemote fallback"
+    "shared dispatch must prefer desktop adapters, then use Chromium extension exactly before MediaRemote fallback"
 )
+desktop_dispatch = send[
+    send.index("if let result = desktopTransport.submit(command: command, target: target) {"):
+    send.index("if let sent = chromiumBrowserExtensionController.submit")
+]
+assert_order(
+    desktop_dispatch,
+    [
+        "trace(result: result, transportBackend: result.backend)",
+        "finishDispatch(id: dispatchID, fallback: false)",
+        "mediaRemoteController.refreshSnapshot()",
+        "showCommandFailureIfNeeded(result: result, target: target)",
+        'logDispatch(command: command, target: target, context: context, transport: result.backend ?? "desktop")',
+    ],
+    "desktop transport results must be terminal and keep the shared dispatch bookkeeping"
+)
+for forbidden in (
+    "shouldFallbackFromUnsupportedDesktopResult(",
+    "sendSpotifyWebAPI(",
+    "sendMediaRemote(",
+    "desktop_transport_fallback",
+    "spotify_webapi_fallback",
+):
+    if forbidden in desktop_dispatch:
+        fail(f"desktop transport results must not fall through after submit(): {forbidden}")
 if "legacyChromiumFallbackTarget" in send or '"chromium_extension_fallback"' in send:
     fail("Chromium extension command failures must not fall back to legacy browser rows")
 
@@ -210,22 +230,6 @@ assert_order(
         "guard sendMediaRemote(command: command, to: target, dispatchID: dispatchID, context: context)",
     ],
     "MediaRemote fallback must gate the player path before dispatch"
-)
-
-spotify_webapi = function_body("sendSpotifyWebAPI")
-assert_order(
-    spotify_webapi,
-    [
-        "spotifyPlaybackCommand(command: command, target: target)",
-        "spotifyPlaybackController.sendActivePlaybackCommand(spotifyCommand)",
-        "Self.spotifyWebAPIResult(",
-        "Self.spotifyWebAPIBackend",
-        "finishDispatch(id: dispatchID, fallback: false)",
-        "sendMediaRemote(command: command, to: target, dispatchID: dispatchID, context: context)",
-        '"spotify_webapi_fallback"',
-        "showCommandFailureIfNeeded(result: result, target: target)",
-    ],
-    "Spotify Web API fallback must use the shared Spotify command service and fall through to MediaRemote on command failure"
 )
 
 mediaremote = function_body("sendMediaRemote")
@@ -266,28 +270,44 @@ assert_order(
     ],
     "legacy Chromium browser rows must not use MediaRemote player-path routing because selected-row dispatch can affect a competing global media session"
 )
-
-desktop_fallback_gate = function_body("shouldFallbackFromUnsupportedDesktopResult")
-assert_contains(
-    desktop_fallback_gate,
-    "!target.isChromiumBrowserLike",
-    "Unsupported browser desktop automation commands must not fall through to MediaRemote or Spotify fallback"
-)
 if "net.imput.helium" in desktop_transport or "execute active tab of front window javascript" in desktop_transport:
     fail("Helium must not retain desktop fallback probing or active-tab JavaScript dispatch")
-if "legacyChromiumFallbackTarget" in source or '"chromium_extension_fallback"' in source:
-    fail("Chromium extension routing must not retain legacy browser fallback hooks")
+for forbidden in (
+    "shouldFallbackFromUnsupportedDesktopResult(",
+    "sendSpotifyWebAPI(",
+    "spotifyPlaybackCommand(",
+    "spotifyWebAPIResult(",
+    "spotifyWebAPIBackend",
+    "spotify_webapi_fallback",
+    "legacyChromiumFallbackTarget",
+    '"chromium_extension_fallback"',
+):
+    if forbidden in source:
+        fail(f"Chromium and desktop routing must not retain obsolete fallback hooks: {forbidden}")
 
 failure = function_body("showCommandFailureIfNeeded")
-assert_order(
+automation_check = 'if result.message.contains("-1743") {'
+unsupported_check = "if result.unsupported {"
+generic_failure = 'message: "Keyway could not reach \\(target.appName)."'
+assert_contains(
     failure,
-    [
-        "if result.unsupported",
-        'title: "Command Unsupported"',
-        'title: "Media Command Failed"',
-    ],
-    "unsupported command results must be shown as unsupported rather than generic failures"
+    automation_check,
+    "Automation denial hint must be handled explicitly before generic unsupported failures"
 )
+assert_contains(
+    failure,
+    unsupported_check,
+    "unsupported command results must still have a dedicated HUD branch"
+)
+assert_contains(
+    failure,
+    generic_failure,
+    "generic command failures must still show the reachability HUD"
+)
+if failure.index(automation_check) > failure.index(unsupported_check):
+    fail("Automation denial hint must be checked before the generic unsupported branch")
+if failure.index(unsupported_check) > failure.index(generic_failure):
+    fail("unsupported command results must be shown as unsupported rather than generic failures")
 
 backend = function_body("transportBackendName")
 assert_order(
@@ -305,36 +325,6 @@ assert_contains(
     chooser_scoped,
     "desktopTransport.keepsPlayPauseToggle(for: target)",
     "chooser-scoped playPause must preserve desktop adapter toggles for Spotify"
-)
-
-spotify_command = function_body("spotifyPlaybackCommand")
-assert_order(
-    spotify_command,
-    [
-        "guard target.isSpotify",
-        "case .play:",
-        "return .play",
-        "case .pause:",
-        "return .pause",
-        "case .playPause:",
-        "return .playPause",
-        "case .next:",
-        "return .next",
-        "case .previous:",
-        "return .previous",
-    ],
-    "Spotify Web API fallback must map every media transport command to the shared Spotify playback command model"
-)
-
-assert_contains(
-    source,
-    "private let spotifyPlaybackController: any SpotifyActivePlaybackObserving",
-    "media transport routing must receive the shared Spotify playback service"
-)
-assert_contains(
-    source,
-    'private static let spotifyWebAPIBackend = "spotify_web_api"',
-    "Spotify Web API fallback must have a distinct trace backend"
 )
 
 print("verify_mixed_media_routing_semantics=ok")
