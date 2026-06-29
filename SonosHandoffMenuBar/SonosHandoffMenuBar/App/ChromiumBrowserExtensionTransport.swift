@@ -45,17 +45,15 @@ enum ChromiumBrowserExtensionTransport {
     }
 
     static func shadowsLegacyTarget(extensionTarget: MediaRemoteTarget, legacyTarget: MediaRemoteTarget) -> Bool {
-        guard isTarget(extensionTarget), !isTarget(legacyTarget), legacyTarget.isChromiumBrowserLike else {
+        guard isTarget(extensionTarget),
+              !isTarget(legacyTarget),
+              legacyTarget.isChromiumBrowserLike,
+              let extensionFamily = browserFamily(target: extensionTarget),
+              let legacyFamily = legacyBrowserFamily(target: legacyTarget)
+        else {
             return false
         }
-        if let extensionFamily = browserFamily(target: extensionTarget),
-           let legacyFamily = legacyBrowserFamily(target: legacyTarget),
-           extensionFamily == legacyFamily {
-            return true
-        }
-
-        let extensionTitle = normalizedMediaTitle(extensionTarget.title)
-        return !extensionTitle.isEmpty && extensionTitle == normalizedMediaTitle(legacyTarget.title)
+        return extensionFamily == legacyFamily
     }
 
     private static func browserFamily(identities: [String]) -> String? {
@@ -64,10 +62,6 @@ enum ChromiumBrowserExtensionTransport {
             return matcher.family
         }
         return nil
-    }
-
-    private static func normalizedMediaTitle(_ title: String) -> String {
-        title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
     static func targetDisplayName(browser: String, pageTitle: String) -> String {

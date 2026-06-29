@@ -32,11 +32,19 @@ struct MediaTransportTargetResolver {
         }
 
         if let focusedTarget = focusedTarget(in: targets) {
+            if ChromiumBrowserExtensionTransport.isTarget(focusedTarget),
+               !ChromiumBrowserExtensionTransport.supports(command: command, target: focusedTarget) {
+                return nil
+            }
             return (focusedTarget, .focused)
         }
 
         if let recentTargetID,
            let recentTarget = targets.first(where: { $0.id == recentTargetID }) {
+            if ChromiumBrowserExtensionTransport.isTarget(recentTarget),
+               !ChromiumBrowserExtensionTransport.supports(command: command, target: recentTarget) {
+                return nil
+            }
             return (recentTarget, .recent)
         }
 
@@ -147,10 +155,14 @@ struct MediaTransportTargetResolver {
         }
 
         let processID = Int(pid)
-        if let exactTarget = targets.first(where: { target in
+        let exactMatches = targets.filter { target in
             target.pid == processID && target.matchesRoutingIdentity(liveBundleIdentifier)
-        }) {
-            return exactTarget
+        }
+        if exactMatches.count == 1 {
+            return exactMatches[0]
+        }
+        if exactMatches.count > 1 {
+            return nil
         }
 
         let routingIdentityMatches = targets.filter { $0.matchesRoutingIdentity(liveBundleIdentifier) }

@@ -83,11 +83,14 @@ expect(
     "extensionFamily == legacyFamily",
     "Chromium transport must shadow weaker legacy browser rows by exact browser family",
 )
-expect(
-    transport,
+for forbidden in [
     "extensionTitle == normalizedMediaTitle(legacyTarget.title)",
-    "Chromium transport must shadow weaker legacy browser rows for the same media title across browser-family mismatches",
-)
+    "private static func normalizedMediaTitle(",
+]:
+    if forbidden in transport:
+        raise SystemExit(
+            "verify_chromium_extension_semantics: Chromium transport must not shadow different browser families by title-only media metadata"
+        )
 expect(
     transport,
     'appendingPathComponent("Contents/Helpers/keyway-chromium-native-host")',

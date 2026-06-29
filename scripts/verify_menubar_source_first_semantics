@@ -37,7 +37,12 @@ ast-grep --lang swift -p 'func focus(target: MediaRemoteTarget) { $$$ }' "$trans
 expect_contains "$status_controller" "MenuBarMediaSourceSection("
 expect_contains "$status_controller" "sonosTile"
 expect_contains "$status_controller" 'Text("Speakers")'
+expect_contains "$status_controller" 'MenuBarVolumeControl(playback: playback)'
+expect_contains "$status_controller" "if hasOutput {"
+expect_contains "$status_controller" 'return "Looking on this network"'
+expect_contains "$status_controller" 'return "Unavailable on this network"'
 expect_absent "$status_controller" "nowPlayingCard"
+expect_absent "$status_controller" '"Fallback room"'
 expect_absent "$status_controller" "mediaTransportActions.route(command: command)"
 
 expect_contains "$source_section" 'Text("Active Sources")'

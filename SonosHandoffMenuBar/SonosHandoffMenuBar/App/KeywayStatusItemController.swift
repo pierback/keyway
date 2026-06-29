@@ -475,7 +475,9 @@ private struct KeywayControlCenterPopoverView: View {
     private var sonosTile: some View {
         let row = selectedOutputRow
         let hasOutput = row != nil
-        let roomName = playback.selectedRoomName ?? row?.coordinator.roomName ?? "Fallback room"
+        let roomName = playback.selectedRoomName
+            ?? row?.coordinator.roomName
+            ?? (playback.isRefreshingOutputs ? "Searching for speakers" : "No Sonos speakers")
         let statusText = sonosStatusText(row: row)
 
         return card(cornerRadius: Metrics.cardCornerRadius, padding: 10) {
@@ -522,8 +524,10 @@ private struct KeywayControlCenterPopoverView: View {
                     }
                 }
 
-                MenuBarVolumeControl(playback: playback)
-                    .padding(.horizontal, -3)
+                if hasOutput {
+                    MenuBarVolumeControl(playback: playback)
+                        .padding(.horizontal, -3)
+                }
 
                 if showSpeakersList {
                     Divider()
@@ -554,10 +558,10 @@ private struct KeywayControlCenterPopoverView: View {
 
     private func sonosStatusText(row: PlaybackOutputRow?) -> String {
         if playback.isRefreshingOutputs {
-            return "Searching for speakers"
+            return "Looking on this network"
         }
         guard row != nil else {
-            return "Unavailable or offline"
+            return "Unavailable on this network"
         }
         if playback.volumeState.outputFixed {
             return "Fixed output"

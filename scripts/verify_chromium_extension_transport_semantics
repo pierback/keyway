@@ -233,8 +233,8 @@ struct Semantics {
         let merged = controller.targetsIncludingBrowserExtensionTargets([target, chromiumLegacy, heliumLegacy, duplicateHeliumLegacy])
         expectEqual(
             merged.map(\.id),
-            [target.id, heliumLegacy.id, second.id],
-            "Merging browser extension targets must hide same-family and same-media legacy rows while preserving unrelated browser fallbacks"
+            [target.id, heliumLegacy.id, duplicateHeliumLegacy.id, second.id],
+            "Merging browser extension targets must hide same-family legacy rows while preserving different-browser targets even when titles match"
         )
         let braveTarget = chromiumTarget(
             id: "chromium-extension:brave:chromium-extension:runtime:44",

@@ -273,6 +273,57 @@ struct Semantics {
             processIdentifier: 707,
             bundleIdentifier: "com.google.Chrome"
         )
+        let unsupportedFocusedChromiumDecision = resolver.automaticTarget(
+            command: .next,
+            from: [
+                target(id: "spotify-paused", bundleIdentifier: "com.spotify.client", pid: 909),
+                target(id: "chromium-unsupported:focused-tab", bundleIdentifier: "com.google.Chrome", pid: 0),
+            ],
+            recentTargetID: nil
+        )
+        expectNil(
+            unsupportedFocusedChromiumDecision,
+            "Focused routing must fall back to the chooser when the focused Chromium target does not support the command"
+        )
+
+        ResolverWorkspace.shared.frontmostApplication = ResolverRunningApplication(
+            processIdentifier: 808,
+            bundleIdentifier: "com.apple.Music"
+        )
+        let unsupportedRecentChromiumDecision = resolver.automaticTarget(
+            command: .next,
+            from: [
+                target(id: "spotify-paused", bundleIdentifier: "com.spotify.client", pid: 909),
+                target(id: "chromium-unsupported:recent-tab", bundleIdentifier: "com.google.Chrome", pid: 0),
+            ],
+            recentTargetID: "chromium-unsupported:recent-tab"
+        )
+        expectNil(
+            unsupportedRecentChromiumDecision,
+            "Recent routing must fall back to the chooser when the remembered Chromium target does not support the command"
+        )
+
+        ResolverWorkspace.shared.frontmostApplication = ResolverRunningApplication(
+            processIdentifier: 707,
+            bundleIdentifier: "com.google.Chrome"
+        )
+        let ambiguousExactFocusedDecision = resolver.automaticTarget(
+            command: .next,
+            from: [
+                target(id: "chrome-exact-1", bundleIdentifier: "com.google.Chrome", pid: 707),
+                target(id: "chrome-exact-2", bundleIdentifier: "com.google.Chrome", pid: 707),
+            ],
+            recentTargetID: nil
+        )
+        expectNil(
+            ambiguousExactFocusedDecision,
+            "Focused routing must treat multiple exact pid-and-bundle matches as ambiguous instead of picking the first row"
+        )
+
+        ResolverWorkspace.shared.frontmostApplication = ResolverRunningApplication(
+            processIdentifier: 707,
+            bundleIdentifier: "com.google.Chrome"
+        )
         let ambiguousFocusedDecision = resolver.automaticTarget(
             command: .next,
             from: [
@@ -384,6 +435,16 @@ expect(
 )
 expect(
     resolver,
+    "let exactMatches = targets.filter { target in",
+    "resolver must collect exact pid-and-bundle matches before deciding whether the focused source is ambiguous"
+)
+expect(
+    resolver,
+    "if exactMatches.count > 1 {\n            return nil\n        }",
+    "resolver must reject ambiguous exact pid-and-bundle matches instead of picking the first row"
+)
+expect(
+    resolver,
     "let playingTargets = targets.filter(\\.isCurrentlyPlaying)",
     "resolver must evaluate the global playing-target set before focused and recent fallbacks"
 )
@@ -396,6 +457,26 @@ expect(
     resolver,
     "!ChromiumBrowserExtensionTransport.supports(command: command, target: playingTarget)",
     "resolver must reject automatic routing when a single playing Chromium target does not support the command"
+)
+expect(
+    resolver,
+    "ChromiumBrowserExtensionTransport.isTarget(focusedTarget)",
+    "resolver must capability-gate focused Chromium targets before automatic routing"
+)
+expect(
+    resolver,
+    "!ChromiumBrowserExtensionTransport.supports(command: command, target: focusedTarget)",
+    "resolver must reject focused Chromium automatic routing when the command is unsupported"
+)
+expect(
+    resolver,
+    "ChromiumBrowserExtensionTransport.isTarget(recentTarget)",
+    "resolver must capability-gate recent Chromium targets before automatic routing"
+)
+expect(
+    resolver,
+    "!ChromiumBrowserExtensionTransport.supports(command: command, target: recentTarget)",
+    "resolver must reject recent Chromium automatic routing when the command is unsupported"
 )
 expect(
     resolver,
