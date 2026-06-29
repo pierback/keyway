@@ -58,9 +58,21 @@ expect_contains "$source_section" "cachedTargetsGraceInterval"
 expect_contains "$source_section" "cachedTargetsUpdatedAt"
 expect_contains "$source_section" "sessionTargets"
 expect_contains "$source_section" "sessionHasOpened"
-expect_contains "$source_section" "let latestTargetsByID = Dictionary(uniqueKeysWithValues: freshTargets.map { (\$0.id, \$0) })"
-expect_contains "$source_section" "return sessionTargets.map { liveSessionTarget(\$0, latestTarget: latestTargetsByID[\$0.id]) }"
+expect_contains "$source_section" "let latestTargets = freshTargets"
+expect_contains "$source_section" "let latestTargetsByID = Dictionary(uniqueKeysWithValues: latestTargets.map { (\$0.id, \$0) })"
+expect_contains "$source_section" "var usedTargetIDs: Set<String> = []"
+expect_contains "$source_section" "let resolvedTargets = sessionTargets.compactMap { sessionTarget in"
+expect_contains "$source_section" "if let replacementTarget = replacementTarget("
+expect_contains "$source_section" "usedTargetIDs.insert(replacementTarget.id)"
+expect_contains "$source_section" "if ChromiumBrowserExtensionTransport.isTarget(sessionTarget), !latestTargets.isEmpty {"
+expect_contains "$source_section" "return resolvedTargets + latestTargets.filter { !usedTargetIDs.contains(\$0.id) }"
 expect_contains "$source_section" "private func liveSessionTarget("
+expect_contains "$source_section" "private func replacementTarget("
+expect_contains "$source_section" "latestTarget.browserBundleIdentifier == sessionTarget.browserBundleIdentifier"
+expect_contains "$source_section" "latestTarget.browserDisplayName == sessionTarget.browserDisplayName"
+expect_contains "$source_section" "latestTarget.title == sessionTarget.title"
+expect_contains "$source_section" "latestTarget.artist == sessionTarget.artist"
+expect_contains "$source_section" "latestTarget.album == sessionTarget.album"
 expect_contains "$source_section" "displayName: sessionTarget.displayName"
 expect_contains "$source_section" "title: sessionTarget.title"
 expect_contains "$source_section" "playbackRate: latestTarget.playbackRate"
@@ -86,6 +98,7 @@ expect_contains "$source_section" 'Text(selected ? "\(row.displayName) connected
 expect_contains "$source_section" 'accessibilityIdentifier("source-empty-connect-spotify-to-\(row.coordinator.roomName)")'
 expect_absent "$source_section" "if displayTargets.isEmpty, mediaRemoteController.isRefreshingSnapshot"
 expect_absent "$source_section" 'Text(mediaRemoteController.isRefreshingSnapshot ? "Refreshing..." : "No active media sources")'
+expect_absent "$source_section" "return sessionTargets.map { liveSessionTarget(\$0, latestTarget: latestTargetsByID[\$0.id]) }"
 expect_contains "$source_section" "mediaTransportActions.route(command: command, to: target)"
 expect_absent "$source_section" "mediaTransportActions.route(command: command)"
 expect_contains "$source_section" "mediaTransportActions.focus(target: target)"
@@ -143,6 +156,56 @@ if closure_remember not in closure_body:
     fail("chooser onFocus must remember the focused target")
 if closure_body.index(closure_remember) > closure_body.index(closure_delegate):
     fail("chooser onFocus must remember the target before delegating focus")
+PY
+
+python3 - "$source_section" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+
+def fail(message):
+    raise SystemExit(f"verify_menubar_source_first_semantics: {message}")
+
+display_start = text.index("    private var displayTargets: [MediaRemoteTarget] {")
+display_end = text.index("\n    private var openingTargets: [MediaRemoteTarget] {", display_start)
+display_body = text[display_start:display_end]
+required_order = [
+    "let latestTargets = freshTargets",
+    "let latestTargetsByID = Dictionary(uniqueKeysWithValues: latestTargets.map { ($0.id, $0) })",
+    "var usedTargetIDs: Set<String> = []",
+    "let resolvedTargets = sessionTargets.compactMap { sessionTarget in",
+    "if let latestTarget = latestTargetsByID[sessionTarget.id] {",
+    "if let replacementTarget = replacementTarget(",
+    "if ChromiumBrowserExtensionTransport.isTarget(sessionTarget), !latestTargets.isEmpty {",
+    "return resolvedTargets + latestTargets.filter { !usedTargetIDs.contains($0.id) }",
+]
+positions = []
+for needle in required_order:
+    position = display_body.find(needle)
+    if position < 0:
+        fail(f"displayTargets must contain {needle!r}")
+    positions.append(position)
+if positions != sorted(positions):
+    fail("displayTargets must reconcile exact matches before Chromium replacement and only drop stale Chromium rows after reconciliation")
+
+replacement_start = text.index("    private func replacementTarget(")
+replacement_end = text.index("\n    private func rememberTargets(", replacement_start)
+replacement_body = text[replacement_start:replacement_end]
+for needle in [
+    "guard ChromiumBrowserExtensionTransport.isTarget(sessionTarget) else {",
+    "ChromiumBrowserExtensionTransport.isTarget(latestTarget)",
+    "latestTarget.id != sessionTarget.id",
+    "!usedTargetIDs.contains(latestTarget.id)",
+    "latestTarget.browserBundleIdentifier == sessionTarget.browserBundleIdentifier",
+    "latestTarget.browserDisplayName == sessionTarget.browserDisplayName",
+    "latestTarget.title == sessionTarget.title",
+    "latestTarget.artist == sessionTarget.artist",
+    "latestTarget.album == sessionTarget.album",
+    "guard matchingTargets.count == 1 else {",
+]:
+    if needle not in replacement_body:
+        fail(f"replacementTarget must contain {needle!r}")
 PY
 
 expect_contains "$project_file" "MenuBarMediaSourceSection.swift"
