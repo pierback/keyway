@@ -36,6 +36,10 @@ ast-grep --lang swift -p 'func focus(target: MediaRemoteTarget) { $$$ }' "$trans
 
 expect_contains "$status_controller" "MenuBarMediaSourceSection("
 expect_contains "$status_controller" "sonosTile"
+source_line="$(grep -n 'MenuBarMediaSourceSection(' "$status_controller" | head -1 | cut -d: -f1)"
+sonos_line="$(grep -n 'sonosTile' "$status_controller" | head -1 | cut -d: -f1)"
+[[ -n "$source_line" && -n "$sonos_line" && "$source_line" -lt "$sonos_line" ]] \
+  || fail "$status_controller must render media sources before the speakers tile"
 expect_contains "$status_controller" 'Text("Speakers")'
 expect_contains "$status_controller" 'MenuBarVolumeControl(playback: playback)'
 expect_contains "$status_controller" "if hasOutput {"
@@ -110,6 +114,36 @@ expect_absent "$output_section" "Hands off Spotify playback"
 
 expect_contains "$transport_controller" "func focus(target: MediaRemoteTarget)"
 expect_contains "$transport_controller" "sourceFocusActionController.focus(target: target)"
+
+python3 - "$transport_controller" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+
+def fail(message):
+    raise SystemExit(f"verify_menubar_source_first_semantics: {message}")
+
+focus_start = text.index("    func focus(target: MediaRemoteTarget) {")
+focus_end = text.index("\n    func currentRouteStatus()", focus_start)
+focus_body = text[focus_start:focus_end]
+remember = "rememberTarget(target)"
+delegate = "sourceFocusActionController.focus(target: target)"
+if remember not in focus_body:
+    fail("focus(target:) must remember the focused target")
+if focus_body.index(remember) > focus_body.index(delegate):
+    fail("focus(target:) must remember the target before delegating focus")
+
+closure_start = text.index("            onFocus: { [weak self] target in")
+closure_end = text.index("\n            onDismiss:", closure_start)
+closure_body = text[closure_start:closure_end]
+closure_remember = "self.rememberTarget(target)"
+closure_delegate = "self.sourceFocusActionController.focus(target: target)"
+if closure_remember not in closure_body:
+    fail("chooser onFocus must remember the focused target")
+if closure_body.index(closure_remember) > closure_body.index(closure_delegate):
+    fail("chooser onFocus must remember the target before delegating focus")
+PY
 
 expect_contains "$project_file" "MenuBarMediaSourceSection.swift"
 

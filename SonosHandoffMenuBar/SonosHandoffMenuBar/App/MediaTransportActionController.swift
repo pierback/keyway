@@ -151,6 +151,7 @@ final class MediaTransportActionController {
     }
 
     func focus(target: MediaRemoteTarget) {
+        rememberTarget(target)
         sourceFocusActionController.focus(target: target)
     }
 
@@ -411,6 +412,7 @@ final class MediaTransportActionController {
                     targetCount: self.mediaRemoteController.targets.count
                 )
                 self.relaxRouteShield?("chooser_focus")
+                self.rememberTarget(target)
                 self.sourceFocusActionController.focus(target: target)
             },
             onDismiss: { [weak self] in
