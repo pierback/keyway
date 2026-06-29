@@ -45,7 +45,10 @@ struct MenuBarMediaSourceSection: View {
             if ChromiumBrowserExtensionTransport.isTarget(sessionTarget), !latestTargets.isEmpty {
                 return nil
             }
-            return sessionTarget
+            if mediaRemoteController.isRefreshingSnapshot, canShowCachedTargets {
+                return sessionTarget
+            }
+            return nil
         }
         return resolvedTargets + latestTargets.filter { !usedTargetIDs.contains($0.id) }
     }

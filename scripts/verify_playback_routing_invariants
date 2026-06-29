@@ -68,6 +68,28 @@ grep -q 'cachedTargetsGraceInterval' "$menu_bar_media_sources" \
 grep -q 'canShowCachedTargets' "$menu_bar_media_sources" \
   || fail "menu bar source cache must expire cached rows when refresh gets stuck"
 
+python3 - "$menu_bar_media_sources" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+start = text.index("    private var displayTargets: [MediaRemoteTarget] {")
+end = text.index("    private var openingTargets: [MediaRemoteTarget] {", start)
+body = text[start:end]
+guarded_fallback = """if mediaRemoteController.isRefreshingSnapshot, canShowCachedTargets {
+                return sessionTarget
+            }
+            return nil"""
+if guarded_fallback not in body:
+    raise SystemExit("verify_playback_routing_invariants: unresolved menu session targets must drop after the bounded refresh grace window")
+unguarded_fallback = """if ChromiumBrowserExtensionTransport.isTarget(sessionTarget), !latestTargets.isEmpty {
+                return nil
+            }
+            return sessionTarget"""
+if unguarded_fallback in body:
+    raise SystemExit("verify_playback_routing_invariants: menu session cache must not keep unresolved targets commandable without a refresh-grace guard")
+PY
+
 python3 - "$project_file" "$repo_root/scripts/generate_xcode_projects.rb" <<'PY'
 import pathlib
 import re
