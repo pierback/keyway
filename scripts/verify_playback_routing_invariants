@@ -488,13 +488,25 @@ if '"chooser_closed_for_dispatch"' not in choose_body:
 if "dispatchFromChooser(" not in choose_body:
     raise SystemExit("verify_playback_routing_invariants: chooser row selection must dispatch after releasing the route shield")
 if "relaxRouteShield?(\"selected_row_dispatch\")" not in choose_body:
-    raise SystemExit("verify_playback_routing_invariants: chooser row selection must stop the Command Center route shield before selected-target dispatch")
+    raise SystemExit("verify_playback_routing_invariants: non-desktop chooser row selection must stop the Command Center route shield before selected-target dispatch")
 if "selectedRowDispatchRouteShieldReleaseDelayNanoseconds" not in choose_body:
     raise SystemExit("verify_playback_routing_invariants: selected-target dispatch must wait only for the explicit route-shield release delay")
 if choose_body.index(finish_marker) > choose_body.index("dispatchFromChooser("):
     raise SystemExit("verify_playback_routing_invariants: chooser visible guard must clear before selected-row dispatch")
 if choose_body.index('"chooser_closed_for_dispatch"') > choose_body.index("dispatchFromChooser("):
     raise SystemExit("verify_playback_routing_invariants: chooser close trace must happen before selected-row dispatch")
+route_shield_branch = choose_body[
+    choose_body.index("if let desktopTransport = self.desktopTransportName(target: target) {"):
+    choose_body.index("Task { @MainActor [weak self] in")
+]
+if "} else {" not in route_shield_branch:
+    raise SystemExit("verify_playback_routing_invariants: chooser row selection must separate desktop route-shield retention from non-desktop release")
+if '"selected_row_dispatch_route_shield_kept"' not in route_shield_branch:
+    raise SystemExit("verify_playback_routing_invariants: desktop chooser row selection must trace route-shield retention in the desktop branch")
+if route_shield_branch.index('"selected_row_dispatch_route_shield_kept"') > route_shield_branch.index("} else {"):
+    raise SystemExit("verify_playback_routing_invariants: desktop route-shield retention must stay inside the desktop-only chooser branch")
+if route_shield_branch.index('self.relaxRouteShield?("selected_row_dispatch")') < route_shield_branch.index("} else {"):
+    raise SystemExit("verify_playback_routing_invariants: non-desktop chooser row selection must relax the route shield only after the desktop branch")
 route_shield_delay = re.search(r'selectedRowDispatchRouteShieldReleaseDelayNanoseconds: UInt64 = ([0-9_]+)', text)
 if not route_shield_delay:
     raise SystemExit("verify_playback_routing_invariants: selected-row dispatch route-shield release delay must be explicit")

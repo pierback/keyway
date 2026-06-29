@@ -99,8 +99,10 @@ expect_contains "$source_section" 'accessibilityIdentifier("source-empty-connect
 expect_absent "$source_section" "if displayTargets.isEmpty, mediaRemoteController.isRefreshingSnapshot"
 expect_absent "$source_section" 'Text(mediaRemoteController.isRefreshingSnapshot ? "Refreshing..." : "No active media sources")'
 expect_absent "$source_section" "return sessionTargets.map { liveSessionTarget(\$0, latestTarget: latestTargetsByID[\$0.id]) }"
+expect_contains "$source_section" "let enabled = supports(command, target: target)"
 expect_contains "$source_section" "mediaTransportActions.route(command: command, to: target)"
 expect_absent "$source_section" "mediaTransportActions.route(command: command)"
+expect_contains "$source_section" ".disabled(!enabled)"
 expect_contains "$source_section" "mediaTransportActions.focus(target: target)"
 expect_contains "$source_section" "if target.isSpotify"
 expect_contains "$source_section" "playback.transferSpotifyPlayback(source: source, to: row)"
