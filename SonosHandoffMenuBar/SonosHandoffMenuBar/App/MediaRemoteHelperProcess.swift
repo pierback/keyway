@@ -26,7 +26,7 @@ final class MediaRemoteHelperProcess {
     }
 
     var isRunning: Bool {
-        process != nil && inputPipe != nil
+        process?.isRunning == true && inputPipe != nil
     }
 
     func start(
@@ -91,7 +91,19 @@ final class MediaRemoteHelperProcess {
         self.inputPipe = inputPipe
         self.outputPipe = outputPipe
         self.errorPipe = errorPipe
-        try process.run()
+        do {
+            try process.run()
+        } catch {
+            outputPipe.fileHandleForReading.readabilityHandler = nil
+            errorPipe.fileHandleForReading.readabilityHandler = nil
+            activeRunID = nil
+            self.process = nil
+            self.inputPipe = nil
+            self.outputPipe = nil
+            self.errorPipe = nil
+            outputBuffer.removeAll()
+            throw error
+        }
     }
 
     func stop() {
@@ -114,16 +126,20 @@ final class MediaRemoteHelperProcess {
 
     @discardableResult
     func send(_ request: [String: String]) -> Bool {
-        guard let inputPipe else {
+        guard let inputPipe, process?.isRunning == true else {
+            if process != nil || self.inputPipe != nil || outputPipe != nil || errorPipe != nil {
+                stop()
+            }
             return false
         }
 
         do {
             let data = try JSONSerialization.data(withJSONObject: request, options: [])
-            inputPipe.fileHandleForWriting.write(data + Data([0x0A]))
+            try inputPipe.fileHandleForWriting.write(contentsOf: data + Data([0x0A]))
             return true
         } catch {
             logger.error("MediaRemoteHelper role=\(self.role.rawValue, privacy: .public) write_failed=\(error.localizedDescription, privacy: .public)")
+            stop()
             return false
         }
     }

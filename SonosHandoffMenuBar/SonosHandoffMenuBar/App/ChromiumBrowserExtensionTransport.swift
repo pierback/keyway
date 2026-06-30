@@ -613,10 +613,31 @@ final class ChromiumBrowserExtensionController: ObservableObject {
             return
         }
         guard let requestID = result.requestID,
-              let pending = pendingCommands.removeValue(forKey: requestID)
+              let pending = pendingCommands[requestID]
         else {
             return
         }
+        guard result.targetID == pending.targetID,
+              result.command == pending.commandName
+        else {
+            pendingCommands.removeValue(forKey: requestID)
+            commandResultTimeouts.removeValue(forKey: requestID)?.cancel()
+            let elapsed = ProcessInfo.processInfo.systemUptime - pending.startedAt
+            logger.error(
+                "ChromiumExtension command_result_mismatch requestID=\(requestID, privacy: .public) expectedCommand=\(pending.commandName, privacy: .public) actualCommand=\(result.command, privacy: .public) expectedTarget=\(pending.targetID, privacy: .public) actualTarget=\(result.targetID, privacy: .public) elapsedMs=\(Int((elapsed * 1000).rounded()), privacy: .public)"
+            )
+            pending.resultHandler(MediaRemoteCommandResultEvent(
+                type: "commandResult",
+                requestID: requestID,
+                targetID: pending.targetID,
+                command: pending.commandName,
+                ok: false,
+                message: "Chromium extension command-result did not match the queued request.",
+                backend: ChromiumBrowserExtensionTransport.backendName
+            ))
+            return
+        }
+        pendingCommands.removeValue(forKey: requestID)
         commandResultTimeouts.removeValue(forKey: requestID)?.cancel()
         let elapsed = ProcessInfo.processInfo.systemUptime - pending.startedAt
         logger.info("ChromiumExtension command_result requestID=\(requestID, privacy: .public) command=\(result.command, privacy: .public) target=\(result.targetID, privacy: .public) ok=\(result.ok, privacy: .public) elapsedMs=\(Int((elapsed * 1000).rounded()), privacy: .public)")
@@ -659,10 +680,28 @@ final class ChromiumBrowserExtensionController: ObservableObject {
             return
         }
         guard let requestID = result.requestID,
-              let pending = pendingFocusRequests.removeValue(forKey: requestID)
+              let pending = pendingFocusRequests[requestID]
         else {
             return
         }
+        guard result.targetID == pending.targetID else {
+            pendingFocusRequests.removeValue(forKey: requestID)
+            focusResultTimeouts.removeValue(forKey: requestID)?.cancel()
+            let elapsed = ProcessInfo.processInfo.systemUptime - pending.startedAt
+            logger.error(
+                "ChromiumExtension focus_result_mismatch requestID=\(requestID, privacy: .public) expectedTarget=\(pending.targetID, privacy: .public) actualTarget=\(result.targetID, privacy: .public) elapsedMs=\(Int((elapsed * 1000).rounded()), privacy: .public)"
+            )
+            pending.resultHandler(SourceFocusResult(
+                requestID: requestID,
+                targetID: pending.targetID,
+                ok: false,
+                message: "Chromium extension focus-result did not match the queued request.",
+                backend: ChromiumBrowserExtensionTransport.backendName,
+                failureReason: .chromiumExtensionProtocolMismatch
+            ))
+            return
+        }
+        pendingFocusRequests.removeValue(forKey: requestID)
         focusResultTimeouts.removeValue(forKey: requestID)?.cancel()
         let elapsed = ProcessInfo.processInfo.systemUptime - pending.startedAt
         logger.info("ChromiumExtension focus_result requestID=\(requestID, privacy: .public) target=\(result.targetID, privacy: .public) ok=\(result.ok, privacy: .public) elapsedMs=\(Int((elapsed * 1000).rounded()), privacy: .public)")

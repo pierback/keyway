@@ -404,6 +404,51 @@ struct Semantics {
         expectTrue(malformedCommandResultController.pendingCommands.isEmpty, "Protocol-mismatched Chromium command results must clear the pending command slot")
         expectTrue(malformedCommandResultController.commandResultTimeouts.isEmpty, "Protocol-mismatched Chromium command results must cancel the command timeout")
 
+        let mismatchedCommandResultController = ChromiumBrowserExtensionController()
+        mismatchedCommandResultController.markConnected(targets: [target, second])
+        var mismatchedCommandResult: MediaRemoteCommandResultEvent?
+        let mismatchedCommandHandled = mismatchedCommandResultController.submit(command: .pause, target: target) { result in
+            mismatchedCommandResult = result
+        }
+        expectEqual(mismatchedCommandHandled, true, "Connected Chromium commands must arm mismatch validation before result delivery")
+        guard let mismatchedCommandRequestID = mismatchedCommandResultController.pendingCommands.keys.first else {
+            fail("Mismatched Chromium command result test must have a pending request ID")
+        }
+        mismatchedCommandResultController.handleCommandResultPayload("""
+        {"type":"commandResult","protocolVersion":2,"requestID":"\(mismatchedCommandRequestID)","targetID":"\(second.id)","command":"play","ok":true,"message":"played wrong target","backend":"chromium_extension","unsupported":false}
+        """)
+        expectEqual(
+            mismatchedCommandResult?.requestID,
+            mismatchedCommandRequestID,
+            "Mismatched Chromium command results must complete the matching pending request with a failure"
+        )
+        expectEqual(
+            mismatchedCommandResult?.targetID,
+            target.id,
+            "Mismatched Chromium command results must report the queued target instead of the mismatched payload target"
+        )
+        expectEqual(
+            mismatchedCommandResult?.command,
+            "pause",
+            "Mismatched Chromium command results must report the queued command instead of the mismatched payload command"
+        )
+        expectEqual(
+            mismatchedCommandResult?.ok,
+            false,
+            "Mismatched Chromium command results must fail the queued command"
+        )
+        expectEqual(
+            mismatchedCommandResult?.message,
+            "Chromium extension command-result did not match the queued request.",
+            "Mismatched Chromium command results must explain the trust-boundary failure"
+        )
+        expectFalse(
+            mismatchedCommandResult?.unsupported ?? true,
+            "Mismatched Chromium command results must not masquerade as unsupported commands"
+        )
+        expectTrue(mismatchedCommandResultController.pendingCommands.isEmpty, "Mismatched Chromium command results must clear the pending command slot")
+        expectTrue(mismatchedCommandResultController.commandResultTimeouts.isEmpty, "Mismatched Chromium command results must cancel the command timeout")
+
         let focusResultController = ChromiumBrowserExtensionController()
         focusResultController.markConnected(targets: [target])
         var focusResult: SourceFocusResult?
@@ -457,6 +502,47 @@ struct Semantics {
         expectEqual(protocolMismatchFocusResult?.failureReason, .chromiumExtensionProtocolMismatch, "Protocol-mismatched Chromium focus results must report the protocol-mismatch failure reason")
         expectTrue(malformedFocusResultController.pendingFocusRequests.isEmpty, "Protocol-mismatched Chromium focus results must clear the pending focus slot")
         expectTrue(malformedFocusResultController.focusResultTimeouts.isEmpty, "Protocol-mismatched Chromium focus results must cancel the focus timeout")
+
+        let mismatchedFocusResultController = ChromiumBrowserExtensionController()
+        mismatchedFocusResultController.markConnected(targets: [target, second])
+        var mismatchedFocusResult: SourceFocusResult?
+        let mismatchedFocusHandled = mismatchedFocusResultController.focus(target: target) { result in
+            mismatchedFocusResult = result
+        }
+        expectEqual(mismatchedFocusHandled, true, "Connected Chromium focus must arm mismatch validation before result delivery")
+        guard let mismatchedFocusRequestID = mismatchedFocusResultController.pendingFocusRequests.keys.first else {
+            fail("Mismatched Chromium focus result test must have a pending request ID")
+        }
+        mismatchedFocusResultController.handleFocusResultPayload("""
+        {"type":"focusResult","protocolVersion":2,"requestID":"\(mismatchedFocusRequestID)","targetID":"\(second.id)","ok":true,"message":"focused wrong tab","backend":"chromium_extension"}
+        """)
+        expectEqual(
+            mismatchedFocusResult?.requestID,
+            mismatchedFocusRequestID,
+            "Mismatched Chromium focus results must complete the matching pending request with a failure"
+        )
+        expectEqual(
+            mismatchedFocusResult?.targetID,
+            target.id,
+            "Mismatched Chromium focus results must report the queued target instead of the mismatched payload target"
+        )
+        expectEqual(
+            mismatchedFocusResult?.ok,
+            false,
+            "Mismatched Chromium focus results must fail the queued request"
+        )
+        expectEqual(
+            mismatchedFocusResult?.message,
+            "Chromium extension focus-result did not match the queued request.",
+            "Mismatched Chromium focus results must explain the trust-boundary failure"
+        )
+        expectEqual(
+            mismatchedFocusResult?.failureReason,
+            .chromiumExtensionProtocolMismatch,
+            "Mismatched Chromium focus results must reuse the protocol-mismatch failure classification"
+        )
+        expectTrue(mismatchedFocusResultController.pendingFocusRequests.isEmpty, "Mismatched Chromium focus results must clear the pending focus slot")
+        expectTrue(mismatchedFocusResultController.focusResultTimeouts.isEmpty, "Mismatched Chromium focus results must cancel the focus timeout")
 
         print("verify_chromium_extension_transport_semantics=ok")
     }

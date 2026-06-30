@@ -20,12 +20,31 @@ for required in (
     "private var activeRunID: UUID?",
     "private var outputPipe: Pipe?",
     "private var errorPipe: Pipe?",
+    "process?.isRunning == true && inputPipe != nil",
     "self.activeRunID = runID",
     "self.activeRunID == runID || self.ownsStopped(terminatedProcess)",
     "guard let self, self.activeRunID == runID else {",
 ):
     if required not in text:
         raise SystemExit(f"verify_media_remote_helper_process_semantics: missing helper run-ownership guard: {required}")
+
+start = text.index("        do {")
+end = text.index("\n    }\n\n    func stop()", start)
+body = text[start:end]
+for required in (
+    "try process.run()",
+    "outputPipe.fileHandleForReading.readabilityHandler = nil",
+    "errorPipe.fileHandleForReading.readabilityHandler = nil",
+    "activeRunID = nil",
+    "self.process = nil",
+    "self.inputPipe = nil",
+    "self.outputPipe = nil",
+    "self.errorPipe = nil",
+    "outputBuffer.removeAll()",
+    "throw error",
+):
+    if required not in body:
+        raise SystemExit(f"verify_media_remote_helper_process_semantics: start() must clean up failed launches before rethrowing: {required}")
 
 start = text.index("    func stop() {")
 end = text.index("\n    @discardableResult", start)
@@ -53,6 +72,17 @@ for required in (
 ):
     if required not in body:
         raise SystemExit(f"verify_media_remote_helper_process_semantics: retire() must detach old helper pipes before a restart: {required}")
+
+start = text.index("    func send(_ request: [String: String]) -> Bool {")
+end = text.index("\n    func owns(_ candidate: Process) -> Bool {", start)
+body = text[start:end]
+for required in (
+    "guard let inputPipe, process?.isRunning == true else {",
+    "try inputPipe.fileHandleForWriting.write(contentsOf: data + Data([0x0A]))",
+    "stop()",
+):
+    if required not in body:
+        raise SystemExit(f"verify_media_remote_helper_process_semantics: send() must guard dead helpers and tear down broken pipes: {required}")
 PY
 
 python3 - "$controller" <<'PY'
