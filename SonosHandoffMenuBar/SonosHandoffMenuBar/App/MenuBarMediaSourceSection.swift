@@ -120,8 +120,6 @@ struct MenuBarMediaSourceSection: View {
                 .stroke(.white.opacity(0.09), lineWidth: 0.5)
         }
         .animation(MenuBarMotion.rowUpdate, value: targetIDs)
-        .animation(MenuBarMotion.rowUpdate, value: playback.outputRows)
-        .animation(MenuBarMotion.rowUpdate, value: playback.selectedRoomName)
         .onAppear {
             openTargetSession()
         }

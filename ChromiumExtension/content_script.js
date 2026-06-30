@@ -120,7 +120,7 @@ function isClickable(element) {
 function trackControl(command) {
   const selectors = trackControlSelectors[command] || [];
   for (const selector of selectors) {
-    const element = querySelectorDeep(selector);
+    const element = querySelectorDeep(document, selector);
     if (isClickable(element)) return element;
   }
   return null;
@@ -130,22 +130,38 @@ function playbackControl(command, element) {
   const commands = command === "playPause"
     ? (element.paused || element.ended ? ["play", "playPause"] : ["pause", "playPause"])
     : [command];
+  let scope = element;
+  while (scope) {
+    for (const name of commands) {
+      for (const selector of playbackControlSelectors[name] || []) {
+        const control = querySelectorDeep(scope, selector);
+        if (isClickable(control)) return control;
+      }
+    }
+    const root = typeof scope.getRootNode === "function" ? scope.getRootNode() : null;
+    scope = scope.parentElement || root?.host || null;
+  }
+  if (mediaElements().length !== 1) {
+    return null;
+  }
   for (const name of commands) {
     for (const selector of playbackControlSelectors[name] || []) {
-      const control = querySelectorDeep(selector);
+      const control = querySelectorDeep(document, selector);
       if (isClickable(control)) return control;
     }
   }
   return null;
 }
 
-function querySelectorDeep(selector) {
-  const roots = [document];
+function querySelectorDeep(root, selector) {
+  const roots = [root];
   while (roots.length) {
-    const root = roots.shift();
-    const match = root.querySelector(selector);
+    const current = roots.shift();
+    if (typeof current.matches === "function" && current.matches(selector)) return current;
+    const match = typeof current.querySelector === "function" ? current.querySelector(selector) : null;
     if (match) return match;
-    for (const element of root.querySelectorAll("*")) {
+    if (typeof current.querySelectorAll !== "function") continue;
+    for (const element of current.querySelectorAll("*")) {
       if (element.shadowRoot) roots.push(element.shadowRoot);
     }
   }
@@ -190,9 +206,13 @@ function runBridgeTask(action) {
 }
 
 function retireBridge() {
+  if (!bridgeActive) return;
   bridgeActive = false;
   observer.disconnect();
-  publishTimer = null;
+  if (publishTimer !== null) {
+    clearInterval(publishTimer);
+    publishTimer = null;
+  }
 }
 
 function sendRuntimeMessage(message) {

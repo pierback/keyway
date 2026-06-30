@@ -226,17 +226,15 @@ if "desktopTransport.submit(command: command, target: target)" in mediaremote_fa
 assert_order(
     mediaremote_fallback,
     [
-        "canUseMediaRemotePlayerPath(command: command, target: target)",
         "guard sendMediaRemote(command: command, to: target, dispatchID: dispatchID, context: context)",
     ],
-    "MediaRemote fallback must gate the player path before dispatch"
+    "MediaRemote fallback must dispatch through the shared player-path sender"
 )
 
 mediaremote = function_body("sendMediaRemote")
 assert_order(
     mediaremote,
     [
-        "canUseMediaRemotePlayerPath(command: command, target: target)",
         "mediaRemoteController.submit(command: command, targetID: target.id)",
         "Self.mediaRemotePlayerPathBackend",
         "finishDispatch(id: dispatchID, fallback: false)",
@@ -256,20 +254,8 @@ assert_order(
 if "legacyChromiumFallbackTarget" in chooser_send or '"chromium_extension_fallback"' in chooser_send:
     fail("Chooser Chromium extension command failures must not fall back to legacy browser rows")
 
-mediaremote_gate = function_body("canUseMediaRemotePlayerPath")
-assert_order(
-    mediaremote_gate,
-    [
-        "ChromiumBrowserExtensionTransport.isTarget(target)",
-        "desktopTransport.backendName(for: target) != nil",
-        "target.isChromiumBrowserLike",
-        '"browser_legacy_mediaremote_blocked"',
-        '"requires_browser_extension"',
-        '"Browser Extension Required"',
-        "return false",
-    ],
-    "legacy Chromium browser rows must not use MediaRemote player-path routing because selected-row dispatch can affect a competing global media session"
-)
+if "canUseMediaRemotePlayerPath(" in source:
+    fail("legacy Chromium rows must keep MediaRemote fallback available instead of pre-blocking the player path")
 if "net.imput.helium" in desktop_transport or "execute active tab of front window javascript" in desktop_transport:
     fail("Helium must not retain desktop fallback probing or active-tab JavaScript dispatch")
 for forbidden in (

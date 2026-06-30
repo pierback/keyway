@@ -487,10 +487,6 @@ final class MediaTransportActionController {
         dispatchID: UUID,
         context: MediaTransportDispatchContext
     ) {
-        guard canUseMediaRemotePlayerPath(command: command, target: target) else {
-            finishDispatch(id: dispatchID, fallback: true)
-            return
-        }
         guard sendMediaRemote(command: command, to: target, dispatchID: dispatchID, context: context) else {
             finishDispatch(id: dispatchID, fallback: true)
             logDispatchFailure(command: command, target: target, context: context)
@@ -509,10 +505,6 @@ final class MediaTransportActionController {
         dispatchID: UUID,
         context: MediaTransportDispatchContext
     ) -> Bool {
-        guard canUseMediaRemotePlayerPath(command: command, target: target) else {
-            return false
-        }
-
         let sent = mediaRemoteController.submit(command: command, targetID: target.id) { [weak self] result in
             self?.trace(result: result, transportBackend: Self.mediaRemotePlayerPathBackend)
             self?.finishDispatch(id: dispatchID, fallback: false)
@@ -586,34 +578,6 @@ final class MediaTransportActionController {
         case .chooser:
             logger.error("MediaTransport chooser_failed command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public)")
         }
-    }
-
-    private func canUseMediaRemotePlayerPath(
-        command: MediaRemoteTransportCommand,
-        target: MediaRemoteTarget
-    ) -> Bool {
-        if ChromiumBrowserExtensionTransport.isTarget(target) {
-            return true
-        }
-        if desktopTransport.backendName(for: target) != nil {
-            return true
-        }
-        if target.isChromiumBrowserLike {
-            trace(
-                "browser_legacy_mediaremote_blocked",
-                command: command,
-                target: target,
-                reason: "requires_browser_extension",
-                transportBackend: Self.mediaRemotePlayerPathBackend
-            )
-            StatusHUD.shared.finish(
-                title: "Browser Extension Required",
-                message: "Install and enable the Keyway browser extension in \(target.appName), then retry.",
-                dismissAfter: 2.8
-            )
-            return false
-        }
-        return true
     }
 
     private func chooserScopedCommand(

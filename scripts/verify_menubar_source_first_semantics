@@ -90,6 +90,8 @@ expect_contains "$source_section" "sessionHasOpened = false"
 expect_contains "$source_section" "if targets.isEmpty, mediaRemoteController.isRefreshingSnapshot, canShowCachedTargets"
 expect_contains "$source_section" ".animation(MenuBarMotion.rowUpdate, value: targetIDs)"
 expect_absent "$source_section" ".animation(MenuBarMotion.rowUpdate, value: targets)"
+expect_absent "$source_section" ".animation(MenuBarMotion.rowUpdate, value: playback.outputRows)"
+expect_absent "$source_section" ".animation(MenuBarMotion.rowUpdate, value: playback.selectedRoomName)"
 expect_contains "$source_section" "ForEach(displayTargets)"
 expect_contains "$source_section" 'Text("No active media sources")'
 expect_contains "$source_section" "idleSpotifyConnectButton(row)"

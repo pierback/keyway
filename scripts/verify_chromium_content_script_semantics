@@ -22,7 +22,6 @@ function makeContext(options = {}) {
   let observerDisconnected = false;
   let runtimeMessageListener = null;
   let sendMessageThrows = false;
-  let clearIntervalThrows = false;
   let domTraversalInvalidated = false;
   let playbackButtonClickCount = 0;
 
@@ -142,9 +141,6 @@ function makeContext(options = {}) {
       return `interval-${intervals.length}`;
     },
     clearInterval(id) {
-      if (clearIntervalThrows) {
-        throw new Error("Extension context invalidated.");
-      }
       clearedIntervals.push(id);
     },
     MutationObserver: function MutationObserver(callback) {
@@ -179,22 +175,180 @@ function makeContext(options = {}) {
     invalidateRuntime() {
       sendMessageThrows = true;
     },
-    invalidateTimerRuntime() {
-      clearIntervalThrows = true;
-    },
     invalidateDomTraversal() {
       domTraversalInvalidated = true;
     },
   };
 }
 
-async function sendCommand(fixture, command) {
+function makeScopedPlaybackContext() {
+  const sentMessages = [];
+  const intervals = [];
+  let runtimeMessageListener = null;
+  let firstButtonClickCount = 0;
+  let secondButtonClickCount = 0;
+
+  function makeVideo(initiallyPaused) {
+    return {
+      ended: false,
+      currentSrc: "https://media.example.test/video.mp4",
+      src: "",
+      paused: initiallyPaused,
+      muted: false,
+      volume: 0.5,
+      duration: 120,
+      currentTime: 10,
+      dataset: {},
+      querySelector() {
+        return null;
+      },
+      querySelectorAll() {
+        return [];
+      },
+      getAttribute() {
+        return "";
+      },
+      getBoundingClientRect() {
+        return { width: 100, height: 100 };
+      },
+      addEventListener() {},
+      play() {
+        this.paused = false;
+        this.ended = false;
+        return Promise.resolve();
+      },
+      pause() {
+        this.paused = true;
+      },
+    };
+  }
+
+  function isPlaybackSelector(selector) {
+    const normalized = selector.toLowerCase();
+    return normalized.includes("play")
+      || normalized.includes("pause")
+      || normalized.includes("abspielen")
+      || normalized.includes("pausieren")
+      || normalized.includes("playbacktoggle");
+  }
+
+  const firstVideo = makeVideo(true);
+  const secondVideo = makeVideo(true);
+  const firstButton = {
+    disabled: false,
+    getAttribute(name) {
+      if (name === "aria-disabled") return "false";
+      if (name === "aria-label") return firstVideo.paused ? "Play" : "Pause";
+      return "";
+    },
+    getBoundingClientRect() {
+      return { width: 44, height: 44 };
+    },
+    click() {
+      firstButtonClickCount += 1;
+      firstVideo.paused = !firstVideo.paused;
+      firstVideo.ended = false;
+    },
+  };
+  const secondButton = {
+    disabled: false,
+    getAttribute(name) {
+      if (name === "aria-disabled") return "false";
+      if (name === "aria-label") return secondVideo.paused ? "Play" : "Pause";
+      return "";
+    },
+    getBoundingClientRect() {
+      return { width: 44, height: 44 };
+    },
+    click() {
+      secondButtonClickCount += 1;
+      secondVideo.paused = !secondVideo.paused;
+      secondVideo.ended = false;
+    },
+  };
+  const firstScope = {
+    querySelector(selector) {
+      return isPlaybackSelector(selector) ? firstButton : null;
+    },
+    querySelectorAll() {
+      return [];
+    },
+  };
+  const secondScope = {
+    querySelector(selector) {
+      return isPlaybackSelector(selector) ? secondButton : null;
+    },
+    querySelectorAll() {
+      return [];
+    },
+  };
+  firstVideo.parentElement = firstScope;
+  secondVideo.parentElement = secondScope;
+
+  const document = {
+    title: "Magenta TV",
+    documentElement: {},
+    querySelector(selector) {
+      return isPlaybackSelector(selector) ? firstButton : null;
+    },
+    querySelectorAll(selector) {
+      if (selector === "video,audio") return [firstVideo, secondVideo];
+      if (selector === "*") return [];
+      return [];
+    },
+  };
+
+  return {
+    context: {
+      console,
+      crypto: { randomUUID: () => "doc-main" },
+      location: { href: "https://www.magentatv.de/watch" },
+      navigator: { mediaSession: { metadata: { title: "Live TV", artist: "Magenta", album: "" } } },
+      document,
+      chrome: {
+        runtime: {
+          id: "extensionid",
+          sendMessage(message) {
+            sentMessages.push(message);
+          },
+          onMessage: {
+            addListener(listener) {
+              runtimeMessageListener = listener;
+            },
+          },
+        },
+      },
+      setInterval(callback, delay) {
+        intervals.push({ callback, delay });
+        return `interval-${intervals.length}`;
+      },
+      clearInterval() {},
+      MutationObserver: function MutationObserver() {
+        this.observe = () => {};
+        this.disconnect = () => {};
+      },
+    },
+    firstVideo,
+    secondVideo,
+    get runtimeMessageListener() {
+      return runtimeMessageListener;
+    },
+    get firstButtonClickCount() {
+      return firstButtonClickCount;
+    },
+    get secondButtonClickCount() {
+      return secondButtonClickCount;
+    },
+  };
+}
+
+async function sendCommand(fixture, command, mediaId = "media-1") {
   let response = null;
   fixture.runtimeMessageListener(
     {
       type: "keywayCommand",
       documentID: "doc-main",
-      mediaId: "media-1",
+      mediaId,
       command,
     },
     {},
@@ -219,11 +373,11 @@ async function sendCommand(fixture, command) {
   live.mutationCallback();
   assertEqual(live.eventListenerCounts.get("timeupdate"), 1, "content script must not register duplicate media listeners");
   live.invalidateRuntime();
-  live.invalidateTimerRuntime();
   live.events.get("timeupdate")();
   const sentMessageCountAfterRetire = live.sentMessages.length;
+  assertEqual(live.clearedIntervals.length, 1, "invalidated extension context must clear the heartbeat interval on retire");
+  assertEqual(live.clearedIntervals[0], "interval-1", "invalidated extension context must clear the active heartbeat interval");
   live.intervals[0].callback();
-  assertEqual(live.clearedIntervals.length, 0, "invalidated extension context must not call clearInterval after the browser world is gone");
   assertEqual(live.sentMessages.length, sentMessageCountAfterRetire, "retired extension heartbeat must not keep publishing media state");
   assert(live.observerDisconnected, "invalidated extension context must disconnect the DOM observer");
 
@@ -233,6 +387,7 @@ async function sendCommand(fixture, command) {
   assert(typeof staleDomTraversal.events.get("timeupdate") === "function", "stale DOM traversal fixture must observe media before invalidation");
   staleDomTraversal.invalidateDomTraversal();
   staleDomTraversal.intervals[0].callback();
+  assertEqual(staleDomTraversal.clearedIntervals.length, 1, "invalidated DOM traversal must clear the heartbeat interval on retire");
   assert(staleDomTraversal.observerDisconnected, "invalidated extension context during DOM traversal must disconnect the DOM observer");
   const sentMessageCountAfterDomRetire = staleDomTraversal.sentMessages.length;
   staleDomTraversal.events.get("timeupdate")();
@@ -270,6 +425,15 @@ async function sendCommand(fixture, command) {
   assertEqual(magentaPaused.playbackButtonClickCount, 1, "Magenta-style play must click the page playback control when paused");
   assertEqual(magentaPaused.video.paused, false, "Magenta-style page playback control must start the selected media");
   assertEqual(magentaPlayResponse.message, "playing", "Magenta-style play must report playing");
+
+  const scopedControls = makeScopedPlaybackContext();
+  vm.runInNewContext(code, scopedControls.context, { filename: contentScriptPath });
+  const scopedPlayResponse = await sendCommand(scopedControls, "play", "media-2");
+  assertEqual(scopedControls.firstButtonClickCount, 0, "scoped play must not click a competing page control");
+  assertEqual(scopedControls.secondButtonClickCount, 1, "scoped play must click the selected media element's page control");
+  assertEqual(scopedControls.firstVideo.paused, true, "scoped play must leave the competing media element untouched");
+  assertEqual(scopedControls.secondVideo.paused, false, "scoped play must start the selected media element");
+  assertEqual(scopedPlayResponse.message, "playing", "scoped play must report playing for the selected media element");
 
   const directMedia = makeContext({ initiallyPaused: true });
   vm.runInNewContext(code, directMedia.context, { filename: contentScriptPath });
