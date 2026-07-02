@@ -727,6 +727,9 @@ fi
 grep -q 'command_center_input_shadow_ignored' "$command_filter" \
   || fail "duplicate command-center callbacks must not re-open the chooser"
 
+grep -q 'command_center_unpaired_input_ignored' "$command_filter" \
+  || fail "standalone command-center callbacks must not route without paired event-tap input"
+
 grep -q 'struct MediaTransportInputMetadata' "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportRouteSource.swift" \
   || fail "event-tap media-key routing must carry event-source metadata"
 
@@ -861,6 +864,9 @@ if begin_chooser.index("inFlightChooserTargetedMediaKeyEchoes = [") < begin_choo
 media_key_start = text.index("    func ignoreReasonForMediaKey")
 media_key_end = text.index("    func ignoreReasonForCommandCenter", media_key_start)
 media_key_body = text[media_key_start:media_key_end]
+command_center_start = text.index("    func ignoreReasonForCommandCenter")
+command_center_end = text.index("    private func ignoreCommandCenterInputShadow", command_center_start)
+command_center_body = text[command_center_start:command_center_end]
 if "consumeChooserMediaKeyRebound(command: command, metadata: metadata)" not in media_key_body:
     raise SystemExit("verify_playback_routing_invariants: media-key routing must suppress only exact chooser-bound physical rebounds before reopening the chooser")
 if "consumeProgrammaticMediaKeyEcho(command: command, metadata: metadata)" not in media_key_body:
@@ -873,6 +879,10 @@ if media_key_body.index("consumeChooserMediaKeyRebound") > media_key_body.index(
     raise SystemExit("verify_playback_routing_invariants: media-key rebound suppression must run before command-center shadow checks")
 if "ignoreChooserMediaKeyEcho" in media_key_body:
     raise SystemExit("verify_playback_routing_invariants: media-key routing must not use broad chooser echo suppression")
+if "case unpairedCommandCenterInput" not in text or "command_center_unpaired_input_ignored" not in text:
+    raise SystemExit("verify_playback_routing_invariants: standalone command-center rejection must be observable in traces")
+if ".unpairedCommandCenterInput" not in command_center_body:
+    raise SystemExit("verify_playback_routing_invariants: command-center routing must reject unpaired callbacks instead of routing them")
 if "isFreshPhysicalMediaKey" in text or "lastAcceptedMediaKey" in text:
     raise SystemExit("verify_playback_routing_invariants: chooser media-key echo suppression must not keep stale accepted-key memory")
 if "case mediaKeyRebound" not in text or "media_key_rebound_ignored" not in text:

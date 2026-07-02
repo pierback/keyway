@@ -45,9 +45,74 @@ expect_contains "$status_controller" 'MenuBarVolumeControl(playback: playback)'
 expect_contains "$status_controller" "if hasOutput {"
 expect_contains "$status_controller" 'return "Looking on this network"'
 expect_contains "$status_controller" 'return "Unavailable on this network"'
+expect_contains "$status_controller" "Text(headerStatusTitle)"
+expect_contains "$status_controller" "private var headerStatusTitle: String"
+expect_contains "$status_controller" "private var isBrowserOnlyRoutingAvailable: Bool"
+expect_contains "$status_controller" "private var postPopoverCloseAction: (@MainActor () -> Void)?"
+expect_contains "$status_controller" "postPopoverCloseAction = { [weak self] in"
+expect_contains "$status_controller" "self?.showCenteredChooser()"
+expect_contains "$status_controller" "let action = postPopoverCloseAction"
+expect_contains "$status_controller" "postPopoverCloseAction = nil"
+expect_contains "$status_controller" "action?()"
+expect_contains "$status_controller" "case .failed, .stopped:"
+expect_contains "$status_controller" 'return "Browser only"'
+expect_contains "$status_controller" "mediaRemoteController.canRouteCommands"
+expect_contains "$status_controller" "mediaRemoteController.targets.contains(where: ChromiumBrowserExtensionTransport.isTarget)"
 expect_absent "$status_controller" "nowPlayingCard"
 expect_absent "$status_controller" '"Fallback room"'
 expect_absent "$status_controller" "mediaTransportActions.route(command: command)"
+expect_absent "$status_controller" "Text(mediaRemoteController.health.badgeTitle)"
+
+python3 - "$status_controller" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+
+def fail(message):
+    raise SystemExit(f"verify_menubar_source_first_semantics: {message}")
+
+chooser_start = text.index("    private func openChooserFromPopover() {")
+chooser_end = text.index("\n    @objc private func openSettingsFromMenu(", chooser_start)
+chooser_body = text[chooser_start:chooser_end]
+required_order = [
+    "if popover.isShown {",
+    "postPopoverCloseAction = { [weak self] in",
+    "closePopover()",
+    "return",
+]
+positions = []
+for needle in required_order:
+    position = chooser_body.find(needle)
+    if position < 0:
+        fail(f"openChooserFromPopover must contain {needle!r}")
+    positions.append(position)
+if positions != sorted(positions):
+    fail("openChooserFromPopover must defer chooser presentation until after the popover closes")
+if "self?.showCenteredChooser()" not in chooser_body:
+    fail("openChooserFromPopover must reopen the chooser from the deferred popover-close action")
+fallback_position = chooser_body.rfind("showCenteredChooser()")
+if fallback_position < positions[-1]:
+    fail("openChooserFromPopover must keep the direct chooser fallback only after the deferred popover-close branch")
+
+popover_close_start = text.index("    func popoverDidClose(_ notification: Notification) {")
+popover_close_end = text.index("\n}", popover_close_start)
+popover_close_body = text[popover_close_start:popover_close_end]
+required_close_order = [
+    "stopPopoverDismissMonitors()",
+    "let action = postPopoverCloseAction",
+    "postPopoverCloseAction = nil",
+    "action?()",
+]
+close_positions = []
+for needle in required_close_order:
+    position = popover_close_body.find(needle)
+    if position < 0:
+        fail(f"popoverDidClose must contain {needle!r}")
+    close_positions.append(position)
+if close_positions != sorted(close_positions):
+    fail("popoverDidClose must clear and run the deferred chooser action after the popover closes")
+PY
 
 expect_contains "$source_section" 'Text("Active Sources")'
 expect_contains "$source_section" "mediaRemoteController.targets"

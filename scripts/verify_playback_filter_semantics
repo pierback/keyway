@@ -31,9 +31,10 @@ struct FilterSemantics {
             chooserTargetedMediaKeyEchoWindow: 0.45
         )
 
-        expectNil(
+        expectEqual(
             filter.ignoreReasonForCommandCenter(command: .playPause),
-            "fresh command-center event must pass through"
+            .unpairedCommandCenterInput,
+            "fresh command-center event must not route as standalone input"
         )
         expectNil(
             filter.ignoreReasonForMediaKey(command: .playPause),
@@ -60,18 +61,21 @@ struct FilterSemantics {
                 "media-key shadow must suppress matching command-center callback \(index)"
             )
         }
-        expectNil(
+        expectEqual(
             filter.ignoreReasonForCommandCenter(command: .playPause),
-            "media-key shadow must be callback-count bounded"
+            .unpairedCommandCenterInput,
+            "media-key shadow expiry must not make command-center input routeable on its own"
         )
-        expectNil(
+        expectEqual(
             filter.ignoreReasonForCommandCenter(command: .next),
-            "media-key shadow must not suppress unrelated commands"
+            .unpairedCommandCenterInput,
+            "unrelated command-center input must still be rejected as unpaired"
         )
         try? await Task.sleep(nanoseconds: 400_000_000)
-        expectNil(
+        expectEqual(
             filter.ignoreReasonForCommandCenter(command: .playPause),
-            "media-key shadow must expire"
+            .unpairedCommandCenterInput,
+            "expired media-key shadow must still leave command-center input unpaired"
         )
 
         filter.beginProgrammaticDispatch(command: .playPause)
@@ -213,9 +217,10 @@ struct FilterSemantics {
             "programmatic Command Center echo suppression must not swallow a fresh physical media key"
         )
         try? await Task.sleep(nanoseconds: 600_000_000)
-        expectNil(
+        expectEqual(
             lateEchoFilter.ignoreReasonForCommandCenter(command: .playPause),
-            "programmatic Command Center echo suppression must still expire"
+            .unpairedCommandCenterInput,
+            "expired Command Center echo suppression must still reject standalone command-center input"
         )
         let delayedOSEchoFilter = MediaTransportCommandCenterFilter(
             mediaKeyShadowInterval: 0.15,
@@ -242,12 +247,13 @@ struct FilterSemantics {
         )
         delayedChooserCommandCenterEchoFilter.beginChooserDispatch(command: .pause)
         try? await Task.sleep(nanoseconds: 300_000_000)
-        expectNil(
+        expectEqual(
             delayedChooserCommandCenterEchoFilter.ignoreReasonForCommandCenter(
                 command: .playPause,
                 metadata: MediaCommandCenterInputMetadata(eventTimestamp: 901)
             ),
-            "chooser dispatch must not hide delayed Command Center input behind a selected-row cooldown"
+            .unpairedCommandCenterInput,
+            "chooser dispatch must reject delayed standalone Command Center input after the cooldown boundary"
         )
         delayedOSEchoFilter.beginProgrammaticDispatch(command: .pause)
         try? await Task.sleep(nanoseconds: 100_000_000)
@@ -315,9 +321,10 @@ struct FilterSemantics {
             ),
             "chooser dispatch without source metadata must not suppress delayed targeted HID-shaped input"
         )
-        expectNil(
+        expectEqual(
             delayedGeneratedChooserEchoFilter.ignoreReasonForCommandCenter(command: .playPause),
-            "chooser dispatch must not keep a selected-row Command Center cooldown after the instant boundary"
+            .unpairedCommandCenterInput,
+            "chooser dispatch must reject delayed standalone Command Center input after the instant boundary"
         )
         let targetedEchoCommandCenterShadowFilter = MediaTransportCommandCenterFilter(
             mediaKeyShadowInterval: 0.15,

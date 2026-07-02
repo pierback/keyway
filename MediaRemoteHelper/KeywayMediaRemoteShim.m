@@ -1,6 +1,7 @@
 #import <AppKit/AppKit.h>
 #import <Foundation/Foundation.h>
 #import <dispatch/dispatch.h>
+#import <math.h>
 
 typedef void (*MRMediaRemoteGetNowPlayingClientsFn)(dispatch_queue_t queue, void (^completion)(NSArray *clients));
 typedef id (*MRMediaRemoteGetLocalOriginFn)(void);
@@ -76,6 +77,20 @@ static NSString *KeywaySafeString(id value) {
         return [(NSNumber *)value stringValue];
     }
     return [value description];
+}
+
+static NSNumber *KeywaySafeJSONNumber(id value, NSNumber *fallback) {
+    if (![value isKindOfClass:[NSNumber class]]) {
+        return fallback;
+    }
+
+    NSNumber *number = (NSNumber *)value;
+    double doubleValue = number.doubleValue;
+    if (!isfinite(doubleValue)) {
+        return fallback;
+    }
+
+    return number;
 }
 
 static NSString *KeywayStableHash(NSString *value) {
@@ -216,19 +231,19 @@ static void KeywayApplyNowPlayingInfo(NSMutableDictionary *row, NSDictionary *in
 
     id duration = info[@"kMRMediaRemoteNowPlayingInfoDuration"];
     if ([duration isKindOfClass:[NSNumber class]]) {
-        row[@"duration"] = duration;
+        row[@"duration"] = KeywaySafeJSONNumber(duration, @0);
     }
 
     id elapsed = info[@"kMRMediaRemoteNowPlayingInfoElapsedTime"];
     if ([elapsed isKindOfClass:[NSNumber class]]) {
-        row[@"elapsedTime"] = elapsed;
+        row[@"elapsedTime"] = KeywaySafeJSONNumber(elapsed, @0);
     }
 
     id timestamp = info[@"kMRMediaRemoteNowPlayingInfoTimestamp"];
     if ([timestamp isKindOfClass:[NSNumber class]]) {
-        row[@"elapsedTimestamp"] = timestamp;
+        row[@"elapsedTimestamp"] = KeywaySafeJSONNumber(timestamp, @0);
     } else if ([timestamp isKindOfClass:[NSDate class]]) {
-        row[@"elapsedTimestamp"] = @([(NSDate *)timestamp timeIntervalSince1970]);
+        row[@"elapsedTimestamp"] = KeywaySafeJSONNumber(@([(NSDate *)timestamp timeIntervalSince1970]), @0);
     }
 
 }

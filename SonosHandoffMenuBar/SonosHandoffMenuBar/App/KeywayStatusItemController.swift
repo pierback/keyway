@@ -12,6 +12,7 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
     private var popoverGlobalDismissMonitor: Any?
     private var appDeactivationObserver: NSObjectProtocol?
     private var settingsWindow: NSWindow?
+    private var postPopoverCloseAction: (@MainActor () -> Void)?
 
     init(environment: AppEnvironment) {
         self.environment = environment
@@ -62,6 +63,7 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
     }
 
     private func showPopover(relativeTo button: NSStatusBarButton) {
+        postPopoverCloseAction = nil
         environment.mediaRemoteController.refreshSnapshot()
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
@@ -93,7 +95,13 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
     }
 
     private func openChooserFromPopover() {
-        closePopover()
+        if popover.isShown {
+            postPopoverCloseAction = { [weak self] in
+                self?.showCenteredChooser()
+            }
+            closePopover()
+            return
+        }
         showCenteredChooser()
     }
 
@@ -277,6 +285,9 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
 
     func popoverDidClose(_ notification: Notification) {
         stopPopoverDismissMonitors()
+        let action = postPopoverCloseAction
+        postPopoverCloseAction = nil
+        action?()
     }
 }
 
@@ -429,7 +440,7 @@ private struct KeywayControlCenterPopoverView: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.88))
 
-            Text(mediaRemoteController.health.badgeTitle)
+            Text(headerStatusTitle)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.white.opacity(0.50))
                 .lineLimit(1)
@@ -577,6 +588,23 @@ private struct KeywayControlCenterPopoverView: View {
             .fill(mediaRemoteController.health.isHealthy ? Color.green : Color.orange)
             .frame(width: 8, height: 8)
             .accessibilityIdentifier("helper-status")
+    }
+
+    private var headerStatusTitle: String {
+        switch mediaRemoteController.health.state {
+        case .failed, .stopped:
+            if isBrowserOnlyRoutingAvailable {
+                return "Browser only"
+            }
+            return mediaRemoteController.health.badgeTitle
+        case .starting, .running:
+            return mediaRemoteController.health.badgeTitle
+        }
+    }
+
+    private var isBrowserOnlyRoutingAvailable: Bool {
+        mediaRemoteController.canRouteCommands
+            && mediaRemoteController.targets.contains(where: ChromiumBrowserExtensionTransport.isTarget)
     }
 
     private func card<Content: View>(
