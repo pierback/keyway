@@ -94,6 +94,7 @@ enum SourceFocusFailureReason: String, Codable {
     case applicationActivationRejected = "application_activation_rejected"
     case chromiumExtensionDisconnected = "chromium_extension_disconnected"
     case chromiumExtensionProtocolMismatch = "chromium_extension_protocol_mismatch"
+    case chromiumExtensionPayloadEncodingFailed = "chromium_extension_payload_encoding_failed"
     case chromiumExtensionTimedOut = "chromium_extension_timed_out"
     case browserActivationFailed = "browser_activation_failed"
     case browserTargetUnavailable = "browser_target_unavailable"
@@ -668,3 +669,63 @@ if rg -n 'try! decoder.decode\((ChromiumBrowserExtensionSnapshotPayload|MediaRem
   echo "verify_chromium_extension_transport_semantics: external Chromium notifications must not force-decode untrusted payloads" >&2
   exit 1
 fi
+
+python3 - "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionTransport.swift" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+
+def fail(message):
+    raise SystemExit(f"verify_chromium_extension_transport_semantics: {message}")
+
+if "try! JSONEncoder().encode(payload)" in text:
+    fail("Chromium extension outbound payloads must not use try! JSONEncoder")
+if "String(data: data, encoding: .utf8)!" in text:
+    fail("Chromium extension outbound payloads must not force-unwrap UTF-8 JSON")
+
+focus_start = text.find("    func focus(\n        target: MediaRemoteTarget,")
+submit_start = text.find("    private func submit(\n        commandName: String,", focus_start)
+if focus_start < 0 or submit_start < 0:
+    fail("missing focus or command submission methods")
+focus = text[focus_start:submit_start]
+
+command_end = text.find("\n    func targetsIncludingBrowserExtensionTargets", submit_start)
+if command_end < 0:
+    fail("missing command submission method boundary")
+command = text[submit_start:command_end]
+
+for required in (
+    "do {",
+    "data = try JSONEncoder().encode(payload)",
+    "} catch {",
+    "logger.error(\"ChromiumExtension focus_encode_failed",
+    "onResult(SourceFocusResult(",
+    "message: \"Chromium extension focus payload encoding failed.\"",
+    "failureReason: .chromiumExtensionPayloadEncodingFailed",
+    "return true",
+    "guard let json = String(data: data, encoding: .utf8) else {",
+    "pendingFocusRequests[requestID] = ChromiumBrowserExtensionPendingFocus(",
+):
+    if required not in focus:
+        fail(f"focus submission must report encoding failures through SourceFocusResult: missing {required}")
+
+for required in (
+    "do {",
+    "data = try JSONEncoder().encode(payload)",
+    "} catch {",
+    "logger.error(\"ChromiumExtension command_encode_failed",
+    "onResult(MediaRemoteCommandResultEvent(",
+    "message: \"Chromium extension command payload encoding failed.\"",
+    "return true",
+    "guard let json = String(data: data, encoding: .utf8) else {",
+    "pendingCommands[requestID] = ChromiumBrowserExtensionPendingCommand(",
+):
+    if required not in command:
+        fail(f"command submission must report encoding failures through MediaRemoteCommandResultEvent: missing {required}")
+
+if focus.find("onResult(SourceFocusResult(") > focus.find("pendingFocusRequests[requestID] = ChromiumBrowserExtensionPendingFocus("):
+    fail("focus encoding failures must callback before any pending focus request is queued")
+if command.find("onResult(MediaRemoteCommandResultEvent(") > command.find("pendingCommands[requestID] = ChromiumBrowserExtensionPendingCommand("):
+    fail("command encoding failures must callback before any pending command is queued")
+PY

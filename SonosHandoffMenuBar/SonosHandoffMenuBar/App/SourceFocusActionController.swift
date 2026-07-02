@@ -16,6 +16,7 @@ enum SourceFocusFailureReason: String, Codable {
     case applicationActivationRejected = "application_activation_rejected"
     case chromiumExtensionDisconnected = "chromium_extension_disconnected"
     case chromiumExtensionProtocolMismatch = "chromium_extension_protocol_mismatch"
+    case chromiumExtensionPayloadEncodingFailed = "chromium_extension_payload_encoding_failed"
     case chromiumExtensionTimedOut = "chromium_extension_timed_out"
     case browserActivationFailed = "browser_activation_failed"
     case browserTargetUnavailable = "browser_target_unavailable"

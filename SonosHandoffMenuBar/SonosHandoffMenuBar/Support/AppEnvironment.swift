@@ -1,9 +1,11 @@
 import AppKit
+import os
 import SonosHandoffCore
 
 struct AppEnvironment: @unchecked Sendable {
     let configImportService: ConfigImportService
     let configImportReport: ConfigImportReport?
+    let chromiumNativeMessagingHostInstallMessage: String?
     let configStore: any ConfigStoring
     let tokenStore: any TokenStoring
     let connectTokenStatusStore: any ConnectTokenStatusChecking
@@ -37,6 +39,7 @@ struct AppEnvironment: @unchecked Sendable {
 
     @MainActor
     static func live() -> AppEnvironment {
+        let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "AppEnvironment")
         let configImportService = ConfigImportService()
         let configStore = ConfigStore()
         let tokenStore = KeychainTokenStore()
@@ -69,7 +72,14 @@ struct AppEnvironment: @unchecked Sendable {
         )
         let macAudioOutputMonitor = MacAudioOutputMonitor()
         let chromiumNativeMessagingHostInstaller = ChromiumNativeMessagingHostInstaller()
-        _ = try! chromiumNativeMessagingHostInstaller.install()
+        let chromiumNativeMessagingHostInstallMessage: String?
+        do {
+            let state = try chromiumNativeMessagingHostInstaller.install()
+            chromiumNativeMessagingHostInstallMessage = "Installed native host manifests in \(state.manifestPaths.count) supported Chromium-family locations."
+        } catch {
+            chromiumNativeMessagingHostInstallMessage = "Chromium bridge install failed: \(error.localizedDescription)"
+            logger.error("Chromium native bridge install failed error=\(error.localizedDescription, privacy: .public)")
+        }
         let chromiumBrowserExtensionController = ChromiumBrowserExtensionController()
         let targetSelectionMemory = MediaTargetSelectionMemory()
         let mediaRemoteController = MediaRemoteController(
@@ -107,6 +117,7 @@ struct AppEnvironment: @unchecked Sendable {
         return AppEnvironment(
             configImportService: configImportService,
             configImportReport: nil,
+            chromiumNativeMessagingHostInstallMessage: chromiumNativeMessagingHostInstallMessage,
             configStore: configStore,
             tokenStore: tokenStore,
             connectTokenStatusStore: connectTokenStatusStore,
@@ -148,6 +159,7 @@ final class MediaRoutingProbeController {
 
     private let mediaRemoteController: MediaRemoteController
     private let mediaTransportActionController: MediaTransportActionController
+    private let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "MediaRoutingProbe")
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
     private var observer: NSObjectProtocol?
@@ -172,7 +184,10 @@ final class MediaRoutingProbeController {
             object: Self.notificationObject,
             queue: .main
         ) { [weak self] notification in
-            let payload = notification.userInfo!["payload"] as! String
+            guard let payload = notification.userInfo?["payload"] as? String else {
+                self?.logger.error("Ignoring media routing probe request without string payload")
+                return
+            }
             Task { @MainActor [weak self] in
                 self?.handle(payload)
             }
@@ -180,10 +195,16 @@ final class MediaRoutingProbeController {
     }
 
     private func handle(_ payload: String) {
-        let request = try! decoder.decode(
-            MediaRoutingProbeRequest.self,
-            from: Data(payload.utf8)
-        )
+        let request: MediaRoutingProbeRequest
+        do {
+            request = try decoder.decode(
+                MediaRoutingProbeRequest.self,
+                from: Data(payload.utf8)
+            )
+        } catch {
+            logger.error("Ignoring media routing probe decode failure error=\(error.localizedDescription, privacy: .public)")
+            return
+        }
 
         switch request.action {
         case .snapshot:
@@ -199,8 +220,34 @@ final class MediaRoutingProbeController {
                 )
             )
         case .route:
-            let targetID = request.targetID!
-            let command = request.command!
+            guard let targetID = request.targetID else {
+                publish(
+                    MediaRoutingProbeResponse(
+                        requestID: request.requestID,
+                        action: request.action,
+                        ok: false,
+                        message: "missing_target_id",
+                        targetID: nil,
+                        command: request.command,
+                        targets: mediaRemoteController.targets
+                    )
+                )
+                return
+            }
+            guard let command = request.command else {
+                publish(
+                    MediaRoutingProbeResponse(
+                        requestID: request.requestID,
+                        action: request.action,
+                        ok: false,
+                        message: "missing_command",
+                        targetID: targetID,
+                        command: nil,
+                        targets: mediaRemoteController.targets
+                    )
+                )
+                return
+            }
             guard let target = mediaRemoteController.targets.first(where: { $0.id == targetID }) else {
                 publish(
                     MediaRoutingProbeResponse(
@@ -232,8 +279,17 @@ final class MediaRoutingProbeController {
     }
 
     private func publish(_ response: MediaRoutingProbeResponse) {
-        let data = try! encoder.encode(response)
-        let json = String(data: data, encoding: .utf8)!
+        let data: Data
+        do {
+            data = try encoder.encode(response)
+        } catch {
+            logger.error("Dropping media routing probe response encode failure requestID=\(response.requestID, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+            return
+        }
+        guard let json = String(data: data, encoding: .utf8) else {
+            logger.error("Dropping media routing probe response with non-UTF-8 JSON requestID=\(response.requestID, privacy: .public)")
+            return
+        }
         DistributedNotificationCenter.default().postNotificationName(
             .keywayMediaRoutingProbeResponse,
             object: Self.notificationObject,

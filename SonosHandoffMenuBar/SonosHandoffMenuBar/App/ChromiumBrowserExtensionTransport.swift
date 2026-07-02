@@ -127,6 +127,17 @@ struct ChromiumNativeMessagingHostInstallState: Equatable {
     let manifestPaths: [String]
 }
 
+enum ChromiumNativeMessagingHostInstallError: LocalizedError, Equatable {
+    case missingExecutable(path: String)
+
+    var errorDescription: String? {
+        switch self {
+        case .missingExecutable(let path):
+            return "Bundled Chromium native host is missing or not executable at \(path)"
+        }
+    }
+}
+
 struct ChromiumNativeMessagingHostInstaller {
     private struct Manifest: Encodable {
         let name: String
@@ -160,10 +171,9 @@ struct ChromiumNativeMessagingHostInstaller {
     }
 
     func install() throws -> ChromiumNativeMessagingHostInstallState {
-        precondition(
-            fileManager.isExecutableFile(atPath: nativeHostExecutableURL.path),
-            "Bundled Chromium native host is missing or not executable at \(nativeHostExecutableURL.path)"
-        )
+        guard fileManager.isExecutableFile(atPath: nativeHostExecutableURL.path) else {
+            throw ChromiumNativeMessagingHostInstallError.missingExecutable(path: nativeHostExecutableURL.path)
+        }
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
@@ -481,8 +491,33 @@ final class ChromiumBrowserExtensionController: ObservableObject {
             requestID: requestID,
             targetID: target.id
         )
-        let data = try! JSONEncoder().encode(payload)
-        let json = String(data: data, encoding: .utf8)!
+        let data: Data
+        do {
+            data = try JSONEncoder().encode(payload)
+        } catch {
+            logger.error("ChromiumExtension focus_encode_failed requestID=\(requestID, privacy: .public) target=\(target.id, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+            onResult(SourceFocusResult(
+                requestID: requestID,
+                targetID: target.id,
+                ok: false,
+                message: "Chromium extension focus payload encoding failed.",
+                backend: ChromiumBrowserExtensionTransport.backendName,
+                failureReason: .chromiumExtensionPayloadEncodingFailed
+            ))
+            return true
+        }
+        guard let json = String(data: data, encoding: .utf8) else {
+            logger.error("ChromiumExtension focus_encode_failed requestID=\(requestID, privacy: .public) target=\(target.id, privacy: .public) error=non_utf8_json")
+            onResult(SourceFocusResult(
+                requestID: requestID,
+                targetID: target.id,
+                ok: false,
+                message: "Chromium extension focus payload encoding failed.",
+                backend: ChromiumBrowserExtensionTransport.backendName,
+                failureReason: .chromiumExtensionPayloadEncodingFailed
+            ))
+            return true
+        }
         pendingFocusRequests[requestID] = ChromiumBrowserExtensionPendingFocus(
             startedAt: ProcessInfo.processInfo.systemUptime,
             targetID: target.id,
@@ -514,8 +549,35 @@ final class ChromiumBrowserExtensionController: ObservableObject {
             command: commandName,
             volumeDelta: volumeDelta
         )
-        let data = try! JSONEncoder().encode(payload)
-        let json = String(data: data, encoding: .utf8)!
+        let data: Data
+        do {
+            data = try JSONEncoder().encode(payload)
+        } catch {
+            logger.error("ChromiumExtension command_encode_failed requestID=\(requestID, privacy: .public) command=\(commandName, privacy: .public) target=\(target.id, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+            onResult(MediaRemoteCommandResultEvent(
+                type: "commandResult",
+                requestID: requestID,
+                targetID: target.id,
+                command: commandName,
+                ok: false,
+                message: "Chromium extension command payload encoding failed.",
+                backend: ChromiumBrowserExtensionTransport.backendName
+            ))
+            return true
+        }
+        guard let json = String(data: data, encoding: .utf8) else {
+            logger.error("ChromiumExtension command_encode_failed requestID=\(requestID, privacy: .public) command=\(commandName, privacy: .public) target=\(target.id, privacy: .public) error=non_utf8_json")
+            onResult(MediaRemoteCommandResultEvent(
+                type: "commandResult",
+                requestID: requestID,
+                targetID: target.id,
+                command: commandName,
+                ok: false,
+                message: "Chromium extension command payload encoding failed.",
+                backend: ChromiumBrowserExtensionTransport.backendName
+            ))
+            return true
+        }
         pendingCommands[requestID] = ChromiumBrowserExtensionPendingCommand(
             startedAt: ProcessInfo.processInfo.systemUptime,
             commandName: commandName,

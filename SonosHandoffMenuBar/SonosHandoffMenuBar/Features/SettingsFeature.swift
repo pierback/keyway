@@ -57,6 +57,7 @@ struct SettingsFeature: View {
         configImportService: ConfigImportService = ConfigImportService(),
         chromiumNativeMessagingHostInstaller: ChromiumNativeMessagingHostInstaller = ChromiumNativeMessagingHostInstaller(),
         initialConfigImportReport: ConfigImportReport? = nil,
+        initialChromiumBridgeMessage: String? = nil,
         mediaRemoteController: MediaRemoteController = MediaRemoteController(),
         chromiumBrowserExtensionController: ChromiumBrowserExtensionController = ChromiumBrowserExtensionController()
     ) {
@@ -72,6 +73,7 @@ struct SettingsFeature: View {
             browserOpener: { NSWorkspace.shared.open($0) }
         )
         _configImportReport = State(initialValue: initialConfigImportReport)
+        _chromiumBridgeMessage = State(initialValue: initialChromiumBridgeMessage)
         _mediaRemoteController = ObservedObject(wrappedValue: mediaRemoteController)
         _chromiumBrowserExtensionController = ObservedObject(wrappedValue: chromiumBrowserExtensionController)
     }
@@ -554,7 +556,11 @@ struct SettingsFeature: View {
                     settingsDiagnosticRow(title: "spotify keychain", detail: keychainStatusText(configImportReport.keychainStatus))
                     settingsDiagnosticRow(title: "media targets", detail: "\(mediaRemoteController.targets.count)")
                     settingsDiagnosticRow(title: "chromium targets", detail: "\(chromiumBrowserExtensionController.targets.count)")
-                } else {
+                }
+                if let chromiumBridgeMessage {
+                    settingsDiagnosticRow(title: "chromium bridge", detail: chromiumBridgeMessage)
+                }
+                if configImportReport == nil && chromiumBridgeMessage == nil {
                     Text("No diagnostics recorded yet.")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
@@ -836,17 +842,27 @@ struct SettingsFeature: View {
     }
 
     private func installChromiumNativeBridge() {
-        let state = try! chromiumNativeMessagingHostInstaller.install()
-        chromiumBridgeMessage = "Installed native host manifests in \(state.manifestPaths.count) supported Chromium-family locations."
+        do {
+            let state = try chromiumNativeMessagingHostInstaller.install()
+            chromiumBridgeMessage = "Installed native host manifests in \(state.manifestPaths.count) supported Chromium-family locations."
+        } catch {
+            chromiumBridgeMessage = "Chromium bridge install failed: \(error.localizedDescription)"
+            logger.error("Chromium native bridge install failed error=\(error.localizedDescription, privacy: .public)")
+        }
     }
 
     private func revealChromiumExtension() {
-        let extensionURL = Bundle.main.resourceURL!
-            .appendingPathComponent("ChromiumExtension", isDirectory: true)
-        precondition(
-            FileManager.default.fileExists(atPath: extensionURL.appendingPathComponent("manifest.json").path),
-            "Bundled Chromium extension is missing at \(extensionURL.path)"
-        )
+        guard let resourceURL = Bundle.main.resourceURL else {
+            chromiumBridgeMessage = "Bundled Chromium extension is missing: app bundle has no resource directory."
+            logger.error("Chromium extension reveal failed: Bundle.main.resourceURL is nil")
+            return
+        }
+        let extensionURL = resourceURL.appendingPathComponent("ChromiumExtension", isDirectory: true)
+        guard FileManager.default.fileExists(atPath: extensionURL.appendingPathComponent("manifest.json").path) else {
+            chromiumBridgeMessage = "Bundled Chromium extension is missing at \(extensionURL.path)"
+            logger.error("Chromium extension reveal failed: missing manifest at path=\(extensionURL.path, privacy: .public)")
+            return
+        }
         NSWorkspace.shared.activateFileViewerSelecting([extensionURL])
         chromiumBridgeMessage = "Revealed bundled Chromium extension folder."
     }

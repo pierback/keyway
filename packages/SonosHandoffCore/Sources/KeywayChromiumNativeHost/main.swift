@@ -28,12 +28,12 @@ struct HostBrowserIdentity {
     static func current() -> HostBrowserIdentity {
         let parentPID = getppid()
         guard let app = NSRunningApplication(processIdentifier: pid_t(parentPID)) else {
-            preconditionFailure("Chromium native host could not resolve parent browser process \(parentPID).")
+            exitWithFailure("could not resolve parent browser process \(parentPID).")
         }
         let bundleIdentifier = app.bundleIdentifier ?? ""
         let appName = app.localizedName ?? ""
         guard let family = browserFamily(bundleIdentifier: bundleIdentifier, displayName: appName) else {
-            preconditionFailure("Chromium native host parent is not a supported browser: \(bundleIdentifier) \(appName)")
+            exitWithFailure("parent is not a supported browser: \(bundleIdentifier) \(appName)")
         }
 
         return HostBrowserIdentity(
@@ -42,6 +42,11 @@ struct HostBrowserIdentity {
             bundleIdentifier: bundleIdentifier,
             instanceID: UUID().uuidString.lowercased()
         )
+    }
+
+    private static func exitWithFailure(_ message: String) -> Never {
+        fputs("Keyway Chromium native host: \(message)\n", stderr)
+        exit(EXIT_FAILURE)
     }
 
     private static func browserFamily(bundleIdentifier: String, displayName: String) -> String? {

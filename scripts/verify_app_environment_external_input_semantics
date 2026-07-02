@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+environment="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/Support/AppEnvironment.swift"
+transport="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionTransport.swift"
+settings="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/Features/SettingsFeature.swift"
+status_item="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/KeywayStatusItemController.swift"
+
+python3 - "$environment" "$transport" "$settings" "$status_item" <<'PY'
+import pathlib
+import sys
+
+environment = pathlib.Path(sys.argv[1]).read_text()
+transport = pathlib.Path(sys.argv[2]).read_text()
+settings = pathlib.Path(sys.argv[3]).read_text()
+status_item = pathlib.Path(sys.argv[4]).read_text()
+
+def fail(message):
+    raise SystemExit(f"verify_app_environment_external_input_semantics: {message}")
+
+def section(source, start_needle, end_needle):
+    start = source.find(start_needle)
+    if start < 0:
+        fail(f"missing {start_needle!r}")
+    end = source.find(end_needle, start)
+    if end < 0:
+        fail(f"missing {end_needle!r}")
+    return source[start:end]
+
+live = section(
+    environment,
+    "    static func live() -> AppEnvironment {",
+    "\n}\n\n@MainActor",
+)
+if "try! chromiumNativeMessagingHostInstaller.install()" in live:
+    fail("AppEnvironment.live() must not crash when Chromium native bridge install throws")
+for required in (
+    "let chromiumNativeMessagingHostInstallMessage: String?",
+    "do {",
+    "let state = try chromiumNativeMessagingHostInstaller.install()",
+    "Chromium bridge install failed: \\(error.localizedDescription)",
+    "logger.error(\"Chromium native bridge install failed",
+    "chromiumNativeMessagingHostInstallMessage: chromiumNativeMessagingHostInstallMessage",
+):
+    if required not in live:
+        fail(f"AppEnvironment.live() must log and store launch install failures: missing {required}")
+
+install = section(
+    transport,
+    "    func install() throws -> ChromiumNativeMessagingHostInstallState {",
+    "\n    private var nativeHostDirectories",
+)
+if "precondition(" in install:
+    fail("ChromiumNativeMessagingHostInstaller.install() must throw instead of preconditioning on filesystem state")
+for required in (
+    "enum ChromiumNativeMessagingHostInstallError: LocalizedError, Equatable",
+    "guard fileManager.isExecutableFile(atPath: nativeHostExecutableURL.path) else {",
+    "throw ChromiumNativeMessagingHostInstallError.missingExecutable(path: nativeHostExecutableURL.path)",
+):
+    if required not in transport:
+        fail(f"Chromium native bridge installer must expose typed install failures: missing {required}")
+
+for required in (
+    "initialChromiumBridgeMessage: String? = nil",
+    "_chromiumBridgeMessage = State(initialValue: initialChromiumBridgeMessage)",
+    'settingsDiagnosticRow(title: "chromium bridge", detail: chromiumBridgeMessage)',
+    "do {",
+    "let state = try chromiumNativeMessagingHostInstaller.install()",
+    "Chromium bridge install failed: \\(error.localizedDescription)",
+):
+    if required not in settings:
+        fail(f"Settings must surface launch and repair bridge install failures: missing {required}")
+
+if "try! chromiumNativeMessagingHostInstaller.install()" in settings:
+    fail("Settings Repair Bridge action must not crash when Chromium native bridge install throws")
+if "initialChromiumBridgeMessage: environment.chromiumNativeMessagingHostInstallMessage" not in status_item:
+    fail("Settings window must receive the launch Chromium bridge install message")
+
+reveal = section(
+    settings,
+    "    private func revealChromiumExtension() {",
+    "\n    }\n\n    private func openChromiumExtensionsPage",
+)
+if "Bundle.main.resourceURL!" in reveal or "precondition(" in reveal:
+    fail("Settings Reveal Extension action must not crash on a missing app bundle or extension folder")
+for required in (
+    "guard let resourceURL = Bundle.main.resourceURL else {",
+    "guard FileManager.default.fileExists(atPath: extensionURL.appendingPathComponent(\"manifest.json\").path) else {",
+):
+    if required not in reveal:
+        fail(f"Settings Reveal Extension action must degrade gracefully: missing {required}")
+
+probe = section(
+    environment,
+    "final class MediaRoutingProbeController {",
+    "\n}\n\nprivate enum MediaRoutingProbeAction",
+)
+for forbidden in (
+    "userInfo!",
+    "as! String",
+    "try! decoder.decode",
+    "request.targetID!",
+    "request.command!",
+    "try! encoder.encode",
+    "String(data: data, encoding: .utf8)!",
+):
+    if forbidden in probe:
+        fail(f"MediaRoutingProbeController must not force untrusted probe input: found {forbidden}")
+for required in (
+    'guard let payload = notification.userInfo?["payload"] as? String else {',
+    'logger.error("Ignoring media routing probe request without string payload")',
+    "request = try decoder.decode(",
+    'logger.error("Ignoring media routing probe decode failure',
+    'message: "missing_target_id"',
+    'message: "missing_command"',
+    "data = try encoder.encode(response)",
+    'logger.error("Dropping media routing probe response encode failure',
+    "guard let json = String(data: data, encoding: .utf8) else {",
+):
+    if required not in probe:
+        fail(f"MediaRoutingProbeController must log, ignore, or publish typed probe failures: missing {required}")
+
+print("verify_app_environment_external_input_semantics=ok")
+PY

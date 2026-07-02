@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+native_host="$repo_root/packages/SonosHandoffCore/Sources/KeywayChromiumNativeHost/main.swift"
+
+python3 - "$native_host" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+
+def fail(message):
+    raise SystemExit(f"verify_chromium_native_host_input_semantics: {message}")
+
+def section(start_needle, end_needle):
+    start = text.find(start_needle)
+    if start < 0:
+        fail(f"missing {start_needle!r}")
+    end = text.find(end_needle, start)
+    if end < 0:
+        fail(f"missing {end_needle!r}")
+    return text[start:end]
+
+current = section(
+    "    static func current() -> HostBrowserIdentity {",
+    "\n    private static func browserFamily",
+)
+if "preconditionFailure" in current or "precondition(" in current:
+    fail("HostBrowserIdentity.current() must not crash on unsupported or unresolvable parent processes")
+for required in (
+    "guard let app = NSRunningApplication(processIdentifier: pid_t(parentPID)) else {",
+    'exitWithFailure("could not resolve parent browser process \\(parentPID).")',
+    'exitWithFailure("parent is not a supported browser: \\(bundleIdentifier) \\(appName)")',
+    "private static func exitWithFailure(_ message: String) -> Never {",
+    'fputs("Keyway Chromium native host: \\(message)\\n", stderr)',
+    "exit(EXIT_FAILURE)",
+):
+    if required not in current:
+        fail(f"HostBrowserIdentity.current() must log and exit cleanly: missing {required}")
+
+for forbidden in ("try!", "as!", "userInfo!", "preconditionFailure", "precondition(", "fatalError"):
+    if forbidden in text:
+        fail(f"native host external input handling must not use {forbidden}")
+
+read_message = section("func readNativeMessage() -> Data? {", "\n}\n\nfunc writeNativeMessage")
+for required in (
+    "guard let lengthData = readExact(4) else {",
+    "return nil",
+    "return readExact(Int(length))",
+):
+    if required not in read_message:
+        fail(f"readNativeMessage() must degrade to nil on malformed or closed stdio input: missing {required}")
+
+snapshot = section("func payloadByAddingHostBrowserIdentity(_ payload: Data) -> String? {", "\n}\n\nfunc payloadByRestoringRawTargetIdentity")
+for required in (
+    "try? JSONSerialization.jsonObject(with: payload)",
+    'fputs("Keyway Chromium native host: ignoring malformed snapshot payload.\\n", stderr)',
+    'fputs("Keyway Chromium native host: ignoring snapshot target without id.\\n", stderr)',
+    "try? JSONSerialization.data(withJSONObject: root)",
+    'fputs("Keyway Chromium native host: ignoring snapshot payload rewrite failure.\\n", stderr)',
+    "return nil",
+):
+    if required not in snapshot:
+        fail(f"snapshot payload rewriting must ignore malformed native messages: missing {required}")
+
+command = section("func payloadByRestoringRawTargetIdentity(_ payload: String) -> Data? {", "\n}\n\nfunc payloadByRestoringPublicTargetIdentity")
+for required in (
+    "payload.data(using: .utf8)",
+    "try? JSONSerialization.jsonObject(with: data)",
+    'fputs("Keyway Chromium native host: ignoring malformed command payload.\\n", stderr)',
+    "guard let rawTargetID = hostBrowserIdentity.rawTargetID(publicTargetID: publicTargetID) else {",
+    "try? JSONSerialization.data(withJSONObject: root)",
+    'fputs("Keyway Chromium native host: ignoring command payload rewrite failure.\\n", stderr)',
+    "return nil",
+):
+    if required not in command:
+        fail(f"command payload rewriting must ignore malformed distributed-notification input: missing {required}")
+
+result = section("func payloadByRestoringPublicTargetIdentity(_ payload: Data) -> String? {", "\n}\n\nlet commandObserver")
+for required in (
+    "try? JSONSerialization.jsonObject(with: payload)",
+    'fputs("Keyway Chromium native host: ignoring malformed result payload.\\n", stderr)',
+    "try? JSONSerialization.data(withJSONObject: root)",
+    'fputs("Keyway Chromium native host: ignoring result payload rewrite failure.\\n", stderr)',
+    "return nil",
+):
+    if required not in result:
+        fail(f"result payload rewriting must ignore malformed native messages: missing {required}")
+
+observer = section("let commandObserver = DistributedNotificationCenter.default().addObserver(", "\n}\n\nfunc postNativeMessage")
+for required in (
+    'guard let payload = notification.userInfo?["payload"] as? String else {',
+    'fputs("Keyway Chromium native host: ignoring command notification without payload.\\n", stderr)',
+    "guard let routedPayload = payloadByRestoringRawTargetIdentity(payload) else {",
+):
+    if required not in observer:
+        fail(f"distributed command notifications must be optional-decoded: missing {required}")
+
+post = section("func postNativeMessage(_ payload: Data) {", "\n}\n\nDispatchQueue.global")
+for required in (
+    "try? JSONDecoder().decode(NativeMessageEnvelope.self, from: payload)",
+    'fputs("Keyway Chromium native host: ignoring undecodable native message envelope.\\n", stderr)',
+    'fputs("Keyway Chromium native host: ignoring unknown native message type.\\n", stderr)',
+    'guard envelope.type == "snapshot" || envelope.type == "commandResult" || envelope.type == "focusResult" else {',
+    "guard let postedPayload else {",
+):
+    if required not in post:
+        fail(f"native message posting must reject malformed envelopes without crashing: missing {required}")
+
+if "while let payload = readNativeMessage()" not in text or "exit(0)" not in text:
+    fail("native host stdio loop must exit cleanly when input closes")
+
+print("verify_chromium_native_host_input_semantics=ok")
+PY

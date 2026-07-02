@@ -376,9 +376,13 @@ for forbidden in [
         )
 expect(
     environment,
-    "_ = try! chromiumNativeMessagingHostInstaller.install()",
+    "let state = try chromiumNativeMessagingHostInstaller.install()",
     "app startup must install or repair Chromium native messaging manifests",
 )
+if "_ = try! chromiumNativeMessagingHostInstaller.install()" in environment:
+    raise SystemExit(
+        "verify_chromium_extension_semantics: app startup must not crash when the Chromium bridge install fails"
+    )
 expect(
     settings,
     'Button("Repair Bridge")',

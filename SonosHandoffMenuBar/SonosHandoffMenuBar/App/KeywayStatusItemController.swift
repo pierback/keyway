@@ -174,6 +174,7 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
                 configImportService: environment.configImportService,
                 chromiumNativeMessagingHostInstaller: environment.chromiumNativeMessagingHostInstaller,
                 initialConfigImportReport: environment.configImportReport,
+                initialChromiumBridgeMessage: environment.chromiumNativeMessagingHostInstallMessage,
                 mediaRemoteController: environment.mediaRemoteController,
                 chromiumBrowserExtensionController: environment.chromiumBrowserExtensionController
             )
