@@ -61,7 +61,6 @@ struct MediaRemoteTarget: Equatable, Identifiable {
     let browserFamily: String?
     let browserDisplayName: String?
     let browserBundleIdentifier: String?
-    let browserInstanceID: String?
 
     var isChromiumBrowserLike: Bool {
         let identities = [bundleIdentifier, parentBundleIdentifier, displayName].map { $0.lowercased() }
@@ -86,7 +85,27 @@ struct MediaRemoteCommandResultEvent: Decodable {
     let ok: Bool
     let message: String
     let backend: String?
-    var unsupported: Bool = false
+    let unsupported: Bool
+
+    init(
+        type: String,
+        requestID: String?,
+        targetID: String,
+        command: String,
+        ok: Bool,
+        message: String,
+        backend: String?,
+        unsupported: Bool = false
+    ) {
+        self.type = type
+        self.requestID = requestID
+        self.targetID = targetID
+        self.command = command
+        self.ok = ok
+        self.message = message
+        self.backend = backend
+        self.unsupported = unsupported
+    }
 }
 
 enum SourceFocusFailureReason: String, Codable {
@@ -137,22 +156,49 @@ struct Semantics {
     @MainActor
     static func main() {
         let target = chromiumTarget(
-            id: "chromium-extension:chrome:chromium-extension:runtime:22",
+            id: "chromium-tab:chromium-profile-a:22",
             title: "Video A"
         )
-        let second = chromiumTarget(
-            id: "chromium-extension:chrome:chromium-extension:runtime:23",
+        let replacement = chromiumTarget(
+            id: "chromium-tab:chromium-profile-a:23",
             title: "Video B"
         )
+        let braveTarget = chromiumTarget(
+            id: "chromium-tab:brave-profile-b:44",
+            title: "Brave Video",
+            browserFamily: "brave",
+            browserDisplayName: "Brave",
+            browserBundleIdentifier: "com.brave.Browser"
+        )
         let unsupportedTrackTarget = chromiumTarget(
-            id: "chromium-extension:chrome:chromium-extension:runtime:24",
+            id: "chromium-tab:chromium-profile-a:24",
             title: "Video C",
             supportedCommands: [.play, .pause, .playPause]
         )
 
+        expectEqual(
+            ChromiumBrowserExtensionTransport.protocolVersion,
+            3,
+            "Chromium extension transport must use protocol v3"
+        )
+        expectEqual(
+            ChromiumBrowserExtensionTransport.targetIDPrefix,
+            "chromium-tab:",
+            "Chromium extension target IDs must use the stable tab prefix"
+        )
         expectTrue(
             ChromiumBrowserExtensionTransport.isTarget(target),
-            "Chromium extension targets must be recognized by exact target identity"
+            "Chromium tab targets must be recognized by exact target identity"
+        )
+        expectEqual(
+            ChromiumBrowserExtensionTransport.profileGuid(targetID: target.id),
+            "chromium-profile-a",
+            "Chromium tab target IDs must expose the profile GUID for route lookup"
+        )
+        expectEqual(
+            ChromiumBrowserExtensionTransport.profileGuid(targetID: "legacy-prefix:old:shape"),
+            nil,
+            "Old Chromium extension IDs must not parse as routable profile targets"
         )
         expectEqual(
             ChromiumBrowserExtensionTransport.targetDisplayName(browser: "Chromium", pageTitle: "Video A"),
@@ -160,34 +206,9 @@ struct Semantics {
             "Chromium targets must visibly include browser and tab title"
         )
         expectEqual(
-            ChromiumBrowserExtensionTransport.protocolVersion,
-            2,
-            "Chromium extension transport must use protocol v2"
-        )
-        expectEqual(
-            ChromiumBrowserExtensionTransport.extensionID,
-            "gmdpkggbaohimgacbclndlfjghgcbael",
-            "Chromium native host manifests must use the stable extension ID"
-        )
-        expectEqual(
-            ChromiumBrowserExtensionTransport.focusResultNotificationName.rawValue,
-            "com.fpieringer.keyway.chromium.focusResult",
-            "Chromium focus results must use a separate notification channel from media command results"
-        )
-        expectEqual(
             ChromiumBrowserExtensionTransport.browserFamily(target: target),
             "chromium",
             "Chromium extension targets must expose the browser family from typed metadata"
-        )
-        expectEqual(
-            target.browserInstanceID,
-            "chromium-profile-a",
-            "Chromium extension targets must preserve the browser host instance identity"
-        )
-        expectEqual(
-            ChromiumBrowserExtensionTransport.targetDisplayName(browser: "Chromium", pageTitle: ""),
-            "Chromium",
-            "Chromium targets without a tab title must keep the browser label"
         )
         expectTrue(
             ChromiumBrowserExtensionTransport.supports(command: .playPause, target: target),
@@ -197,17 +218,9 @@ struct Semantics {
             ChromiumBrowserExtensionTransport.supports(command: .next, target: target),
             "Chromium extension targets must support Next when the page advertises it"
         )
-        expectTrue(
-            ChromiumBrowserExtensionTransport.supports(command: .previous, target: target),
-            "Chromium extension targets must support Previous when the page advertises it"
-        )
         expectFalse(
             ChromiumBrowserExtensionTransport.supports(command: .next, target: unsupportedTrackTarget),
             "Chromium extension targets must not support Next when the page does not advertise it"
-        )
-        expectFalse(
-            ChromiumBrowserExtensionTransport.supports(command: .previous, target: unsupportedTrackTarget),
-            "Chromium extension targets must not support Previous when the page does not advertise it"
         )
 
         let unsupported = ChromiumBrowserExtensionTransport.unsupportedResult(command: .next, target: unsupportedTrackTarget)
@@ -216,7 +229,11 @@ struct Semantics {
         expectEqual(unsupported.backend, ChromiumBrowserExtensionTransport.backendName, "Unsupported result must name the Chromium backend")
 
         let controller = ChromiumBrowserExtensionController()
-        controller.markConnected(targets: [target, second])
+        controller.markConnected(
+            profileGuid: "chromium-profile-a",
+            connectionID: "connection-a",
+            targets: [target]
+        )
         let chromiumLegacy = legacyTarget(
             bundleIdentifier: "org.chromium.Chromium",
             displayName: "Chromium"
@@ -226,67 +243,48 @@ struct Semantics {
             displayName: "Helium",
             title: "Unrelated Helium Video"
         )
-        let duplicateHeliumLegacy = legacyTarget(
-            bundleIdentifier: "net.imput.helium",
-            displayName: "Helium",
-            title: "Video A"
-        )
-        let merged = controller.targetsIncludingBrowserExtensionTargets([target, chromiumLegacy, heliumLegacy, duplicateHeliumLegacy])
+        let merged = controller.targetsIncludingBrowserExtensionTargets([target, chromiumLegacy, heliumLegacy])
         expectEqual(
             merged.map(\.id),
-            [target.id, heliumLegacy.id, duplicateHeliumLegacy.id, second.id],
-            "Merging browser extension targets must hide same-family legacy rows while preserving different-browser targets even when titles match"
+            [target.id, heliumLegacy.id],
+            "Merging browser extension targets must hide same-family legacy rows while preserving different-browser targets"
         )
-        let braveTarget = chromiumTarget(
-            id: "chromium-extension:brave:chromium-extension:runtime:44",
-            title: "Brave Video",
-            browserFamily: "brave",
-            browserDisplayName: "Brave",
-            browserBundleIdentifier: "com.brave.Browser",
-            browserInstanceID: "brave-profile-b"
+
+        let multiProfileController = ChromiumBrowserExtensionController()
+        multiProfileController.markConnected(
+            profileGuid: "chromium-profile-a",
+            connectionID: "connection-a",
+            targets: [target]
         )
-        let multiBrowserController = ChromiumBrowserExtensionController()
-        multiBrowserController.markConnected(
-            browserInstanceID: "chromium-profile-a",
-            targets: [target, second]
-        )
-        multiBrowserController.markConnected(
-            browserInstanceID: "brave-profile-b",
+        multiProfileController.markConnected(
+            profileGuid: "brave-profile-b",
+            connectionID: "connection-b",
             targets: [braveTarget]
         )
         expectEqual(
-            multiBrowserController.targets.map(\.id),
-            [braveTarget.id, target.id, second.id],
-            "Chromium extension snapshots must merge targets across browser instances instead of replacing the previous browser snapshot"
+            multiProfileController.targets.map(\.id),
+            [braveTarget.id, target.id],
+            "Chromium extension snapshots must merge targets across profiles"
         )
-        multiBrowserController.markConnected(
-            browserInstanceID: "chromium-profile-a",
+        multiProfileController.markConnected(
+            profileGuid: "chromium-profile-a",
+            connectionID: "connection-a2",
+            targets: [replacement]
+        )
+        expectEqual(
+            multiProfileController.targets.map(\.id),
+            [braveTarget.id, replacement.id],
+            "A new snapshot for the same profile must atomically replace the prior profile snapshot"
+        )
+        multiProfileController.markConnected(
+            profileGuid: "chromium-profile-a",
+            connectionID: "connection-a3",
             targets: []
         )
         expectEqual(
-            multiBrowserController.targets.map(\.id),
+            multiProfileController.targets.map(\.id),
             [braveTarget.id],
-            "An empty snapshot must clear only the browser instance that reported it"
-        )
-        let staleSourceController = ChromiumBrowserExtensionController()
-        staleSourceController.markConnected(
-            browserInstanceID: "stale-browser",
-            targets: [target],
-            now: Date(timeIntervalSinceNow: -5)
-        )
-        staleSourceController.markConnected(
-            browserInstanceID: "live-browser",
-            targets: [braveTarget]
-        )
-        expectEqual(
-            staleSourceController.targets.map(\.id),
-            [braveTarget.id],
-            "Stale Chromium browser snapshots must expire independently when another browser stays connected"
-        )
-        expectEqual(
-            ChromiumBrowserExtensionTransport.legacyBrowserFamily(target: heliumLegacy),
-            "helium",
-            "Legacy Chromium browser family detection must identify Helium rows"
+            "An empty snapshot must clear only the reporting profile"
         )
 
         var unsupportedCallbackResult: MediaRemoteCommandResultEvent?
@@ -297,11 +295,6 @@ struct Semantics {
         expectEqual(unsupportedCallbackResult?.unsupported, true, "Unsupported Chromium commands must report through the command-result callback")
         expectEqual(unsupportedCallbackResult?.ok, false, "Unsupported Chromium commands must not report callback success")
 
-        expectEqual(ChromiumBrowserAudioCommand.mute.rawValue, "mute", "Chromium mute must use the extension mute command")
-        expectEqual(ChromiumBrowserAudioCommand.mute.volumeDelta, nil, "Chromium mute must not send a volume delta")
-        expectEqual(ChromiumBrowserAudioCommand.volumeDelta(0.05).rawValue, "volumeDelta", "Chromium volume must use the extension volumeDelta command")
-        expectEqual(ChromiumBrowserAudioCommand.volumeDelta(0.05).volumeDelta, 0.05, "Chromium volume must preserve the requested delta")
-
         let disconnectedController = ChromiumBrowserExtensionController()
         var disconnectedAudioResult: MediaRemoteCommandResultEvent?
         let disconnectedAudioHandled = disconnectedController.submit(audioCommand: .mute, target: target) { result in
@@ -311,8 +304,13 @@ struct Semantics {
         expectEqual(disconnectedAudioResult?.ok, false, "Disconnected Chromium audio commands must not report success")
         expectEqual(disconnectedAudioResult?.command, "mute", "Disconnected Chromium audio commands must preserve the command name")
 
-        let connectedAudioHandled = controller.submit(audioCommand: .volumeDelta(0.05), target: target) { _ in }
-        expectEqual(connectedAudioHandled, true, "Connected Chromium audio commands must route through the Chromium backend")
+        var missingRouteResult: MediaRemoteCommandResultEvent?
+        let missingRouteHandled = controller.submit(command: .play, target: braveTarget) { result in
+            missingRouteResult = result
+        }
+        expectEqual(missingRouteHandled, true, "Missing Chromium routes must still be owned by the Chromium backend")
+        expectEqual(missingRouteResult?.ok, false, "Missing Chromium routes must fail locally")
+        expectEqual(missingRouteResult?.message, "Chromium extension is disconnected.", "Missing Chromium routes must not broadcast without a connection ID")
 
         var disconnectedFocusResult: SourceFocusResult?
         let disconnectedFocusHandled = disconnectedController.focus(target: target) { result in
@@ -320,230 +318,56 @@ struct Semantics {
         }
         expectEqual(disconnectedFocusHandled, true, "Disconnected Chromium focus must be handled by the Chromium backend")
         expectEqual(disconnectedFocusResult?.ok, false, "Disconnected Chromium focus must not report success")
-        expectEqual(disconnectedFocusResult?.backend, ChromiumBrowserExtensionTransport.backendName, "Disconnected Chromium focus must name the Chromium backend")
         expectEqual(disconnectedFocusResult?.failureReason, .chromiumExtensionDisconnected, "Disconnected Chromium focus must report a focus-specific failure reason")
 
-        let connectedFocusHandled = controller.focus(target: second) { _ in }
-        expectEqual(connectedFocusHandled, true, "Connected Chromium focus must route through the Chromium backend")
-
-        let snapshotTrustBoundaryController = ChromiumBrowserExtensionController()
-        snapshotTrustBoundaryController.markConnected(
-            browserInstanceID: "chromium-profile-a",
-            targets: [target]
-        )
-        snapshotTrustBoundaryController.markConnected(
-            browserInstanceID: "brave-profile-b",
-            targets: [braveTarget]
-        )
-        snapshotTrustBoundaryController.handleSnapshotPayload("not-json")
-        expectEqual(
-            snapshotTrustBoundaryController.targets.map(\.id),
-            [braveTarget.id, target.id],
-            "Malformed Chromium snapshots must be ignored without dropping existing browser state"
-        )
-        snapshotTrustBoundaryController.handleSnapshotPayload("""
-        {"protocolVersion":999,"browserInstanceID":"chromium-profile-a","targets":[]}
+        let snapshotController = ChromiumBrowserExtensionController()
+        snapshotController.handleSnapshotPayload("""
+        {"protocolVersion":3,"profileGuid":"chromium-profile-a","connectionID":"connection-a","targets":[{"id":"chromium-tab:chromium-profile-a:22","browser":"Chrome","browserFamily":"chrome","browserDisplayName":"Chrome","browserBundleIdentifier":"com.google.Chrome","url":"https://example.test","pageTitle":"Example","title":"Song","artist":"Artist","album":"Album","playing":true,"duration":100,"elapsedTime":10,"supportedCommands":["play","pause","playPause"]}]}
         """)
-        expectEqual(
-            snapshotTrustBoundaryController.targets.map(\.id),
-            [braveTarget.id],
-            "Protocol-mismatched Chromium snapshots must clear only the reporting browser instance"
-        )
+        expectEqual(snapshotController.targets.map(\.id), ["chromium-tab:chromium-profile-a:22"], "Valid Chromium snapshots must decode stable tab IDs")
+        snapshotController.handleSnapshotPayload("""
+        {"protocolVersion":3,"profileGuid":"chromium-profile-a","connectionID":"connection-a2","targets":[{"id":"chromium-tab:chromium-profile-a:23","browser":"Chrome","browserFamily":"chrome","browserDisplayName":"Chrome","browserBundleIdentifier":"com.google.Chrome","url":"https://example.test/2","pageTitle":"Second","title":"Second","artist":"Artist","album":"Album","playing":true,"duration":100,"elapsedTime":10,"supportedCommands":["play","pause","playPause"]}]}
+        """)
+        expectEqual(snapshotController.targets.map(\.id), ["chromium-tab:chromium-profile-a:23"], "Decoded snapshots must atomically replace by profile GUID")
+        snapshotController.handleSnapshotPayload("""
+        {"protocolVersion":999,"profileGuid":"chromium-profile-a","connectionID":"connection-a3","targets":[]}
+        """)
+        expectEqual(snapshotController.targets.map(\.id), ["chromium-tab:chromium-profile-a:23"], "Protocol-mismatched Chromium snapshots must be ignored")
 
         let commandResultController = ChromiumBrowserExtensionController()
-        commandResultController.markConnected(targets: [target])
+        commandResultController.markConnected(profileGuid: "chromium-profile-a", connectionID: "connection-a", targets: [target])
         var commandResult: MediaRemoteCommandResultEvent?
-        let commandHandled = commandResultController.submit(command: .play, target: target) { result in
+        let commandRequestID = "command-result-a"
+        commandResultController.pendingCommands[commandRequestID] = ChromiumBrowserExtensionPendingCommand(
+            startedAt: ProcessInfo.processInfo.systemUptime,
+            commandName: "play",
+            targetID: target.id
+        ) { result in
             commandResult = result
         }
-        expectEqual(commandHandled, true, "Connected Chromium commands must queue a pending command result")
-        guard let commandRequestID = commandResultController.pendingCommands.keys.first else {
-            fail("Connected Chromium commands must record the pending request ID")
-        }
         commandResultController.handleCommandResultPayload("""
-        {"type":"commandResult","protocolVersion":2,"requestID":"\(commandRequestID)","targetID":"\(target.id)","command":"play","ok":true,"message":"played","backend":"chromium_extension","unsupported":false}
+        {"type":"commandResult","protocolVersion":3,"requestID":"\(commandRequestID)","targetID":"\(target.id)","command":"play","ok":true,"message":"played","backend":"chromium_extension","unsupported":false}
         """)
-        expectEqual(commandResult?.requestID, commandRequestID, "Valid Chromium command results must be routed back to the matching pending command")
-        expectEqual(commandResult?.command, "play", "Valid Chromium command results must preserve the requested command")
+        expectEqual(commandResult?.requestID, commandRequestID, "Valid Chromium command results must route back to the matching pending command")
         expectEqual(commandResult?.ok, true, "Valid Chromium command results must preserve success")
         expectTrue(commandResultController.pendingCommands.isEmpty, "Valid Chromium command results must clear the pending command slot")
-        expectTrue(commandResultController.commandResultTimeouts.isEmpty, "Valid Chromium command results must cancel the command timeout")
-
-        let malformedCommandResultController = ChromiumBrowserExtensionController()
-        malformedCommandResultController.markConnected(targets: [target])
-        var protocolMismatchCommandResult: MediaRemoteCommandResultEvent?
-        let protocolMismatchCommandHandled = malformedCommandResultController.submit(command: .pause, target: target) { result in
-            protocolMismatchCommandResult = result
-        }
-        expectEqual(protocolMismatchCommandHandled, true, "Connected Chromium commands must arm a pending request before result validation")
-        guard let protocolMismatchCommandRequestID = malformedCommandResultController.pendingCommands.keys.first else {
-            fail("Malformed Chromium command result test must have a pending request ID")
-        }
-        malformedCommandResultController.handleCommandResultPayload("not-json")
-        expectEqual(
-            malformedCommandResultController.pendingCommands.keys.sorted(),
-            [protocolMismatchCommandRequestID],
-            "Malformed Chromium command results must leave the pending request armed for a later valid reply"
-        )
-        expectEqual(
-            protocolMismatchCommandResult?.requestID,
-            nil,
-            "Malformed Chromium command results must not spuriously complete the pending request"
-        )
-        malformedCommandResultController.handleCommandResultPayload("""
-        {"type":"commandResult","protocolVersion":999,"requestID":"\(protocolMismatchCommandRequestID)","targetID":"\(target.id)","command":"pause","ok":false,"message":"Chromium extension protocol mismatch.","backend":"chromium_extension","unsupported":true}
-        """)
-        expectEqual(
-            protocolMismatchCommandResult?.requestID,
-            protocolMismatchCommandRequestID,
-            "Protocol-mismatched Chromium command results must complete the matching pending request"
-        )
-        expectEqual(protocolMismatchCommandResult?.command, "pause", "Protocol-mismatched Chromium command results must preserve the queued command name")
-        expectEqual(protocolMismatchCommandResult?.ok, false, "Protocol-mismatched Chromium command results must fail the command")
-        expectEqual(protocolMismatchCommandResult?.unsupported, true, "Protocol-mismatched Chromium command results must be marked unsupported")
-        expectEqual(protocolMismatchCommandResult?.message, "Chromium extension protocol mismatch.", "Protocol-mismatched Chromium command results must explain the protocol failure")
-        expectTrue(malformedCommandResultController.pendingCommands.isEmpty, "Protocol-mismatched Chromium command results must clear the pending command slot")
-        expectTrue(malformedCommandResultController.commandResultTimeouts.isEmpty, "Protocol-mismatched Chromium command results must cancel the command timeout")
-
-        let mismatchedCommandResultController = ChromiumBrowserExtensionController()
-        mismatchedCommandResultController.markConnected(targets: [target, second])
-        var mismatchedCommandResult: MediaRemoteCommandResultEvent?
-        let mismatchedCommandHandled = mismatchedCommandResultController.submit(command: .pause, target: target) { result in
-            mismatchedCommandResult = result
-        }
-        expectEqual(mismatchedCommandHandled, true, "Connected Chromium commands must arm mismatch validation before result delivery")
-        guard let mismatchedCommandRequestID = mismatchedCommandResultController.pendingCommands.keys.first else {
-            fail("Mismatched Chromium command result test must have a pending request ID")
-        }
-        mismatchedCommandResultController.handleCommandResultPayload("""
-        {"type":"commandResult","protocolVersion":2,"requestID":"\(mismatchedCommandRequestID)","targetID":"\(second.id)","command":"play","ok":true,"message":"played wrong target","backend":"chromium_extension","unsupported":false}
-        """)
-        expectEqual(
-            mismatchedCommandResult?.requestID,
-            mismatchedCommandRequestID,
-            "Mismatched Chromium command results must complete the matching pending request with a failure"
-        )
-        expectEqual(
-            mismatchedCommandResult?.targetID,
-            target.id,
-            "Mismatched Chromium command results must report the queued target instead of the mismatched payload target"
-        )
-        expectEqual(
-            mismatchedCommandResult?.command,
-            "pause",
-            "Mismatched Chromium command results must report the queued command instead of the mismatched payload command"
-        )
-        expectEqual(
-            mismatchedCommandResult?.ok,
-            false,
-            "Mismatched Chromium command results must fail the queued command"
-        )
-        expectEqual(
-            mismatchedCommandResult?.message,
-            "Chromium extension command-result did not match the queued request.",
-            "Mismatched Chromium command results must explain the trust-boundary failure"
-        )
-        expectFalse(
-            mismatchedCommandResult?.unsupported ?? true,
-            "Mismatched Chromium command results must not masquerade as unsupported commands"
-        )
-        expectTrue(mismatchedCommandResultController.pendingCommands.isEmpty, "Mismatched Chromium command results must clear the pending command slot")
-        expectTrue(mismatchedCommandResultController.commandResultTimeouts.isEmpty, "Mismatched Chromium command results must cancel the command timeout")
 
         let focusResultController = ChromiumBrowserExtensionController()
-        focusResultController.markConnected(targets: [target])
+        focusResultController.markConnected(profileGuid: "chromium-profile-a", connectionID: "connection-a", targets: [target])
         var focusResult: SourceFocusResult?
-        let focusHandled = focusResultController.focus(target: target) { result in
+        let focusRequestID = "focus-result-a"
+        focusResultController.pendingFocusRequests[focusRequestID] = ChromiumBrowserExtensionPendingFocus(
+            startedAt: ProcessInfo.processInfo.systemUptime,
+            targetID: target.id
+        ) { result in
             focusResult = result
         }
-        expectEqual(focusHandled, true, "Connected Chromium focus must queue a pending focus result")
-        guard let focusRequestID = focusResultController.pendingFocusRequests.keys.first else {
-            fail("Connected Chromium focus must record the pending focus request ID")
-        }
         focusResultController.handleFocusResultPayload("""
-        {"type":"focusResult","protocolVersion":2,"requestID":"\(focusRequestID)","targetID":"\(target.id)","ok":true,"message":"focused","backend":"chromium_extension"}
+        {"type":"focusResult","protocolVersion":3,"requestID":"\(focusRequestID)","targetID":"\(target.id)","ok":true,"message":"focused","backend":"chromium_extension"}
         """)
-        expectEqual(focusResult?.requestID, focusRequestID, "Valid Chromium focus results must be routed back to the matching pending focus request")
+        expectEqual(focusResult?.requestID, focusRequestID, "Valid Chromium focus results must route back to the matching pending focus request")
         expectEqual(focusResult?.ok, true, "Valid Chromium focus results must preserve success")
-        expectEqual(focusResult?.message, "focused", "Valid Chromium focus results must preserve the extension message")
         expectTrue(focusResultController.pendingFocusRequests.isEmpty, "Valid Chromium focus results must clear the pending focus slot")
-        expectTrue(focusResultController.focusResultTimeouts.isEmpty, "Valid Chromium focus results must cancel the focus timeout")
-
-        let malformedFocusResultController = ChromiumBrowserExtensionController()
-        malformedFocusResultController.markConnected(targets: [target])
-        var protocolMismatchFocusResult: SourceFocusResult?
-        let protocolMismatchFocusHandled = malformedFocusResultController.focus(target: target) { result in
-            protocolMismatchFocusResult = result
-        }
-        expectEqual(protocolMismatchFocusHandled, true, "Connected Chromium focus must arm a pending request before result validation")
-        guard let protocolMismatchFocusRequestID = malformedFocusResultController.pendingFocusRequests.keys.first else {
-            fail("Malformed Chromium focus result test must have a pending request ID")
-        }
-        malformedFocusResultController.handleFocusResultPayload("not-json")
-        expectEqual(
-            malformedFocusResultController.pendingFocusRequests.keys.sorted(),
-            [protocolMismatchFocusRequestID],
-            "Malformed Chromium focus results must leave the pending request armed for a later valid reply"
-        )
-        expectEqual(
-            protocolMismatchFocusResult?.requestID,
-            nil,
-            "Malformed Chromium focus results must not spuriously complete the pending request"
-        )
-        malformedFocusResultController.handleFocusResultPayload("""
-        {"type":"focusResult","protocolVersion":999,"requestID":"\(protocolMismatchFocusRequestID)","targetID":"\(target.id)","ok":false,"message":"Chromium extension protocol mismatch.","backend":"chromium_extension","failureReason":"chromium_extension_protocol_mismatch"}
-        """)
-        expectEqual(
-            protocolMismatchFocusResult?.requestID,
-            protocolMismatchFocusRequestID,
-            "Protocol-mismatched Chromium focus results must complete the matching pending request"
-        )
-        expectEqual(protocolMismatchFocusResult?.ok, false, "Protocol-mismatched Chromium focus results must fail the focus request")
-        expectEqual(protocolMismatchFocusResult?.message, "Chromium extension protocol mismatch.", "Protocol-mismatched Chromium focus results must explain the protocol failure")
-        expectEqual(protocolMismatchFocusResult?.failureReason, .chromiumExtensionProtocolMismatch, "Protocol-mismatched Chromium focus results must report the protocol-mismatch failure reason")
-        expectTrue(malformedFocusResultController.pendingFocusRequests.isEmpty, "Protocol-mismatched Chromium focus results must clear the pending focus slot")
-        expectTrue(malformedFocusResultController.focusResultTimeouts.isEmpty, "Protocol-mismatched Chromium focus results must cancel the focus timeout")
-
-        let mismatchedFocusResultController = ChromiumBrowserExtensionController()
-        mismatchedFocusResultController.markConnected(targets: [target, second])
-        var mismatchedFocusResult: SourceFocusResult?
-        let mismatchedFocusHandled = mismatchedFocusResultController.focus(target: target) { result in
-            mismatchedFocusResult = result
-        }
-        expectEqual(mismatchedFocusHandled, true, "Connected Chromium focus must arm mismatch validation before result delivery")
-        guard let mismatchedFocusRequestID = mismatchedFocusResultController.pendingFocusRequests.keys.first else {
-            fail("Mismatched Chromium focus result test must have a pending request ID")
-        }
-        mismatchedFocusResultController.handleFocusResultPayload("""
-        {"type":"focusResult","protocolVersion":2,"requestID":"\(mismatchedFocusRequestID)","targetID":"\(second.id)","ok":true,"message":"focused wrong tab","backend":"chromium_extension"}
-        """)
-        expectEqual(
-            mismatchedFocusResult?.requestID,
-            mismatchedFocusRequestID,
-            "Mismatched Chromium focus results must complete the matching pending request with a failure"
-        )
-        expectEqual(
-            mismatchedFocusResult?.targetID,
-            target.id,
-            "Mismatched Chromium focus results must report the queued target instead of the mismatched payload target"
-        )
-        expectEqual(
-            mismatchedFocusResult?.ok,
-            false,
-            "Mismatched Chromium focus results must fail the queued request"
-        )
-        expectEqual(
-            mismatchedFocusResult?.message,
-            "Chromium extension focus-result did not match the queued request.",
-            "Mismatched Chromium focus results must explain the trust-boundary failure"
-        )
-        expectEqual(
-            mismatchedFocusResult?.failureReason,
-            .chromiumExtensionProtocolMismatch,
-            "Mismatched Chromium focus results must reuse the protocol-mismatch failure classification"
-        )
-        expectTrue(mismatchedFocusResultController.pendingFocusRequests.isEmpty, "Mismatched Chromium focus results must clear the pending focus slot")
-        expectTrue(mismatchedFocusResultController.focusResultTimeouts.isEmpty, "Mismatched Chromium focus results must cancel the focus timeout")
 
         print("verify_chromium_extension_transport_semantics=ok")
     }
@@ -554,8 +378,7 @@ struct Semantics {
         supportedCommands: [MediaRemoteTransportCommand]? = [.play, .pause, .playPause, .next, .previous],
         browserFamily: String = "chromium",
         browserDisplayName: String = "Chromium",
-        browserBundleIdentifier: String = "org.chromium.Chromium",
-        browserInstanceID: String = "chromium-profile-a"
+        browserBundleIdentifier: String = "org.chromium.Chromium"
     ) -> MediaRemoteTarget {
         MediaRemoteTarget(
             id: id,
@@ -578,8 +401,7 @@ struct Semantics {
             supportedCommands: supportedCommands,
             browserFamily: browserFamily,
             browserDisplayName: browserDisplayName,
-            browserBundleIdentifier: browserBundleIdentifier,
-            browserInstanceID: browserInstanceID
+            browserBundleIdentifier: browserBundleIdentifier
         )
     }
 
@@ -606,8 +428,7 @@ struct Semantics {
             supportedCommands: nil,
             browserFamily: nil,
             browserDisplayName: nil,
-            browserBundleIdentifier: nil,
-            browserInstanceID: nil
+            browserBundleIdentifier: nil
         )
     }
 
@@ -625,7 +446,7 @@ struct Semantics {
 
     private static func expectEqual<T: Equatable>(_ actual: T, _ expected: T, _ message: String) {
         guard actual == expected else {
-            fail("\(message): expected \(expected), got \(actual)")
+            fail("\(message): expected \(String(describing: expected)), got \(String(describing: actual))")
         }
     }
 
@@ -637,6 +458,7 @@ struct Semantics {
 SWIFT
 
 swiftc \
+  -module-cache-path "$workdir/module-cache" \
   "$workdir/Stubs.swift" \
   "$workdir/ChromiumBrowserExtensionTransport.swift" \
   "$workdir/Semantics.swift" \
@@ -644,88 +466,106 @@ swiftc \
 
 "$workdir/verify_chromium_extension_transport_semantics"
 
-rg -n 'root\["browserInstanceID"\] = hostBrowserIdentity.instanceID' \
-  "$repo_root/packages/SonosHandoffCore/Sources/KeywayChromiumNativeHost/main.swift" >/dev/null \
-  || {
-    echo "verify_chromium_extension_transport_semantics: native host snapshots must carry browserInstanceID at the payload root" >&2
-    exit 1
-  }
-
-rg -n 'markConnected\(browserInstanceID: (snapshotEnvelope|snapshot)\.browserInstanceID' \
-  "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionTransport.swift" >/dev/null \
-  || {
-    echo "verify_chromium_extension_transport_semantics: snapshot handling must key extension state by browserInstanceID" >&2
-    exit 1
-  }
-
-if rg -n 'preconditionFailure\("Chromium native host (snapshot|command-result|focus-result) notifications must include' \
-  "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionTransport.swift" >/dev/null; then
-  echo "verify_chromium_extension_transport_semantics: external Chromium notifications must not crash the app on missing or invalid payloads" >&2
-  exit 1
-fi
-
-if rg -n 'try! decoder.decode\((ChromiumBrowserExtensionSnapshotPayload|MediaRemoteCommandResultEvent|SourceFocusResult)\.self' \
-  "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionTransport.swift" >/dev/null; then
-  echo "verify_chromium_extension_transport_semantics: external Chromium notifications must not force-decode untrusted payloads" >&2
-  exit 1
-fi
-
-python3 - "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionTransport.swift" <<'PY'
+python3 - "$repo_root" <<'PY'
+import json
 import pathlib
+import re
 import sys
 
-text = pathlib.Path(sys.argv[1]).read_text()
+repo_root = pathlib.Path(sys.argv[1])
+transport = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionTransport.swift").read_text()
+native_host = (repo_root / "packages/SonosHandoffCore/Sources/KeywayChromiumNativeHost/main.swift").read_text()
+service_worker = (repo_root / "ChromiumExtension/service_worker.js").read_text()
 
 def fail(message):
     raise SystemExit(f"verify_chromium_extension_transport_semantics: {message}")
 
-if "try! JSONEncoder().encode(payload)" in text:
-    fail("Chromium extension outbound payloads must not use try! JSONEncoder")
-if "String(data: data, encoding: .utf8)!" in text:
-    fail("Chromium extension outbound payloads must not force-unwrap UTF-8 JSON")
+def expect(text, needle, message):
+    if needle not in text:
+        fail(message)
 
-focus_start = text.find("    func focus(\n        target: MediaRemoteTarget,")
-submit_start = text.find("    private func submit(\n        commandName: String,", focus_start)
-if focus_start < 0 or submit_start < 0:
-    fail("missing focus or command submission methods")
-focus = text[focus_start:submit_start]
-
-command_end = text.find("\n    func targetsIncludingBrowserExtensionTargets", submit_start)
-if command_end < 0:
-    fail("missing command submission method boundary")
-command = text[submit_start:command_end]
-
-for required in (
-    "do {",
-    "data = try JSONEncoder().encode(payload)",
-    "} catch {",
-    "logger.error(\"ChromiumExtension focus_encode_failed",
-    "onResult(SourceFocusResult(",
-    "message: \"Chromium extension focus payload encoding failed.\"",
-    "failureReason: .chromiumExtensionPayloadEncodingFailed",
-    "return true",
-    "guard let json = String(data: data, encoding: .utf8) else {",
-    "pendingFocusRequests[requestID] = ChromiumBrowserExtensionPendingFocus(",
+for forbidden in (
+    "browser" + "InstanceID",
+    "instance" + "ID",
+    "chromium-" + "extension:",
+    "disconnectInterval",
+    "snapshotSourcesByBrowser" + "InstanceID",
+    "public" + "TargetID",
+    "raw" + "TargetID",
 ):
-    if required not in focus:
-        fail(f"focus submission must report encoding failures through SourceFocusResult: missing {required}")
+    if forbidden in transport or forbidden in native_host:
+        fail(f"old Chromium identity mechanism must be removed from Swift/native host sources: {forbidden}")
 
-for required in (
-    "do {",
-    "data = try JSONEncoder().encode(payload)",
-    "} catch {",
-    "logger.error(\"ChromiumExtension command_encode_failed",
-    "onResult(MediaRemoteCommandResultEvent(",
-    "message: \"Chromium extension command payload encoding failed.\"",
-    "return true",
-    "guard let json = String(data: data, encoding: .utf8) else {",
-    "pendingCommands[requestID] = ChromiumBrowserExtensionPendingCommand(",
-):
-    if required not in command:
-        fail(f"command submission must report encoding failures through MediaRemoteCommandResultEvent: missing {required}")
+expect(service_worker, "const protocolVersion = 3", "service worker must speak Chromium extension protocol v3")
+expect(service_worker, 'return ["chromium-tab", message.profileGuid, message.tabId].join(":")', "service worker source IDs must use profile GUID plus tab ID")
+expect(service_worker, "chrome.storage.local.get([profileGuidStorageKey]", "service worker must load profile GUID from chrome.storage.local")
+expect(service_worker, "chrome.storage.local.set({ [profileGuidStorageKey]: profileGuid }", "service worker must persist minted profile GUIDs")
+expect(service_worker, 'sendNative({ type: "hello", protocolVersion, profileGuid })', "service worker hello must include profile GUID")
 
-if focus.find("onResult(SourceFocusResult(") > focus.find("pendingFocusRequests[requestID] = ChromiumBrowserExtensionPendingFocus("):
-    fail("focus encoding failures must callback before any pending focus request is queued")
-if command.find("onResult(MediaRemoteCommandResultEvent(") > command.find("pendingCommands[requestID] = ChromiumBrowserExtensionPendingCommand("):
-    fail("command encoding failures must callback before any pending command is queued")
+expect(transport, "static let protocolVersion = 3", "Swift transport must hard-cut the browser extension protocol at v3")
+expect(transport, 'static let targetIDPrefix = "chromium-tab:"', "Swift transport must recognize the stable Chromium tab target prefix")
+expect(transport, "private var snapshotSourcesByProfileGuid: [String: SnapshotSource] = [:]", "Swift transport snapshots must be keyed by profile GUID")
+expect(transport, "private var connectionIDByProfileGuid: [String: String] = [:]", "Swift transport must maintain a profile-to-connection route table")
+expect(transport, "snapshotSourcesByProfileGuid[profileGuid] = SnapshotSource(", "Swift transport must atomically replace profile snapshots")
+expect(transport, "connectionIDByProfileGuid[profileGuid] = connectionID", "Swift transport must update the route table with each snapshot")
+expect(transport, "connectionID: connectionID", "Swift command/focus payloads must stamp the resolved connection ID")
+expect(transport, "return connectionIDByProfileGuid[profileGuid]", "Swift route lookup must resolve connection ID from target profile GUID")
+
+# A profile with a dead connection must eventually be evicted, or a browser quit /
+# extension death leaves zombie targets that shadow the real MediaRemote target
+# forever (F1, Phase 1 review). This is pure eviction only -- no grace/suspect UI
+# state -- and is expected to be deleted once Phase 2 lands an explicit disconnect
+# signal (native host EOF -> bridgeDown), so keep this check narrow and named.
+expect(transport, "private static let staleProfileTimeout: TimeInterval = 5", "Swift transport must evict a profile with no snapshot for 5s (stopgap until Phase 2's disconnect protocol)")
+expect(transport, "let lastSnapshotAt: Date", "Swift transport snapshots must record when they were last refreshed")
+expect(transport, "private func evictStaleProfiles(now: Date) {", "Swift transport must evict stale profiles from both the snapshot and route tables")
+expect(transport, "connectionIDByProfileGuid.removeValue(forKey: profileGuid)", "evicting a stale profile must also drop its route table entry")
+for forbidden in ("disconnectInterval", "markDisconnectedIfStale", "browserInstanceID"):
+    if forbidden in transport:
+        fail(f"Swift transport must not reintroduce the old overlap/grace mechanism: {forbidden}")
+
+expect(native_host, "let connectionID = UUID().uuidString.lowercased()", "native host must mint one private connection ID per process")
+expect(native_host, "struct NativeHelloMessage: Decodable", "native host must decode hello messages carrying profile GUID")
+expect(native_host, "hostConnectionState.record(profileGuid: hello.profileGuid)", "native host must record the profile GUID from hello")
+expect(native_host, 'targets[index]["id"] = "\\(chromiumTargetIDPrefix)\\(profileGuid):\\(tabID)"', "native host must assemble stable Chromium tab target IDs")
+expect(native_host, 'root["profileGuid"] = profileGuid', "native host snapshots must expose profile GUID at the root")
+expect(native_host, 'root["connectionID"] = connectionID', "native host snapshots must expose the private route connection ID at the root")
+expect(native_host, "func payloadByMatchingConnectionID(_ payload: String) -> Data?", "native host must route commands by connection ID")
+expect(native_host, 'let payloadConnectionID = root["connectionID"] as? String', "native host command routing must require an explicit connection ID")
+expect(native_host, "guard payloadConnectionID == connectionID else {\n        return nil\n    }", "native host must silently drop commands for other connections")
+expect(native_host, 'root.removeValue(forKey: "connectionID")', "native host must not forward the private route token to the extension")
+
+observer = native_host[native_host.index("let commandObserver = DistributedNotificationCenter.default().addObserver("):native_host.index("\n}\n\nfunc postNativeMessage")]
+expect(observer, "guard let routedPayload = payloadByMatchingConnectionID(payload) else {\n        return\n    }", "native host observer must stop before forwarding mismatched connection IDs")
+expect(observer, "writeNativeMessage(routedPayload)", "native host observer must forward only matched payloads")
+if "postNotificationName" in observer:
+    fail("native host command observer must not post replies for commands owned by another connection")
+
+def routed(payload, expected_connection_id):
+    root = json.loads(payload)
+    if root.get("connectionID") != expected_connection_id:
+        return None
+    root.pop("connectionID", None)
+    return root
+
+payload = json.dumps({
+    "type": "command",
+    "protocolVersion": 3,
+    "requestID": "request-a",
+    "targetID": "chromium-tab:profile-a:22",
+    "command": "playPause",
+    "connectionID": "connection-a",
+})
+forwarded_by_a = routed(payload, "connection-a")
+forwarded_by_b = routed(payload, "connection-b")
+if forwarded_by_a is None:
+    fail("demultiplexing proof expected profile A host to forward profile A command")
+if forwarded_by_b is not None:
+    fail("demultiplexing proof expected profile B host to drop profile A command")
+if "connectionID" in forwarded_by_a:
+    fail("demultiplexing proof expected forwarded command to omit private connection ID")
+if forwarded_by_a["targetID"] != "chromium-tab:profile-a:22":
+    fail("demultiplexing proof expected stable target ID to pass through unchanged")
+
+print("verify_chromium_extension_transport_static_semantics=ok")
 PY

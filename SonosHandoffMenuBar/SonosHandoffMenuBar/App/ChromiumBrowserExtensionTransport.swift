@@ -5,8 +5,8 @@ import os
 enum ChromiumBrowserExtensionTransport {
     static let backendName = "chromium_extension"
     static let mediaType = "chromium_extension"
-    static let protocolVersion = 2
-    static let targetIDPrefix = "chromium-extension:"
+    static let protocolVersion = 3
+    static let targetIDPrefix = "chromium-tab:"
     static let nativeMessagingHostName = "com.fpieringer.keyway.chromium"
     static let extensionID = "gmdpkggbaohimgacbclndlfjghgcbael"
     static let snapshotNotificationName = Notification.Name("com.fpieringer.keyway.chromium.snapshot")
@@ -26,6 +26,14 @@ enum ChromiumBrowserExtensionTransport {
 
     static func isTarget(_ target: MediaRemoteTarget) -> Bool {
         target.mediaType == mediaType || target.id.hasPrefix(targetIDPrefix)
+    }
+
+    static func profileGuid(targetID: String) -> String? {
+        let parts = targetID.split(separator: ":", omittingEmptySubsequences: false)
+        guard parts.count == 3, parts[0] == "chromium-tab" else {
+            return nil
+        }
+        return String(parts[1])
     }
 
     static func browserFamily(target: MediaRemoteTarget) -> String? {
@@ -260,8 +268,11 @@ enum ChromiumBrowserAudioCommand: Sendable {
 
 @MainActor
 final class ChromiumBrowserExtensionController: ObservableObject {
-    private static let disconnectInterval: TimeInterval = 2
     private static let commandResultTimeoutNanoseconds: UInt64 = 350_000_000
+    /// Stopgap eviction only (no grace/suspect UI state) until Phase 2's explicit
+    /// disconnect protocol lands. Stable IDs make a false eviction cheap -- the row
+    /// simply reappears under the same identity on the next snapshot.
+    private static let staleProfileTimeout: TimeInterval = 5
 
     private struct SnapshotSource {
         let lastSnapshotAt: Date
@@ -270,7 +281,8 @@ final class ChromiumBrowserExtensionController: ObservableObject {
 
     private struct ChromiumBrowserExtensionSnapshotEnvelope: Decodable {
         let protocolVersion: Int
-        let browserInstanceID: String
+        let profileGuid: String
+        let connectionID: String
     }
 
     private struct ChromiumBrowserExtensionCommandResultEnvelope: Decodable {
@@ -291,8 +303,9 @@ final class ChromiumBrowserExtensionController: ObservableObject {
     private var snapshotObserver: NSObjectProtocol?
     private var commandResultObserver: NSObjectProtocol?
     private var focusResultObserver: NSObjectProtocol?
-    private var disconnectTimer: Timer?
-    private var snapshotSourcesByBrowserInstanceID: [String: SnapshotSource] = [:]
+    private var staleEvictionTimer: Timer?
+    private var snapshotSourcesByProfileGuid: [String: SnapshotSource] = [:]
+    private var connectionIDByProfileGuid: [String: String] = [:]
     private var pendingCommands: [String: ChromiumBrowserExtensionPendingCommand] = [:]
     private var commandResultTimeouts: [String: Task<Void, Never>] = [:]
     private var pendingFocusRequests: [String: ChromiumBrowserExtensionPendingFocus] = [:]
@@ -349,9 +362,9 @@ final class ChromiumBrowserExtensionController: ObservableObject {
             }
         }
 
-        disconnectTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+        staleEvictionTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.markDisconnectedIfStale(now: Date())
+                self?.evictStaleProfiles(now: Date())
             }
         }
     }
@@ -369,8 +382,8 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         snapshotObserver = nil
         commandResultObserver = nil
         focusResultObserver = nil
-        disconnectTimer?.invalidate()
-        disconnectTimer = nil
+        staleEvictionTimer?.invalidate()
+        staleEvictionTimer = nil
         commandResultTimeouts.values.forEach { $0.cancel() }
         commandResultTimeouts = [:]
         pendingCommands = [:]
@@ -381,19 +394,22 @@ final class ChromiumBrowserExtensionController: ObservableObject {
     }
 
     func markConnected(
-        browserInstanceID: String = "direct",
+        profileGuid: String,
+        connectionID: String,
         targets: [MediaRemoteTarget],
         now: Date = Date()
     ) {
-        snapshotSourcesByBrowserInstanceID[browserInstanceID] = SnapshotSource(
+        snapshotSourcesByProfileGuid[profileGuid] = SnapshotSource(
             lastSnapshotAt: now,
             targets: targets.filter(ChromiumBrowserExtensionTransport.isTarget)
         )
-        rebuildConnectionState(now: now)
+        connectionIDByProfileGuid[profileGuid] = connectionID
+        rebuildConnectionState()
     }
 
     func markDisconnected() {
-        snapshotSourcesByBrowserInstanceID = [:]
+        snapshotSourcesByProfileGuid = [:]
+        connectionIDByProfileGuid = [:]
         connected = false
         targets = []
     }
@@ -483,13 +499,25 @@ final class ChromiumBrowserExtensionController: ObservableObject {
             ))
             return true
         }
+        guard let connectionID = connectionID(for: target) else {
+            onResult(SourceFocusResult(
+                requestID: UUID().uuidString,
+                targetID: target.id,
+                ok: false,
+                message: "Chromium extension is disconnected.",
+                backend: ChromiumBrowserExtensionTransport.backendName,
+                failureReason: .chromiumExtensionDisconnected
+            ))
+            return true
+        }
 
         let requestID = UUID().uuidString
         let payload = ChromiumBrowserExtensionFocusPayload(
             type: "focusTarget",
             protocolVersion: ChromiumBrowserExtensionTransport.protocolVersion,
             requestID: requestID,
-            targetID: target.id
+            targetID: target.id,
+            connectionID: connectionID
         )
         let data: Data
         do {
@@ -540,6 +568,18 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         target: MediaRemoteTarget,
         onResult: @escaping (MediaRemoteCommandResultEvent) -> Void
     ) -> Bool? {
+        guard let connectionID = connectionID(for: target) else {
+            onResult(MediaRemoteCommandResultEvent(
+                type: "commandResult",
+                requestID: UUID().uuidString,
+                targetID: target.id,
+                command: commandName,
+                ok: false,
+                message: "Chromium extension is disconnected.",
+                backend: ChromiumBrowserExtensionTransport.backendName
+            ))
+            return true
+        }
         let requestID = UUID().uuidString
         let payload = ChromiumBrowserExtensionCommandPayload(
             type: "command",
@@ -547,7 +587,8 @@ final class ChromiumBrowserExtensionController: ObservableObject {
             requestID: requestID,
             targetID: target.id,
             command: commandName,
-            volumeDelta: volumeDelta
+            volumeDelta: volumeDelta,
+            connectionID: connectionID
         )
         let data: Data
         do {
@@ -607,6 +648,13 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         }
     }
 
+    private func connectionID(for target: MediaRemoteTarget) -> String? {
+        guard let profileGuid = ChromiumBrowserExtensionTransport.profileGuid(targetID: target.id) else {
+            return nil
+        }
+        return connectionIDByProfileGuid[profileGuid]
+    }
+
     private func handleSnapshotPayload(_ payload: String) {
         guard let data = payload.data(using: .utf8) else {
             logger.error("Ignoring Chromium extension snapshot with non-UTF-8 payload")
@@ -621,7 +669,6 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         }
         guard snapshotEnvelope.protocolVersion == ChromiumBrowserExtensionTransport.protocolVersion else {
             logger.error("Ignoring Chromium extension snapshot protocol=\(snapshotEnvelope.protocolVersion, privacy: .public)")
-            markConnected(browserInstanceID: snapshotEnvelope.browserInstanceID, targets: [])
             return
         }
         let snapshot: ChromiumBrowserExtensionSnapshotPayload
@@ -632,7 +679,8 @@ final class ChromiumBrowserExtensionController: ObservableObject {
             return
         }
         markConnected(
-            browserInstanceID: snapshot.browserInstanceID,
+            profileGuid: snapshot.profileGuid,
+            connectionID: snapshot.connectionID,
             targets: snapshot.targets.map(\.mediaRemoteTarget)
         )
     }
@@ -770,22 +818,29 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         pending.resultHandler(result)
     }
 
-    private func markDisconnectedIfStale(now: Date) {
-        rebuildConnectionState(now: now)
-    }
-
-    private func rebuildConnectionState(now: Date) {
-        snapshotSourcesByBrowserInstanceID = snapshotSourcesByBrowserInstanceID.filter {
-            now.timeIntervalSince($0.value.lastSnapshotAt) <= Self.disconnectInterval
-        }
-        connected = !snapshotSourcesByBrowserInstanceID.isEmpty
+    private func rebuildConnectionState() {
+        connected = !snapshotSourcesByProfileGuid.isEmpty
 
         var seenTargetIDs: Set<String> = []
-        targets = snapshotSourcesByBrowserInstanceID.keys.sorted().flatMap { browserInstanceID in
-            snapshotSourcesByBrowserInstanceID[browserInstanceID]?.targets ?? []
+        targets = snapshotSourcesByProfileGuid.keys.sorted().flatMap { profileGuid in
+            snapshotSourcesByProfileGuid[profileGuid]?.targets ?? []
         }.filter { target in
             seenTargetIDs.insert(target.id).inserted
         }
+    }
+
+    private func evictStaleProfiles(now: Date) {
+        let staleProfileGuids = snapshotSourcesByProfileGuid.filter {
+            now.timeIntervalSince($0.value.lastSnapshotAt) > Self.staleProfileTimeout
+        }.keys
+        guard !staleProfileGuids.isEmpty else {
+            return
+        }
+        for profileGuid in staleProfileGuids {
+            snapshotSourcesByProfileGuid.removeValue(forKey: profileGuid)
+            connectionIDByProfileGuid.removeValue(forKey: profileGuid)
+        }
+        rebuildConnectionState()
     }
 
     private func armCommandResultTimeout(requestID: String) {
@@ -856,6 +911,7 @@ private struct ChromiumBrowserExtensionCommandPayload: Encodable {
     let targetID: String
     let command: String
     let volumeDelta: Double?
+    let connectionID: String
 }
 
 private struct ChromiumBrowserExtensionFocusPayload: Encodable {
@@ -863,11 +919,13 @@ private struct ChromiumBrowserExtensionFocusPayload: Encodable {
     let protocolVersion: Int
     let requestID: String
     let targetID: String
+    let connectionID: String
 }
 
 private struct ChromiumBrowserExtensionSnapshotPayload: Decodable {
     let protocolVersion: Int
-    let browserInstanceID: String
+    let profileGuid: String
+    let connectionID: String
     let targets: [ChromiumBrowserExtensionTargetPayload]
 }
 
@@ -877,7 +935,6 @@ private struct ChromiumBrowserExtensionTargetPayload: Decodable {
     let browserFamily: String?
     let browserDisplayName: String?
     let browserBundleIdentifier: String?
-    let browserInstanceID: String?
     let url: String
     let pageTitle: String
     let title: String
@@ -910,8 +967,7 @@ private struct ChromiumBrowserExtensionTargetPayload: Decodable {
             supportedCommands: supportedCommands.compactMap(MediaRemoteTransportCommand.init(rawValue:)),
             browserFamily: browserFamily,
             browserDisplayName: browserDisplayName,
-            browserBundleIdentifier: browserBundleIdentifier,
-            browserInstanceID: browserInstanceID
+            browserBundleIdentifier: browserBundleIdentifier
         )
     }
 }

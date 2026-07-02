@@ -172,8 +172,7 @@ struct MenuBarMediaSourceSection: View {
             supportedCommands: latestTarget.supportedCommands ?? sessionTarget.supportedCommands,
             browserFamily: sessionTarget.browserFamily,
             browserDisplayName: sessionTarget.browserDisplayName,
-            browserBundleIdentifier: sessionTarget.browserBundleIdentifier,
-            browserInstanceID: sessionTarget.browserInstanceID
+            browserBundleIdentifier: sessionTarget.browserBundleIdentifier
         )
     }
 

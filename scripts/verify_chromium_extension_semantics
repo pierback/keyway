@@ -35,8 +35,8 @@ def expect(text, needle, message):
 
 expect(
     transport,
-    "static let protocolVersion = 2",
-    "Swift Chromium transport must hard-cut the browser extension protocol at v2",
+    "static let protocolVersion = 3",
+    "Swift Chromium transport must hard-cut the browser extension protocol at v3",
 )
 expect(
     transport,
@@ -174,8 +174,23 @@ expect(
 )
 expect(
     repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
-    "const protocolVersion = 2",
-    "Chromium extension service worker must speak protocol v2",
+    "const protocolVersion = 3",
+    "Chromium extension service worker must speak protocol v3",
+)
+expect(
+    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    "chrome.storage.local.get([profileGuidStorageKey]",
+    "Chromium extension service worker must load profile GUIDs from local browser-profile storage",
+)
+expect(
+    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    "chrome.storage.local.set({ [profileGuidStorageKey]: profileGuid }",
+    "Chromium extension service worker must persist minted profile GUIDs",
+)
+expect(
+    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    'sendNative({ type: "hello", protocolVersion, profileGuid })',
+    "Chromium extension service worker must announce its stable profile GUID to the native host",
 )
 expect(
     repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
@@ -219,8 +234,8 @@ expect(
 )
 expect(
     repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
-    "sourceID(message)",
-    "Chromium extension service worker must expose tab-scoped source identities instead of media-element target identities",
+    'return ["chromium-tab", message.profileGuid, message.tabId].join(":")',
+    "Chromium extension service worker must expose stable profile-and-tab source identities instead of media-element target identities",
 )
 expect(
     repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
@@ -311,18 +326,18 @@ expect(
 )
 expect(
     native_host,
-    "hostBrowserIdentity.publicTargetID(rawTargetID:",
-    "Chromium native host must publish browser-scoped target IDs to the app",
+    'targets[index]["id"] = "\\(chromiumTargetIDPrefix)\\(profileGuid):\\(tabID)"',
+    "Chromium native host must publish stable profile-and-tab target IDs to the app",
 )
 expect(
     native_host,
-    '"\\(chromiumTargetIDPrefix)\\(family):\\(instanceID):"',
-    "Chromium native host public target IDs must include host instance identity to avoid profile collisions",
+    "let connectionID = UUID().uuidString.lowercased()",
+    "Chromium native host must mint one private connection ID per native-host process",
 )
 expect(
     native_host,
-    "payloadByRestoringRawTargetIdentity",
-    "Chromium native host must strip public target IDs for owned commands",
+    "func payloadByMatchingConnectionID(_ payload: String) -> Data?",
+    "Chromium native host must route commands by private connection ID",
 )
 expect(
     native_host,
@@ -341,12 +356,12 @@ expect(
 )
 expect(
     native_host,
-    "func payloadByRestoringPublicTargetIdentity(_ payload: Data) -> String?",
-    "Chromium native host must validate result payloads before restoring public target IDs"
+    "func payloadStringForResult(_ payload: Data) -> String?",
+    "Chromium native host must validate result payloads before forwarding target IDs"
 )
 expect(
     native_host,
-    "guard let rawTargetID = hostBrowserIdentity.rawTargetID(publicTargetID: publicTargetID) else {\n        return nil\n    }",
+    "guard payloadConnectionID == connectionID else {\n        return nil\n    }",
     "Chromium native host must silently ignore commands owned by another browser host to avoid racing the owner result",
 )
 if "postUnroutableTargetResult" in native_host:
@@ -358,17 +373,26 @@ expect(
 )
 expect(
     native_host,
-    'targets[index]["browserInstanceID"]',
-    "Chromium native host must expose browser host instance metadata",
+    'root["profileGuid"] = profileGuid',
+    "Chromium native host must expose profile GUID metadata",
+)
+expect(
+    native_host,
+    'root["connectionID"] = connectionID',
+    "Chromium native host must expose private routing connection metadata",
 )
 for forbidden in [
     'try! JSONSerialization.jsonObject(with: data) as! [String: Any]',
-    'let rawTargetID = targets[index]["id"] as! String',
-    'let publicTargetID = root["targetID"] as! String',
-    'let rawTargetID = root["targetID"] as! String',
+    'let raw' + 'TargetID = targets[index]["id"] as! String',
+    'let public' + 'TargetID = root["targetID"] as! String',
+    'let raw' + 'TargetID = root["targetID"] as! String',
     'let envelope = try! JSONDecoder().decode(NativeMessageEnvelope.self, from: data)',
     'preconditionFailure("Keyway command notifications must include a payload.")',
     'Unknown Chromium native message type:',
+    "public" + "TargetID",
+    "raw" + "TargetID",
+    "instance" + "ID",
+    "browser" + "InstanceID",
 ]:
     if forbidden in native_host:
         raise SystemExit(

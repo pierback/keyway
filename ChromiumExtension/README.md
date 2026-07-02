@@ -3,10 +3,10 @@
 The extension makes browser media deterministic by giving Keyway one canonical source row for each browser tab/session:
 
 ```text
-chromium-extension:<browser-runtime>:<tab-id>
+chromium-tab:<profile-guid>:<tab-id>
 ```
 
-The browser runtime component includes the detected Chrome-family browser and extension runtime ID, so Chromium-family targets do not collapse into the same identity when tab IDs overlap. The unpacked extension has a stable manifest key, so its runtime ID is deterministic: `gmdpkggbaohimgacbclndlfjghgcbael`. The service worker keeps frame and media element IDs as private route state and sends commands to the selected element for the source. This avoids both OS media-key ambiguity and duplicate Keyway rows when one page exposes several media elements.
+The profile GUID is minted once by the extension and persisted in `chrome.storage.local`, so a tab keeps the same Keyway identity across native-host process churn and service-worker restarts. The unpacked extension has a stable manifest key, so its runtime ID is deterministic metadata: `gmdpkggbaohimgacbclndlfjghgcbael`. The service worker keeps frame and media element IDs as private route state and sends commands to the selected element for the source. This avoids both OS media-key ambiguity and duplicate Keyway rows when one page exposes several media elements.
 
 ## Architecture
 

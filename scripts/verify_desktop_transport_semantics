@@ -55,7 +55,6 @@ struct MediaRemoteTarget: Equatable, Identifiable {
     let browserFamily: String?
     let browserDisplayName: String?
     let browserBundleIdentifier: String?
-    let browserInstanceID: String?
 }
 
 struct MediaRemoteCommandResultEvent: Equatable {
@@ -91,7 +90,7 @@ struct MediaRemoteCommandResultEvent: Equatable {
 
 enum ChromiumBrowserExtensionTransport {
     static let mediaType = "chromium_extension"
-    static let targetIDPrefix = "chromium-extension:"
+    static let targetIDPrefix = "chromium-tab:"
 
     static func isTarget(_ target: MediaRemoteTarget) -> Bool {
         target.mediaType == mediaType || target.id.hasPrefix(targetIDPrefix)
@@ -113,7 +112,7 @@ struct Semantics {
             parentBundleIdentifier: ""
         )
         let heliumExtension = target(
-            id: "chromium-extension:helium:host:chromium-extension:runtime:44",
+            id: "chromium-tab:helium-profile:44",
             bundleIdentifier: "net.imput.helium",
             parentBundleIdentifier: "",
             mediaType: "chromium_extension"
@@ -187,8 +186,7 @@ struct Semantics {
             supportedCommands: nil,
             browserFamily: nil,
             browserDisplayName: nil,
-            browserBundleIdentifier: nil,
-            browserInstanceID: nil
+            browserBundleIdentifier: nil
         )
     }
 

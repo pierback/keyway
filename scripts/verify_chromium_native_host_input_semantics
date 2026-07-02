@@ -52,11 +52,14 @@ for required in (
     if required not in read_message:
         fail(f"readNativeMessage() must degrade to nil on malformed or closed stdio input: missing {required}")
 
-snapshot = section("func payloadByAddingHostBrowserIdentity(_ payload: Data) -> String? {", "\n}\n\nfunc payloadByRestoringRawTargetIdentity")
+snapshot = section("func payloadByAddingHostBrowserIdentity(_ payload: Data) -> String? {", "\n}\n\nfunc payloadByMatchingConnectionID")
 for required in (
     "try? JSONSerialization.jsonObject(with: payload)",
     'fputs("Keyway Chromium native host: ignoring malformed snapshot payload.\\n", stderr)',
-    'fputs("Keyway Chromium native host: ignoring snapshot target without id.\\n", stderr)',
+    'fputs("Keyway Chromium native host: ignoring snapshot before hello.\\n", stderr)',
+    'fputs("Keyway Chromium native host: ignoring snapshot target without tabId.\\n", stderr)',
+    'root["profileGuid"] = profileGuid',
+    'root["connectionID"] = connectionID',
     "try? JSONSerialization.data(withJSONObject: root)",
     'fputs("Keyway Chromium native host: ignoring snapshot payload rewrite failure.\\n", stderr)',
     "return nil",
@@ -64,12 +67,14 @@ for required in (
     if required not in snapshot:
         fail(f"snapshot payload rewriting must ignore malformed native messages: missing {required}")
 
-command = section("func payloadByRestoringRawTargetIdentity(_ payload: String) -> Data? {", "\n}\n\nfunc payloadByRestoringPublicTargetIdentity")
+command = section("func payloadByMatchingConnectionID(_ payload: String) -> Data? {", "\n}\n\nfunc payloadStringForResult")
 for required in (
     "payload.data(using: .utf8)",
     "try? JSONSerialization.jsonObject(with: data)",
     'fputs("Keyway Chromium native host: ignoring malformed command payload.\\n", stderr)',
-    "guard let rawTargetID = hostBrowserIdentity.rawTargetID(publicTargetID: publicTargetID) else {",
+    'let payloadConnectionID = root["connectionID"] as? String',
+    "guard payloadConnectionID == connectionID else {",
+    'root.removeValue(forKey: "connectionID")',
     "try? JSONSerialization.data(withJSONObject: root)",
     'fputs("Keyway Chromium native host: ignoring command payload rewrite failure.\\n", stderr)',
     "return nil",
@@ -77,12 +82,11 @@ for required in (
     if required not in command:
         fail(f"command payload rewriting must ignore malformed distributed-notification input: missing {required}")
 
-result = section("func payloadByRestoringPublicTargetIdentity(_ payload: Data) -> String? {", "\n}\n\nlet commandObserver")
+result = section("func payloadStringForResult(_ payload: Data) -> String? {", "\n}\n\nlet commandObserver")
 for required in (
     "try? JSONSerialization.jsonObject(with: payload)",
     'fputs("Keyway Chromium native host: ignoring malformed result payload.\\n", stderr)',
-    "try? JSONSerialization.data(withJSONObject: root)",
-    'fputs("Keyway Chromium native host: ignoring result payload rewrite failure.\\n", stderr)',
+    'fputs("Keyway Chromium native host: ignoring non-UTF-8 result payload.\\n", stderr)',
     "return nil",
 ):
     if required not in result:
@@ -92,7 +96,7 @@ observer = section("let commandObserver = DistributedNotificationCenter.default(
 for required in (
     'guard let payload = notification.userInfo?["payload"] as? String else {',
     'fputs("Keyway Chromium native host: ignoring command notification without payload.\\n", stderr)',
-    "guard let routedPayload = payloadByRestoringRawTargetIdentity(payload) else {",
+    "guard let routedPayload = payloadByMatchingConnectionID(payload) else {",
 ):
     if required not in observer:
         fail(f"distributed command notifications must be optional-decoded: missing {required}")
@@ -102,7 +106,7 @@ for required in (
     "try? JSONDecoder().decode(NativeMessageEnvelope.self, from: payload)",
     'fputs("Keyway Chromium native host: ignoring undecodable native message envelope.\\n", stderr)',
     'fputs("Keyway Chromium native host: ignoring unknown native message type.\\n", stderr)',
-    'guard envelope.type == "snapshot" || envelope.type == "commandResult" || envelope.type == "focusResult" else {',
+    'guard envelope.type == "snapshot" || envelope.type == "hello" || envelope.type == "commandResult" || envelope.type == "focusResult" else {',
     "guard let postedPayload else {",
 ):
     if required not in post:

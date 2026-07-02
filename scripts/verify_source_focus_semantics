@@ -47,7 +47,7 @@ struct MediaRemoteTarget: Equatable, Identifiable {
 enum ChromiumBrowserExtensionTransport {
     static let backendName = "chromium_extension"
     static let mediaType = "chromium_extension"
-    static let targetIDPrefix = "chromium-extension:"
+    static let targetIDPrefix = "chromium-tab:"
 
     static func isTarget(_ target: MediaRemoteTarget) -> Bool {
         target.mediaType == mediaType || target.id.hasPrefix(targetIDPrefix)
@@ -56,7 +56,7 @@ enum ChromiumBrowserExtensionTransport {
 
 struct ChromiumBrowserExtensionTargetAddress {
     init(targetID: String) {
-        precondition(targetID.hasPrefix("chromium-extension:"))
+        precondition(targetID.hasPrefix("chromium-tab:"))
     }
 }
 
@@ -398,7 +398,7 @@ struct Semantics {
         displayName: String
     ) -> MediaRemoteTarget {
         MediaRemoteTarget(
-            id: "chromium-extension:\(browserRuntime):chromium-extension:runtime:\(tabID)",
+            id: "chromium-tab:\(browserRuntime):\(tabID)",
             bundleIdentifier: "com.fpieringer.keyway.chromium",
             parentBundleIdentifier: "",
             displayName: displayName,

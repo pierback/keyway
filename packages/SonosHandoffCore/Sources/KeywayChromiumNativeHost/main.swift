@@ -7,23 +7,42 @@ let commandResultNotificationName = Notification.Name("com.fpieringer.keyway.chr
 let focusResultNotificationName = Notification.Name("com.fpieringer.keyway.chromium.focusResult")
 let commandNotificationName = Notification.Name("com.fpieringer.keyway.chromium.command")
 let hostName = "com.fpieringer.keyway.chromium"
-let chromiumTargetIDPrefix = "chromium-extension:"
+let chromiumTargetIDPrefix = "chromium-tab:"
 let writeLock = NSLock()
 let hostBrowserIdentity = HostBrowserIdentity.current()
+let connectionID = UUID().uuidString.lowercased()
+let hostConnectionState = HostConnectionState()
 
 struct NativeMessageEnvelope: Decodable {
     let type: String
+}
+
+struct NativeHelloMessage: Decodable {
+    let profileGuid: String
+}
+
+final class HostConnectionState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var profileGuid: String?
+
+    func record(profileGuid: String) {
+        lock.lock()
+        self.profileGuid = profileGuid
+        lock.unlock()
+    }
+
+    func currentProfileGuid() -> String? {
+        lock.lock()
+        let value = profileGuid
+        lock.unlock()
+        return value
+    }
 }
 
 struct HostBrowserIdentity {
     let family: String
     let displayName: String
     let bundleIdentifier: String
-    let instanceID: String
-
-    var publicTargetIDPrefix: String {
-        "\(chromiumTargetIDPrefix)\(family):\(instanceID):"
-    }
 
     static func current() -> HostBrowserIdentity {
         let parentPID = getppid()
@@ -39,8 +58,7 @@ struct HostBrowserIdentity {
         return HostBrowserIdentity(
             family: family,
             displayName: appName.isEmpty ? displayName(family: family) : appName,
-            bundleIdentifier: bundleIdentifier,
-            instanceID: UUID().uuidString.lowercased()
+            bundleIdentifier: bundleIdentifier
         )
     }
 
@@ -99,24 +117,6 @@ struct HostBrowserIdentity {
         }
     }
 
-    func publicTargetID(rawTargetID: String) -> String {
-        guard rawTargetID.hasPrefix(chromiumTargetIDPrefix),
-              !rawTargetID.hasPrefix(publicTargetIDPrefix)
-        else {
-            return rawTargetID
-        }
-        return "\(publicTargetIDPrefix)\(rawTargetID)"
-    }
-
-    func rawTargetID(publicTargetID: String) -> String? {
-        guard publicTargetID.hasPrefix(chromiumTargetIDPrefix) else {
-            return publicTargetID
-        }
-        guard publicTargetID.hasPrefix(publicTargetIDPrefix) else {
-            return nil
-        }
-        return String(publicTargetID.dropFirst(publicTargetIDPrefix.count))
-    }
 }
 
 func readExact(_ byteCount: Int) -> Data? {
@@ -152,6 +152,14 @@ func writeNativeMessage(_ payload: Data) {
     writeLock.unlock()
 }
 
+func recordHelloProfileGuid(_ payload: Data) {
+    guard let hello = try? JSONDecoder().decode(NativeHelloMessage.self, from: payload) else {
+        fputs("Keyway Chromium native host: ignoring malformed hello payload.\n", stderr)
+        return
+    }
+    hostConnectionState.record(profileGuid: hello.profileGuid)
+}
+
 func payloadByAddingHostBrowserIdentity(_ payload: Data) -> String? {
     guard let rootObject = try? JSONSerialization.jsonObject(with: payload),
           var root = rootObject as? [String: Any],
@@ -160,20 +168,26 @@ func payloadByAddingHostBrowserIdentity(_ payload: Data) -> String? {
         fputs("Keyway Chromium native host: ignoring malformed snapshot payload.\n", stderr)
         return nil
     }
+    guard let profileGuid = hostConnectionState.currentProfileGuid() else {
+        fputs("Keyway Chromium native host: ignoring snapshot before hello.\n", stderr)
+        return nil
+    }
 
     for index in targets.indices {
-        guard let rawTargetID = targets[index]["id"] as? String else {
-            fputs("Keyway Chromium native host: ignoring snapshot target without id.\n", stderr)
+        guard let tabID = targets[index]["tabId"] as? Int else {
+            fputs("Keyway Chromium native host: ignoring snapshot target without tabId.\n", stderr)
             return nil
         }
-        targets[index]["id"] = hostBrowserIdentity.publicTargetID(rawTargetID: rawTargetID)
+        targets[index]["id"] = "\(chromiumTargetIDPrefix)\(profileGuid):\(tabID)"
         targets[index]["browserFamily"] = hostBrowserIdentity.family
         targets[index]["browserDisplayName"] = hostBrowserIdentity.displayName
         targets[index]["browserBundleIdentifier"] = hostBrowserIdentity.bundleIdentifier
-        targets[index]["browserInstanceID"] = hostBrowserIdentity.instanceID
+        targets[index]["profileGuid"] = profileGuid
         targets[index]["browser"] = hostBrowserIdentity.displayName
     }
-    root["browserInstanceID"] = hostBrowserIdentity.instanceID
+    root["profileGuid"] = profileGuid
+    // Private routing token only; target identity is chromium-tab:<profileGuid>:<tabId>.
+    root["connectionID"] = connectionID
     root["targets"] = targets
 
     guard let enriched = try? JSONSerialization.data(withJSONObject: root),
@@ -185,19 +199,21 @@ func payloadByAddingHostBrowserIdentity(_ payload: Data) -> String? {
     return payload
 }
 
-func payloadByRestoringRawTargetIdentity(_ payload: String) -> Data? {
+func payloadByMatchingConnectionID(_ payload: String) -> Data? {
     guard let data = payload.data(using: .utf8),
           let rootObject = try? JSONSerialization.jsonObject(with: data),
-          var root = rootObject as? [String: Any],
-          let publicTargetID = root["targetID"] as? String
+          var root = rootObject as? [String: Any]
     else {
         fputs("Keyway Chromium native host: ignoring malformed command payload.\n", stderr)
         return nil
     }
-    guard let rawTargetID = hostBrowserIdentity.rawTargetID(publicTargetID: publicTargetID) else {
+    guard let payloadConnectionID = root["connectionID"] as? String else {
         return nil
     }
-    root["targetID"] = rawTargetID
+    guard payloadConnectionID == connectionID else {
+        return nil
+    }
+    root.removeValue(forKey: "connectionID")
 
     guard let routed = try? JSONSerialization.data(withJSONObject: root) else {
         fputs("Keyway Chromium native host: ignoring command payload rewrite failure.\n", stderr)
@@ -206,20 +222,18 @@ func payloadByRestoringRawTargetIdentity(_ payload: String) -> Data? {
     return routed
 }
 
-func payloadByRestoringPublicTargetIdentity(_ payload: Data) -> String? {
+func payloadStringForResult(_ payload: Data) -> String? {
     guard let rootObject = try? JSONSerialization.jsonObject(with: payload),
-          var root = rootObject as? [String: Any],
-          let rawTargetID = root["targetID"] as? String
+          let root = rootObject as? [String: Any],
+          (root["targetID"] as? String) != nil
     else {
         fputs("Keyway Chromium native host: ignoring malformed result payload.\n", stderr)
         return nil
     }
-    root["targetID"] = hostBrowserIdentity.publicTargetID(rawTargetID: rawTargetID)
 
-    guard let routed = try? JSONSerialization.data(withJSONObject: root),
-          let payload = String(data: routed, encoding: .utf8)
+    guard let payload = String(data: payload, encoding: .utf8)
     else {
-        fputs("Keyway Chromium native host: ignoring result payload rewrite failure.\n", stderr)
+        fputs("Keyway Chromium native host: ignoring non-UTF-8 result payload.\n", stderr)
         return nil
     }
     return payload
@@ -234,7 +248,7 @@ let commandObserver = DistributedNotificationCenter.default().addObserver(
         fputs("Keyway Chromium native host: ignoring command notification without payload.\n", stderr)
         return
     }
-    guard let routedPayload = payloadByRestoringRawTargetIdentity(payload) else {
+    guard let routedPayload = payloadByMatchingConnectionID(payload) else {
         return
     }
     writeNativeMessage(routedPayload)
@@ -249,12 +263,13 @@ func postNativeMessage(_ payload: Data) {
         fputs("Keyway Chromium native host: ignoring unknown native message type.\n", stderr)
         return
     }
-    guard envelope.type == "snapshot" || envelope.type == "commandResult" || envelope.type == "focusResult" else {
+    if envelope.type == "hello" {
+        recordHelloProfileGuid(payload)
         return
     }
     let postedPayload = envelope.type == "snapshot"
         ? payloadByAddingHostBrowserIdentity(payload)
-        : payloadByRestoringPublicTargetIdentity(payload)
+        : payloadStringForResult(payload)
     guard let postedPayload else {
         return
     }

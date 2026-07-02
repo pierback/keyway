@@ -300,6 +300,8 @@ let activePageTitlePath = CommandLine.arguments[2]
 
 struct Snapshot: Decodable {
     let protocolVersion: Int
+    let profileGuid: String
+    let connectionID: String
     let targets: [Target]
 }
 
@@ -309,7 +311,6 @@ struct Target: Decodable {
     let browserFamily: String?
     let browserDisplayName: String?
     let browserBundleIdentifier: String?
-    let browserInstanceID: String?
     let pageTitle: String
     let title: String
     let playing: Bool
@@ -341,6 +342,7 @@ struct CommandPayload: Encodable {
     let targetID: String
     let command: String
     let volumeDelta: Double?
+    let connectionID: String
 }
 
 struct FocusPayload: Encodable {
@@ -348,6 +350,7 @@ struct FocusPayload: Encodable {
     let protocolVersion: Int
     let requestID: String
     let targetID: String
+    let connectionID: String
 }
 
 final class State {
@@ -355,16 +358,18 @@ final class State {
     private let lock = NSLock()
     private(set) var targetsByTitle: [String: Target] = [:]
     private(set) var targetsByID: [String: Target] = [:]
+    private var connectionIDByTargetID: [String: String] = [:]
     private var resultsByRequestID: [String: CommandResult] = [:]
     private var focusResultsByRequestID: [String: FocusResult] = [:]
 
     func handleSnapshot(_ payload: String) {
         let snapshot = try! decoder.decode(Snapshot.self, from: Data(payload.utf8))
-        precondition(snapshot.protocolVersion == 2, "Chromium extension snapshots must use protocol v2.")
+        precondition(snapshot.protocolVersion == 3, "Chromium extension snapshots must use protocol v3.")
         lock.lock()
         for target in snapshot.targets where target.pageTitle.hasPrefix("Keyway Chromium Smoke ") {
             targetsByTitle[target.pageTitle] = target
             targetsByID[target.id] = target
+            connectionIDByTargetID[target.id] = snapshot.connectionID
         }
         lock.unlock()
     }
@@ -417,6 +422,12 @@ final class State {
         defer { lock.unlock() }
         return focusResultsByRequestID[requestID]
     }
+
+    func connectionID(targetID: String) -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        return connectionIDByTargetID[targetID]!
+    }
 }
 
 func runLoop(until deadline: Date, condition: () -> Bool) -> Bool {
@@ -435,14 +446,15 @@ func percentile95(_ values: [Int]) -> Int {
     return sorted[index]
 }
 
-func postCommand(target: Target, requestID: String, command: String, volumeDelta: Double? = nil) {
+func postCommand(state: State, target: Target, requestID: String, command: String, volumeDelta: Double? = nil) {
     let payload = CommandPayload(
         type: "command",
-        protocolVersion: 2,
+        protocolVersion: 3,
         requestID: requestID,
         targetID: target.id,
         command: command,
-        volumeDelta: volumeDelta
+        volumeDelta: volumeDelta,
+        connectionID: state.connectionID(targetID: target.id)
     )
     let data = try! JSONEncoder().encode(payload)
     DistributedNotificationCenter.default().postNotificationName(
@@ -453,12 +465,13 @@ func postCommand(target: Target, requestID: String, command: String, volumeDelta
     )
 }
 
-func postFocus(target: Target, requestID: String) {
+func postFocus(state: State, target: Target, requestID: String) {
     let payload = FocusPayload(
         type: "focusTarget",
-        protocolVersion: 2,
+        protocolVersion: 3,
         requestID: requestID,
-        targetID: target.id
+        targetID: target.id,
+        connectionID: state.connectionID(targetID: target.id)
     )
     let data = try! JSONEncoder().encode(payload)
     DistributedNotificationCenter.default().postNotificationName(
@@ -478,7 +491,7 @@ func runCommand(
 ) -> CommandResult? {
     let requestID = UUID().uuidString
     let started = ProcessInfo.processInfo.systemUptime
-    postCommand(target: target, requestID: requestID, command: command, volumeDelta: volumeDelta)
+    postCommand(state: state, target: target, requestID: requestID, command: command, volumeDelta: volumeDelta)
     guard runLoop(until: Date(timeIntervalSinceNow: 2), condition: { state.result(requestID: requestID) != nil }),
           let result = state.result(requestID: requestID)
     else {
@@ -511,7 +524,7 @@ func runFocusCheck(
 ) -> Bool {
     let requestID = UUID().uuidString
     let started = ProcessInfo.processInfo.systemUptime
-    postFocus(target: target, requestID: requestID)
+    postFocus(state: state, target: target, requestID: requestID)
     guard runLoop(until: Date(timeIntervalSinceNow: 2), condition: { state.focusResult(requestID: requestID) != nil }),
           let result = state.focusResult(requestID: requestID)
     else {

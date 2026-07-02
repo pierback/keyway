@@ -25,6 +25,8 @@ const tabGetRequests = [];
 const queryRequests = [];
 const tabWindowIDs = new Map([[22, 11], [23, 11]]);
 const activeTabIDByWindowID = new Map();
+const storage = {};
+const storageSets = [];
 let focusedWindowID = null;
 let disconnectListener = null;
 let nativeMessageListener = null;
@@ -36,6 +38,11 @@ let reloadCount = 0;
 
 const context = {
   console,
+  crypto: {
+    randomUUID() {
+      return "profile-guid-a";
+    },
+  },
   navigator: {
     userAgent: "Mozilla/5.0 Chrome/126.0.0.0 Safari/537.36",
   },
@@ -51,6 +58,24 @@ const context = {
     return `timeout-${timeouts.length}`;
   },
   chrome: {
+    storage: {
+      local: {
+        get(keys, callback) {
+          const result = {};
+          for (const key of keys) {
+            if (key in storage) {
+              result[key] = storage[key];
+            }
+          }
+          callback(result);
+        },
+        set(items, callback) {
+          Object.assign(storage, items);
+          storageSets.push(items);
+          callback();
+        },
+      },
+    },
     runtime: {
       id: "extensionid",
       lastError: null,
@@ -161,9 +186,11 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
 
 (async () => {
   assert(postedMessages.some(message => message.type === "hello"), "service worker must announce hello to native host");
-  assertEqual(postedMessages.find(message => message.type === "hello").protocolVersion, 2, "hello must use Chromium extension protocol v2");
+  assertEqual(postedMessages.find(message => message.type === "hello").protocolVersion, 3, "hello must use Chromium extension protocol v3");
+  assertEqual(postedMessages.find(message => message.type === "hello").profileGuid, "profile-guid-a", "hello must include the persisted profile GUID");
+  assertEqual(storageSets[0].profileGuid, "profile-guid-a", "service worker must persist a generated profile GUID");
   assert(postedMessages.some(message => message.type === "snapshot"), "service worker must publish a snapshot immediately");
-  assertEqual(postedMessages.find(message => message.type === "snapshot").protocolVersion, 2, "snapshot must use Chromium extension protocol v2");
+  assertEqual(postedMessages.find(message => message.type === "snapshot").protocolVersion, 3, "snapshot must use Chromium extension protocol v3");
   assertEqual(queryRequests.length, 1, "service worker must probe tabs after connecting to the native host");
   assertEqual(scriptExecutions.length, 2, "service worker must reinject the current content script into existing media tabs after restart");
   assert(scriptExecutions.every(entry => entry.target.allFrames === true), "content-script restart probe must cover all frames");
@@ -221,15 +248,16 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   assertEqual(snapshot.targets.length, 1, "media state must publish one browser target");
   assertEqual(
     snapshot.targets[0].id,
-    "chromium-extension:chrome-extensionid:22",
-    "target id must include browser runtime and tab identity"
+    "chromium-tab:profile-guid-a:22",
+    "target id must include stable profile GUID and tab identity"
   );
   assertEqual(snapshot.targets[0].browser, "Chrome", "target browser label");
   assertEqual(snapshot.targets[0].browserFamily, "chrome", "snapshot must expose explicit browser family metadata");
   assertEqual(snapshot.targets[0].browserRuntimeID, "extensionid", "snapshot must expose the extension runtime identity as metadata");
+  assertEqual(snapshot.targets[0].profileGuid, "profile-guid-a", "snapshot must expose the stable profile identity as metadata");
+  assertEqual(snapshot.targets[0].tabId, 22, "snapshot must expose the tab identity needed by the native host");
   assert(!("frameId" in snapshot.targets[0]), "snapshot must not expose private frame route identity");
   assert(!("mediaId" in snapshot.targets[0]), "snapshot must not expose private media route identity");
-  assert(!("tabId" in snapshot.targets[0]), "snapshot must not expose private tab route identity");
   assert(!("windowId" in snapshot.targets[0]), "snapshot must not expose private window route identity");
   assertEqual(snapshot.targets[0].pageTitle, "Example Video", "browser source must prefer the tab title over frame titles");
   assertEqual(snapshot.targets[0].url, "https://example.test/video", "browser source must preserve the tab URL");
@@ -268,7 +296,7 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   await Promise.resolve();
   const duplicateElementSnapshot = postedMessages.filter(message => message.type === "snapshot").at(-1);
   assertEqual(duplicateElementSnapshot.targets.length, 1, "multiple media elements in one tab must publish one browser source");
-  assertEqual(duplicateElementSnapshot.targets[0].id, "chromium-extension:chrome-extensionid:22", "duplicate media elements must keep the same tab source identity");
+  assertEqual(duplicateElementSnapshot.targets[0].id, "chromium-tab:profile-guid-a:22", "duplicate media elements must keep the same tab source identity");
   assertEqual(duplicateElementSnapshot.targets[0].pageTitle, "Example Video", "duplicate iframe media must not replace the tab source title");
   assertEqual(duplicateElementSnapshot.targets[0].title, "Song", "a competing iframe with metadata must not steal the active route from an audible current route");
 
@@ -416,7 +444,7 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   assertEqual(twoTargetSnapshot.targets.length, 2, "two audible media tabs must publish two exact browser targets");
   assertEqual(
     twoTargetSnapshot.targets[1].id,
-    "chromium-extension:chrome-extensionid:23",
+    "chromium-tab:profile-guid-a:23",
     "second target id must preserve its own tab identity"
   );
 
@@ -451,14 +479,14 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   assert(typeof nativeMessageListener === "function", "service worker must register native command listener");
   nativeMessageListener({
     type: "reloadExtension",
-    protocolVersion: 2,
+    protocolVersion: 3,
   });
   assertEqual(reloadCount, 1, "native reload command must reload the extension runtime");
   assertEqual(tabMessages.length, 0, "native reload command must not dispatch into any tab");
 
   nativeMessageListener({
     type: "command",
-    protocolVersion: 1,
+    protocolVersion: 2,
     requestID: "protocol-mismatch",
     targetID: twoTargetSnapshot.targets[1].id,
     command: "playPause",
@@ -473,9 +501,9 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
 
   nativeMessageListener({
     type: "command",
-    protocolVersion: 2,
+    protocolVersion: 3,
     requestID: "ignored-command",
-    targetID: "chromium-extension:other-runtime:23",
+    targetID: "chromium-tab:other-profile:23",
     command: "playPause",
   });
   assertEqual(tabMessages.length, 0, "native command must ignore target IDs owned by another runtime");
@@ -493,9 +521,9 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   const focusResultCountBeforeIgnored = postedMessages.filter(message => message.type === "focusResult").length;
   nativeMessageListener({
     type: "focusTarget",
-    protocolVersion: 2,
+    protocolVersion: 3,
     requestID: "ignored-focus",
-    targetID: "chromium-extension:other-runtime:23",
+    targetID: "chromium-tab:other-profile:23",
   });
   assertEqual(windowUpdates.length, 0, "native focus must ignore target IDs owned by another runtime");
   assertEqual(tabUpdates.length, 0, "ignored native focus must not activate a browser tab");
@@ -508,7 +536,7 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
 
   nativeMessageListener({
     type: "focusTarget",
-    protocolVersion: 2,
+    protocolVersion: 3,
     requestID: "focus-1",
     targetID: twoTargetSnapshot.targets[1].id,
   });
@@ -534,7 +562,7 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
 
   nativeMessageListener({
     type: "command",
-    protocolVersion: 2,
+    protocolVersion: 3,
     requestID: "command-1",
     targetID: twoTargetSnapshot.targets[1].id,
     tabId: 999,
@@ -555,7 +583,7 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   tabMessages.length = 0;
   nativeMessageListener({
     type: "command",
-    protocolVersion: 2,
+    protocolVersion: 3,
     requestID: "unsupported-command",
     targetID: twoTargetSnapshot.targets[1].id,
     command: "next",
@@ -571,7 +599,7 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   tabUpdatedListener(22, { status: "loading" });
   const afterNavigationSnapshot = postedMessages.filter(message => message.type === "snapshot").at(-1);
   assertEqual(afterNavigationSnapshot.targets.length, 1, "tab navigation must clear only the stale tab target");
-  assertEqual(afterNavigationSnapshot.targets[0].id, "chromium-extension:chrome-extensionid:23", "tab navigation must keep other tab targets");
+  assertEqual(afterNavigationSnapshot.targets[0].id, "chromium-tab:profile-guid-a:23", "tab navigation must keep other tab targets");
 
   runtimeMessageListener(
     {

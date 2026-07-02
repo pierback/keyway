@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-payload='{"type":"reloadExtension","protocolVersion":2}'
+payload='{"type":"reloadExtension","protocolVersion":3}'
 
 /usr/bin/swift - "$payload" <<'SWIFT'
 import Foundation

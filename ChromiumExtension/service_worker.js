@@ -1,9 +1,13 @@
 const nativeHostName = "com.fpieringer.keyway.chromium";
-const protocolVersion = 2;
+const protocolVersion = 3;
+const profileGuidStorageKey = "profileGuid";
 let nativePort = null;
 let reconnectTimer = null;
 let heartbeatTimer = null;
 let cachedBrowserInfo = null;
+let profileGuid = null;
+let profileGuidLoading = false;
+const profileGuidCallbacks = [];
 const sources = new Map();
 const targetStaleAfterMs = 15000;
 
@@ -17,10 +21,41 @@ function connectNativeHost() {
     stopHeartbeat();
     scheduleReconnect();
   });
-  sendNative({ type: "hello", protocolVersion });
+  sendNative({ type: "hello", protocolVersion, profileGuid });
   probeTabsForMedia();
   publishSnapshot();
   startHeartbeat();
+}
+
+function loadProfileGuid(callback) {
+  if (profileGuid) {
+    callback();
+    return;
+  }
+  profileGuidCallbacks.push(callback);
+  if (profileGuidLoading) return;
+  profileGuidLoading = true;
+
+  chrome.storage.local.get([profileGuidStorageKey], result => {
+    void chrome.runtime.lastError;
+    const storedProfileGuid = result && result[profileGuidStorageKey];
+    if (typeof storedProfileGuid === "string" && storedProfileGuid) {
+      profileGuid = storedProfileGuid;
+      flushProfileGuidCallbacks();
+      return;
+    }
+
+    profileGuid = crypto.randomUUID();
+    chrome.storage.local.set({ [profileGuidStorageKey]: profileGuid }, flushProfileGuidCallbacks);
+  });
+}
+
+function flushProfileGuidCallbacks() {
+  profileGuidLoading = false;
+  const callbacks = profileGuidCallbacks.splice(0);
+  for (const callback of callbacks) {
+    callback();
+  }
 }
 
 function scheduleReconnect() {
@@ -48,7 +83,7 @@ function stopHeartbeat() {
 }
 
 function sourceID(message) {
-  return ["chromium-extension", message.browserKey, message.tabId].join(":");
+  return ["chromium-tab", message.profileGuid, message.tabId].join(":");
 }
 
 function candidateID(documentID, frameId, mediaId) {
@@ -144,7 +179,7 @@ function clearSourcesForTab(tabId) {
 function upsertCandidate(browser, tab, frameId, message) {
   const now = Date.now();
   const id = sourceID({
-    browserKey: browser.key,
+    profileGuid,
     tabId: tab.id,
   });
   const candidateKey = candidateID(message.documentID, frameId, message.mediaId);
@@ -155,6 +190,7 @@ function upsertCandidate(browser, tab, frameId, message) {
     browser: browser.name,
     browserFamily: browser.family,
     browserRuntimeID: browser.runtimeID,
+    profileGuid,
     tabId: tab.id,
     windowId: tab.windowId,
     tabTitle: tab.title || "",
@@ -307,6 +343,8 @@ function materializeSource(source) {
     browser: source.browser,
     browserFamily: source.browserFamily,
     browserRuntimeID: source.browserRuntimeID,
+    profileGuid: source.profileGuid,
+    tabId: source.tabId,
     url: source.tabUrl || selected.url,
     pageTitle,
     title,
@@ -563,10 +601,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return false;
     }
 
-    browserInfo().then(browser => {
-      upsertCandidate(browser, tab, sender.frameId, message);
-      publishSnapshot();
-      sendResponse({ ok: true });
+    loadProfileGuid(() => {
+      browserInfo().then(browser => {
+        upsertCandidate(browser, tab, sender.frameId, message);
+        publishSnapshot();
+        sendResponse({ ok: true });
+      });
     });
     return true;
   }
@@ -604,4 +644,4 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   }
 });
 
-connectNativeHost();
+loadProfileGuid(connectNativeHost);
