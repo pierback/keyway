@@ -9,10 +9,26 @@ bash -n "$repo_root/scripts/setup_chromium_extension" >/dev/null
 bash -n "$repo_root/scripts/smoke_helium_chromium_extension_transport" >/dev/null
 
 python3 - "$repo_root" <<'PY'
+import json
 import pathlib
 import sys
 
 repo_root = pathlib.Path(sys.argv[1])
+manifest = json.loads((repo_root / "ChromiumExtension/manifest.json").read_text())
+service_worker = (repo_root / "ChromiumExtension/service_worker.js").read_text()
+declared_permissions = set(manifest.get("permissions", []))
+chrome_api_to_permission = {
+    "chrome.storage.": "storage",
+    "chrome.alarms.": "alarms",
+}
+for api_prefix, required_permission in chrome_api_to_permission.items():
+    if api_prefix in service_worker and required_permission not in declared_permissions:
+        raise SystemExit(
+            f"verify_chromium_extension_semantics: service_worker.js calls {api_prefix}* but "
+            f"manifest.json permissions is missing '{required_permission}' -- this API is undefined "
+            "at runtime without it, silently breaking the extension outside this repo's static checks"
+        )
+
 transport = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionTransport.swift").read_text()
 models = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaRemoteModels.swift").read_text()
 action_controller = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportActionController.swift").read_text()
