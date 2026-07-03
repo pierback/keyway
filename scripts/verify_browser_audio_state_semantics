@@ -1,0 +1,366 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+workdir="$(mktemp -d)"
+trap 'rm -rf "$workdir"' EXIT
+
+cp "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaAudioControlController.swift" "$workdir/MediaAudioControlController.swift"
+perl -0pi -e 's/^import SonosHandoffCore\n//m' "$workdir/MediaAudioControlController.swift"
+
+if grep -q 'try!' "$workdir/MediaAudioControlController.swift"; then
+  echo "verify_browser_audio_state_semantics: MediaAudioControlController.swift must not use try!" >&2
+  exit 1
+fi
+
+cat >"$workdir/Stubs.swift" <<'SWIFT'
+import Combine
+import Foundation
+
+enum AppIdentity {
+    static let loggerSubsystem = "com.fpieringer.Keyway.tests"
+}
+
+enum MediaRemoteTransportCommand: String, Equatable, Sendable {
+    case play
+    case pause
+    case playPause
+}
+
+enum ChromiumBrowserAudioCommand: Sendable {
+    case mute
+    case volumeDelta(Double)
+
+    var rawValue: String {
+        switch self {
+        case .mute:
+            return "mute"
+        case .volumeDelta:
+            return "volumeDelta"
+        }
+    }
+
+    var displayName: String {
+        switch self {
+        case .mute:
+            return "Mute"
+        case .volumeDelta:
+            return "Volume"
+        }
+    }
+
+    var volumeDelta: Double? {
+        switch self {
+        case .mute:
+            return nil
+        case .volumeDelta(let delta):
+            return delta
+        }
+    }
+}
+
+struct MediaRemoteTarget: Equatable, Identifiable, Sendable {
+    let id: String
+    let displayName: String
+    let playbackRate: String
+    let mediaType: String?
+    var muted: Bool? = nil
+
+    var appName: String { displayName }
+    var detailText: String { displayName }
+    var isBrowserLike: Bool { ChromiumBrowserExtensionTransport.isTarget(self) }
+}
+
+enum ChromiumBrowserExtensionTransport {
+    static let mediaType = "chromium_extension"
+    static func isTarget(_ target: MediaRemoteTarget) -> Bool {
+        target.mediaType == mediaType || target.id.hasPrefix("chromium-tab:")
+    }
+}
+
+struct MediaRemoteCommandResultEvent: Equatable, Sendable {
+    let type: String
+    let requestID: String?
+    let targetID: String
+    let command: String
+    let ok: Bool
+    let message: String
+    let backend: String?
+    let unsupported: Bool
+
+    init(
+        type: String = "commandResult",
+        requestID: String? = nil,
+        targetID: String,
+        command: String,
+        ok: Bool,
+        message: String,
+        backend: String? = "chromium_extension",
+        unsupported: Bool = false
+    ) {
+        self.type = type
+        self.requestID = requestID
+        self.targetID = targetID
+        self.command = command
+        self.ok = ok
+        self.message = message
+        self.backend = backend
+        self.unsupported = unsupported
+    }
+}
+
+enum MediaSourceReachability: Equatable, Sendable {
+    case live
+    case suspect(reason: String, since: Date)
+
+    var isSuspect: Bool {
+        switch self {
+        case .suspect:
+            return true
+        case .live:
+            return false
+        }
+    }
+}
+
+struct MediaSourceAudioState: Equatable, Sendable {
+    let playbackRate: String
+    let muted: Bool
+}
+
+struct SourceRow: Equatable, Identifiable, Sendable {
+    let target: MediaRemoteTarget
+    var reachability: MediaSourceReachability = .live
+    let audioState: MediaSourceAudioState
+
+    var id: String { target.id }
+}
+
+@MainActor
+final class MediaSourceStore: ObservableObject {
+    @Published private(set) var rows: [SourceRow]
+    private(set) var recordCommandResults: [MediaRemoteCommandResultEvent] = []
+    private(set) var directCommandFailures: [String] = []
+
+    init(rows: [SourceRow]) {
+        self.rows = rows
+    }
+
+    func replaceRows(_ rows: [SourceRow]) {
+        self.rows = rows
+    }
+
+    func recordCommandResult(_ result: MediaRemoteCommandResultEvent) {
+        recordCommandResults.append(result)
+    }
+
+    func markCommandFailed(targetID: String) {
+        directCommandFailures.append(targetID)
+    }
+
+    func resetDirectCommandFailures() {
+        directCommandFailures = []
+    }
+}
+
+@MainActor
+final class ChromiumBrowserExtensionController: ObservableObject {
+    @Published var connected = true
+    var nextSubmitResult: Bool? = true
+    var resultHandler: ((MediaRemoteCommandResultEvent) -> Void)?
+
+    func submit(
+        audioCommand: ChromiumBrowserAudioCommand,
+        target: MediaRemoteTarget,
+        onResult: @escaping (MediaRemoteCommandResultEvent) -> Void
+    ) -> Bool? {
+        resultHandler = onResult
+        return nextSubmitResult
+    }
+}
+
+protocol SpeakerVolumeAdjusting {}
+protocol SpotifyActivePlaybackObserving {
+    func activePlaybackDeviceStatus() async throws -> SpotifyActivePlaybackStatus?
+    func setActivePlaybackDeviceVolume(_ volume: Int) async throws -> Int
+}
+
+struct SpotifyActivePlaybackStatus {
+    let deviceName: String
+    let volumePercent: Int?
+}
+
+struct PlaybackOutputSelection {
+    var roomName: String?
+    var selectedGroup: PlaybackOutputGroup?
+}
+
+struct PlaybackOutputGroup {
+    let members: [String]
+    func contains(roomName: String) -> Bool { members.contains(roomName) }
+}
+
+enum PlaybackVolumeScope {
+    case member
+    case group
+}
+
+enum SonosRoomName {
+    static func normalized(_ roomName: String?) -> String? { roomName }
+}
+
+struct SonosOutputPreferenceResolver {
+    func preferredRoomName(selectedRoomName: String?) -> String { selectedRoomName ?? "Office" }
+}
+
+struct SpeakerVolumeStatus {
+    let roomName: String
+    let volume: Int
+    let muted: Bool
+}
+
+final class SpeakerVolumeCommandQueue {
+    static let shared = SpeakerVolumeCommandQueue()
+    func volumeDown(using: any SpeakerVolumeAdjusting, roomName: String, step: Int) async throws -> Int { 0 }
+    func volumeUp(using: any SpeakerVolumeAdjusting, roomName: String, step: Int) async throws -> Int { 0 }
+    func groupVolumeDown(using: any SpeakerVolumeAdjusting, coordinatorRoomName: String, step: Int) async throws -> Int { 0 }
+    func groupVolumeUp(using: any SpeakerVolumeAdjusting, coordinatorRoomName: String, step: Int) async throws -> Int { 0 }
+    func toggleMute(using: any SpeakerVolumeAdjusting, roomName: String) async throws -> Bool { false }
+    func toggleGroupMute(using: any SpeakerVolumeAdjusting, coordinatorRoomName: String) async throws -> Bool { false }
+    func volumeStatus(using: any SpeakerVolumeAdjusting, roomName: String) async throws -> SpeakerVolumeStatus {
+        SpeakerVolumeStatus(roomName: roomName, volume: 0, muted: false)
+    }
+    func groupVolumeStatus(using: any SpeakerVolumeAdjusting, coordinatorRoomName: String) async throws -> SpeakerVolumeStatus {
+        SpeakerVolumeStatus(roomName: coordinatorRoomName, volume: 0, muted: false)
+    }
+}
+
+@MainActor
+final class SonosVolumeMonitor {
+    static let shared = SonosVolumeMonitor()
+    func noteLocalChange(roomName: String, volume: Int? = nil, muted: Bool? = nil) {}
+}
+
+@MainActor
+final class StatusHUD {
+    static let shared = StatusHUD()
+    private(set) var finishes: [(title: String, message: String)] = []
+
+    func finish(title: String, message: String, dismissAfter: TimeInterval? = nil) {
+        finishes.append((title, message))
+    }
+
+    func showMute(roomName: String, muted: Bool, dismissAfter: TimeInterval = 3.0) {}
+    func showVolume(roomName: String, volume: Int, dismissAfter: TimeInterval = 3.0) {}
+}
+
+struct VolumeService: SpeakerVolumeAdjusting {}
+
+struct PlaybackObserver: SpotifyActivePlaybackObserving {
+    func activePlaybackDeviceStatus() async throws -> SpotifyActivePlaybackStatus? { nil }
+    func setActivePlaybackDeviceVolume(_ volume: Int) async throws -> Int { volume }
+}
+SWIFT
+
+cat >"$workdir/Semantics.swift" <<'SWIFT'
+import Foundation
+
+@main
+struct Semantics {
+    @MainActor
+    static func main() async {
+        let target = browserTarget(muted: false)
+        let store = MediaSourceStore(rows: [row(target: target, muted: false)])
+        let chromium = ChromiumBrowserExtensionController()
+        let controller = MediaAudioControlController(
+            volumeService: VolumeService(),
+            outputSelection: PlaybackOutputSelection(),
+            activePlaybackObserver: PlaybackObserver(),
+            chromiumBrowserExtensionController: chromium,
+            mediaSourceStore: store,
+            browserMuteConfirmationTimeoutNanoseconds: 80_000_000
+        )
+
+        controller.toggleBrowserMute(target: target)
+        expectEqual(controller.browserMuteState(for: target), BrowserMuteState(muted: true, isPending: true), "toggle must enter optimistic pending mute state")
+        store.replaceRows([row(target: target, muted: true)])
+        await drainMainQueue()
+        expectEqual(controller.browserMuteState(for: target), BrowserMuteState(muted: true, isPending: false), "matching snapshot must confirm pending mute")
+        expectEqual(store.directCommandFailures.count, 0, "confirmed mute must not mark command failure")
+
+        var unmutedTarget = target
+        unmutedTarget.muted = false
+        store.replaceRows([row(target: unmutedTarget, muted: false)])
+        await drainMainQueue()
+        controller.toggleBrowserMute(target: unmutedTarget)
+        expectEqual(controller.browserMuteState(for: unmutedTarget), BrowserMuteState(muted: true, isPending: true), "second toggle must enter pending before timeout")
+        let timeoutDeadline = Date().addingTimeInterval(1)
+        while Date() < timeoutDeadline,
+              controller.browserMuteState(for: unmutedTarget)?.isPending == true {
+            await drainMainQueue()
+        }
+        expectEqual(controller.browserMuteState(for: unmutedTarget), BrowserMuteState(muted: false, isPending: false), "timeout must revert to last confirmed mute state")
+        expectEqual(store.directCommandFailures, [unmutedTarget.id], "timeout must surface command failure through the existing store path")
+
+        store.resetDirectCommandFailures()
+        store.replaceRows([row(target: unmutedTarget, muted: false)])
+        await drainMainQueue()
+        controller.toggleBrowserMute(target: unmutedTarget)
+        chromium.resultHandler?(MediaRemoteCommandResultEvent(
+            targetID: unmutedTarget.id,
+            command: "mute",
+            ok: false,
+            message: "tab update failed"
+        ))
+        await drainMainQueue()
+        expectEqual(controller.browserMuteState(for: unmutedTarget), BrowserMuteState(muted: false, isPending: false), "command failure result must clear pending without waiting for timeout")
+        expectEqual(store.recordCommandResults.count, 1, "command failure result must be recorded once")
+        expectEqual(store.directCommandFailures.count, 0, "command failure result must not be double-marked by the pending loop")
+
+        print("verify_browser_audio_state_semantics=ok")
+    }
+
+    private static func browserTarget(muted: Bool) -> MediaRemoteTarget {
+        var target = MediaRemoteTarget(
+            id: "chromium-tab:profile-a:22",
+            displayName: "Chrome - Video",
+            playbackRate: "1",
+            mediaType: ChromiumBrowserExtensionTransport.mediaType
+        )
+        target.muted = muted
+        return target
+    }
+
+    private static func row(target: MediaRemoteTarget, muted: Bool) -> SourceRow {
+        SourceRow(
+            target: target,
+            audioState: MediaSourceAudioState(playbackRate: target.playbackRate, muted: muted)
+        )
+    }
+
+    @MainActor
+    private static func drainMainQueue() async {
+        try? await Task.sleep(nanoseconds: 20_000_000)
+    }
+
+    private static func expectEqual<T: Equatable>(_ actual: T, _ expected: T, _ message: String) {
+        guard actual == expected else {
+            fail("\(message): expected \(expected), got \(actual)")
+        }
+    }
+
+    private static func fail(_ message: String) -> Never {
+        FileHandle.standardError.write(Data("verify_browser_audio_state_semantics: \(message)\n".utf8))
+        exit(1)
+    }
+}
+SWIFT
+
+swiftc \
+  -module-cache-path "$workdir/module-cache" \
+  "$workdir/Stubs.swift" \
+  "$workdir/MediaAudioControlController.swift" \
+  "$workdir/Semantics.swift" \
+  -o "$workdir/verify_browser_audio_state_semantics"
+
+"$workdir/verify_browser_audio_state_semantics"

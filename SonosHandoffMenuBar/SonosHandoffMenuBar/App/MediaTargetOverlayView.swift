@@ -284,9 +284,10 @@ struct MediaTargetOverlayView: View {
                             onBrowserVolume(.down)
                         }
                         iconButton(
-                            "speaker.slash.fill",
+                            model.audioSnapshot.browser.muted == true ? "speaker.slash.fill" : "speaker.wave.2.fill",
                             identifier: "mediaTargetOverlay.browserMute",
-                            enabled: model.audioSnapshot.browser.isEnabled
+                            enabled: model.audioSnapshot.browser.isEnabled && !model.audioSnapshot.browser.isPending,
+                            pending: model.audioSnapshot.browser.isPending
                         ) {
                             onBrowserMute()
                         }
@@ -339,6 +340,7 @@ struct MediaTargetOverlayView: View {
         _ systemName: String,
         identifier: String,
         enabled: Bool,
+        pending: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
@@ -347,9 +349,9 @@ struct MediaTargetOverlayView: View {
                 .frame(width: 28, height: 26)
         }
         .buttonStyle(.plain)
-        .foregroundStyle(enabled ? Color.primary : Color.secondary.opacity(0.55))
+        .foregroundStyle(pending ? Color.secondary.opacity(0.72) : enabled ? Color.primary : Color.secondary.opacity(0.55))
         .background(
-            Color.primary.opacity(enabled ? 0.08 : 0.04),
+            Color.primary.opacity(pending ? 0.11 : enabled ? 0.08 : 0.04),
             in: RoundedRectangle(cornerRadius: 7, style: .continuous)
         )
         .disabled(!enabled)

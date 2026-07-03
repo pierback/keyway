@@ -367,6 +367,7 @@ async function sendCommand(fixture, command, mediaId = "media-1") {
   assertEqual(live.intervals.length, 1, "content script must publish one heartbeat while the runtime is valid");
   assert(typeof live.runtimeMessageListener === "function", "content script must register runtime message listener when runtime is valid");
   assertEqual(live.sentMessages.at(-1).type, "keywayMediaState", "content script must publish initial media state");
+  assert(!("muted" in live.sentMessages.at(-1)), "content script must leave tab-level mute state to the service worker");
   live.mutationCallback();
   assert(typeof live.events.get("timeupdate") === "function", "content script must observe media events after discovery");
   assertEqual(live.video.dataset.keywayObserved, undefined, "content script must keep extension observation state out of the page DOM");
@@ -441,6 +442,9 @@ async function sendCommand(fixture, command, mediaId = "media-1") {
   assertEqual(directMedia.playbackButtonClickCount, 0, "direct media pages must not require a page playback control");
   assertEqual(directMedia.video.paused, false, "direct media playPause must still use HTML media methods");
   assertEqual(directResponse.message, "playing", "direct media playPause must report playing");
+  const muteResponse = await sendCommand(directMedia, "mute");
+  assertEqual(muteResponse.unsupported, true, "content script must not implement tab-level mute");
+  assertEqual(directMedia.video.muted, false, "content script mute command must not change element mute state");
 
   const missingRuntime = makeContext({ withRuntime: false });
   vm.runInNewContext(code, missingRuntime.context, { filename: contentScriptPath });

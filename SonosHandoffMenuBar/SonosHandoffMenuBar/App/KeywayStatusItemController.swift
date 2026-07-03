@@ -150,6 +150,7 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
                 playback: playback,
                 mediaRemoteController: environment.mediaRemoteController,
                 mediaSourceStore: environment.mediaSourceStore,
+                mediaAudioControlController: environment.mediaAudioControlController,
                 mediaTransportActions: environment.mediaTransportActionController,
                 openChooser: { [weak self] in self?.openChooserFromPopover() },
                 openSettings: { [weak self] in self?.openSettings() },
@@ -307,6 +308,7 @@ private struct KeywayControlCenterPopoverView: View {
     @ObservedObject private var playback: PlaybackSyncController
     @ObservedObject private var mediaRemoteController: MediaRemoteController
     @ObservedObject private var mediaSourceStore: MediaSourceStore
+    @ObservedObject private var mediaAudioControlController: MediaAudioControlController
 
     private let mediaTransportActions: MediaTransportActionController
     private let openChooser: @MainActor () -> Void
@@ -324,6 +326,7 @@ private struct KeywayControlCenterPopoverView: View {
         playback: PlaybackSyncController,
         mediaRemoteController: MediaRemoteController,
         mediaSourceStore: MediaSourceStore,
+        mediaAudioControlController: MediaAudioControlController,
         mediaTransportActions: MediaTransportActionController,
         openChooser: @escaping @MainActor () -> Void,
         openSettings: @escaping @MainActor () -> Void,
@@ -333,6 +336,7 @@ private struct KeywayControlCenterPopoverView: View {
         self.playback = playback
         self.mediaRemoteController = mediaRemoteController
         self.mediaSourceStore = mediaSourceStore
+        self.mediaAudioControlController = mediaAudioControlController
         self.mediaTransportActions = mediaTransportActions
         self.openChooser = openChooser
         self.openSettings = openSettings
@@ -347,6 +351,7 @@ private struct KeywayControlCenterPopoverView: View {
                 MenuBarMediaSourceSection(
                     mediaRemoteController: mediaRemoteController,
                     mediaSourceStore: mediaSourceStore,
+                    mediaAudioControlController: mediaAudioControlController,
                     playback: playback,
                     mediaTransportActions: mediaTransportActions,
                     progressTick: progressTick

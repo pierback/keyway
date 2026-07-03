@@ -30,6 +30,7 @@ struct MediaRemoteTarget: Equatable, Identifiable, Sendable {
     let elapsedTime: Double?
     let elapsedTimestamp: Double?
     let supportedCommands: [MediaRemoteTransportCommand]?
+    var muted: Bool? = nil
 }
 
 struct MediaRemoteCommandResultEvent: Equatable, Sendable {
@@ -82,7 +83,8 @@ struct SourceStoreSemantics {
             id: "chromium-tab:profile-a:22",
             title: "Video",
             playbackRate: "0",
-            supportedCommands: [.play, .pause]
+            supportedCommands: [.play, .pause],
+            muted: true
         )
         let controller = MediaRemoteController(targets: [spotify, chromium])
         let chromiumController = ChromiumBrowserExtensionController()
@@ -109,6 +111,7 @@ struct SourceStoreSemantics {
         expectEqual(store.targets.map(\.title), ["Updated Song", "Video"], "same-ID updates must refresh target fields")
         expectEqual(store.rows[0].capabilities.supportedCommands, [.pause], "capabilities must refresh from updated targets")
         expectEqual(store.rows[0].audioState.playbackRate, "0", "audio state must refresh from updated targets")
+        expectEqual(store.rows.first { $0.id == chromium.id }?.audioState.muted, true, "browser audio state must preserve tab-level muted state")
         assertAllLive(store.rows, "updated rows")
 
         chromiumController.replaceSuspectTargetIDs([chromium.id])
@@ -163,9 +166,10 @@ struct SourceStoreSemantics {
         id: String,
         title: String,
         playbackRate: String,
-        supportedCommands: [MediaRemoteTransportCommand]?
+        supportedCommands: [MediaRemoteTransportCommand]?,
+        muted: Bool? = nil
     ) -> MediaRemoteTarget {
-        MediaRemoteTarget(
+        var target = MediaRemoteTarget(
             id: id,
             title: title,
             playbackRate: playbackRate,
@@ -174,6 +178,8 @@ struct SourceStoreSemantics {
             elapsedTimestamp: 1_700_000_000,
             supportedCommands: supportedCommands
         )
+        target.muted = muted
+        return target
     }
 
     @MainActor
@@ -229,6 +235,7 @@ struct SourceStoreSemantics {
 SWIFT
 
 swiftc \
+  -module-cache-path "$workdir/module-cache" \
   "$workdir/SourceStoreStubs.swift" \
   "$workdir/MediaSourceStore.swift" \
   "$workdir/SourceStoreSemantics.swift" \

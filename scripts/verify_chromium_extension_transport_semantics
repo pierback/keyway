@@ -58,6 +58,7 @@ struct MediaRemoteTarget: Equatable, Identifiable {
     let elapsedTime: Double?
     let elapsedTimestamp: Double?
     let supportedCommands: [MediaRemoteTransportCommand]?
+    var muted: Bool? = nil
     let browserFamily: String?
     let browserDisplayName: String?
     let browserBundleIdentifier: String?
@@ -326,9 +327,10 @@ struct Semantics {
 
         let snapshotController = ChromiumBrowserExtensionController()
         snapshotController.handleSnapshotPayload("""
-        {"protocolVersion":3,"profileGuid":"chromium-profile-a","connectionID":"connection-a","epoch":10,"resumed":false,"browserBundleIdentifier":"com.google.Chrome","targets":[{"id":"chromium-tab:chromium-profile-a:22","browser":"Chrome","browserFamily":"chrome","browserDisplayName":"Chrome","browserBundleIdentifier":"com.google.Chrome","url":"https://example.test","pageTitle":"Example","title":"Song","artist":"Artist","album":"Album","playing":true,"duration":100,"elapsedTime":10,"supportedCommands":["play","pause","playPause"]}]}
+        {"protocolVersion":3,"profileGuid":"chromium-profile-a","connectionID":"connection-a","epoch":10,"resumed":false,"browserBundleIdentifier":"com.google.Chrome","targets":[{"id":"chromium-tab:chromium-profile-a:22","browser":"Chrome","browserFamily":"chrome","browserDisplayName":"Chrome","browserBundleIdentifier":"com.google.Chrome","url":"https://example.test","pageTitle":"Example","title":"Song","artist":"Artist","album":"Album","playing":true,"muted":true,"duration":100,"elapsedTime":10,"supportedCommands":["play","pause","playPause"]}]}
         """)
         expectEqual(snapshotController.targets.map(\.id), ["chromium-tab:chromium-profile-a:22"], "Valid Chromium snapshots must decode stable tab IDs")
+        expectEqual(snapshotController.targets.first?.muted, true, "Valid Chromium snapshots must decode tab-level muted state")
         snapshotController.handleSnapshotPayload("""
         {"protocolVersion":3,"profileGuid":"chromium-profile-a","connectionID":"connection-a","epoch":11,"browserBundleIdentifier":"com.google.Chrome","targets":[{"id":"chromium-tab:chromium-profile-a:23","browser":"Chrome","browserFamily":"chrome","browserDisplayName":"Chrome","browserBundleIdentifier":"com.google.Chrome","url":"https://example.test/2","pageTitle":"Second","title":"Second","artist":"Artist","album":"Album","playing":true,"duration":100,"elapsedTime":10,"supportedCommands":["play","pause","playPause"]}]}
         """)

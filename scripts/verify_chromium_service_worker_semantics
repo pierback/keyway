@@ -23,6 +23,8 @@ const focusEvents = [];
 const tabGetRequests = [];
 const queryRequests = [];
 const tabWindowIDs = new Map([[22, 11], [23, 11]]);
+const tabMutedByID = new Map([[22, false], [23, false]]);
+const tabAudibleByID = new Map([[22, true], [23, true]]);
 const activeTabIDByWindowID = new Map();
 const localStorage = {};
 const sessionStorage = {};
@@ -156,7 +158,13 @@ const context = {
       get(tabId, callback) {
         tabGetRequests.push(tabId);
         context.chrome.runtime.lastError = null;
-        callback({ id: tabId, windowId: tabWindowIDs.get(tabId) || 11, index: tabId === 23 ? 3 : 2 });
+        callback({
+          id: tabId,
+          windowId: tabWindowIDs.get(tabId) || 11,
+          index: tabId === 23 ? 3 : 2,
+          mutedInfo: { muted: tabMutedByID.get(tabId) === true },
+          audible: tabAudibleByID.get(tabId) === true,
+        });
       },
       query(queryInfo, callback) {
         queryRequests.push(queryInfo);
@@ -174,8 +182,17 @@ const context = {
         if (updateInfo.active === true) {
           activeTabIDByWindowID.set(tabWindowIDs.get(tabId) || 11, tabId);
         }
+        if (typeof updateInfo.muted === "boolean") {
+          tabMutedByID.set(tabId, updateInfo.muted);
+          tabAudibleByID.set(tabId, !updateInfo.muted);
+        }
         context.chrome.runtime.lastError = null;
-        callback({ id: tabId, active: updateInfo.active });
+        callback({
+          id: tabId,
+          active: updateInfo.active,
+          mutedInfo: { muted: tabMutedByID.get(tabId) === true },
+          audible: tabAudibleByID.get(tabId) === true,
+        });
       },
       highlight(highlightInfo, callback) {
         tabHighlights.push(highlightInfo);
@@ -299,6 +316,7 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   assert(!("windowId" in snapshot.targets[0]), "snapshot must not expose private window route identity");
   assertEqual(snapshot.targets[0].pageTitle, "Example Video", "browser source must prefer the tab title over frame titles");
   assertEqual(snapshot.targets[0].url, "https://example.test/video", "browser source must preserve the tab URL");
+  assertEqual(snapshot.targets[0].muted, false, "media state must source mute from the browser tab");
   assertEqual(snapshot.targets[0].album, "Album", "media state must preserve Media Session album metadata");
   assertEqual(snapshot.targets[0].supportedCommands.join(","), "play,pause,playPause,next", "media state must preserve page-supported commands");
   assertEqual(intervals.at(-1).delay, 1000, "service worker must switch to the active snapshot heartbeat when a media source exists");
@@ -332,6 +350,8 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
         windowId: 11,
         url: "https://example.test/video",
         title: "Example Video",
+        mutedInfo: { muted: false },
+        audible: true,
       },
       frameId: 7,
     },
@@ -364,6 +384,8 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
         windowId: 11,
         url: "https://example.test/second-video",
         title: "Second Example Video",
+        mutedInfo: { muted: false },
+        audible: false,
       },
       frameId: 0,
     },
@@ -393,6 +415,8 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
         windowId: 11,
         url: "https://example.test/second-video",
         title: "Second Example Video",
+        mutedInfo: { muted: true },
+        audible: false,
       },
       frameId: 0,
     },
@@ -422,6 +446,8 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
         windowId: 11,
         url: "https://example.test/second-video",
         title: "Second Example Video",
+        mutedInfo: { muted: false },
+        audible: false,
       },
       frameId: 0,
     },
@@ -429,7 +455,7 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   );
   await Promise.resolve();
   const mutedTargetSnapshot = postedMessages.filter(message => message.type === "snapshot").at(-1);
-  assertEqual(mutedTargetSnapshot.targets.length, 1, "muted browser media without Media Session metadata must not publish an active source row");
+  assertEqual(mutedTargetSnapshot.targets.length, 1, "tab-muted browser media without Media Session metadata must not publish an active source row");
 
   runtimeMessageListener(
     {
@@ -450,6 +476,8 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
         windowId: 11,
         url: "https://example.test/second-video",
         title: "Second Example Video",
+        mutedInfo: { muted: false },
+        audible: true,
       },
       frameId: 0,
     },
@@ -625,6 +653,33 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   assertEqual(commandResult.ok, true, "command result must preserve content-script acknowledgement");
 
   tabMessages.length = 0;
+  const tabUpdateCountBeforeMute = tabUpdates.length;
+  const snapshotCountBeforeMute = postedMessages.filter(message => message.type === "snapshot").length;
+  nativeMessageListener({
+    type: "command",
+    protocolVersion: 3,
+    requestID: "mute-command",
+    targetID: twoTargetSnapshot.targets[1].id,
+    command: "mute",
+  });
+  assertEqual(tabMessages.length, 0, "native mute command must not dispatch to the content script");
+  assertEqual(tabGetRequests.at(-1), 23, "native mute command must resolve the live tab");
+  assertEqual(tabUpdates.length, tabUpdateCountBeforeMute + 1, "native mute command must update exactly one tab");
+  assertEqual(tabUpdates.at(-1).tabId, 23, "native mute command must update the selected tab");
+  assertEqual(tabUpdates.at(-1).updateInfo.muted, true, "native mute command must toggle the tab-level muted flag");
+  const muteCommandResult = postedMessages.filter(message => message.type === "commandResult").at(-1);
+  assertEqual(muteCommandResult.targetID, twoTargetSnapshot.targets[1].id, "mute command result must preserve exact target id");
+  assertEqual(muteCommandResult.ok, true, "mute command result must report the tabs API update");
+  assertEqual(muteCommandResult.message, "muted", "mute command result must describe the tab-level state");
+  const muteCommandSnapshot = postedMessages.filter(message => message.type === "snapshot").at(-1);
+  assertEqual(
+    postedMessages.filter(message => message.type === "snapshot").length,
+    snapshotCountBeforeMute + 1,
+    "native mute command must immediately publish the confirmed tab-level state"
+  );
+  assertEqual(muteCommandSnapshot.targets.find(target => target.id === twoTargetSnapshot.targets[1].id)?.muted, true, "mute command snapshot must carry tab-level muted=true");
+
+  tabMessages.length = 0;
   nativeMessageListener({
     type: "command",
     protocolVersion: 3,
@@ -640,6 +695,19 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   );
 
   assert(typeof tabUpdatedListener === "function", "service worker must register tab update listener");
+  const snapshotCountBeforeExternalUnmute = postedMessages.filter(message => message.type === "snapshot").length;
+  tabMutedByID.set(23, false);
+  tabAudibleByID.set(23, true);
+  tabUpdatedListener(23, { mutedInfo: { muted: false } });
+  const externalUnmuteSnapshot = postedMessages.filter(message => message.type === "snapshot").at(-1);
+  assertEqual(
+    postedMessages.filter(message => message.type === "snapshot").length,
+    snapshotCountBeforeExternalUnmute + 1,
+    "external tab mutedInfo changes must publish exactly one immediate snapshot"
+  );
+  assertEqual(externalUnmuteSnapshot.targets.find(target => target.id === twoTargetSnapshot.targets[1].id)?.muted, false, "external unmute snapshot must carry tab-level muted=false");
+  assertEqual(externalUnmuteSnapshot.epoch, muteCommandSnapshot.epoch + 1, "external mutedInfo snapshots must advance the normal snapshot epoch");
+
   tabUpdatedListener(22, { status: "loading" });
   const afterNavigationSnapshot = postedMessages.filter(message => message.type === "snapshot").at(-1);
   assertEqual(afterNavigationSnapshot.targets.length, 1, "tab navigation must clear only the stale tab target");

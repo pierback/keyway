@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import os
 import SonosHandoffCore
@@ -22,6 +23,7 @@ struct MediaAudioControlPresentation: Equatable, Sendable {
     var volume: Int?
     var muted: Bool?
     var isEnabled: Bool
+    var isPending: Bool = false
 
     static func disabled(title: String, detail: String) -> MediaAudioControlPresentation {
         MediaAudioControlPresentation(
@@ -40,8 +42,15 @@ struct MediaAudioControlSnapshot: Equatable, Sendable {
     var browser: MediaAudioControlPresentation
 }
 
+struct BrowserMuteState: Equatable, Sendable {
+    let muted: Bool
+    let isPending: Bool
+}
+
 @MainActor
-final class MediaAudioControlController {
+final class MediaAudioControlController: ObservableObject {
+    nonisolated private static let defaultBrowserMuteConfirmationTimeoutNanoseconds: UInt64 = 2_000_000_000
+
     private let logger = Logger(subsystem: AppIdentity.loggerSubsystem, category: "MediaAudio")
     private let volumeService: any SpeakerVolumeAdjusting
     private let outputSelection: PlaybackOutputSelection
@@ -49,15 +58,26 @@ final class MediaAudioControlController {
     private let chromiumBrowserExtensionController: ChromiumBrowserExtensionController
     private let mediaSourceStore: MediaSourceStore?
     private let volumeCommands: SpeakerVolumeCommandQueue
+    private let browserMuteConfirmationTimeoutNanoseconds: UInt64
     private let outputPreferenceResolver = SonosOutputPreferenceResolver()
+    private var mediaSourceRowsSubscription: AnyCancellable?
+    @Published private var pendingBrowserMutesByTargetID: [String: PendingBrowserMute] = [:]
+
+    private struct PendingBrowserMute {
+        let expectedMuted: Bool
+        let appName: String
+        let startedAt: Date
+        var timeoutTask: Task<Void, Never>?
+    }
 
     init(
         volumeService: any SpeakerVolumeAdjusting,
         outputSelection: PlaybackOutputSelection,
         activePlaybackObserver: any SpotifyActivePlaybackObserving,
-        chromiumBrowserExtensionController: ChromiumBrowserExtensionController = ChromiumBrowserExtensionController(),
+        chromiumBrowserExtensionController: ChromiumBrowserExtensionController,
         mediaSourceStore: MediaSourceStore? = nil,
-        volumeCommands: SpeakerVolumeCommandQueue = .shared
+        volumeCommands: SpeakerVolumeCommandQueue = .shared,
+        browserMuteConfirmationTimeoutNanoseconds: UInt64 = MediaAudioControlController.defaultBrowserMuteConfirmationTimeoutNanoseconds
     ) {
         self.volumeService = volumeService
         self.outputSelection = outputSelection
@@ -65,6 +85,13 @@ final class MediaAudioControlController {
         self.chromiumBrowserExtensionController = chromiumBrowserExtensionController
         self.mediaSourceStore = mediaSourceStore
         self.volumeCommands = volumeCommands
+        self.browserMuteConfirmationTimeoutNanoseconds = browserMuteConfirmationTimeoutNanoseconds
+        mediaSourceRowsSubscription = mediaSourceStore?.$rows
+            .sink { [weak self] rows in
+                MainActor.assumeIsolated {
+                    self?.confirmPendingBrowserMutes(rows: rows)
+                }
+            }
     }
 
     func snapshot(for target: MediaRemoteTarget?) async -> MediaAudioControlSnapshot {
@@ -172,7 +199,61 @@ final class MediaAudioControlController {
     }
 
     func toggleBrowserMute(target: MediaRemoteTarget) {
-        submitBrowserAudioCommand(.mute, target: target)
+        guard ChromiumBrowserExtensionTransport.isTarget(target) else {
+            StatusHUD.shared.finish(
+                title: "Browser Command Unsupported",
+                message: "\(target.appName) is not a Chromium extension target.",
+                dismissAfter: 2.2
+            )
+            return
+        }
+
+        // Toggle from the pending-aware state, not raw confirmed state: the UI disables
+        // the button while pending, but this is public API -- a second call racing the
+        // 2s confirmation window would otherwise re-send "expect muted" while the tab
+        // ends up toggled back, then time out into a false failure + suspect mark.
+        let expectedMuted = !(browserMuteState(for: target)?.muted ?? confirmedBrowserMuted(target: target))
+        beginPendingBrowserMute(target: target, expectedMuted: expectedMuted)
+
+        guard let sent = chromiumBrowserExtensionController.submit(audioCommand: .mute, target: target, onResult: { [weak self, mediaSourceStore] result in
+            mediaSourceStore?.recordCommandResult(result)
+            if result.ok {
+                return
+            }
+            self?.failPendingBrowserMute(
+                targetID: target.id,
+                title: result.unsupported ? "Browser Command Unsupported" : "Browser Command Failed",
+                message: result.message,
+                markCommandFailed: false
+            )
+        }) else {
+            failPendingBrowserMute(
+                targetID: target.id,
+                title: "Browser Command Unsupported",
+                message: "\(target.appName) is not a Chromium extension target.",
+                markCommandFailed: false
+            )
+            return
+        }
+
+        if !sent {
+            failPendingBrowserMute(
+                targetID: target.id,
+                title: "Browser Command Failed",
+                message: "Keyway could not reach \(target.appName).",
+                markCommandFailed: true
+            )
+        }
+    }
+
+    func browserMuteState(for target: MediaRemoteTarget) -> BrowserMuteState? {
+        guard ChromiumBrowserExtensionTransport.isTarget(target) else {
+            return nil
+        }
+        if let pending = pendingBrowserMutesByTargetID[target.id] {
+            return BrowserMuteState(muted: pending.expectedMuted, isPending: true)
+        }
+        return BrowserMuteState(muted: confirmedBrowserMuted(target: target), isPending: false)
     }
 
     private func submitBrowserAudioCommand(
@@ -281,8 +362,79 @@ final class MediaAudioControlController {
             title: "Browser",
             detail: target.detailText,
             volume: nil,
-            muted: nil,
-            isEnabled: true
+            muted: browserMuteState(for: target)?.muted,
+            isEnabled: true,
+            isPending: pendingBrowserMutesByTargetID[target.id] != nil
+        )
+    }
+
+    private func confirmedBrowserMuted(target: MediaRemoteTarget) -> Bool {
+        if let row = mediaSourceStore?.rows.first(where: { $0.id == target.id }) {
+            return row.audioState.muted
+        }
+        return target.muted == true
+    }
+
+    private func beginPendingBrowserMute(target: MediaRemoteTarget, expectedMuted: Bool) {
+        pendingBrowserMutesByTargetID[target.id]?.timeoutTask?.cancel()
+        let startedAt = Date()
+        pendingBrowserMutesByTargetID[target.id] = PendingBrowserMute(
+            expectedMuted: expectedMuted,
+            appName: target.appName,
+            startedAt: startedAt,
+            timeoutTask: nil
+        )
+        let targetID = target.id
+        pendingBrowserMutesByTargetID[targetID]?.timeoutTask = Task { @MainActor [weak self] in
+            guard let self,
+                  (try? await Task.sleep(nanoseconds: self.browserMuteConfirmationTimeoutNanoseconds)) != nil,
+                  let pending = self.pendingBrowserMutesByTargetID[targetID],
+                  pending.startedAt == startedAt
+            else {
+                return
+            }
+            self.pendingBrowserMutesByTargetID.removeValue(forKey: targetID)
+            self.mediaSourceStore?.markCommandFailed(targetID: targetID)
+            StatusHUD.shared.finish(
+                title: "Browser Command Failed",
+                message: "Keyway could not confirm \(pending.appName) mute.",
+                dismissAfter: 2.2
+            )
+        }
+    }
+
+    private func confirmPendingBrowserMutes(rows: [SourceRow]) {
+        for row in rows {
+            guard let pending = pendingBrowserMutesByTargetID[row.id],
+                  row.audioState.muted == pending.expectedMuted
+            else {
+                continue
+            }
+            pending.timeoutTask?.cancel()
+            pendingBrowserMutesByTargetID.removeValue(forKey: row.id)
+            StatusHUD.shared.finish(
+                title: "\(pending.appName) Mute",
+                message: pending.expectedMuted ? "Muted" : "Unmuted",
+                dismissAfter: 1.6
+            )
+        }
+    }
+
+    private func failPendingBrowserMute(
+        targetID: String,
+        title: String,
+        message: String,
+        markCommandFailed: Bool
+    ) {
+        pendingBrowserMutesByTargetID[targetID]?.timeoutTask?.cancel()
+        pendingBrowserMutesByTargetID.removeValue(forKey: targetID)
+        if markCommandFailed {
+            mediaSourceStore?.markCommandFailed(targetID: targetID)
+        }
+        StatusHUD.shared.finish(
+            title: title,
+            message: message,
+            dismissAfter: 2.2
         )
     }
 

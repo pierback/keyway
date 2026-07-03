@@ -1064,6 +1064,7 @@ private struct ChromiumBrowserExtensionTargetPayload: Decodable {
     let artist: String
     let album: String?
     let playing: Bool
+    let muted: Bool?
     let duration: Double?
     let elapsedTime: Double?
     let supportedCommands: [String]
@@ -1088,6 +1089,7 @@ private struct ChromiumBrowserExtensionTargetPayload: Decodable {
             elapsedTime: elapsedTime,
             elapsedTimestamp: Date().timeIntervalSince1970,
             supportedCommands: supportedCommands.compactMap(MediaRemoteTransportCommand.init(rawValue:)),
+            muted: muted,
             browserFamily: browserFamily,
             browserDisplayName: browserDisplayName,
             browserBundleIdentifier: browserBundleIdentifier

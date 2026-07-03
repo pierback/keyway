@@ -56,6 +56,7 @@ struct MediaRemoteTarget: Codable, Equatable, Identifiable, Sendable {
     let elapsedTime: Double?
     let elapsedTimestamp: Double?
     let supportedCommands: [MediaRemoteTransportCommand]?
+    var muted: Bool? = nil
     let browserFamily: String?
     let browserDisplayName: String?
     let browserBundleIdentifier: String?

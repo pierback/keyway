@@ -29,12 +29,14 @@ struct MediaSourceAudioState: Equatable, Sendable {
     let duration: Double?
     let elapsedTime: Double?
     let elapsedTimestamp: Double?
+    let muted: Bool
 
     init(target: MediaRemoteTarget) {
         self.playbackRate = target.playbackRate
         self.duration = target.duration
         self.elapsedTime = target.elapsedTime
         self.elapsedTimestamp = target.elapsedTimestamp
+        self.muted = target.muted == true
     }
 }
 

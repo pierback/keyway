@@ -259,6 +259,45 @@ end tell
 APPLESCRIPT
 }
 
+click_overlay_button() {
+  local identifier="$1"
+  osascript - "$identifier" <<'APPLESCRIPT'
+on clickByIdentifier(e, wanted, depth)
+  if depth > 8 then return false
+  tell application "System Events"
+    try
+      if role of e is "AXButton" then
+        try
+          if value of attribute "AXIdentifier" of e is wanted then
+            click e
+            return true
+          end if
+        end try
+      end if
+    end try
+    try
+      repeat with c in UI elements of e
+        if my clickByIdentifier(c, wanted, depth + 1) then return true
+      end repeat
+    end try
+  end tell
+  return false
+end clickByIdentifier
+
+on run argv
+  set wanted to item 1 of argv
+  tell application "System Events"
+    tell process "Keyway"
+      set frontmost to true
+      if (count of windows) is 0 then return "missing-window"
+      if my clickByIdentifier(window 1, wanted, 0) then return "clicked"
+      return "missing-button"
+    end tell
+  end tell
+end run
+APPLESCRIPT
+}
+
 open "$APP_DIR"
 sleep 1.0
 close_overlay
@@ -336,13 +375,26 @@ if ! grep -q '^Browser$' <<<"$overlay_text"; then
   echo "smoke_overlay_browser_controls: browser control row is missing" >&2
   exit 1
 fi
-if ! grep -q '^Disabled$' <<<"$overlay_text"; then
-  echo "smoke_overlay_browser_controls: browser row does not show Disabled" >&2
-  exit 1
-fi
-if ! grep -q '^Volume disabled without browser extension$' <<<"$overlay_text"; then
-  echo "smoke_overlay_browser_controls: browser volume disabled explanation is missing" >&2
-  exit 1
+
+if grep -q '^Disabled$' <<<"$overlay_text"; then
+  if ! grep -q '^Volume disabled without browser extension$' <<<"$overlay_text"; then
+    echo "smoke_overlay_browser_controls: browser volume disabled explanation is missing" >&2
+    exit 1
+  fi
+else
+  click_result="$(click_overlay_button "mediaTargetOverlay.browserMute")"
+  if [[ "$click_result" != "clicked" ]]; then
+    echo "$overlay_text"
+    echo "smoke_overlay_browser_controls: browser mute button was not clickable ($click_result)" >&2
+    exit 1
+  fi
+  sleep 0.5
+  overlay_text="$(keyway_window_text || true)"
+  if ! grep -q '^Browser$' <<<"$overlay_text"; then
+    echo "$overlay_text"
+    echo "smoke_overlay_browser_controls: overlay disappeared after browser mute toggle" >&2
+    exit 1
+  fi
 fi
 
 echo "smoke_overlay_browser_controls=ok"

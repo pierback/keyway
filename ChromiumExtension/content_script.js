@@ -258,7 +258,6 @@ function publishElement(element) {
       pageTitle: document.title || "",
       url: location.href || "",
       playing: !element.paused && !element.ended,
-      muted: element.muted,
       volume: element.volume,
       duration: element.duration,
       elapsedTime: element.currentTime,
@@ -326,11 +325,6 @@ function applyCommand(message) {
     }
     element.pause();
     return Promise.resolve({ ok: true, message: "paused" });
-  }
-
-  if (message.command === "mute") {
-    element.muted = !element.muted;
-    return Promise.resolve({ ok: true, message: element.muted ? "muted" : "unmuted" });
   }
 
   if (message.command === "volumeDelta") {

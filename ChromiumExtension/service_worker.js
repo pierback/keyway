@@ -263,8 +263,12 @@ function isVisibleTarget(target) {
   return target.hasPlaybackActivity;
 }
 
-function isAudiblePlayback(target) {
-  return target.playing && !target.muted && target.volume !== 0;
+function isAudiblePlayback(target, source = null) {
+  const muted = source ? source.muted : target.muted;
+  if (!target.playing || muted || target.volume === 0) return false;
+  if (source && typeof source.tabAudible === "boolean") return source.tabAudible;
+  if (typeof target.tabAudible === "boolean") return target.tabAudible;
+  return true;
 }
 
 function removeStaleSources() {
@@ -317,6 +321,8 @@ function upsertCandidate(browser, tab, frameId, message) {
     windowId: tab.windowId,
     tabTitle: tab.title || "",
     tabUrl: tab.url || "",
+    muted: Boolean(tab.mutedInfo?.muted),
+    tabAudible: typeof tab.audible === "boolean" ? tab.audible : null,
     candidates: new Map(),
     route: null,
     updatedAt: now,
@@ -336,7 +342,6 @@ function upsertCandidate(browser, tab, frameId, message) {
     artist: message.artist || "",
     album: message.album || "",
     playing: Boolean(message.playing),
-    muted: Boolean(message.muted),
     volume: Number.isFinite(message.volume) ? message.volume : null,
     duration: Number.isFinite(message.duration) ? message.duration : null,
     elapsedTime: Number.isFinite(message.elapsedTime) ? message.elapsedTime : null,
@@ -349,7 +354,9 @@ function upsertCandidate(browser, tab, frameId, message) {
     lastActiveAt: 0,
   };
 
-  candidate.lastActiveAt = isAudiblePlayback(candidate)
+  source.muted = Boolean(tab.mutedInfo?.muted);
+  source.tabAudible = typeof tab.audible === "boolean" ? tab.audible : source.tabAudible;
+  candidate.lastActiveAt = isAudiblePlayback(candidate, source)
     ? now
     : existingCandidate?.lastActiveAt || 0;
   candidate.hasPlaybackActivity = candidate.hasPlaybackActivity
@@ -396,9 +403,9 @@ function refreshSource(source) {
 function selectPrimaryCandidate(source) {
   const now = Date.now();
   const current = source.route ? source.candidates.get(source.route.candidateKey) : null;
-  const audible = bestCandidate(source, candidate => isAudiblePlayback(candidate), current, now);
+  const audible = bestCandidate(source, candidate => isAudiblePlayback(candidate, source), current, now);
   if (audible) {
-    if (current && current.candidateKey !== audible.candidateKey && isAudiblePlayback(current)) {
+    if (current && current.candidateKey !== audible.candidateKey && isAudiblePlayback(current, source)) {
       return current;
     }
     return audible;
@@ -415,7 +422,7 @@ function bestCandidate(source, predicate, current, now) {
   let selected = null;
   for (const candidate of source.candidates.values()) {
     if (!predicate(candidate)) continue;
-    if (!selected || compareCandidates(candidate, selected, current, now) < 0) {
+    if (!selected || compareCandidates(candidate, selected, current, now, source) < 0) {
       selected = candidate;
     }
   }
@@ -427,18 +434,18 @@ function isStickyCandidate(candidate, now) {
     && (candidate.playing || candidate.hasPlaybackActivity);
 }
 
-function compareCandidates(left, right, current, now) {
-  const scoreDifference = candidateScore(right, current, now) - candidateScore(left, current, now);
+function compareCandidates(left, right, current, now, source) {
+  const scoreDifference = candidateScore(right, current, now, source) - candidateScore(left, current, now, source);
   if (scoreDifference !== 0) return scoreDifference;
   if (right.updatedAt !== left.updatedAt) return right.updatedAt - left.updatedAt;
   return left.candidateKey.localeCompare(right.candidateKey);
 }
 
-function candidateScore(candidate, current, now) {
+function candidateScore(candidate, current, now, source) {
   let score = 0;
-  if (isAudiblePlayback(candidate)) {
+  if (isAudiblePlayback(candidate, source)) {
     score += 100000;
-  } else if (candidate.playing && !candidate.muted) {
+  } else if (candidate.playing && !source.muted) {
     score += 50000;
   } else if (candidate.playing) {
     score += 1000;
@@ -473,7 +480,8 @@ function materializeSource(source) {
     artist: selected.artist,
     album: selected.album,
     playing: selected.playing,
-    muted: selected.muted,
+    muted: source.muted,
+    tabAudible: source.tabAudible,
     volume: selected.volume,
     duration: selected.duration,
     elapsedTime: selected.elapsedTime,
@@ -585,6 +593,11 @@ function handleCommandMessage(message) {
     return;
   }
 
+  if (message.command === "mute") {
+    handleTabMuteCommand(message, source);
+    return;
+  }
+
   chrome.tabs.sendMessage(
     source.tabId,
     {
@@ -611,6 +624,63 @@ function handleCommandMessage(message) {
       });
     }
   );
+}
+
+function sendCommandResult(message, ok, unsupported, resultMessage) {
+  sendNative({
+    type: "commandResult",
+    protocolVersion,
+    requestID: message.requestID,
+    targetID: message.targetID,
+    command: message.command,
+    ok,
+    unsupported,
+    message: resultMessage,
+    backend: "chromium_extension",
+  });
+}
+
+function handleTabMuteCommand(message, source) {
+  chrome.tabs.get(source.tabId, tab => {
+    const lookupError = chrome.runtime.lastError;
+    if (lookupError || !tab) {
+      sendCommandResult(
+        message,
+        false,
+        false,
+        lookupError ? lookupError.message || "Could not find browser tab." : "Could not find browser tab."
+      );
+      return;
+    }
+
+    const muted = Boolean(tab.mutedInfo?.muted);
+    chrome.tabs.update(source.tabId, { muted: !muted }, updatedTab => {
+      const updateError = chrome.runtime.lastError;
+      if (updateError) {
+        sendCommandResult(message, false, false, updateError.message || "Chromium tab mute failed.");
+        return;
+      }
+
+      updateSourceTabState(source.tabId, updatedTab || { mutedInfo: { muted: !muted } });
+      sendCommandResult(message, true, false, muted ? "unmuted" : "muted");
+    });
+  });
+}
+
+function updateSourceTabState(tabId, tab) {
+  let changed = false;
+  for (const source of sources.values()) {
+    if (source.tabId !== tabId) continue;
+    const nextMuted = Boolean(tab.mutedInfo?.muted);
+    const nextTabAudible = typeof tab.audible === "boolean" ? tab.audible : source.tabAudible;
+    if (source.muted !== nextMuted || source.tabAudible !== nextTabAudible) {
+      source.muted = nextMuted;
+      source.tabAudible = nextTabAudible;
+      refreshSource(source);
+      changed = true;
+    }
+  }
+  if (changed) publishSnapshot();
 }
 
 function handleFocusMessage(message) {
@@ -766,6 +836,14 @@ chrome.tabs.onRemoved.addListener(tabId => {
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.url || changeInfo.status === "loading") {
     clearSourcesForTab(tabId);
+    return;
+  }
+  if (changeInfo.mutedInfo || typeof changeInfo.audible === "boolean") {
+    chrome.tabs.get(tabId, tab => {
+      const error = chrome.runtime.lastError;
+      if (error || !tab) return;
+      updateSourceTabState(tabId, tab);
+    });
   }
 });
 

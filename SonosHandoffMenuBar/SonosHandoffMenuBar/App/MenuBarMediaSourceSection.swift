@@ -10,6 +10,7 @@ struct MenuBarMediaSourceSection: View {
 
     @ObservedObject var mediaRemoteController: MediaRemoteController
     @ObservedObject var mediaSourceStore: MediaSourceStore
+    @ObservedObject var mediaAudioControlController: MediaAudioControlController
     @ObservedObject var playback: PlaybackSyncController
     let mediaTransportActions: MediaTransportActionController
     let progressTick: UInt64
@@ -163,6 +164,7 @@ struct MenuBarMediaSourceSection: View {
             elapsedTime: latestTarget.elapsedTime ?? sessionTarget.elapsedTime,
             elapsedTimestamp: latestTarget.elapsedTimestamp ?? sessionTarget.elapsedTimestamp,
             supportedCommands: latestTarget.supportedCommands ?? sessionTarget.supportedCommands,
+            muted: latestTarget.muted ?? sessionTarget.muted,
             browserFamily: sessionTarget.browserFamily,
             browserDisplayName: sessionTarget.browserDisplayName,
             browserBundleIdentifier: sessionTarget.browserBundleIdentifier
@@ -250,6 +252,9 @@ struct MenuBarMediaSourceSection: View {
                     sourceTransportButton(.previous, target: target)
                     sourceTransportButton(target.isCurrentlyPlaying ? .pause : .play, target: target, emphasized: true)
                     sourceTransportButton(.next, target: target)
+                    if ChromiumBrowserExtensionTransport.isTarget(target) {
+                        browserMuteButton(target)
+                    }
                     focusButton(target)
                 }
             }
@@ -324,6 +329,34 @@ struct MenuBarMediaSourceSection: View {
         .help("Focus \(target.appName)")
         .accessibilityIdentifier("source-\(target.id)-focus")
         .accessibilityLabel("Focus \(target.appName)")
+    }
+
+    private func browserMuteButton(_ target: MediaRemoteTarget) -> some View {
+        let state = mediaAudioControlController.browserMuteState(for: target)
+        let disabled = state == nil || state?.isPending == true || sourceReachability(target).isSuspect
+        let muted = state?.muted == true
+
+        return Button {
+            mediaAudioControlController.toggleBrowserMute(target: target)
+        } label: {
+            Image(systemName: muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                .font(.system(size: 10, weight: .semibold))
+                .frame(width: 22, height: 22)
+                .contentShape(Circle())
+                .overlay {
+                    if state?.isPending == true {
+                        Circle()
+                            .stroke(.white.opacity(0.34), lineWidth: 1)
+                            .frame(width: 18, height: 18)
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.white.opacity(disabled ? 0.24 : muted ? 0.82 : 0.50))
+        .disabled(disabled)
+        .help(state?.isPending == true ? "Mute pending" : muted ? "Unmute tab" : "Mute tab")
+        .accessibilityIdentifier("source-\(target.id)-browser-mute")
+        .accessibilityLabel(muted ? "Unmute \(target.appName)" : "Mute \(target.appName)")
     }
 
     private func spotifyRouteRow(for target: MediaRemoteTarget) -> some View {
