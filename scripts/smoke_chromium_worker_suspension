@@ -1,0 +1,400 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+workdir="$(mktemp -d)"
+server_pid=""
+browser_pid=""
+monitor_pid=""
+
+cleanup() {
+  if [[ -n "$monitor_pid" ]]; then
+    kill "$monitor_pid" >/dev/null 2>&1 || true
+    wait "$monitor_pid" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$browser_pid" ]]; then
+    kill "$browser_pid" >/dev/null 2>&1 || true
+    wait "$browser_pid" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$server_pid" ]]; then
+    kill "$server_pid" >/dev/null 2>&1 || true
+    wait "$server_pid" >/dev/null 2>&1 || true
+  fi
+  for _ in {1..20}; do
+    if rm -rf "$workdir" >/dev/null 2>&1; then
+      return
+    fi
+    sleep 0.1
+  done
+  rm -rf "$workdir" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+fail() {
+  printf 'smoke_chromium_worker_suspension: %s\n' "$1" >&2
+  exit 1
+}
+
+extension_id="$(
+  python3 - "$repo_root/ChromiumExtension/manifest.json" <<'PY'
+import base64
+import hashlib
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as manifest_file:
+    public_key = json.load(manifest_file)["key"]
+
+digest = hashlib.sha256(base64.b64decode(public_key)).digest()[:16]
+print("".join(chr(ord("a") + (byte >> 4)) + chr(ord("a") + (byte & 15)) for byte in digest))
+PY
+)"
+
+browser_path="${KEYWAY_CHROMIUM_SMOKE_BROWSER_PATH:-}"
+if [[ -z "$browser_path" ]]; then
+  if [[ -x "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser" ]]; then
+    browser_path="/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"
+  elif [[ -x "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ]]; then
+    browser_path="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+  else
+    fail "Google Chrome or Brave Browser must be installed, or set KEYWAY_CHROMIUM_SMOKE_BROWSER_PATH"
+  fi
+fi
+
+playwright_module="$(
+  bun --input-type=module -e "console.log(await import.meta.resolve('playwright'))" \
+    || fail "Playwright must be available to launch Chromium with extension support"
+)"
+
+"$repo_root/scripts/install_chromium_native_host" "$extension_id" >/dev/null
+
+cat >"$workdir/server.py" <<'PY'
+import http.server
+import math
+import pathlib
+import socketserver
+import struct
+import sys
+import wave
+
+root = pathlib.Path(sys.argv[1])
+port_file = pathlib.Path(sys.argv[2])
+
+sample_rate = 44100
+with wave.open(str(root / "tone.wav"), "w") as wav:
+    wav.setnchannels(1)
+    wav.setsampwidth(2)
+    wav.setframerate(sample_rate)
+    for index in range(sample_rate):
+        value = int(1200 * math.sin(2 * math.pi * 440 * index / sample_rate))
+        wav.writeframesraw(struct.pack("<h", value))
+
+(root / "index.html").write_text("""<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Keyway Chromium Suspension Smoke</title></head>
+<body>
+<audio id="media" controls preload="auto" autoplay loop src="/tone.wav"></audio>
+<script>
+media.volume = 0.4;
+navigator.mediaSession.metadata = new MediaMetadata({
+  title: "Keyway Chromium Suspension Track",
+  artist: "Keyway",
+  album: "Worker Suspension",
+});
+media.play();
+</script>
+</body>
+</html>
+""", encoding="utf-8")
+
+class QuietHandler(http.server.SimpleHTTPRequestHandler):
+    def log_message(self, format, *args):
+        return
+
+socketserver.TCPServer.allow_reuse_address = True
+with socketserver.TCPServer(("127.0.0.1", 0), QuietHandler) as httpd:
+    pathlib.os.chdir(root)
+    port_file.write_text(str(httpd.server_address[1]), encoding="utf-8")
+    httpd.serve_forever()
+PY
+
+port_file="$workdir/port"
+python3 "$workdir/server.py" "$workdir" "$port_file" &
+server_pid="$!"
+
+for _ in {1..100}; do
+  if [[ -s "$port_file" ]]; then
+    break
+  fi
+  sleep 0.05
+done
+[[ -s "$port_file" ]] || fail "local smoke server did not start"
+
+port="$(cat "$port_file")"
+profile_dir="$workdir/profile"
+mkdir -p "$profile_dir"
+
+cat >"$workdir/launch-browser.mjs" <<'JS'
+import fs from "node:fs/promises";
+
+const [playwrightModule, browserPath, userDataDir, extensionPath, readyFile, targetURL] = process.argv.slice(2);
+const { chromium } = await import(playwrightModule);
+const context = await chromium.launchPersistentContext(userDataDir, {
+  headless: false,
+  executablePath: browserPath,
+  ignoreDefaultArgs: ["--disable-extensions"],
+  args: [
+    `--load-extension=${extensionPath}`,
+    "--autoplay-policy=no-user-gesture-required",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--remote-debugging-port=0",
+  ],
+});
+
+const page = await context.newPage();
+await page.goto(targetURL);
+await fs.writeFile(readyFile, "ready", "utf8");
+
+const close = async () => {
+  await context.close();
+  process.exit(0);
+};
+
+process.on("SIGTERM", close);
+process.on("SIGINT", close);
+await new Promise(() => {});
+JS
+
+browser_ready_file="$workdir/browser-ready"
+browser_log_file="$workdir/browser.log"
+bun "$workdir/launch-browser.mjs" \
+  "$playwright_module" \
+  "$browser_path" \
+  "$profile_dir" \
+  "$repo_root/ChromiumExtension" \
+  "$browser_ready_file" \
+  "http://127.0.0.1:$port/index.html" \
+  >"$browser_log_file" 2>&1 &
+browser_pid="$!"
+
+for _ in {1..200}; do
+  if [[ -s "$browser_ready_file" ]]; then
+    break
+  fi
+  sleep 0.05
+done
+
+if [[ ! -s "$browser_ready_file" ]]; then
+  if [[ -s "$browser_log_file" ]]; then
+    sed 's/^/chromium-worker-suspension-browser: /' "$browser_log_file" >&2
+  fi
+  fail "Chromium smoke browser did not load the test page"
+fi
+
+devtools_active_port="$profile_dir/DevToolsActivePort"
+for _ in {1..100}; do
+  if [[ -s "$devtools_active_port" ]]; then
+    break
+  fi
+  sleep 0.05
+done
+[[ -s "$devtools_active_port" ]] || fail "Chromium did not expose DevToolsActivePort"
+
+cat >"$workdir/WorkerSuspensionMonitor.swift" <<'SWIFT'
+import Foundation
+
+let hostName = "com.fpieringer.keyway.chromium"
+let snapshotNotificationName = Notification.Name("com.fpieringer.keyway.chromium.snapshot")
+let readyPath = CommandLine.arguments[1]
+let donePath = CommandLine.arguments[2]
+let failPath = CommandLine.arguments[3]
+let smokePageTitle = "Keyway Chromium Suspension Smoke"
+
+struct Snapshot: Decodable {
+    let protocolVersion: Int
+    let profileGuid: String
+    let connectionID: String
+    let epoch: Int?
+    let resumed: Bool?
+    let targets: [Target]
+}
+
+struct Target: Decodable {
+    let id: String
+    let pageTitle: String
+    let title: String
+}
+
+final class Monitor {
+    private let decoder = JSONDecoder()
+    private var initialIDs: Set<String>?
+    private var initialConnectionID: String?
+    private var initialProfileGuid: String?
+    private var resumedAt: TimeInterval?
+    private(set) var failed = false
+
+    func handleSnapshot(_ payload: String) {
+        let snapshot = try! decoder.decode(Snapshot.self, from: Data(payload.utf8))
+        precondition(snapshot.protocolVersion == 3, "Chromium extension snapshots must use protocol v3.")
+        let smokeTargets = snapshot.targets.filter { $0.pageTitle == smokePageTitle }
+        if initialIDs == nil {
+            guard !smokeTargets.isEmpty else {
+                return
+            }
+            initialIDs = Set(smokeTargets.map(\.id))
+            initialConnectionID = snapshot.connectionID
+            initialProfileGuid = snapshot.profileGuid
+            try! "ready".write(toFile: readyPath, atomically: true, encoding: .utf8)
+            return
+        }
+        guard snapshot.profileGuid == initialProfileGuid else {
+            return
+        }
+
+        if smokeTargets.isEmpty {
+            failed = true
+            try! "target set went empty after initial discovery\n".write(toFile: failPath, atomically: true, encoding: .utf8)
+            return
+        }
+
+        let ids = Set(smokeTargets.map(\.id))
+        if ids == initialIDs && snapshot.connectionID != initialConnectionID {
+            resumedAt = resumedAt ?? ProcessInfo.processInfo.systemUptime
+        }
+        if ids != initialIDs {
+            failed = true
+            try! "target IDs changed after worker suspension: \(Array(ids).sorted())\n".write(toFile: failPath, atomically: true, encoding: .utf8)
+        }
+    }
+
+    var done: Bool {
+        guard let resumedAt else {
+            return false
+        }
+        return ProcessInfo.processInfo.systemUptime - resumedAt >= 2
+    }
+}
+
+let monitor = Monitor()
+let observer = DistributedNotificationCenter.default().addObserver(
+    forName: snapshotNotificationName,
+    object: hostName,
+    queue: .main
+) { notification in
+    guard let payload = notification.userInfo?["payload"] as? String else {
+        preconditionFailure("Chromium snapshot notifications must include payload.")
+    }
+    monitor.handleSnapshot(payload)
+}
+
+let deadline = Date(timeIntervalSinceNow: 30)
+while Date() < deadline {
+    RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.025))
+    if monitor.failed {
+        DistributedNotificationCenter.default().removeObserver(observer)
+        exit(1)
+    }
+    if monitor.done {
+        try! "done".write(toFile: donePath, atomically: true, encoding: .utf8)
+        DistributedNotificationCenter.default().removeObserver(observer)
+        exit(0)
+    }
+}
+
+try! "timed out waiting for resumed worker snapshot\n".write(toFile: failPath, atomically: true, encoding: .utf8)
+DistributedNotificationCenter.default().removeObserver(observer)
+exit(1)
+SWIFT
+
+swiftc "$workdir/WorkerSuspensionMonitor.swift" -o "$workdir/worker-suspension-monitor"
+monitor_ready_file="$workdir/monitor-ready"
+monitor_done_file="$workdir/monitor-done"
+monitor_fail_file="$workdir/monitor-fail"
+"$workdir/worker-suspension-monitor" "$monitor_ready_file" "$monitor_done_file" "$monitor_fail_file" &
+monitor_pid="$!"
+
+for _ in {1..200}; do
+  if [[ -s "$monitor_ready_file" || -s "$monitor_fail_file" ]]; then
+    break
+  fi
+  sleep 0.05
+done
+
+if [[ -s "$monitor_fail_file" ]]; then
+  fail "$(cat "$monitor_fail_file")"
+fi
+[[ -s "$monitor_ready_file" ]] || fail "Chromium worker suspension monitor did not discover the initial target"
+
+cat >"$workdir/stop-worker.mjs" <<'JS'
+import fs from "node:fs/promises";
+
+const [devtoolsActivePortPath, extensionID] = process.argv.slice(2);
+const [port, wsPath] = (await fs.readFile(devtoolsActivePortPath, "utf8")).trim().split(/\r?\n/);
+const targetScriptURL = `chrome-extension://${extensionID}/service_worker.js`;
+const socket = new WebSocket(`ws://127.0.0.1:${port}${wsPath}`);
+const pending = new Map();
+let nextID = 1;
+let versions = [];
+
+socket.addEventListener("message", event => {
+  const message = JSON.parse(event.data);
+  if (message.id && pending.has(message.id)) {
+    const { resolve, reject } = pending.get(message.id);
+    pending.delete(message.id);
+    if (message.error) {
+      reject(new Error(message.error.message || JSON.stringify(message.error)));
+    } else {
+      resolve(message.result || {});
+    }
+    return;
+  }
+  if (message.method === "ServiceWorker.workerVersionUpdated") {
+    versions = message.params.versions || [];
+  }
+});
+
+await new Promise(resolve => socket.addEventListener("open", resolve, { once: true }));
+
+function send(method, params = {}) {
+  const id = nextID;
+  nextID += 1;
+  socket.send(JSON.stringify({ id, method, params }));
+  return new Promise((resolve, reject) => {
+    pending.set(id, { resolve, reject });
+  });
+}
+
+async function waitForVersion() {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const version = versions.find(candidate => candidate.scriptURL === targetScriptURL && candidate.runningStatus === "running")
+      || versions.find(candidate => candidate.scriptURL === targetScriptURL);
+    if (version) return version;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  throw new Error(`did not find extension service worker version for ${targetScriptURL}`);
+}
+
+await send("ServiceWorker.enable");
+const version = await waitForVersion();
+await send("ServiceWorker.stopWorker", { versionId: version.versionId });
+socket.close();
+console.log(`chromium_worker_suspension_stopped_version=${version.versionId}`);
+JS
+
+bun "$workdir/stop-worker.mjs" "$devtools_active_port" "$extension_id"
+
+for _ in {1..500}; do
+  if [[ -s "$monitor_done_file" || -s "$monitor_fail_file" ]]; then
+    break
+  fi
+  sleep 0.05
+done
+
+if [[ -s "$monitor_fail_file" ]]; then
+  fail "$(cat "$monitor_fail_file")"
+fi
+[[ -s "$monitor_done_file" ]] || fail "worker suspension monitor timed out"
+
+printf 'smoke_chromium_worker_suspension=ok\n'

@@ -42,6 +42,7 @@ generator = (repo_root / "scripts/generate_xcode_projects.rb").read_text()
 setup = (repo_root / "scripts/setup_chromium_extension").read_text()
 helium_smoke = (repo_root / "scripts/smoke_helium_chromium_extension_transport").read_text()
 chromium_smoke = (repo_root / "scripts/smoke_chromium_extension_transport").read_text()
+worker_suspension_smoke = (repo_root / "scripts/smoke_chromium_worker_suspension").read_text()
 regression_gate = (repo_root / "scripts/regression_gate").read_text()
 native_host = (repo_root / "packages/SonosHandoffCore/Sources/KeywayChromiumNativeHost/main.swift").read_text()
 
@@ -205,8 +206,33 @@ expect(
 )
 expect(
     repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
-    'sendNative({ type: "hello", protocolVersion, profileGuid })',
-    "Chromium extension service worker must announce its stable profile GUID to the native host",
+    'type: "hello"',
+    "Chromium extension service worker must announce hello to the native host",
+)
+expect(
+    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    "profileGuid,",
+    "Chromium extension service worker hello must include its stable profile GUID",
+)
+expect(
+    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    "epoch: snapshotEpoch",
+    "Chromium extension service worker hello must include the current snapshot epoch",
+)
+expect(
+    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    "resumed: resume.resumed",
+    "Chromium extension service worker hello must include resumed state",
+)
+expect(
+    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    "chrome.storage.session.get([snapshotStorageKey, snapshotEpochStorageKey]",
+    "Chromium extension service worker must rehydrate snapshots from session storage",
+)
+expect(
+    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    "chrome.alarms.create(nativePortAlarmName, { periodInMinutes: 0.5 })",
+    "Chromium extension service worker must register a 30s native-port dead-man alarm",
 )
 expect(
     repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
@@ -524,6 +550,21 @@ expect(
     "live Chromium extension smoke must fail when exact-tab focus does not land",
 )
 expect(
+    worker_suspension_smoke,
+    "ServiceWorker.stopWorker",
+    "worker suspension smoke must stop the MV3 service worker via CDP without reloading the extension",
+)
+expect(
+    worker_suspension_smoke,
+    "target set went empty after initial discovery",
+    "worker suspension smoke must fail if Swift-visible Chromium targets go empty during resume",
+)
+expect(
+    worker_suspension_smoke,
+    "snapshot.connectionID != initialConnectionID",
+    "worker suspension smoke must prove the same target IDs survive across a new native-host connection",
+)
+expect(
     helium_smoke,
     'restart_existing="${KEYWAY_HELIUM_SMOKE_RESTART:-0}"',
     "Helium extension smoke must require explicit opt-in before restarting a running Helium app",
@@ -547,6 +588,11 @@ expect(
     regression_gate,
     "KEYWAY_HELIUM_CHROMIUM_EXTENSION_SMOKE",
     "regression gate must expose the Helium Chromium extension smoke",
+)
+expect(
+    regression_gate,
+    "KEYWAY_CHROMIUM_WORKER_SUSPENSION_SMOKE",
+    "regression gate must expose the Chromium worker suspension smoke",
 )
 expect(
     transport,

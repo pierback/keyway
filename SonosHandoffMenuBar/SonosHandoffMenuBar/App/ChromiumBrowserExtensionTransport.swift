@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import Foundation
 import os
@@ -269,20 +270,22 @@ enum ChromiumBrowserAudioCommand: Sendable {
 @MainActor
 final class ChromiumBrowserExtensionController: ObservableObject {
     private static let commandResultTimeoutNanoseconds: UInt64 = 350_000_000
-    /// Stopgap eviction only (no grace/suspect UI state) until Phase 2's explicit
-    /// disconnect protocol lands. Stable IDs make a false eviction cheap -- the row
-    /// simply reappears under the same identity on the next snapshot.
-    private static let staleProfileTimeout: TimeInterval = 5
+    private static let profileRetainVisibleDuration: TimeInterval = 10
 
     private struct SnapshotSource {
         let lastSnapshotAt: Date
         let targets: [MediaRemoteTarget]
+        let browserBundleIdentifier: String?
+        let visible: Bool
     }
 
     private struct ChromiumBrowserExtensionSnapshotEnvelope: Decodable {
         let protocolVersion: Int
         let profileGuid: String
         let connectionID: String
+        let epoch: Int?
+        let resumed: Bool?
+        let browserBundleIdentifier: String?
     }
 
     private struct ChromiumBrowserExtensionCommandResultEnvelope: Decodable {
@@ -303,9 +306,11 @@ final class ChromiumBrowserExtensionController: ObservableObject {
     private var snapshotObserver: NSObjectProtocol?
     private var commandResultObserver: NSObjectProtocol?
     private var focusResultObserver: NSObjectProtocol?
-    private var staleEvictionTimer: Timer?
+    private var profileRetentionTimer: Timer?
+    private var workspaceTerminationObserver: NSObjectProtocol?
     private var snapshotSourcesByProfileGuid: [String: SnapshotSource] = [:]
     private var connectionIDByProfileGuid: [String: String] = [:]
+    private var highestAcceptedEpochByProfileGuid: [String: Int] = [:]
     private var pendingCommands: [String: ChromiumBrowserExtensionPendingCommand] = [:]
     private var commandResultTimeouts: [String: Task<Void, Never>] = [:]
     private var pendingFocusRequests: [String: ChromiumBrowserExtensionPendingFocus] = [:]
@@ -362,9 +367,24 @@ final class ChromiumBrowserExtensionController: ObservableObject {
             }
         }
 
-        staleEvictionTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+        profileRetentionTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.evictStaleProfiles(now: Date())
+                self?.hideSilentProfiles(now: Date())
+            }
+        }
+
+        workspaceTerminationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didTerminateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                  let bundleIdentifier = app.bundleIdentifier
+            else {
+                return
+            }
+            Task { @MainActor [weak self, bundleIdentifier] in
+                self?.handleBrowserTermination(bundleIdentifier: bundleIdentifier)
             }
         }
     }
@@ -379,11 +399,15 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         if let focusResultObserver {
             DistributedNotificationCenter.default().removeObserver(focusResultObserver)
         }
+        if let workspaceTerminationObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(workspaceTerminationObserver)
+        }
         snapshotObserver = nil
         commandResultObserver = nil
         focusResultObserver = nil
-        staleEvictionTimer?.invalidate()
-        staleEvictionTimer = nil
+        workspaceTerminationObserver = nil
+        profileRetentionTimer?.invalidate()
+        profileRetentionTimer = nil
         commandResultTimeouts.values.forEach { $0.cancel() }
         commandResultTimeouts = [:]
         pendingCommands = [:]
@@ -397,11 +421,21 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         profileGuid: String,
         connectionID: String,
         targets: [MediaRemoteTarget],
+        epoch: Int = 0,
+        resumed: Bool? = nil,
+        browserBundleIdentifier: String? = nil,
         now: Date = Date()
     ) {
+        guard acceptSnapshot(profileGuid: profileGuid, connectionID: connectionID, epoch: epoch, resumed: resumed) else {
+            return
+        }
+        let chromiumTargets = targets.filter(ChromiumBrowserExtensionTransport.isTarget)
         snapshotSourcesByProfileGuid[profileGuid] = SnapshotSource(
             lastSnapshotAt: now,
-            targets: targets.filter(ChromiumBrowserExtensionTransport.isTarget)
+            targets: chromiumTargets,
+            browserBundleIdentifier: browserBundleIdentifier
+                ?? chromiumTargets.compactMap(\.browserBundleIdentifier).first,
+            visible: true
         )
         connectionIDByProfileGuid[profileGuid] = connectionID
         rebuildConnectionState()
@@ -410,6 +444,7 @@ final class ChromiumBrowserExtensionController: ObservableObject {
     func markDisconnected() {
         snapshotSourcesByProfileGuid = [:]
         connectionIDByProfileGuid = [:]
+        highestAcceptedEpochByProfileGuid = [:]
         connected = false
         targets = []
     }
@@ -681,7 +716,10 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         markConnected(
             profileGuid: snapshot.profileGuid,
             connectionID: snapshot.connectionID,
-            targets: snapshot.targets.map(\.mediaRemoteTarget)
+            targets: snapshot.targets.map(\.mediaRemoteTarget),
+            epoch: snapshotEnvelope.epoch ?? 0,
+            resumed: snapshotEnvelope.resumed,
+            browserBundleIdentifier: snapshotEnvelope.browserBundleIdentifier
         )
     }
 
@@ -822,23 +860,81 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         connected = !snapshotSourcesByProfileGuid.isEmpty
 
         var seenTargetIDs: Set<String> = []
-        targets = snapshotSourcesByProfileGuid.keys.sorted().flatMap { profileGuid in
-            snapshotSourcesByProfileGuid[profileGuid]?.targets ?? []
-        }.filter { target in
-            seenTargetIDs.insert(target.id).inserted
+        targets = snapshotSourcesByProfileGuid.keys.sorted()
+            .compactMap { snapshotSourcesByProfileGuid[$0] }
+            .filter(\.visible)
+            .flatMap(\.targets)
+            .filter { target in
+                seenTargetIDs.insert(target.id).inserted
+            }
+    }
+
+    private func acceptSnapshot(
+        profileGuid: String,
+        connectionID: String,
+        epoch: Int,
+        resumed: Bool?
+    ) -> Bool {
+        // A hello-derived snapshot (resumed true or false) always wins and adopts its
+        // connectionID: it can only originate from the newest live worker for this
+        // profile, so trusting it unconditionally is safe. Rejecting a resumed:true
+        // hello whose persisted epoch lagged behind (a real race: the extension sends
+        // the snapshot before its chrome.storage.session.set() write lands) would
+        // otherwise leave connectionIDByProfileGuid pointing at the dead connection
+        // forever -- every later ordinary snapshot (resumed == nil) from the live
+        // worker would then fail the connectionID-mismatch check below regardless of
+        // how high its epoch climbs, permanently wedging the profile until the
+        // browser quits. Worst case of accepting eagerly is a sub-second regression
+        // to slightly-stale bridge targets before the next real snapshot lands.
+        if resumed != nil {
+            highestAcceptedEpochByProfileGuid[profileGuid] = epoch
+            return true
+        }
+        if let currentConnectionID = connectionIDByProfileGuid[profileGuid],
+           currentConnectionID != connectionID,
+           resumed == nil {
+            return false
+        }
+        if let highestAcceptedEpoch = highestAcceptedEpochByProfileGuid[profileGuid],
+           epoch < highestAcceptedEpoch {
+            return false
+        }
+        highestAcceptedEpochByProfileGuid[profileGuid] = max(
+            highestAcceptedEpochByProfileGuid[profileGuid] ?? epoch,
+            epoch
+        )
+        return true
+    }
+
+    private func hideSilentProfiles(now: Date) {
+        var changed = false
+        for (profileGuid, source) in snapshotSourcesByProfileGuid where source.visible {
+            if now.timeIntervalSince(source.lastSnapshotAt) > Self.profileRetainVisibleDuration {
+                snapshotSourcesByProfileGuid[profileGuid] = SnapshotSource(
+                    lastSnapshotAt: source.lastSnapshotAt,
+                    targets: source.targets,
+                    browserBundleIdentifier: source.browserBundleIdentifier,
+                    visible: false
+                )
+                changed = true
+            }
+        }
+        if changed {
+            rebuildConnectionState()
         }
     }
 
-    private func evictStaleProfiles(now: Date) {
-        let staleProfileGuids = snapshotSourcesByProfileGuid.filter {
-            now.timeIntervalSince($0.value.lastSnapshotAt) > Self.staleProfileTimeout
+    private func handleBrowserTermination(bundleIdentifier: String) {
+        let terminatedProfileGuids = snapshotSourcesByProfileGuid.filter {
+            $0.value.browserBundleIdentifier == bundleIdentifier
         }.keys
-        guard !staleProfileGuids.isEmpty else {
+        guard !terminatedProfileGuids.isEmpty else {
             return
         }
-        for profileGuid in staleProfileGuids {
+        for profileGuid in terminatedProfileGuids {
             snapshotSourcesByProfileGuid.removeValue(forKey: profileGuid)
             connectionIDByProfileGuid.removeValue(forKey: profileGuid)
+            highestAcceptedEpochByProfileGuid.removeValue(forKey: profileGuid)
         }
         rebuildConnectionState()
     }

@@ -5,6 +5,7 @@
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAusnxzur0SPGe8iEHzsqn9jMVc/HsVUfFNwxJPuPuBGi1I2Q6PTDyDTFV6TZgR7vbuj/t2xE5heyktAO079BzgULo/t++e68rfQoXepvwptBaIr8TnwX5E+GsWATtleUYSCH8K3FMw2LNhCs/e8wSNe9fuMTcgfZDCOqsCGxfgYORIjKex8K06xGfxfVRD5mDNiMWuxXobg/oW6Wqlf3JV+OhfLBAkcZP7JdAgYIifhv3d+OZC60vtkLVAHN4QtgUpkhNAjeCNBxSUpHr7kuqPUY+TAacorgxHgDKumOoNyk9nPAVFovxkzqNPeaBj/MO0u1VLgB4a184pj6mZwwdfQIDAQAB",
   "description": "Reports Chromium tab media targets to Keyway and executes supported tab-local media commands.",
   "permissions": [
+    "alarms",
     "nativeMessaging",
     "scripting",
     "storage",

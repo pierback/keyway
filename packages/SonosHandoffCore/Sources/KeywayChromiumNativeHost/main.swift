@@ -19,6 +19,28 @@ struct NativeMessageEnvelope: Decodable {
 
 struct NativeHelloMessage: Decodable {
     let profileGuid: String
+    let epoch: Int
+    let resumed: Bool
+    let snapshot: [NativeHelloSnapshotTarget]?
+
+    private enum CodingKeys: String, CodingKey {
+        case profileGuid
+        case epoch
+        case resumed
+        case snapshot
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        profileGuid = try container.decode(String.self, forKey: .profileGuid)
+        epoch = try container.decodeIfPresent(Int.self, forKey: .epoch) ?? 0
+        resumed = try container.decodeIfPresent(Bool.self, forKey: .resumed) ?? false
+        snapshot = try container.decodeIfPresent([NativeHelloSnapshotTarget].self, forKey: .snapshot)
+    }
+}
+
+struct NativeHelloSnapshotTarget: Decodable {
+    let tabId: Int
 }
 
 final class HostConnectionState: @unchecked Sendable {
@@ -152,27 +174,22 @@ func writeNativeMessage(_ payload: Data) {
     writeLock.unlock()
 }
 
-func recordHelloProfileGuid(_ payload: Data) {
+func recordHelloProfileGuid(_ payload: Data) -> NativeHelloMessage? {
     guard let hello = try? JSONDecoder().decode(NativeHelloMessage.self, from: payload) else {
         fputs("Keyway Chromium native host: ignoring malformed hello payload.\n", stderr)
-        return
+        return nil
     }
     hostConnectionState.record(profileGuid: hello.profileGuid)
+    return hello
 }
 
-func payloadByAddingHostBrowserIdentity(_ payload: Data) -> String? {
-    guard let rootObject = try? JSONSerialization.jsonObject(with: payload),
-          var root = rootObject as? [String: Any],
-          var targets = root["targets"] as? [[String: Any]]
-    else {
-        fputs("Keyway Chromium native host: ignoring malformed snapshot payload.\n", stderr)
-        return nil
-    }
-    guard let profileGuid = hostConnectionState.currentProfileGuid() else {
-        fputs("Keyway Chromium native host: ignoring snapshot before hello.\n", stderr)
-        return nil
-    }
-
+func payloadByAddingHostBrowserIdentity(
+    root: [String: Any],
+    targets: [[String: Any]],
+    profileGuid: String
+) -> String? {
+    var root = root
+    var targets = targets
     for index in targets.indices {
         guard let tabID = targets[index]["tabId"] as? Int else {
             fputs("Keyway Chromium native host: ignoring snapshot target without tabId.\n", stderr)
@@ -186,6 +203,9 @@ func payloadByAddingHostBrowserIdentity(_ payload: Data) -> String? {
         targets[index]["browser"] = hostBrowserIdentity.displayName
     }
     root["profileGuid"] = profileGuid
+    root["browserFamily"] = hostBrowserIdentity.family
+    root["browserDisplayName"] = hostBrowserIdentity.displayName
+    root["browserBundleIdentifier"] = hostBrowserIdentity.bundleIdentifier
     // Private routing token only; target identity is chromium-tab:<profileGuid>:<tabId>.
     root["connectionID"] = connectionID
     root["targets"] = targets
@@ -197,6 +217,44 @@ func payloadByAddingHostBrowserIdentity(_ payload: Data) -> String? {
         return nil
     }
     return payload
+}
+
+func payloadByAddingHostBrowserIdentity(_ payload: Data) -> String? {
+    guard let rootObject = try? JSONSerialization.jsonObject(with: payload),
+          let root = rootObject as? [String: Any],
+          let targets = root["targets"] as? [[String: Any]]
+    else {
+        fputs("Keyway Chromium native host: ignoring malformed snapshot payload.\n", stderr)
+        return nil
+    }
+    guard let profileGuid = hostConnectionState.currentProfileGuid() else {
+        fputs("Keyway Chromium native host: ignoring snapshot before hello.\n", stderr)
+        return nil
+    }
+
+    return payloadByAddingHostBrowserIdentity(root: root, targets: targets, profileGuid: profileGuid)
+}
+
+func payloadStringForHello(_ payload: Data) -> String? {
+    guard let hello = recordHelloProfileGuid(payload) else {
+        return nil
+    }
+    guard let rootObject = try? JSONSerialization.jsonObject(with: payload),
+          var root = rootObject as? [String: Any]
+    else {
+        fputs("Keyway Chromium native host: ignoring malformed hello payload.\n", stderr)
+        return nil
+    }
+    root["type"] = "snapshot"
+    root["epoch"] = hello.epoch
+    root["resumed"] = hello.resumed
+    root["targets"] = root["snapshot"] as? [[String: Any]] ?? []
+    root.removeValue(forKey: "snapshot")
+    return payloadByAddingHostBrowserIdentity(
+        root: root,
+        targets: root["targets"] as? [[String: Any]] ?? [],
+        profileGuid: hello.profileGuid
+    )
 }
 
 func payloadByMatchingConnectionID(_ payload: String) -> Data? {
@@ -259,12 +317,23 @@ func postNativeMessage(_ payload: Data) {
         fputs("Keyway Chromium native host: ignoring undecodable native message envelope.\n", stderr)
         return
     }
-    guard envelope.type == "snapshot" || envelope.type == "hello" || envelope.type == "commandResult" || envelope.type == "focusResult" else {
+    guard envelope.type == "snapshot" || envelope.type == "hello" || envelope.type == "keepalive" || envelope.type == "commandResult" || envelope.type == "focusResult" else {
         fputs("Keyway Chromium native host: ignoring unknown native message type.\n", stderr)
         return
     }
+    if envelope.type == "keepalive" {
+        return
+    }
     if envelope.type == "hello" {
-        recordHelloProfileGuid(payload)
+        guard let postedPayload = payloadStringForHello(payload) else {
+            return
+        }
+        DistributedNotificationCenter.default().postNotificationName(
+            snapshotNotificationName,
+            object: hostName,
+            userInfo: ["payload": postedPayload],
+            deliverImmediately: true
+        )
         return
     }
     let postedPayload = envelope.type == "snapshot"

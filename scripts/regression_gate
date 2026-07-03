@@ -32,7 +32,8 @@ run "$ROOT_DIR/scripts/verify_app_environment_external_input_semantics"
 run bash -n \
   "$ROOT_DIR/scripts/smoke_spotify_webapi_transport" \
   "$ROOT_DIR/scripts/diagnose_spotify_playback_readiness" \
-  "$ROOT_DIR/scripts/reload_chromium_extension"
+  "$ROOT_DIR/scripts/reload_chromium_extension" \
+  "$ROOT_DIR/scripts/smoke_chromium_worker_suspension"
 run git -C "$ROOT_DIR" diff --check
 run "$ROOT_DIR/scripts/install_menubar_app"
 
@@ -79,6 +80,10 @@ fi
 
 if [[ "${KEYWAY_CHROMIUM_EXTENSION_SMOKE:-0}" == "1" ]]; then
   run "$ROOT_DIR/scripts/smoke_chromium_extension_transport"
+fi
+
+if [[ "${KEYWAY_CHROMIUM_WORKER_SUSPENSION_SMOKE:-0}" == "1" ]]; then
+  run "$ROOT_DIR/scripts/smoke_chromium_worker_suspension"
 fi
 
 if [[ "${KEYWAY_MIXED_MEDIA_ROUTING_SMOKE:-0}" == "1" ]]; then

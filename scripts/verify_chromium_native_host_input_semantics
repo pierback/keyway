@@ -52,7 +52,17 @@ for required in (
     if required not in read_message:
         fail(f"readNativeMessage() must degrade to nil on malformed or closed stdio input: missing {required}")
 
-snapshot = section("func payloadByAddingHostBrowserIdentity(_ payload: Data) -> String? {", "\n}\n\nfunc payloadByMatchingConnectionID")
+hello = section("struct NativeHelloMessage: Decodable {", "\n}\n\nstruct NativeHelloSnapshotTarget")
+for required in (
+    "profileGuid = try container.decode(String.self, forKey: .profileGuid)",
+    "epoch = try container.decodeIfPresent(Int.self, forKey: .epoch) ?? 0",
+    "resumed = try container.decodeIfPresent(Bool.self, forKey: .resumed) ?? false",
+    "snapshot = try container.decodeIfPresent([NativeHelloSnapshotTarget].self, forKey: .snapshot)",
+):
+    if required not in hello:
+        fail(f"hello payload decoding must tolerate additive v3 resume fields: missing {required}")
+
+snapshot = section("func payloadByAddingHostBrowserIdentity(", "\n}\n\nfunc payloadByMatchingConnectionID")
 for required in (
     "try? JSONSerialization.jsonObject(with: payload)",
     'fputs("Keyway Chromium native host: ignoring malformed snapshot payload.\\n", stderr)',
@@ -106,7 +116,8 @@ for required in (
     "try? JSONDecoder().decode(NativeMessageEnvelope.self, from: payload)",
     'fputs("Keyway Chromium native host: ignoring undecodable native message envelope.\\n", stderr)',
     'fputs("Keyway Chromium native host: ignoring unknown native message type.\\n", stderr)',
-    'guard envelope.type == "snapshot" || envelope.type == "hello" || envelope.type == "commandResult" || envelope.type == "focusResult" else {',
+    'guard envelope.type == "snapshot" || envelope.type == "hello" || envelope.type == "keepalive" || envelope.type == "commandResult" || envelope.type == "focusResult" else {',
+    'if envelope.type == "keepalive" {',
     "guard let postedPayload else {",
 ):
     if required not in post:

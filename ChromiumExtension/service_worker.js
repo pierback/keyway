@@ -1,12 +1,23 @@
 const nativeHostName = "com.fpieringer.keyway.chromium";
 const protocolVersion = 3;
 const profileGuidStorageKey = "profileGuid";
+const snapshotStorageKey = "lastPublishedSnapshotTargets";
+const snapshotEpochStorageKey = "snapshotEpoch";
+const nativePortAlarmName = "keyway-native-port-dead-man";
+const activeHeartbeatIntervalMs = 1000;
+const idleKeepaliveIntervalMs = 25000;
+const resumeBridgeMaxAgeMs = 10000;
 let nativePort = null;
 let reconnectTimer = null;
 let heartbeatTimer = null;
+let heartbeatMode = null;
 let cachedBrowserInfo = null;
 let profileGuid = null;
 let profileGuidLoading = false;
+let snapshotEpoch = 0;
+let resumeStateLoaded = false;
+let pendingResumeTargets = null;
+let pendingResumeExpiresAt = 0;
 const profileGuidCallbacks = [];
 const sources = new Map();
 const targetStaleAfterMs = 15000;
@@ -14,17 +25,31 @@ const targetStaleAfterMs = 15000;
 function connectNativeHost() {
   if (nativePort) return;
 
-  nativePort = chrome.runtime.connectNative(nativeHostName);
-  nativePort.onMessage.addListener(handleNativeMessage);
-  nativePort.onDisconnect.addListener(() => {
+  const port = chrome.runtime.connectNative(nativeHostName);
+  nativePort = port;
+  port.onMessage.addListener(handleNativeMessage);
+  port.onDisconnect.addListener(() => {
+    if (nativePort !== port) return;
     nativePort = null;
     stopHeartbeat();
     scheduleReconnect();
   });
-  sendNative({ type: "hello", protocolVersion, profileGuid });
-  probeTabsForMedia();
-  publishSnapshot();
-  startHeartbeat();
+  loadResumeState(resume => {
+    if (nativePort !== port) return;
+    snapshotEpoch = resume.epoch;
+    resumeStateLoaded = true;
+    setPendingResumeTargets(resume.resumed ? resume.snapshot : null);
+    sendNative({
+      type: "hello",
+      protocolVersion,
+      profileGuid,
+      epoch: snapshotEpoch,
+      resumed: resume.resumed,
+      ...(resume.resumed ? { snapshot: resume.snapshot } : {}),
+    });
+    probeTabsForMedia();
+    publishSnapshot();
+  });
 }
 
 function loadProfileGuid(callback) {
@@ -71,15 +96,65 @@ function sendNative(message) {
   nativePort.postMessage(message);
 }
 
-function startHeartbeat() {
-  if (heartbeatTimer) return;
-  heartbeatTimer = setInterval(publishSnapshot, 1000);
+function startHeartbeat(mode) {
+  if (heartbeatTimer && heartbeatMode === mode) return;
+  stopHeartbeat();
+  heartbeatMode = mode;
+  heartbeatTimer = setInterval(
+    mode === "active" ? publishSnapshot : publishKeepalive,
+    mode === "active" ? activeHeartbeatIntervalMs : idleKeepaliveIntervalMs
+  );
 }
 
 function stopHeartbeat() {
   if (!heartbeatTimer) return;
   clearInterval(heartbeatTimer);
   heartbeatTimer = null;
+  heartbeatMode = null;
+}
+
+function updateHeartbeatForTargets(targets) {
+  startHeartbeat(hasMediaSources(targets) ? "active" : "idle");
+}
+
+function hasMediaSources(targets) {
+  return sources.size > 0 || targets.length > 0 || (pendingResumeTargets && pendingResumeTargets.length > 0);
+}
+
+function setPendingResumeTargets(targets) {
+  pendingResumeTargets = targets && targets.length > 0 ? targets : null;
+  pendingResumeExpiresAt = pendingResumeTargets ? Date.now() + resumeBridgeMaxAgeMs : 0;
+}
+
+function clearPendingResumeTargets() {
+  pendingResumeTargets = null;
+  pendingResumeExpiresAt = 0;
+}
+
+function currentPendingResumeTargets() {
+  if (!pendingResumeTargets) return null;
+  if (Date.now() > pendingResumeExpiresAt) {
+    clearPendingResumeTargets();
+    return null;
+  }
+  return pendingResumeTargets;
+}
+
+function prunePendingResumeTargets(predicate) {
+  if (!pendingResumeTargets) return false;
+  const targets = pendingResumeTargets.filter(predicate);
+  if (targets.length === pendingResumeTargets.length) return false;
+  setPendingResumeTargets(targets);
+  return true;
+}
+
+function publishKeepalive() {
+  sendNative({
+    type: "keepalive",
+    protocolVersion,
+    profileGuid,
+    createdAt: Date.now(),
+  });
 }
 
 function sourceID(message) {
@@ -129,12 +204,56 @@ function browserInfoFromUserAgent(userAgent) {
 }
 
 function publishSnapshot() {
+  // Guard against a message-triggered wake (e.g. keywayMediaState) calling this
+  // before connectNativeHost()'s loadResumeState() callback has set the real
+  // epoch -- publishing early would write epoch 1 into chrome.storage.session,
+  // regressing the persisted epoch and widening the resume-wedge window a crash
+  // could land in. Nothing is lost: `sources` stays in memory, and the
+  // connect-time publish (which runs after resume state loads) covers it.
+  if (!resumeStateLoaded) return;
   removeStaleSources();
+  const materializedTargets = Array.from(sources.values()).map(materializeSource).filter(Boolean);
+  let targets = materializedTargets.filter(isVisibleTarget);
+  if (materializedTargets.length > 0) {
+    clearPendingResumeTargets();
+  } else {
+    const resumeTargets = currentPendingResumeTargets();
+    if (targets.length === 0 && resumeTargets) {
+      targets = resumeTargets;
+    }
+  }
+  snapshotEpoch += 1;
   sendNative({
     type: "snapshot",
     protocolVersion,
+    epoch: snapshotEpoch,
     createdAt: Date.now(),
-    targets: Array.from(sources.values()).map(materializeSource).filter(Boolean).filter(isVisibleTarget),
+    targets,
+  });
+  chrome.storage.session.set({
+    [snapshotStorageKey]: targets,
+    [snapshotEpochStorageKey]: snapshotEpoch,
+  });
+  updateHeartbeatForTargets(targets);
+}
+
+function loadResumeState(callback) {
+  chrome.storage.session.get([snapshotStorageKey, snapshotEpochStorageKey], result => {
+    const storedSnapshot = result && result[snapshotStorageKey];
+    const storedEpoch = result && result[snapshotEpochStorageKey];
+    if (!Array.isArray(storedSnapshot) || !Number.isInteger(storedEpoch)) {
+      callback({ resumed: false, epoch: 0, snapshot: [] });
+      return;
+    }
+
+    chrome.tabs.query({}, tabs => {
+      const liveTabIds = new Set(tabs.map(tab => tab.id).filter(Number.isInteger));
+      callback({
+        resumed: true,
+        epoch: storedEpoch,
+        snapshot: storedSnapshot.filter(target => liveTabIds.has(target.tabId)),
+      });
+    });
   });
 }
 
@@ -167,6 +286,9 @@ function removeStaleSources() {
 
 function clearSourcesForTab(tabId) {
   let changed = false;
+  if (prunePendingResumeTargets(target => target.tabId !== tabId)) {
+    changed = true;
+  }
   for (const [id, source] of sources) {
     if (source.tabId === tabId) {
       sources.delete(id);
@@ -613,6 +735,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "keywayMediaGone") {
     let changed = false;
+    if (sender.tab?.id !== undefined && prunePendingResumeTargets(target => target.tabId !== sender.tab.id)) {
+      changed = true;
+    }
     for (const [id, source] of sources) {
       if (source.tabId === sender.tab?.id) {
         const key = candidateID(message.documentID, sender.frameId, message.mediaId);
@@ -641,6 +766,13 @@ chrome.tabs.onRemoved.addListener(tabId => {
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.url || changeInfo.status === "loading") {
     clearSourcesForTab(tabId);
+  }
+});
+
+chrome.alarms.create(nativePortAlarmName, { periodInMinutes: 0.5 });
+chrome.alarms.onAlarm.addListener(alarm => {
+  if (alarm.name === nativePortAlarmName && !nativePort) {
+    loadProfileGuid(connectNativeHost);
   }
 });
 

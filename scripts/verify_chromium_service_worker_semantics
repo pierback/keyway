@@ -3,18 +3,17 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-node --check "$repo_root/ChromiumExtension/service_worker.js" >/dev/null
-
-node - "$repo_root/ChromiumExtension/service_worker.js" <<'NODE'
+SERVICE_WORKER_PATH="$repo_root/ChromiumExtension/service_worker.js" bun - <<'NODE'
 const fs = require("fs");
 const vm = require("vm");
 
-const serviceWorkerPath = process.argv[2];
+const serviceWorkerPath = process.env.SERVICE_WORKER_PATH;
 const code = fs.readFileSync(serviceWorkerPath, "utf8");
 const postedMessages = [];
 const intervals = [];
 const timeouts = [];
 const clearedIntervals = [];
+const alarmCreations = [];
 const tabMessages = [];
 const scriptExecutions = [];
 const tabUpdates = [];
@@ -25,10 +24,13 @@ const tabGetRequests = [];
 const queryRequests = [];
 const tabWindowIDs = new Map([[22, 11], [23, 11]]);
 const activeTabIDByWindowID = new Map();
-const storage = {};
-const storageSets = [];
+const localStorage = {};
+const sessionStorage = {};
+const localStorageSets = [];
+const sessionStorageSets = [];
 let focusedWindowID = null;
 let disconnectListener = null;
+let alarmListener = null;
 let nativeMessageListener = null;
 let runtimeMessageListener = null;
 let tabRemovedListener = null;
@@ -63,16 +65,41 @@ const context = {
         get(keys, callback) {
           const result = {};
           for (const key of keys) {
-            if (key in storage) {
-              result[key] = storage[key];
+            if (key in localStorage) {
+              result[key] = localStorage[key];
             }
           }
           callback(result);
         },
         set(items, callback) {
-          Object.assign(storage, items);
-          storageSets.push(items);
+          Object.assign(localStorage, items);
+          localStorageSets.push(items);
           callback();
+        },
+      },
+      session: {
+        get(keys, callback) {
+          const result = {};
+          for (const key of keys) {
+            if (key in sessionStorage) {
+              result[key] = sessionStorage[key];
+            }
+          }
+          callback(result);
+        },
+        set(items) {
+          Object.assign(sessionStorage, items);
+          sessionStorageSets.push(items);
+        },
+      },
+    },
+    alarms: {
+      create(name, options) {
+        alarmCreations.push({ name, options });
+      },
+      onAlarm: {
+        addListener(listener) {
+          alarmListener = listener;
         },
       },
     },
@@ -186,11 +213,18 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
 
 (async () => {
   assert(postedMessages.some(message => message.type === "hello"), "service worker must announce hello to native host");
-  assertEqual(postedMessages.find(message => message.type === "hello").protocolVersion, 3, "hello must use Chromium extension protocol v3");
-  assertEqual(postedMessages.find(message => message.type === "hello").profileGuid, "profile-guid-a", "hello must include the persisted profile GUID");
-  assertEqual(storageSets[0].profileGuid, "profile-guid-a", "service worker must persist a generated profile GUID");
+  const hello = postedMessages.find(message => message.type === "hello");
+  assertEqual(hello.protocolVersion, 3, "hello must use Chromium extension protocol v3");
+  assertEqual(hello.profileGuid, "profile-guid-a", "hello must include the persisted profile GUID");
+  assertEqual(hello.epoch, 0, "fresh-session hello must start at epoch 0");
+  assertEqual(hello.resumed, false, "fresh-session hello must report resumed=false");
+  assert(!("snapshot" in hello), "fresh-session hello must not carry a resume snapshot");
+  assertEqual(localStorageSets[0].profileGuid, "profile-guid-a", "service worker must persist a generated profile GUID");
   assert(postedMessages.some(message => message.type === "snapshot"), "service worker must publish a snapshot immediately");
-  assertEqual(postedMessages.find(message => message.type === "snapshot").protocolVersion, 3, "snapshot must use Chromium extension protocol v3");
+  const initialSnapshot = postedMessages.find(message => message.type === "snapshot");
+  assertEqual(initialSnapshot.protocolVersion, 3, "snapshot must use Chromium extension protocol v3");
+  assertEqual(initialSnapshot.epoch, 1, "first fresh-session snapshot must increment the epoch");
+  assertEqual(sessionStorageSets.at(-1).snapshotEpoch, 1, "published snapshots must persist their incremented epoch to session storage");
   assertEqual(queryRequests.length, 1, "service worker must probe tabs after connecting to the native host");
   assertEqual(scriptExecutions.length, 2, "service worker must reinject the current content script into existing media tabs after restart");
   assert(scriptExecutions.every(entry => entry.target.allFrames === true), "content-script restart probe must cover all frames");
@@ -201,12 +235,15 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   );
   tabMessages.length = 0;
   assertEqual(intervals.length, 1, "service worker must start one heartbeat interval");
-  assertEqual(intervals[0].delay, 1000, "service worker heartbeat interval");
+  assertEqual(intervals[0].delay, 25000, "service worker must use the idle keepalive interval when no tab has media");
+  assertEqual(alarmCreations[0].name, "keyway-native-port-dead-man", "service worker must register the native-port dead-man alarm");
+  assertEqual(alarmCreations[0].options.periodInMinutes, 0.5, "service worker dead-man alarm must use Chrome's 30s minimum cadence");
+  assert(typeof alarmListener === "function", "service worker must register a dead-man alarm listener");
 
   intervals[0].callback();
   assert(
-    postedMessages.filter(message => message.type === "snapshot").length >= 2,
-    "heartbeat must publish recurring snapshots"
+    postedMessages.filter(message => message.type === "keepalive").length >= 1,
+    "idle heartbeat must send lightweight keepalive pings instead of recurring snapshots"
   );
 
   assert(typeof runtimeMessageListener === "function", "service worker must register runtime message listener");
@@ -245,6 +282,7 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   await Promise.resolve();
   assertEqual(mediaStateResponse?.ok, true, "media state response");
   const snapshot = postedMessages.filter(message => message.type === "snapshot").at(-1);
+  assertEqual(snapshot.epoch, 2, "media-state snapshot must continue the session epoch");
   assertEqual(snapshot.targets.length, 1, "media state must publish one browser target");
   assertEqual(
     snapshot.targets[0].id,
@@ -263,6 +301,12 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   assertEqual(snapshot.targets[0].url, "https://example.test/video", "browser source must preserve the tab URL");
   assertEqual(snapshot.targets[0].album, "Album", "media state must preserve Media Session album metadata");
   assertEqual(snapshot.targets[0].supportedCommands.join(","), "play,pause,playPause,next", "media state must preserve page-supported commands");
+  assertEqual(intervals.at(-1).delay, 1000, "service worker must switch to the active snapshot heartbeat when a media source exists");
+  intervals.at(-1).callback();
+  assert(
+    postedMessages.filter(message => message.type === "snapshot").length >= 3,
+    "active heartbeat must publish recurring snapshots while media sources exist"
+  );
 
   runtimeMessageListener(
     {
@@ -634,7 +678,10 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
 
   assert(typeof disconnectListener === "function", "service worker must register native disconnect listener");
   disconnectListener();
-  assertEqual(clearedIntervals[0], "interval-1", "service worker must clear heartbeat on disconnect");
+  assert(
+    clearedIntervals.includes(`interval-${intervals.length}`),
+    "service worker must clear the current heartbeat on disconnect"
+  );
   assertEqual(timeouts[0].delay, 1000, "service worker reconnect delay");
 
   console.log("verify_chromium_extension_semantics=ok");
@@ -642,6 +689,317 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   console.error(error);
   process.exit(1);
 });
+
+function assert(condition, message) {
+  if (!condition) {
+    console.error(`verify_chromium_extension_semantics: ${message}`);
+    process.exit(1);
+  }
+}
+
+function assertEqual(actual, expected, message) {
+  assert(actual === expected, `${message}: expected ${expected}, got ${actual}`);
+}
+NODE
+
+SERVICE_WORKER_PATH="$repo_root/ChromiumExtension/service_worker.js" bun - <<'NODE'
+const fs = require("fs");
+const vm = require("vm");
+
+const serviceWorkerPath = process.env.SERVICE_WORKER_PATH;
+const code = fs.readFileSync(serviceWorkerPath, "utf8");
+const ports = [];
+const timeouts = [];
+const sessionGetCallbacks = [];
+const sessionStorageSets = [];
+
+const context = {
+  console,
+  crypto: {
+    randomUUID() {
+      return "unused-new-profile-guid";
+    },
+  },
+  navigator: {
+    userAgent: "Mozilla/5.0 Chrome/126.0.0.0 Safari/537.36",
+  },
+  setInterval() {
+    return "interval";
+  },
+  clearInterval() {},
+  setTimeout(callback, delay) {
+    timeouts.push({ callback, delay });
+    return `timeout-${timeouts.length}`;
+  },
+  chrome: {
+    storage: {
+      local: {
+        get(keys, callback) {
+          callback({ profileGuid: "profile-guid-a" });
+        },
+        set() {
+          throw new Error("stale-port test must not mint a new profile GUID");
+        },
+      },
+      session: {
+        get(keys, callback) {
+          sessionGetCallbacks.push(callback);
+        },
+        set(items) {
+          sessionStorageSets.push(items);
+        },
+      },
+    },
+    alarms: {
+      create() {},
+      onAlarm: {
+        addListener() {},
+      },
+    },
+    runtime: {
+      id: "extensionid",
+      lastError: null,
+      connectNative() {
+        const port = {
+          messages: [],
+          postMessage(message) {
+            port.messages.push(message);
+          },
+          onMessage: {
+            addListener() {},
+          },
+          onDisconnect: {
+            addListener(listener) {
+              port.disconnect = listener;
+            },
+          },
+        };
+        ports.push(port);
+        return port;
+      },
+      onMessage: {
+        addListener() {},
+      },
+    },
+    tabs: {
+      onRemoved: {
+        addListener() {},
+      },
+      onUpdated: {
+        addListener() {},
+      },
+      query(queryInfo, callback) {
+        callback([]);
+      },
+      sendMessage() {},
+    },
+    scripting: {
+      executeScript() {},
+    },
+    windows: {
+      update() {},
+    },
+  },
+};
+
+vm.runInNewContext(code, context, { filename: serviceWorkerPath });
+
+assertEqual(ports.length, 1, "worker must create the first native port");
+assertEqual(sessionGetCallbacks.length, 1, "first native port must start resume loading");
+ports[0].disconnect();
+assertEqual(timeouts[0].delay, 1000, "worker must schedule a reconnect after port disconnect");
+timeouts[0].callback();
+assertEqual(ports.length, 2, "worker must create the replacement native port");
+assertEqual(sessionGetCallbacks.length, 2, "replacement port must start its own resume loading");
+
+sessionGetCallbacks[0]({});
+assertEqual(ports[1].messages.length, 0, "stale resume callback from disconnected port must not post on the replacement port");
+sessionGetCallbacks[1]({});
+assertEqual(ports[1].messages.filter(message => message.type === "hello").length, 1, "replacement port must publish exactly one hello");
+assertEqual(ports[1].messages.filter(message => message.type === "snapshot").length, 1, "replacement port must publish exactly one initial snapshot");
+assertEqual(sessionStorageSets.at(-1).snapshotEpoch, 1, "replacement port must own the resumed epoch sequence");
+
+console.log("verify_chromium_extension_stale_port_resume_semantics=ok");
+
+function assert(condition, message) {
+  if (!condition) {
+    console.error(`verify_chromium_extension_semantics: ${message}`);
+    process.exit(1);
+  }
+}
+
+function assertEqual(actual, expected, message) {
+  assert(actual === expected, `${message}: expected ${expected}, got ${actual}`);
+}
+NODE
+
+SERVICE_WORKER_PATH="$repo_root/ChromiumExtension/service_worker.js" bun - <<'NODE'
+const fs = require("fs");
+const vm = require("vm");
+
+const serviceWorkerPath = process.env.SERVICE_WORKER_PATH;
+const code = fs.readFileSync(serviceWorkerPath, "utf8");
+const postedMessages = [];
+const intervals = [];
+const scriptExecutions = [];
+const tabMessages = [];
+const queryRequests = [];
+const sessionStorageSets = [];
+const localStorage = { profileGuid: "profile-guid-a" };
+const sessionStorage = {
+  snapshotEpoch: 41,
+  lastPublishedSnapshotTargets: [
+    resumeTarget(22, "Live resume tab"),
+    resumeTarget(99, "Closed resume tab"),
+  ],
+};
+
+const context = {
+  console,
+  crypto: {
+    randomUUID() {
+      return "unused-new-profile-guid";
+    },
+  },
+  navigator: {
+    userAgent: "Mozilla/5.0 Chrome/126.0.0.0 Safari/537.36",
+  },
+  setInterval(callback, delay) {
+    intervals.push({ callback, delay });
+    return `interval-${intervals.length}`;
+  },
+  clearInterval() {},
+  setTimeout() {
+    return "timeout";
+  },
+  chrome: {
+    storage: {
+      local: {
+        get(keys, callback) {
+          callback(Object.fromEntries(keys.filter(key => key in localStorage).map(key => [key, localStorage[key]])));
+        },
+        set() {
+          throw new Error("resume wake must not mint a new profile GUID");
+        },
+      },
+      session: {
+        get(keys, callback) {
+          callback(Object.fromEntries(keys.filter(key => key in sessionStorage).map(key => [key, sessionStorage[key]])));
+        },
+        set(items) {
+          Object.assign(sessionStorage, items);
+          sessionStorageSets.push(items);
+        },
+      },
+    },
+    alarms: {
+      create() {},
+      onAlarm: {
+        addListener() {},
+      },
+    },
+    runtime: {
+      id: "extensionid",
+      lastError: null,
+      connectNative() {
+        return {
+          postMessage(message) {
+            postedMessages.push(message);
+          },
+          onMessage: {
+            addListener() {},
+          },
+          onDisconnect: {
+            addListener() {},
+          },
+        };
+      },
+      onMessage: {
+        addListener() {},
+      },
+    },
+    tabs: {
+      onRemoved: {
+        addListener() {},
+      },
+      onUpdated: {
+        addListener() {},
+      },
+      query(queryInfo, callback) {
+        queryRequests.push(queryInfo);
+        callback([{ id: 22, url: "https://example.test/live", title: "Live resume tab" }]);
+      },
+      sendMessage(tabId, message, callback) {
+        tabMessages.push({ tabId, message });
+        callback({ ok: true });
+      },
+    },
+    scripting: {
+      executeScript(request, callback) {
+        scriptExecutions.push(request);
+        callback([]);
+      },
+    },
+    windows: {
+      update() {},
+    },
+  },
+};
+
+vm.runInNewContext(code, context, { filename: serviceWorkerPath });
+
+const hello = postedMessages.find(message => message.type === "hello");
+assert(hello, "resume wake must post hello");
+assertEqual(hello.resumed, true, "resume wake hello must report resumed=true");
+assertEqual(hello.epoch, 41, "resume wake hello must continue the stored epoch");
+assertEqual(hello.snapshot.length, 1, "resume wake hello must prune closed tabs before publishing");
+assertEqual(hello.snapshot[0].tabId, 22, "resume wake hello must keep live tabs");
+assert(!hello.snapshot.some(target => target.tabId === 99), "resume wake hello must drop closed tabs");
+
+const firstSnapshot = postedMessages.find(message => message.type === "snapshot");
+assert(firstSnapshot, "resume wake must publish a bridge snapshot immediately after hello");
+assertEqual(firstSnapshot.epoch, 42, "resume wake first snapshot must increment from the stored epoch");
+assertEqual(firstSnapshot.targets.length, 1, "resume wake first snapshot must preserve the pruned bridge target");
+assertEqual(firstSnapshot.targets[0].tabId, 22, "resume wake bridge snapshot must preserve live tab identity");
+assertEqual(sessionStorageSets.at(-1).snapshotEpoch, 42, "resume wake snapshot persistence must store the incremented epoch");
+assertEqual(intervals[0].delay, 1000, "resume wake with bridge targets must use the active snapshot heartbeat");
+intervals[0].callback();
+const bridgeHeartbeatSnapshot = postedMessages.filter(message => message.type === "snapshot").at(-1);
+assertEqual(bridgeHeartbeatSnapshot.epoch, 43, "resume bridge heartbeat must keep advancing the stored epoch");
+assertEqual(bridgeHeartbeatSnapshot.targets.length, 1, "resume bridge heartbeat must retain targets until a real probe response or expiry");
+assertEqual(bridgeHeartbeatSnapshot.targets[0].tabId, 22, "resume bridge heartbeat must not reintroduce the pruned closed tab");
+assertEqual(queryRequests.length, 2, "resume wake must query tabs once to prune and once to probe");
+assertEqual(scriptExecutions.length, 1, "resume wake probe must reinject only live tabs");
+assertEqual(tabMessages.length, 1, "resume wake probe must ask live tabs to republish");
+
+console.log("verify_chromium_extension_resume_semantics=ok");
+
+function resumeTarget(tabId, title) {
+  return {
+    type: "target",
+    id: `chromium-tab:profile-guid-a:${tabId}`,
+    browser: "Chrome",
+    browserFamily: "chrome",
+    browserRuntimeID: "extensionid",
+    profileGuid: "profile-guid-a",
+    tabId,
+    url: `https://example.test/${tabId}`,
+    pageTitle: title,
+    title,
+    artist: "Artist",
+    album: "Album",
+    playing: true,
+    muted: false,
+    volume: 0.5,
+    duration: 100,
+    elapsedTime: 10,
+    hasMediaSessionMetadata: true,
+    hasPlaybackActivity: true,
+    supportedCommands: ["play", "pause", "playPause"],
+    updatedAt: 1000,
+    lastActiveAt: 1000,
+  };
+}
 
 function assert(condition, message) {
   if (!condition) {
