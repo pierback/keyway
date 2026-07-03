@@ -1,7 +1,7 @@
 import Foundation
 import os
 
-enum MediaRemoteHelperRole: String {
+enum MediaRemoteHelperRole: String, Hashable {
     case snapshot
     case command
 }

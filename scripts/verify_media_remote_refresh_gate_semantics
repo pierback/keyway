@@ -5,6 +5,41 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 workdir="$(mktemp -d)"
 trap 'rm -rf "$workdir"' EXIT
 
+controller="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaRemoteController.swift"
+store="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaSourceStore.swift"
+
+python3 - "$controller" "$store" <<'PY'
+import pathlib
+import sys
+
+controller = pathlib.Path(sys.argv[1]).read_text()
+store = pathlib.Path(sys.argv[2]).read_text()
+
+for forbidden in (
+    "periodicRecoveryInterval",
+    "maxImmediateRestartAttempts",
+    "immediateRestartDelayNanoseconds",
+    "Keyway will retry the helper every",
+):
+    if forbidden in controller:
+        raise SystemExit(f"verify_media_remote_refresh_gate_semantics: removed helper recovery policy is still present: {forbidden}")
+
+if "static let helperRecoveryGraceInterval: TimeInterval = 5" not in controller:
+    raise SystemExit("verify_media_remote_refresh_gate_semantics: controller must own the shared 5s helper recovery grace")
+if "MediaRemoteController.helperRecoveryGraceInterval" not in store:
+    raise SystemExit("verify_media_remote_refresh_gate_semantics: store retention must use the controller's shared helper recovery grace")
+
+snapshot_start = controller.index('            case "snapshot":')
+snapshot_end = controller.index('            case "commandResult":', snapshot_start)
+snapshot_body = controller[snapshot_start:snapshot_end]
+targets_index = snapshot_body.index("targets = visibleTargets")
+clear_index = snapshot_body.index("clearHelperDegraded()")
+if clear_index < targets_index:
+    raise SystemExit("verify_media_remote_refresh_gate_semantics: fresh snapshot must publish targets before clearing degraded retention")
+
+print("verify_media_remote_refresh_gate_policy=ok")
+PY
+
 cat >"$workdir/RefreshGateSemantics.swift" <<'SWIFT'
 import Foundation
 
@@ -68,6 +103,7 @@ struct RefreshGateSemantics {
 SWIFT
 
 swiftc \
+  -module-cache-path "$workdir/module-cache" \
   "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaRemoteSnapshotRefreshGate.swift" \
   "$workdir/RefreshGateSemantics.swift" \
   -o "$workdir/verify_media_remote_refresh_gate_semantics"

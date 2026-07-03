@@ -67,9 +67,15 @@ final class MediaSourceStore: ObservableObject {
     @Published private(set) var rows: [SourceRow] = []
 
     private var targetsSubscription: AnyCancellable?
+    private var helperDegradedSubscription: AnyCancellable?
     private var chromiumSilentSubscription: AnyCancellable?
     private var chromiumSilentSuspectSinceByID: [String: Date] = [:]
     private var commandFailedSinceByID: [String: Date] = [:]
+    private var helperDegradedSince: Date?
+    private var helperRecoveryGraceTask: Task<Void, Never>?
+    private var latestControllerTargets: [MediaRemoteTarget] = []
+    private var retainedMediaRemoteTargets: [MediaRemoteTarget] = []
+    private let now: () -> Date
 
     var targets: [MediaRemoteTarget] {
         rows.map(\.target)
@@ -77,9 +83,11 @@ final class MediaSourceStore: ObservableObject {
 
     init(
         mediaRemoteController: MediaRemoteController,
-        chromiumBrowserExtensionController: ChromiumBrowserExtensionController
+        chromiumBrowserExtensionController: ChromiumBrowserExtensionController,
+        now: @escaping () -> Date = Date.init
     ) {
-        replaceRows(with: mediaRemoteController.targets)
+        self.now = now
+        replaceControllerTargets(mediaRemoteController.targets)
         // Deliberately synchronous, not `.receive(on: .main)` + `Task { @MainActor }`:
         // both hops defer via a fresh main-queue/executor turn even when already on
         // the main thread, leaving a real window where `mediaRemoteController.targets`
@@ -92,7 +100,14 @@ final class MediaSourceStore: ObservableObject {
         targetsSubscription = mediaRemoteController.$targets
             .sink { [weak self] targets in
                 MainActor.assumeIsolated {
-                    self?.replaceRows(with: targets)
+                    self?.replaceControllerTargets(targets)
+                }
+            }
+
+        helperDegradedSubscription = mediaRemoteController.$helperDegradedSince
+            .sink { [weak self] degradedSince in
+                MainActor.assumeIsolated {
+                    self?.replaceHelperDegradedSince(degradedSince)
                 }
             }
 
@@ -117,7 +132,7 @@ final class MediaSourceStore: ObservableObject {
 
     func markCommandFailed(targetID: String, now: Date = Date()) {
         commandFailedSinceByID[targetID] = now
-        replaceRows(with: targets)
+        rebuildRows()
         scheduleCommandFailedCooldown(targetID: targetID, since: now)
     }
 
@@ -125,28 +140,74 @@ final class MediaSourceStore: ObservableObject {
         guard commandFailedSinceByID.removeValue(forKey: targetID) != nil else {
             return
         }
-        replaceRows(with: targets)
+        rebuildRows()
     }
 
-    private func replaceRows(with targets: [MediaRemoteTarget]) {
+    private func replaceControllerTargets(_ targets: [MediaRemoteTarget]) {
+        latestControllerTargets = targets
+        rememberMediaRemoteTargets(from: targets)
+        rebuildRows()
+    }
+
+    private func rebuildRows() {
+        let targets = rowTargets()
         let previousRowsByID = Dictionary(rows.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
         rows = targets.map { target in
             let row = previousRowsByID[target.id]?.updated(target: target) ?? SourceRow(target: target)
-            return row.withReachability(reachability(for: target.id))
+            return row.withReachability(reachability(for: target))
         }
     }
 
     private func replaceChromiumSilentSuspects(_ suspectTargetIDs: Set<String>) {
-        let now = Date()
+        let now = now()
         chromiumSilentSuspectSinceByID = Dictionary(
             uniqueKeysWithValues: suspectTargetIDs.map { targetID in
                 (targetID, chromiumSilentSuspectSinceByID[targetID] ?? now)
             }
         )
-        replaceRows(with: targets)
+        rebuildRows()
     }
 
-    private func reachability(for targetID: String) -> MediaSourceReachability {
+    private func replaceHelperDegradedSince(_ degradedSince: Date?) {
+        helperDegradedSince = degradedSince
+        if let degradedSince {
+            scheduleHelperRecoveryGrace(since: degradedSince)
+        } else {
+            helperRecoveryGraceTask?.cancel()
+            helperRecoveryGraceTask = nil
+            rememberMediaRemoteTargets(from: latestControllerTargets)
+        }
+        rebuildRows()
+    }
+
+    private func rowTargets() -> [MediaRemoteTarget] {
+        guard let helperDegradedSince,
+              now().timeIntervalSince(helperDegradedSince) <= MediaRemoteController.helperRecoveryGraceInterval
+        else {
+            return latestControllerTargets
+        }
+
+        let knownTargetIDs = Set(latestControllerTargets.map(\.id))
+        let retainedTargets = retainedMediaRemoteTargets.filter { target in
+            !knownTargetIDs.contains(target.id)
+        }
+        return latestControllerTargets + retainedTargets
+    }
+
+    private func rememberMediaRemoteTargets(from targets: [MediaRemoteTarget]) {
+        let mediaRemoteTargets = targets.filter { !ChromiumBrowserExtensionTransport.isTarget($0) }
+        if helperDegradedSince == nil || !mediaRemoteTargets.isEmpty {
+            retainedMediaRemoteTargets = mediaRemoteTargets
+        }
+    }
+
+    private func reachability(for target: MediaRemoteTarget) -> MediaSourceReachability {
+        if let since = helperDegradedSince,
+           !ChromiumBrowserExtensionTransport.isTarget(target),
+           now().timeIntervalSince(since) <= MediaRemoteController.helperRecoveryGraceInterval {
+            return .suspect(reason: "helper_restarting", since: since)
+        }
+        let targetID = target.id
         if let since = commandFailedSinceByID[targetID] {
             return .suspect(reason: "command_failed", since: since)
         }
@@ -167,7 +228,29 @@ final class MediaSourceStore: ObservableObject {
                 return
             }
             self.commandFailedSinceByID.removeValue(forKey: targetID)
-            self.replaceRows(with: self.targets)
+            self.rebuildRows()
+        }
+    }
+
+    private func scheduleHelperRecoveryGrace(since: Date) {
+        helperRecoveryGraceTask?.cancel()
+        let elapsed = now().timeIntervalSince(since)
+        let remainingNanoseconds = elapsed >= MediaRemoteController.helperRecoveryGraceInterval
+            ? UInt64(0)
+            : UInt64((MediaRemoteController.helperRecoveryGraceInterval - elapsed) * 1_000_000_000)
+        helperRecoveryGraceTask = Task { @MainActor [weak self] in
+            guard (try? await Task.sleep(nanoseconds: remainingNanoseconds)) != nil else {
+                return
+            }
+            guard let self,
+                  self.helperDegradedSince == since
+            else {
+                return
+            }
+            self.helperRecoveryGraceTask = nil
+            self.helperDegradedSince = nil
+            self.retainedMediaRemoteTargets = []
+            self.rebuildRows()
         }
     }
 }

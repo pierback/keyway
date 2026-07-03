@@ -123,6 +123,7 @@ struct RouteSourceSemantics {
 SWIFT
 
 swiftc \
+  -module-cache-path "$workdir/module-cache" \
   "$workdir/MediaTransportRouteSource.swift" \
   "$workdir/RouteSourceSemantics.swift" \
   -o "$workdir/verify_media_transport_route_source_semantics"

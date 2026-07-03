@@ -87,9 +87,87 @@ PY
 
 python3 - "$controller" <<'PY'
 import pathlib
+import re
 import sys
 
 text = pathlib.Path(sys.argv[1]).read_text()
+for required in (
+    "private static let pingInterval: TimeInterval = 1",
+    "private static let pongFreshnessInterval: TimeInterval = 2.5",
+    "static let helperRecoveryGraceInterval: TimeInterval = 5",
+    '"type": "ping"',
+    '"requestID": requestID',
+    "private var pendingPingRolesByRequestID: [String: (role: MediaRemoteHelperRole, sentAt: Date)] = [:]",
+    "pendingPingRolesByRequestID[requestID] = (role: role, sentAt: Date())",
+    "let pending = pendingPingRolesByRequestID.removeValue(forKey: requestID)",
+    "pending.role == role",
+    "case \"pong\":",
+    "handlePong(pong, role: role)",
+    "func probeHelperLiveness() -> Bool",
+):
+    if required not in text:
+        raise SystemExit(f"verify_media_remote_helper_process_semantics: missing ping liveness policy: {required}")
+
+if "periodicRecoveryInterval" in text or "Keyway will retry the helper every" in text:
+    raise SystemExit("verify_media_remote_helper_process_semantics: 60s periodic helper recovery must not return")
+
+ping_sweep_start = text.index("    private func sendPingSweep()")
+ping_sweep_end = text.index("\n    @discardableResult\n    private func ping", ping_sweep_start)
+ping_sweep_body = text[ping_sweep_start:ping_sweep_end]
+for required in (
+    "let now = Date()",
+    "pendingPingRolesByRequestID = pendingPingRolesByRequestID.filter {",
+    "now.timeIntervalSince($0.value.sentAt) <= Self.pingInterval * 3",
+):
+    if required not in ping_sweep_body:
+        raise SystemExit(f"verify_media_remote_helper_process_semantics: pending pings must be pruned by age before each sweep: {required}")
+if ping_sweep_body.index("pendingPingRolesByRequestID = pendingPingRolesByRequestID.filter {") > ping_sweep_body.index("ping(role: .snapshot)"):
+    raise SystemExit("verify_media_remote_helper_process_semantics: pending ping pruning must happen before sending the next sweep")
+
+update_start = text.index("    private func updatePingLiveness(now: Date = Date())")
+update_end = text.index("\n    private func scheduleHelperRecoveryGrace", update_start)
+update_body = text[update_start:update_end]
+ping_live_start = update_body.index("        if pingLive {")
+ping_live_end = update_body.index("\n        }\n\n        guard helperDegradedSince == nil else", ping_live_start)
+ping_live_body = update_body[ping_live_start:ping_live_end]
+for required in (
+    "if helperDegradedSince != nil {",
+    "clearHelperDegraded()",
+    "return",
+):
+    if required not in ping_live_body:
+        raise SystemExit(f"verify_media_remote_helper_process_semantics: pong recovery must clear ping-caused degradation: {required}")
+
+schedule = re.search(r'relaunchDelayNanoseconds: \[UInt64\] = \[(.*?)\]', text, re.S)
+if not schedule:
+    raise SystemExit("verify_media_remote_helper_process_semantics: capped relaunch schedule must be explicit")
+delays = [int(value.replace("_", "")) for value in re.findall(r'[0-9][0-9_]+', schedule.group(1))]
+if delays != [250_000_000, 500_000_000, 1_000_000_000, 2_000_000_000, 5_000_000_000]:
+    raise SystemExit(f"verify_media_remote_helper_process_semantics: unexpected relaunch schedule {delays}")
+
+schedule_start = text.index("    private func scheduleRelaunch() {")
+schedule_end = text.index("\n    private func cancelRecoveryTask()", schedule_start)
+schedule_body = text[schedule_start:schedule_end]
+for required in (
+    "min(restartAttempts, Self.relaunchDelayNanoseconds.count - 1)",
+    "restartAttempts += 1",
+    "Task { @MainActor [weak self] in",
+    "self.start()",
+):
+    if required not in schedule_body:
+        raise SystemExit(f"verify_media_remote_helper_process_semantics: relaunch scheduler missing {required}")
+
+ready_start = text.index('            case "ready":')
+ready_end = text.index('            case "pong":', ready_start)
+ready_body = text[ready_start:ready_end]
+for required in ("restartAttempts = 0", "cancelRecoveryTask()"):
+    if required not in ready_body:
+        raise SystemExit(f"verify_media_remote_helper_process_semantics: successful start must reset relaunch schedule: {required}")
+
+failure_probe = pathlib.Path(sys.argv[1]).with_name("MediaTransportActionController.swift").read_text()
+if "self?.mediaRemoteController.probeHelperLiveness()" not in failure_probe:
+    raise SystemExit("verify_media_remote_helper_process_semantics: MediaRemote command failures must trigger an out-of-cycle liveness probe")
+
 start = text.index("    private func handleLine(_ line: Data, role: MediaRemoteHelperRole) {")
 end = text.index("\n    private func drainPendingRefreshIfNeeded()", start)
 body = text[start:end]

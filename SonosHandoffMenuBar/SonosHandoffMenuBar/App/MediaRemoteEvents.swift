@@ -34,6 +34,12 @@ struct MediaRemoteSnapshotEvent: Decodable {
     let targets: [MediaRemoteTarget]
 }
 
+struct MediaRemotePongEvent: Decodable {
+    let type: String
+    let requestID: String?
+    let pid: Int?
+}
+
 struct MediaRemoteCommandResultEvent: Decodable {
     let type: String
     let requestID: String?

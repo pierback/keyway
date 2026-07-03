@@ -1,4 +1,5 @@
 import ApplicationServices
+import Darwin
 import Foundation
 import SonosHandoffCore
 
@@ -223,8 +224,15 @@ final class ShortcutRuntimeStatus {
         if mediaTransportTrace.count > 240 {
             mediaTransportTrace.removeFirst(mediaTransportTrace.count - 240)
         }
-        let data = try! JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
-        let json = String(data: data, encoding: .utf8)!
+        let data: Data
+        do {
+            data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+        } catch {
+            fputs("ShortcutRuntimeStatus: dropping media transport trace notification: \(error.localizedDescription)\n", stderr)
+            scheduleTracePersistence()
+            return
+        }
+        let json = String(decoding: data, as: UTF8.self)
         DistributedNotificationCenter.default().postNotificationName(
             .keywayMediaTransportTrace,
             object: "com.fpieringer.Keyway",
@@ -284,12 +292,17 @@ final class ShortcutRuntimeStatus {
             payload["mediaTransportTrace"] = mediaTransportTrace
         }
 
-        try! FileManager.default.createDirectory(
-            at: ConfigPaths.applicationSupportDirectory,
-            withIntermediateDirectories: true
-        )
-        let data = try! JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
-        try! data.write(to: Self.persistenceURL, options: .atomic)
+        do {
+            try FileManager.default.createDirectory(
+                at: ConfigPaths.applicationSupportDirectory,
+                withIntermediateDirectories: true
+            )
+            let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+            try data.write(to: Self.persistenceURL, options: .atomic)
+        } catch {
+            fputs("ShortcutRuntimeStatus: could not persist snapshot: \(error.localizedDescription)\n", stderr)
+            return
+        }
     }
 }
 

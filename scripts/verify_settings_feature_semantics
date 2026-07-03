@@ -76,13 +76,16 @@ for required in (
     if required not in body:
         raise SystemExit(f"verify_settings_feature_semantics: Chromium extension setup must prefer opening Helium extensions: {required}")
 
-mark_failed = controller[controller.index("    private func markFailed"):controller.index("    private func schedulePeriodicRecovery")]
+mark_failed = controller[controller.index("    private func markFailed"):controller.index("    private func beginHelperRecovery")]
 if "pid: nil" not in mark_failed:
     raise SystemExit("verify_settings_feature_semantics: helper failure status must clear the dead MediaRemote pid before Settings renders it")
 
-schedule_recovery = controller[controller.index("    private func schedulePeriodicRecovery"):controller.index("    private func cancelRecoveryTimer")]
-if "pid: nil" not in schedule_recovery:
+begin_recovery = controller[controller.index("    private func beginHelperRecovery"):controller.index("    private func scheduleRelaunch")]
+if "pid: nil" not in begin_recovery:
     raise SystemExit("verify_settings_feature_semantics: helper recovery status must not preserve a dead MediaRemote pid in Settings")
+schedule_relaunch = controller[controller.index("    private func scheduleRelaunch"):controller.index("    private func cancelRecoveryTask")]
+if "relaunchDelayNanoseconds" not in schedule_relaunch:
+    raise SystemExit("verify_settings_feature_semantics: helper recovery must use the capped relaunch schedule")
 
 if 'Text("Up/Down, Enter, Command+Enter, Escape, Tab, 1-9")' not in text:
     raise SystemExit("verify_settings_feature_semantics: overlay shortcut legend must advertise Command+Enter focus and remove nonexistent shortcuts")

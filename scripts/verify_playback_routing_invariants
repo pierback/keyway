@@ -62,11 +62,14 @@ grep -q 'guard !ChromiumBrowserExtensionTransport.isTarget(target) else' "$deskt
 grep -q 'Library/Application Support/net.imput.helium/NativeMessagingHosts' "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionTransport.swift" \
   || fail "Helium must be installed through the Chromium extension native host path"
 
-grep -q 'cachedTargetsGraceInterval' "$menu_bar_media_sources" \
-  || fail "menu bar source cache must have a bounded grace interval so stale rows cannot stay commandable"
+! grep -q 'cachedTargetsGraceInterval\|cachedTargetsUpdatedAt\|canShowCachedTargets' "$menu_bar_media_sources" \
+  || fail "menu bar source retention must live in MediaSourceStore, not the SwiftUI section"
 
-grep -q 'canShowCachedTargets' "$menu_bar_media_sources" \
-  || fail "menu bar source cache must expire cached rows when refresh gets stuck"
+grep -q 'helperRecoveryGraceInterval: TimeInterval = 5' "$remote_controller" \
+  || fail "MediaRemote helper recovery grace must be the shared 5s policy"
+
+grep -q 'MediaRemoteController.helperRecoveryGraceInterval' "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaSourceStore.swift" \
+  || fail "MediaSourceStore retention must use the shared MediaRemote helper recovery grace"
 
 python3 - "$menu_bar_media_sources" <<'PY'
 import pathlib
@@ -74,14 +77,14 @@ import sys
 
 text = pathlib.Path(sys.argv[1]).read_text()
 start = text.index("    private var displayTargets: [MediaRemoteTarget] {")
-end = text.index("    private var openingTargets: [MediaRemoteTarget] {", start)
+end = text.index("    private func sortedTargets", start)
 body = text[start:end]
-guarded_fallback = """if mediaRemoteController.isRefreshingSnapshot, canShowCachedTargets {
+guarded_fallback = """if mediaRemoteController.isRefreshingSnapshot {
                 return sessionTarget
             }
             return nil"""
 if guarded_fallback not in body:
-    raise SystemExit("verify_playback_routing_invariants: unresolved menu session targets must drop after the bounded refresh grace window")
+    raise SystemExit("verify_playback_routing_invariants: unresolved menu session targets must stay visible only while a refresh is in flight")
 unguarded_fallback = """if ChromiumBrowserExtensionTransport.isTarget(sessionTarget), !latestTargets.isEmpty {
                 return nil
             }
@@ -365,11 +368,12 @@ if not poll_interval:
     raise SystemExit("verify_playback_routing_invariants: MediaRemote snapshot poll interval must be explicit")
 if float(poll_interval.group(1)) > 1:
     raise SystemExit("verify_playback_routing_invariants: MediaRemote snapshot polling must keep chooser cache staleness below one second")
-restart_delay = re.search(r'immediateRestartDelayNanoseconds: UInt64 = ([0-9_]+)', text)
-if not restart_delay:
-    raise SystemExit("verify_playback_routing_invariants: MediaRemote helper immediate restart delay must be explicit")
-if int(restart_delay.group(1).replace("_", "")) > 250_000_000:
-    raise SystemExit("verify_playback_routing_invariants: MediaRemote helper immediate restart delay must stay below hidden-delay territory")
+schedule = re.search(r'relaunchDelayNanoseconds: \[UInt64\] = \[(.*?)\]', text, re.S)
+if not schedule:
+    raise SystemExit("verify_playback_routing_invariants: MediaRemote helper relaunch schedule must be explicit")
+delays = [int(value.replace("_", "")) for value in re.findall(r'[0-9][0-9_]+', schedule.group(1))]
+if delays != [250_000_000, 500_000_000, 1_000_000_000, 2_000_000_000, 5_000_000_000]:
+    raise SystemExit(f"verify_playback_routing_invariants: unexpected MediaRemote helper relaunch schedule {delays}")
 PY
 
 grep -q 'armSnapshotRefreshTimeout(requestID: requestID)' "$remote_controller" \
@@ -1301,13 +1305,16 @@ import pathlib
 import sys
 
 text = pathlib.Path(sys.argv[1]).read_text()
-mark_failed = text[text.index("    private func markFailed"):text.index("    private func schedulePeriodicRecovery")]
+mark_failed = text[text.index("    private func markFailed"):text.index("    private func beginHelperRecovery")]
 if "clearMediaRemoteTargets()" not in mark_failed:
     raise SystemExit("verify_playback_routing_invariants: MediaRemote helper failure must clear only MediaRemote-owned rows")
 if "clearAllTargets()" in mark_failed:
     raise SystemExit("verify_playback_routing_invariants: MediaRemote helper failure must not clear Chromium extension-owned rows")
 if "targetCount: targets.count" not in mark_failed:
     raise SystemExit("verify_playback_routing_invariants: MediaRemote helper failure health must report surviving extension rows")
+recovery = text[text.index("    private func beginHelperRecovery"):text.index("    private func scheduleRelaunch")]
+if "helperDegradedSince = degradedSince" not in recovery or "clearMediaRemoteTargets()" not in recovery:
+    raise SystemExit("verify_playback_routing_invariants: helper recovery must publish degraded state before clearing MediaRemote rows")
 clear_media = text[text.index("    private func clearMediaRemoteTargets"):text.index("    private func clearAllTargets")]
 if "mediaRemoteTargets = []" not in clear_media or "mergeVisibleTargets()" not in clear_media:
     raise SystemExit("verify_playback_routing_invariants: clearing MediaRemote rows must re-merge Chromium extension rows")
@@ -1480,8 +1487,8 @@ fi
 grep -q 'let displayTarget = target' "$menu_bar_media_sources" \
   || fail "status menu playback controls must keep the cached target visible during refresh"
 
-grep -q 'cachedTargets' "$menu_bar_media_sources" \
-  || fail "status menu playback controls must keep non-empty source rows visible while snapshots refresh"
+! grep -q 'cachedTargets' "$menu_bar_media_sources" \
+  || fail "status menu source retention must not use a private SwiftUI cache"
 
 if grep -Eq 'target\.isCurrentlyPlaying \\? MediaRemoteTransportCommand\.pause : \\.play|repairIfNeeded|MediaTransportLeakRepairController' "$transport" "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar.xcodeproj/project.pbxproj"; then
   fail "transport routing must not repair or infer Play/Pause from delayed playback state"

@@ -5,10 +5,17 @@ import os
 @MainActor
 final class MediaRemoteController: ObservableObject {
     private static let ignoredBundleIdentifiers: Set<String> = ["com.fpieringer.Keyway"]
-    private static let maxImmediateRestartAttempts = 2
-    private static let immediateRestartDelayNanoseconds: UInt64 = 250_000_000
+    private static let relaunchDelayNanoseconds: [UInt64] = [
+        250_000_000,
+        500_000_000,
+        1_000_000_000,
+        2_000_000_000,
+        5_000_000_000,
+    ]
     private static let snapshotPollInterval: TimeInterval = 1
-    private static let periodicRecoveryInterval: TimeInterval = 60
+    private static let pingInterval: TimeInterval = 1
+    private static let pongFreshnessInterval: TimeInterval = 2.5
+    static let helperRecoveryGraceInterval: TimeInterval = 5
     private static let snapshotRefreshTimeoutNanoseconds: UInt64 = 6_000_000_000
     private static let commandResultTimeoutNanoseconds: UInt64 = 350_000_000
 
@@ -16,6 +23,7 @@ final class MediaRemoteController: ObservableObject {
     @Published private(set) var targets: [MediaRemoteTarget] = []
     @Published private(set) var activeTargetID: String?
     @Published private(set) var isRefreshingSnapshot = false
+    @Published private(set) var helperDegradedSince: Date?
 
     private let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "MediaRemote")
     private let chromiumBrowserExtensionController: ChromiumBrowserExtensionController
@@ -25,7 +33,9 @@ final class MediaRemoteController: ObservableObject {
     private var chromiumTargetsSubscription: AnyCancellable?
     private var mediaRemoteTargets: [MediaRemoteTarget] = []
     private var refreshTimer: Timer?
-    private var recoveryTimer: Timer?
+    private var pingTimer: Timer?
+    private var recoveryTask: Task<Void, Never>?
+    private var helperRecoveryGraceTask: Task<Void, Never>?
     private var notificationDebounce: Task<Void, Never>?
     private var commandRequestStartedAt: [String: TimeInterval] = [:]
     private var commandResultHandlers: [String: (MediaRemoteCommandResultEvent) -> Void] = [:]
@@ -38,6 +48,8 @@ final class MediaRemoteController: ObservableObject {
     private var snapshotRefreshTimeout: Task<Void, Never>?
     private var restartAttempts = 0
     private var expectedTermination = false
+    private var pendingPingRolesByRequestID: [String: (role: MediaRemoteHelperRole, sentAt: Date)] = [:]
+    private var lastPongAtByRole: [MediaRemoteHelperRole: Date] = [:]
 
     var activeTarget: MediaRemoteTarget? {
         guard let activeTargetID else {
@@ -85,7 +97,7 @@ final class MediaRemoteController: ObservableObject {
         do {
             let resources = try helperResources()
             expectedTermination = false
-            cancelRecoveryTimer()
+            cancelRecoveryTask()
             try commandHelper.start(
                 script: resources.script,
                 dylib: resources.dylib,
@@ -113,27 +125,32 @@ final class MediaRemoteController: ObservableObject {
                 }
             )
             startRefreshTimer()
+            startPingTimer()
         } catch {
             snapshotHelper.stop()
             commandHelper.stop()
-            markFailed("Could not start MediaRemote helper: \(error.localizedDescription)")
-            schedulePeriodicRecovery()
+            beginHelperRecovery(message: "Could not start MediaRemote helper: \(error.localizedDescription)")
+            scheduleRelaunch()
         }
     }
 
     func stop() {
         expectedTermination = true
-        cancelRecoveryTimer()
+        cancelRecoveryTask()
         refreshTimer?.invalidate()
         refreshTimer = nil
+        stopPingTimer()
+        cancelHelperRecoveryGrace()
         snapshotHelper.stop()
         commandHelper.stop()
         clearAllTargets()
         clearCommandState()
+        clearPingState()
         refreshGate.reset()
         snapshotRefreshTimeout?.cancel()
         snapshotRefreshTimeout = nil
         pendingRefreshRequested = false
+        helperDegradedSince = nil
         health = .stopped
     }
 
@@ -159,7 +176,8 @@ final class MediaRemoteController: ObservableObject {
             refreshGate.finish(requestID: requestID)
             isRefreshingSnapshot = false
             pendingRefreshRequested = false
-            markFailed("Could not write refresh request to MediaRemote snapshot helper.")
+            beginHelperRecovery(message: "Could not write refresh request to MediaRemote snapshot helper.")
+            scheduleRelaunch()
             return false
         }
         armSnapshotRefreshTimeout(requestID: requestID)
@@ -181,7 +199,7 @@ final class MediaRemoteController: ObservableObject {
         onResult: ((MediaRemoteCommandResultEvent) -> Void)? = nil
     ) -> Bool {
         guard canRouteCommands else {
-            markFailed("MediaRemote helper is not ready.")
+            probeHelperLiveness()
             return false
         }
 
@@ -195,7 +213,8 @@ final class MediaRemoteController: ObservableObject {
             "command": command.rawValue,
         ])
         guard sent else {
-            markFailed("Could not write command request to MediaRemote command helper.")
+            beginHelperRecovery(message: "Could not write command request to MediaRemote command helper.")
+            scheduleRelaunch()
             return false
         }
 
@@ -247,7 +266,7 @@ final class MediaRemoteController: ObservableObject {
                     return
                 }
                 restartAttempts = 0
-                cancelRecoveryTimer()
+                cancelRecoveryTask()
                 health = MediaRemoteHelperHealth(
                     state: .running,
                     message: "Connected through \(ready.host ?? "/usr/bin/perl")",
@@ -257,7 +276,8 @@ final class MediaRemoteController: ObservableObject {
                 )
                 refreshSnapshot()
             case "pong":
-                break
+                let pong = try decoder.decode(MediaRemotePongEvent.self, from: line)
+                handlePong(pong, role: role)
             case "snapshot":
                 let snapshot = try decoder.decode(MediaRemoteSnapshotEvent.self, from: line)
                 guard refreshGate.finish(requestID: snapshot.requestID) else {
@@ -269,6 +289,7 @@ final class MediaRemoteController: ObservableObject {
                 mediaRemoteTargets = snapshot.targets.filter { !Self.isIgnoredTarget($0) }
                 let visibleTargets = chromiumBrowserExtensionController.targetsIncludingBrowserExtensionTargets(mediaRemoteTargets)
                 targets = visibleTargets
+                clearHelperDegraded()
                 activeTargetID = visibleTargets.contains { $0.id == snapshot.activeTargetID }
                     ? Self.nilIfEmpty(snapshot.activeTargetID)
                     : nil
@@ -416,7 +437,9 @@ final class MediaRemoteController: ObservableObject {
         commandHelper.stop()
         refreshTimer?.invalidate()
         refreshTimer = nil
+        stopPingTimer()
         clearCommandState()
+        clearPingState()
         refreshGate.reset()
         snapshotRefreshTimeout?.cancel()
         snapshotRefreshTimeout = nil
@@ -427,17 +450,8 @@ final class MediaRemoteController: ObservableObject {
             return
         }
 
-        markFailed("MediaRemote \(role.rawValue) helper exited with status \(status).")
-        guard restartAttempts < Self.maxImmediateRestartAttempts else {
-            schedulePeriodicRecovery()
-            return
-        }
-
-        restartAttempts += 1
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: Self.immediateRestartDelayNanoseconds)
-            self?.start()
-        }
+        beginHelperRecovery(message: "MediaRemote \(role.rawValue) helper exited with status \(status).")
+        scheduleRelaunch()
     }
 
     private func handleHelperFailure(_ message: String, role: MediaRemoteHelperRole) {
@@ -446,23 +460,15 @@ final class MediaRemoteController: ObservableObject {
         commandHelper.stop()
         refreshTimer?.invalidate()
         refreshTimer = nil
+        stopPingTimer()
         clearCommandState()
+        clearPingState()
         refreshGate.reset()
         snapshotRefreshTimeout?.cancel()
         snapshotRefreshTimeout = nil
         pendingRefreshRequested = false
-        markFailed(message)
-
-        guard restartAttempts < Self.maxImmediateRestartAttempts else {
-            schedulePeriodicRecovery()
-            return
-        }
-
-        restartAttempts += 1
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: Self.immediateRestartDelayNanoseconds)
-            self?.start()
-        }
+        beginHelperRecovery(message: message)
+        scheduleRelaunch()
     }
 
     private func markFailed(_ message: String) {
@@ -483,32 +489,53 @@ final class MediaRemoteController: ObservableObject {
         )
     }
 
-    private func schedulePeriodicRecovery() {
-        guard recoveryTimer == nil else {
-            return
-        }
-
+    private func beginHelperRecovery(message: String) {
+        logger.error("MediaRemoteHelper recovering=\(message, privacy: .public)")
+        let degradedSince = helperDegradedSince ?? Date()
+        helperDegradedSince = degradedSince
+        clearMediaRemoteTargets()
+        isRefreshingSnapshot = false
+        refreshGate.reset()
+        snapshotRefreshTimeout?.cancel()
+        snapshotRefreshTimeout = nil
+        pendingRefreshRequested = false
+        clearCommandState()
+        clearPingState()
         health = MediaRemoteHelperHealth(
-            state: .failed,
-            message: "\(health.message) Keyway will retry the helper every \(Int(Self.periodicRecoveryInterval)) seconds.",
+            state: .starting,
+            message: "\(message) Retrying helper.",
             pid: nil,
             lastSnapshotAt: health.lastSnapshotAt,
             targetCount: targets.count
         )
-        recoveryTimer = Timer.scheduledTimer(withTimeInterval: Self.periodicRecoveryInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self, !self.snapshotHelper.isRunning, !self.commandHelper.isRunning else {
-                    return
-                }
-                self.restartAttempts = 0
-                self.start()
+        scheduleHelperRecoveryGrace(since: degradedSince, message: message)
+    }
+
+    private func scheduleRelaunch() {
+        guard recoveryTask == nil else {
+            return
+        }
+
+        let delay = Self.relaunchDelayNanoseconds[min(restartAttempts, Self.relaunchDelayNanoseconds.count - 1)]
+        restartAttempts += 1
+        recoveryTask = Task { @MainActor [weak self] in
+            guard (try? await Task.sleep(nanoseconds: delay)) != nil else {
+                return
             }
+            guard let self else {
+                return
+            }
+            self.recoveryTask = nil
+            guard !self.snapshotHelper.isRunning, !self.commandHelper.isRunning else {
+                return
+            }
+            self.start()
         }
     }
 
-    private func cancelRecoveryTimer() {
-        recoveryTimer?.invalidate()
-        recoveryTimer = nil
+    private func cancelRecoveryTask() {
+        recoveryTask?.cancel()
+        recoveryTask = nil
     }
 
     private func clearMediaRemoteTargets() {
@@ -531,6 +558,140 @@ final class MediaRemoteController: ObservableObject {
         commandCacheRefreshRequestIDs.removeAll()
         commandCacheRefreshTargetSignatures.removeAll()
         commandCacheTargetSignature = ""
+    }
+
+    @discardableResult
+    func probeHelperLiveness() -> Bool {
+        let snapshotPingSent = ping(role: .snapshot)
+        let commandPingSent = ping(role: .command)
+        return snapshotPingSent || commandPingSent
+    }
+
+    private func startPingTimer() {
+        pingTimer?.invalidate()
+        sendPingSweep()
+        pingTimer = Timer.scheduledTimer(withTimeInterval: Self.pingInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.sendPingSweep()
+            }
+        }
+    }
+
+    private func stopPingTimer() {
+        pingTimer?.invalidate()
+        pingTimer = nil
+    }
+
+    private func sendPingSweep() {
+        let now = Date()
+        pendingPingRolesByRequestID = pendingPingRolesByRequestID.filter {
+            now.timeIntervalSince($0.value.sentAt) <= Self.pingInterval * 3
+        }
+        ping(role: .snapshot)
+        ping(role: .command)
+        updatePingLiveness()
+    }
+
+    @discardableResult
+    private func ping(role: MediaRemoteHelperRole) -> Bool {
+        let helper = role == .snapshot ? snapshotHelper : commandHelper
+        guard helper.isRunning else {
+            return false
+        }
+
+        let requestID = "ping-\(role.rawValue)-\(UUID().uuidString)"
+        let sent = helper.send([
+            "type": "ping",
+            "requestID": requestID,
+        ])
+        if sent {
+            pendingPingRolesByRequestID[requestID] = (role: role, sentAt: Date())
+        }
+        return sent
+    }
+
+    private func handlePong(_ pong: MediaRemotePongEvent, role: MediaRemoteHelperRole) {
+        guard let requestID = pong.requestID,
+              let pending = pendingPingRolesByRequestID.removeValue(forKey: requestID),
+              pending.role == role
+        else {
+            logger.info("MediaRemoteHelper stale_pong_ignored role=\(role.rawValue, privacy: .public) requestID=\(pong.requestID ?? "", privacy: .public)")
+            return
+        }
+
+        lastPongAtByRole[role] = Date()
+        logger.info("MediaRemoteHelper pong role=\(role.rawValue, privacy: .public) pid=\(pong.pid ?? -1, privacy: .public) requestID=\(requestID, privacy: .public)")
+        updatePingLiveness()
+    }
+
+    private func updatePingLiveness(now: Date = Date()) {
+        guard health.state == .running,
+              snapshotHelper.isRunning,
+              commandHelper.isRunning
+        else {
+            return
+        }
+
+        let roles: [MediaRemoteHelperRole] = [.snapshot, .command]
+        let pingLive = roles.allSatisfy { role in
+            guard let lastPongAt = lastPongAtByRole[role] else {
+                return false
+            }
+            return now.timeIntervalSince(lastPongAt) <= Self.pongFreshnessInterval
+        }
+        if pingLive {
+            if helperDegradedSince != nil {
+                clearHelperDegraded()
+            }
+            return
+        }
+
+        guard helperDegradedSince == nil else {
+            return
+        }
+
+        helperDegradedSince = now
+        scheduleHelperRecoveryGrace(since: now, message: "MediaRemote helper stopped answering pings.")
+    }
+
+    private func scheduleHelperRecoveryGrace(since: Date, message: String) {
+        helperRecoveryGraceTask?.cancel()
+        let elapsed = Date().timeIntervalSince(since)
+        let remainingNanoseconds = elapsed >= Self.helperRecoveryGraceInterval
+            ? UInt64(0)
+            : UInt64((Self.helperRecoveryGraceInterval - elapsed) * 1_000_000_000)
+        helperRecoveryGraceTask = Task { @MainActor [weak self] in
+            guard (try? await Task.sleep(nanoseconds: remainingNanoseconds)) != nil else {
+                return
+            }
+            guard let self,
+                  self.helperDegradedSince == since
+            else {
+                return
+            }
+            self.helperRecoveryGraceTask = nil
+            self.snapshotHelper.stop()
+            self.commandHelper.stop()
+            self.stopPingTimer()
+            self.clearPingState()
+            self.markFailed(message)
+            self.scheduleRelaunch()
+        }
+    }
+
+    private func clearHelperDegraded() {
+        helperDegradedSince = nil
+        cancelHelperRecoveryGrace()
+    }
+
+    private func cancelHelperRecoveryGrace() {
+        helperRecoveryGraceTask?.cancel()
+        helperRecoveryGraceTask = nil
+    }
+
+    private func clearPingState() {
+        pendingPingRolesByRequestID.removeAll()
+        lastPongAtByRole.removeAll()
     }
 
     private func warmCommandClientCacheIfNeeded(targets: [MediaRemoteTarget], reason: String) {

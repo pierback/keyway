@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${KEYWAY_MEDIAREMOTE_KILL_SMOKE:-0}" != "1" ]]; then
+  echo "smoke_mediaremote_helper_kill=skipped gate=KEYWAY_MEDIAREMOTE_KILL_SMOKE"
+  exit 0
+fi
+
+APP_DIR="${KEYWAY_APP:-$HOME/Applications/Keyway.app}"
+APP_EXECUTABLE="$APP_DIR/Contents/MacOS/Keyway"
+HELPER_SCRIPT="$APP_DIR/Contents/Resources/MediaRemoteHelper/keyway-mediaremote-helper.pl"
+STATUS_FILE="$HOME/Library/Application Support/keyway/shortcut-runtime-status.json"
+
+fail() {
+  printf 'smoke_mediaremote_helper_kill: %s\n' "$1" >&2
+  exit 1
+}
+
+[[ -x "$APP_EXECUTABLE" ]] || fail "Keyway app is not installed at $APP_DIR; run scripts/install_menubar_app first"
+[[ -x "$HELPER_SCRIPT" ]] || fail "bundled MediaRemote helper script is missing"
+pgrep -x Keyway >/dev/null || fail "Keyway must already be running"
+
+helper_pids() {
+  pgrep -f "$HELPER_SCRIPT" || true
+}
+
+read_trace_sequence() {
+  python3 - "$STATUS_FILE" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+if not path.exists():
+    print(0)
+else:
+    print(json.loads(path.read_text()).get("mediaTransportTraceSequence", 0))
+PY
+}
+
+trace_has_success_after() {
+  local start_sequence="$1"
+  python3 - "$STATUS_FILE" "$start_sequence" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+start_sequence = int(sys.argv[2])
+if not path.exists():
+    raise SystemExit(1)
+events = json.loads(path.read_text()).get("mediaTransportTrace", [])
+for event in events:
+    if event.get("sequence", 0) <= start_sequence:
+        continue
+    if event.get("event") == "helper_command_result" and event.get("ok") is True:
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
+open_menu_text() {
+  osascript <<'APPLESCRIPT'
+tell application "System Events"
+  if not (exists process "Keyway") then return ""
+  tell process "Keyway"
+    try
+      if not (exists window 1) then click menu bar item 1 of menu bar 2
+    end try
+    delay 0.15
+    if not (exists window 1) then return ""
+    set output to ""
+    repeat with e in entire contents of window 1
+      try
+        if role of e is "AXStaticText" then set output to output & (value of e as text) & linefeed
+      end try
+    end repeat
+    return output
+  end tell
+end tell
+APPLESCRIPT
+}
+
+click_first_source_transport_button() {
+  osascript <<'APPLESCRIPT'
+tell application "System Events"
+  if not (exists process "Keyway") then return ""
+  tell process "Keyway"
+    try
+      if not (exists window 1) then click menu bar item 1 of menu bar 2
+    end try
+    delay 0.15
+    if not (exists window 1) then return ""
+    repeat with e in entire contents of window 1
+      try
+        if role of e is "AXButton" then
+          set identifier to value of attribute "AXIdentifier" of e as text
+          if identifier contains "-transport-play" or identifier contains "-transport-pause" or identifier contains "-transport-playPause" then
+            perform action "AXPress" of e
+            return identifier
+          end if
+        end if
+      end try
+    end repeat
+    return ""
+  end tell
+end tell
+APPLESCRIPT
+}
+
+for _ in {1..50}; do
+  [[ -n "$(helper_pids)" ]] && break
+  sleep 0.1
+done
+[[ -n "$(helper_pids)" ]] || fail "MediaRemote helper process is not running"
+
+initial_text="$(open_menu_text)"
+[[ -n "$initial_text" ]] || fail "could not read Keyway menu through Accessibility"
+if grep -Fq "No media sources" <<<"$initial_text"; then
+  fail "Keyway must have at least one visible media source before helper-kill smoke"
+fi
+
+start_sequence="$(read_trace_sequence)"
+kill_started_at="$(python3 - <<'PY'
+import time
+print(time.monotonic())
+PY
+)"
+
+while read -r pid; do
+  [[ -n "$pid" ]] || continue
+  kill "$pid"
+done < <(helper_pids)
+
+grace_deadline="$(python3 - "$kill_started_at" <<'PY'
+import sys
+print(float(sys.argv[1]) + 4.8)
+PY
+)"
+recovery_deadline="$(python3 - "$kill_started_at" <<'PY'
+import sys
+print(float(sys.argv[1]) + 5.0)
+PY
+)"
+
+while python3 - "$grace_deadline" <<'PY'
+import sys
+import time
+raise SystemExit(0 if time.monotonic() < float(sys.argv[1]) else 1)
+PY
+do
+  text="$(open_menu_text)"
+  [[ -n "$text" ]] || fail "Keyway menu disappeared during helper recovery"
+  if grep -Fq "No media sources" <<<"$text"; then
+    fail "source list collapsed to empty during MediaRemote helper recovery grace"
+  fi
+  sleep 0.2
+done
+
+while python3 - "$recovery_deadline" <<'PY'
+import sys
+import time
+raise SystemExit(0 if time.monotonic() < float(sys.argv[1]) else 1)
+PY
+do
+  [[ -n "$(helper_pids)" ]] || {
+    sleep 0.1
+    continue
+  }
+  text="$(open_menu_text)"
+  if grep -Fq "No media sources" <<<"$text"; then
+    sleep 0.1
+    continue
+  fi
+  if grep -Fq "not responding" <<<"$text"; then
+    sleep 0.1
+    continue
+  fi
+  pressed_identifier="$(click_first_source_transport_button)"
+  if [[ -n "$pressed_identifier" ]]; then
+    for _ in {1..20}; do
+      if trace_has_success_after "$start_sequence"; then
+        echo "smoke_mediaremote_helper_kill=ok pressed=$pressed_identifier"
+        exit 0
+      fi
+      sleep 0.05
+    done
+  fi
+  sleep 0.1
+done
+
+fail "routing did not recover within 5s of MediaRemote helper death"

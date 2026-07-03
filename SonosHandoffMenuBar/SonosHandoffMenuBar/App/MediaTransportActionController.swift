@@ -426,7 +426,9 @@ final class MediaTransportActionController {
                     self.relaxRouteShield?("selected_row_dispatch")
                 }
                 Task { @MainActor [weak self] in
-                    try! await Task.sleep(nanoseconds: Self.selectedRowDispatchRouteShieldReleaseDelayNanoseconds)
+                    guard (try? await Task.sleep(nanoseconds: Self.selectedRowDispatchRouteShieldReleaseDelayNanoseconds)) != nil else {
+                        return
+                    }
                     self?.dispatchFromChooser(
                         command: routedCommand,
                         requestedCommand: command,
@@ -575,6 +577,7 @@ final class MediaTransportActionController {
         context: MediaTransportDispatchContext
     ) {
         guard sendMediaRemote(command: command, to: target, dispatchID: dispatchID, context: context) else {
+            mediaRemoteController.probeHelperLiveness()
             mediaSourceStore.markCommandFailed(targetID: target.id)
             finishDispatch(id: dispatchID, fallback: true)
             logDispatchFailure(command: command, target: target, context: context)
@@ -594,6 +597,9 @@ final class MediaTransportActionController {
         context: MediaTransportDispatchContext
     ) -> Bool {
         let sent = mediaRemoteController.submit(command: command, targetID: target.id) { [weak self] result in
+            if !result.ok {
+                self?.mediaRemoteController.probeHelperLiveness()
+            }
             self?.mediaSourceStore.recordCommandResult(result)
             self?.trace(result: result, transportBackend: Self.mediaRemotePlayerPathBackend)
             self?.finishDispatch(id: dispatchID, fallback: false)

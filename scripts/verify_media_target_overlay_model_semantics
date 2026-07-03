@@ -201,6 +201,7 @@ struct OverlayModelSemantics {
 SWIFT
 
 swiftc \
+  -module-cache-path "$workdir/module-cache" \
   "$workdir/ModelStubs.swift" \
   "$workdir/MediaTargetOverlayModel.swift" \
   "$workdir/OverlayModelSemantics.swift" \

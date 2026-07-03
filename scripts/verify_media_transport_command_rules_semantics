@@ -178,6 +178,7 @@ struct CommandRuleSemantics {
 SWIFT
 
 swiftc \
+  -module-cache-path "$workdir/module-cache" \
   "$workdir/CommandRuleStubs.swift" \
   "$workdir/MediaTransportCommandRules.swift" \
   "$workdir/CommandRuleSemantics.swift" \

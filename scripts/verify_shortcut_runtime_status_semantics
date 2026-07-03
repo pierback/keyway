@@ -3,28 +3,59 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 status_file="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutRuntimeStatus.swift"
+command_center_file="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaCommandCenterInterceptor.swift"
 
-python3 - "$status_file" <<'PY'
+python3 - "$status_file" "$command_center_file" <<'PY'
 import pathlib
 import sys
 
 text = pathlib.Path(sys.argv[1]).read_text()
+command_center = pathlib.Path(sys.argv[2]).read_text()
 start = text.index("    private func persistSnapshot()")
 end = text.index("\n}\n\nextension Notification.Name", start)
 body = text[start:end]
 
 required = (
-    "try! FileManager.default.createDirectory(",
-    "let data = try! JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])",
-    "try! data.write(to: Self.persistenceURL, options: .atomic)",
+    "try FileManager.default.createDirectory(",
+    "let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])",
+    "try data.write(to: Self.persistenceURL, options: .atomic)",
+    'fputs("ShortcutRuntimeStatus: could not persist snapshot:',
 )
 for needle in required:
     if needle not in body:
-        raise SystemExit(f"verify_shortcut_runtime_status_semantics: persistSnapshot must fail loud for runtime-status persistence: {needle}")
+        raise SystemExit(f"verify_shortcut_runtime_status_semantics: persistSnapshot must log and skip failed runtime-status persistence: {needle}")
 
-for forbidden in ("do {", "} catch {", "} catch {}", "try FileManager.default.createDirectory(", "let data = try JSONSerialization.data(", "try data.write("):
-    if forbidden in body:
-        raise SystemExit(f"verify_shortcut_runtime_status_semantics: persistSnapshot must not swallow or soften runtime-status persistence failures: {forbidden}")
+trace_start = text.index("    func recordMediaTransportEvent(")
+trace_end = text.index("\n    private func scheduleTracePersistence()", trace_start)
+trace_body = text[trace_start:trace_end]
+for needle in (
+    'fputs("ShortcutRuntimeStatus: dropping media transport trace notification:',
+    "scheduleTracePersistence()",
+    "return",
+):
+    if needle not in trace_body:
+        raise SystemExit(f"verify_shortcut_runtime_status_semantics: trace notification encode failures must log and skip posting: {needle}")
+
+route_start = command_center.index("    private func startRouteShieldAudio()")
+route_end = command_center.index("\n    private func stopRouteShieldAudio()", route_start)
+route_body = command_center[route_start:route_end]
+for needle in (
+    "private func startRouteShieldAudio() -> Bool",
+    'logger.error("MediaCommandCenter routeShieldAudio=failed error=',
+    "routeShieldEngine.stop()",
+    "routeShieldEngine.detach(sourceNode)",
+    "return false",
+):
+    if needle not in route_body:
+        raise SystemExit(f"verify_shortcut_runtime_status_semantics: route shield audio start failures must degrade cleanly: {needle}")
+
+for label, source in (
+    ("ShortcutRuntimeStatus.swift", text),
+    ("MediaCommandCenterInterceptor.swift", command_center),
+):
+    for forbidden in ("try!", "} catch {}", "preconditionFailure(", "fatalError("):
+        if forbidden in source:
+            raise SystemExit(f"verify_shortcut_runtime_status_semantics: {label} must not force-crash or silently catch diagnostics failures: {forbidden}")
 PY
 
 printf 'verify_shortcut_runtime_status_semantics=ok\n'

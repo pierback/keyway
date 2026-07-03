@@ -117,7 +117,9 @@ final class MediaCommandCenterInterceptor {
         guard isRunning else {
             return
         }
-        startRouteShieldAudio()
+        guard startRouteShieldAudio() else {
+            return
+        }
         publishNowPlayingRoute()
         startRouteShieldRefreshIfNeeded()
         logger.info("MediaCommandCenter routeShield=armed reason=\(reason, privacy: .public)")
@@ -133,9 +135,9 @@ final class MediaCommandCenterInterceptor {
         logger.info("MediaCommandCenter routeShield=disarmed reason=\(reason, privacy: .public)")
     }
 
-    private func startRouteShieldAudio() {
+    private func startRouteShieldAudio() -> Bool {
         guard routeShieldSourceNode == nil else {
-            return
+            return true
         }
 
         let sourceNode = AVAudioSourceNode(renderBlock: Self.routeShieldRenderBlock)
@@ -143,8 +145,16 @@ final class MediaCommandCenterInterceptor {
         routeShieldEngine.attach(sourceNode)
         routeShieldEngine.connect(sourceNode, to: routeShieldEngine.mainMixerNode, format: format)
         routeShieldEngine.mainMixerNode.outputVolume = 1
-        try! routeShieldEngine.start()
+        do {
+            try routeShieldEngine.start()
+        } catch {
+            logger.error("MediaCommandCenter routeShieldAudio=failed error=\(error.localizedDescription, privacy: .public)")
+            routeShieldEngine.stop()
+            routeShieldEngine.detach(sourceNode)
+            return false
+        }
         routeShieldSourceNode = sourceNode
+        return true
     }
 
     private func stopRouteShieldAudio() {

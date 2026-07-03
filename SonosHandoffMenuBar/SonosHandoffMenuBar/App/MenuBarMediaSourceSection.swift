@@ -6,7 +6,6 @@ import SwiftUI
 struct MenuBarMediaSourceSection: View {
     private static let accentColor = Color(nsColor: .controlAccentColor)
     private static let routeButtonHeight: CGFloat = 22
-    private static let cachedTargetsGraceInterval = MediaTransportCommandRules.emptyDiscoveryInterval
 
     @ObservedObject var mediaRemoteController: MediaRemoteController
     @ObservedObject var mediaSourceStore: MediaSourceStore
@@ -14,8 +13,6 @@ struct MenuBarMediaSourceSection: View {
     @ObservedObject var playback: PlaybackSyncController
     let mediaTransportActions: MediaTransportActionController
     let progressTick: UInt64
-    @State private var cachedTargets: [MediaRemoteTarget] = []
-    @State private var cachedTargetsUpdatedAt: Date?
     @State private var sessionTargets: [MediaRemoteTarget] = []
     @State private var sessionHasOpened = false
 
@@ -39,7 +36,7 @@ struct MenuBarMediaSourceSection: View {
             if ChromiumBrowserExtensionTransport.isTarget(sessionTarget), !latestTargets.isEmpty {
                 return nil
             }
-            if mediaRemoteController.isRefreshingSnapshot, canShowCachedTargets {
+            if mediaRemoteController.isRefreshingSnapshot {
                 return sessionTarget
             }
             return nil
@@ -48,18 +45,7 @@ struct MenuBarMediaSourceSection: View {
     }
 
     private var openingTargets: [MediaRemoteTarget] {
-        let targets = freshTargets
-        if targets.isEmpty, mediaRemoteController.isRefreshingSnapshot, canShowCachedTargets {
-            return cachedTargets
-        }
-        return targets
-    }
-
-    private var canShowCachedTargets: Bool {
-        guard let cachedTargetsUpdatedAt else {
-            return false
-        }
-        return Date().timeIntervalSince(cachedTargetsUpdatedAt) <= Self.cachedTargetsGraceInterval
+        freshTargets
     }
 
     private func sortedTargets(_ targets: [MediaRemoteTarget]) -> [MediaRemoteTarget] {
@@ -123,13 +109,11 @@ struct MenuBarMediaSourceSection: View {
         }
         .onReceive(mediaSourceStore.$rows) { rows in
             let sortedTargets = sortedTargets(rows.map(\.target))
-            rememberTargets(sortedTargets)
             hydrateEmptySessionIfNeeded(with: sortedTargets)
         }
     }
 
     private func openTargetSession() {
-        rememberTargets(freshTargets)
         sessionTargets = openingTargets
         sessionHasOpened = true
     }
@@ -169,13 +153,6 @@ struct MenuBarMediaSourceSection: View {
             browserDisplayName: sessionTarget.browserDisplayName,
             browserBundleIdentifier: sessionTarget.browserBundleIdentifier
         )
-    }
-
-    private func rememberTargets(_ targets: [MediaRemoteTarget]) {
-        if !targets.isEmpty {
-            cachedTargets = targets
-            cachedTargetsUpdatedAt = Date()
-        }
     }
 
     private var emptyRow: some View {

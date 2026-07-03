@@ -278,7 +278,9 @@ final class VolumeHotkeyController {
     func suspendCommandCenterRouteShieldForSelectedDispatch(reason: String) {
         stopCommandCenterRoute(reason: reason)
         Task { @MainActor [weak self] in
-            try! await Task.sleep(nanoseconds: 600_000_000)
+            guard (try? await Task.sleep(nanoseconds: 600_000_000)) != nil else {
+                return
+            }
             guard let self, self.eventTap.isRunning else {
                 return
             }

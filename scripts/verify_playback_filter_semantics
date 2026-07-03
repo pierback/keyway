@@ -549,6 +549,7 @@ struct FilterSemantics {
 SWIFT
 
 swiftc \
+  -module-cache-path "$workdir/module-cache" \
   "$workdir/MediaRemoteTransportCommand.swift" \
   "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportRouteSource.swift" \
   "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportCommandCenterFilter.swift" \
