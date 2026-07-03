@@ -4,7 +4,7 @@ import Foundation
 @MainActor
 final class MediaTargetOverlayModel: ObservableObject {
     @Published var command: MediaRemoteTransportCommand?
-    @Published var targets: [MediaRemoteTarget] = []
+    @Published private(set) var rows: [SourceRow] = []
     @Published var selectedIndex = 0
     @Published var expanded = false
     @Published var audioSnapshot = MediaAudioControlSnapshot(
@@ -13,32 +13,36 @@ final class MediaTargetOverlayModel: ObservableObject {
         browser: .disabled(title: "Browser", detail: "Select a browser media target")
     )
 
+    var targets: [MediaRemoteTarget] {
+        rows.map(\.target)
+    }
+
     var selectedTarget: MediaRemoteTarget? {
-        guard targets.indices.contains(selectedIndex) else {
+        guard rows.indices.contains(selectedIndex) else {
             return nil
         }
-        return targets[selectedIndex]
+        return rows[selectedIndex].target
     }
 
     func update(
         command: MediaRemoteTransportCommand?,
-        targets: [MediaRemoteTarget]
+        rows: [SourceRow]
     ) {
         self.command = command
-        self.targets = targets
+        self.rows = rows
         selectedIndex = 0
         expanded = false
     }
 
     func moveSelection(by delta: Int) {
-        guard !targets.isEmpty else {
+        guard !rows.isEmpty else {
             return
         }
-        selectedIndex = (selectedIndex + delta + targets.count) % targets.count
+        selectedIndex = (selectedIndex + delta + rows.count) % rows.count
     }
 
     func select(index: Int) {
-        guard targets.indices.contains(index) else {
+        guard rows.indices.contains(index) else {
             return
         }
         selectedIndex = index

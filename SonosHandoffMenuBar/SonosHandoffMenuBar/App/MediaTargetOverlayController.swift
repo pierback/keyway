@@ -55,7 +55,7 @@ final class MediaTargetOverlayController {
 
     func show(
         command: MediaRemoteTransportCommand?,
-        targets: [MediaRemoteTarget],
+        rows: [SourceRow],
         onChoose: @escaping (MediaRemoteTarget, MediaRemoteTransportCommand?) -> Void,
         onFocus: @escaping (MediaRemoteTarget) -> Void,
         onDismiss: @escaping () -> Void = {}
@@ -64,7 +64,7 @@ final class MediaTargetOverlayController {
         self.onFocus = onFocus
         self.onDismiss = onDismiss
         isClosing = false
-        model.update(command: command, targets: targets)
+        model.update(command: command, rows: rows)
         refreshAudioSnapshot()
 
         let panel = ensurePanel()

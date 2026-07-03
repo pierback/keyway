@@ -132,7 +132,7 @@ if "helper_not_running" in chooser_immediate or "MediaRemote helper is not runni
 assert_order(
     chooser_immediate,
     [
-        "let cached = sortedTargets(mediaRemoteController.targets)",
+        "let cached = sortedTargets(mediaSourceStore.targets)",
         "let refreshQueued = mediaRemoteController.refreshSnapshot()",
         "showChooserOverlay(",
     ],
@@ -145,7 +145,7 @@ if "mediaRemoteController.canRouteCommands" in route_cache:
 assert_order(
     route_cache,
     [
-        "let targets = sortedTargets(mediaRemoteController.targets)",
+        "let targets = sortedTargets(mediaSourceStore.targets)",
         "guard !targets.isEmpty else",
         "mediaRemoteController.refreshSnapshot()",
         "route(",

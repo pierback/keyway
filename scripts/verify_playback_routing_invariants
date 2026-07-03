@@ -176,7 +176,7 @@ for required in (
         raise SystemExit(f"verify_playback_routing_invariants: chooser reentry helper is missing required behavior: {required}")
 if "chooserReentryBlocked(" not in show_chooser_immediately:
     raise SystemExit("verify_playback_routing_invariants: direct chooser entry must check reentry before refreshing cached targets")
-if show_chooser_immediately.index("chooserReentryBlocked(") > show_chooser_immediately.index("let cached = sortedTargets(mediaRemoteController.targets)"):
+if show_chooser_immediately.index("chooserReentryBlocked(") > show_chooser_immediately.index("let cached = sortedTargets(mediaSourceStore.targets)"):
     raise SystemExit("verify_playback_routing_invariants: direct chooser entry must block reentry before refreshing cached targets")
 if "chooserReentryBlocked(" not in show_chooser_overlay:
     raise SystemExit("verify_playback_routing_invariants: chooser presentation path must guard reentry")
@@ -1462,7 +1462,7 @@ if "updateTargetsIfVisible" in text:
     raise SystemExit("verify_playback_routing_invariants: open chooser rows must not be mutated by background target snapshots")
 if "updateTargetsPreservingSelection" in model:
     raise SystemExit("verify_playback_routing_invariants: overlay model must not keep a live row-refresh path")
-if "func update(\n        command: MediaRemoteTransportCommand?,\n        targets: [MediaRemoteTarget]" not in model:
+if "func update(\n        command: MediaRemoteTransportCommand?,\n        rows: [SourceRow]" not in model:
     raise SystemExit("verify_playback_routing_invariants: overlay rows must be replaced only when opening a new session")
 if "selectedIndex = 0" not in model or "expanded = false" not in model:
     raise SystemExit("verify_playback_routing_invariants: new chooser sessions must reset selection and expanded controls")

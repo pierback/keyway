@@ -41,6 +41,12 @@ struct MediaRemoteTarget: Equatable, Identifiable {
     let routingIdentity: String
     let appName: String
 }
+
+struct SourceRow: Equatable, Identifiable {
+    let target: MediaRemoteTarget
+
+    var id: String { target.id }
+}
 SWIFT
 
 cat >"$workdir/OverlayModelSemantics.swift" <<'SWIFT'
@@ -59,14 +65,14 @@ struct OverlayModelSemantics {
     @MainActor
     private static func newSessionResetsRowsAndSelection() {
         let model = MediaTargetOverlayModel()
-        model.update(command: .playPause, targets: [
-            target(id: "helium:old", pid: 10, identity: "app.helium", appName: "Helium"),
-            target(id: "spotify:old", pid: 20, identity: "com.spotify.client", appName: "Spotify"),
+        model.update(command: .playPause, rows: [
+            row(id: "helium:old", pid: 10, identity: "app.helium", appName: "Helium"),
+            row(id: "spotify:old", pid: 20, identity: "com.spotify.client", appName: "Spotify"),
         ])
         model.select(index: 1)
 
-        model.update(command: .playPause, targets: [
-            target(id: "arc:new", pid: 30, identity: "company.thebrowser.Browser", appName: "Arc"),
+        model.update(command: .playPause, rows: [
+            row(id: "arc:new", pid: 30, identity: "company.thebrowser.Browser", appName: "Arc"),
         ])
 
         expectEqual(model.targets.map(\.id), ["arc:new"], "a new overlay session must use the rows passed at open time")
@@ -77,9 +83,9 @@ struct OverlayModelSemantics {
     @MainActor
     private static func movementStaysInsideTheVisibleSession() {
         let model = MediaTargetOverlayModel()
-        model.update(command: .playPause, targets: [
-            target(id: "helium:open", pid: 10, identity: "app.helium", appName: "Helium"),
-            target(id: "spotify:open", pid: 20, identity: "com.spotify.client", appName: "Spotify"),
+        model.update(command: .playPause, rows: [
+            row(id: "helium:open", pid: 10, identity: "app.helium", appName: "Helium"),
+            row(id: "spotify:open", pid: 20, identity: "com.spotify.client", appName: "Spotify"),
         ])
         model.moveSelection(by: -1)
 
@@ -91,13 +97,13 @@ struct OverlayModelSemantics {
     @MainActor
     private static func emptySessionClearsRows() {
         let model = MediaTargetOverlayModel()
-        model.update(command: .playPause, targets: [
-            target(id: "helium:old", pid: 10, identity: "app.helium", appName: "Helium"),
-            target(id: "spotify:old", pid: 20, identity: "com.spotify.client", appName: "Spotify"),
+        model.update(command: .playPause, rows: [
+            row(id: "helium:old", pid: 10, identity: "app.helium", appName: "Helium"),
+            row(id: "spotify:old", pid: 20, identity: "com.spotify.client", appName: "Spotify"),
         ])
         model.select(index: 0)
 
-        model.update(command: .playPause, targets: [])
+        model.update(command: .playPause, rows: [])
 
         expectEqual(model.targets.map(\.id), [], "an empty new session must clear visible rows")
         expectEqual(model.selectedIndex, 0, "an empty new session must reset selection")
@@ -111,6 +117,15 @@ struct OverlayModelSemantics {
         appName: String
     ) -> MediaRemoteTarget {
         MediaRemoteTarget(id: id, pid: pid, routingIdentity: identity, appName: appName)
+    }
+
+    private static func row(
+        id: String,
+        pid: Int,
+        identity: String,
+        appName: String
+    ) -> SourceRow {
+        SourceRow(target: target(id: id, pid: pid, identity: identity, appName: appName))
     }
 
     private static func expectEqual<T: Equatable>(

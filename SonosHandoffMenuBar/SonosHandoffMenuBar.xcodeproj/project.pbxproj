@@ -34,6 +34,7 @@
 		909DC5BA5BBCD2904448EDDD /* MediaRemoteHelperProcess.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6BC73490DDBA787052D3482 /* MediaRemoteHelperProcess.swift */; };
 		970E4ACDBE65DDC0D5E83DB7 /* MediaTargetOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A8460E366C2D942669079D5 /* MediaTargetOverlayView.swift */; };
 		A51E99E2E78D22AC32B8D52A /* PlaybackGroupEditController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A44743957D02CFEB760D75BC /* PlaybackGroupEditController.swift */; };
+		A3D92F4B8C1E4D2A9B6C7E50 /* MediaSourceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4E83C2D91AF4B7C8E5D6021 /* MediaSourceStore.swift */; };
 		AF2A2900A92F3C26A16609A1 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F4636D068AD838FCC90412A /* AppEnvironment.swift */; };
 		B6616A631B5C5C009260D42E /* PlaybackBackgroundSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = F39BD37D8C7F8F1202BE349F /* PlaybackBackgroundSync.swift */; };
 		B67371EA86E4DC721DCEBCC8 /* MenuBarVolumeControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F1ACAC5A5D7E96B05749235 /* MenuBarVolumeControl.swift */; };
@@ -105,6 +106,7 @@
 		AFFDE8AE8E69DAA77E5867CC /* PlaybackVolumeActionController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlaybackVolumeActionController.swift; sourceTree = "<group>"; };
 		B2909DA58274CD67BCE03EBB /* MediaRemoteEvents.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaRemoteEvents.swift; sourceTree = "<group>"; };
 		B6BC73490DDBA787052D3482 /* MediaRemoteHelperProcess.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaRemoteHelperProcess.swift; sourceTree = "<group>"; };
+		B4E83C2D91AF4B7C8E5D6021 /* MediaSourceStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaSourceStore.swift; sourceTree = "<group>"; };
 		BCFAFEBAACEE67B02E270812 /* SonosVolumeMonitor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SonosVolumeMonitor.swift; sourceTree = "<group>"; };
 		C125F95317A9849DAB0D7DAA /* MediaTargetOverlayKeyboardAction.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaTargetOverlayKeyboardAction.swift; sourceTree = "<group>"; };
 		CABDA1144941E460E84A36CF /* AppDelegate.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
@@ -213,6 +215,7 @@
 				EE0181FA70D5F2B9B8D5A8EF /* MediaRemoteModels.swift */,
 				09A70F306FE2F7B27D2B527E /* MediaRemoteSnapshotRefreshGate.swift */,
 				0F99C82CF438B208159DD666 /* MediaRouteStatus.swift */,
+				B4E83C2D91AF4B7C8E5D6021 /* MediaSourceStore.swift */,
 				D75E47ED7B98C17F9035651B /* MediaTargetOverlayController.swift */,
 				C125F95317A9849DAB0D7DAA /* MediaTargetOverlayKeyboardAction.swift */,
 				9F12FF96B424590765A87E6A /* MediaTargetOverlayModel.swift */,
@@ -434,6 +437,7 @@
 				C40C77527492B13C14C6B4D5 /* MediaRemoteModels.swift in Sources */,
 				C7B735C10B15FADA41C7D911 /* MediaRemoteSnapshotRefreshGate.swift in Sources */,
 				106B236DD4BAFD203212FD89 /* MediaRouteStatus.swift in Sources */,
+				A3D92F4B8C1E4D2A9B6C7E50 /* MediaSourceStore.swift in Sources */,
 				82550CC9C26D2DD9F27FC9CF /* MediaTargetOverlayController.swift in Sources */,
 				BC593565380FEE4FC935A73B /* MediaTargetOverlayKeyboardAction.swift in Sources */,
 				0CCA83A928BC545F8789DDA2 /* MediaTargetOverlayModel.swift in Sources */,

@@ -15,6 +15,7 @@ final class MediaTransportActionController {
 
     private let logger = Logger(subsystem: AppIdentity.loggerSubsystem, category: "MediaTransport")
     private let mediaRemoteController: MediaRemoteController
+    private let mediaSourceStore: MediaSourceStore
     private let overlayController: MediaTargetOverlayController
     private let commandCenterFilter: MediaTransportCommandCenterFilter
     private let desktopTransport = MediaDesktopTransportAdapter()
@@ -29,12 +30,14 @@ final class MediaTransportActionController {
 
     init(
         mediaRemoteController: MediaRemoteController,
+        mediaSourceStore: MediaSourceStore,
         overlayController: MediaTargetOverlayController,
         chromiumBrowserExtensionController: ChromiumBrowserExtensionController = ChromiumBrowserExtensionController(),
         sourceFocusActionController: SourceFocusActionController,
         targetSelectionMemory: MediaTargetSelectionMemory
     ) {
         self.mediaRemoteController = mediaRemoteController
+        self.mediaSourceStore = mediaSourceStore
         self.overlayController = overlayController
         self.chromiumBrowserExtensionController = chromiumBrowserExtensionController
         self.sourceFocusActionController = sourceFocusActionController
@@ -80,7 +83,7 @@ final class MediaTransportActionController {
         metadata: MediaTransportInputMetadata? = nil,
         commandCenterMetadata: MediaCommandCenterInputMetadata? = nil
     ) {
-        logger.info("MediaTransport input command=\(command.rawValue, privacy: .public) source=\(source.rawValue, privacy: .public) overlayVisible=\(self.overlayController.isVisible, privacy: .public) chooserActive=\(self.chooserSession.isActive, privacy: .public) canRoute=\(self.mediaRemoteController.canRouteCommands, privacy: .public) targetCount=\(self.mediaRemoteController.targets.count, privacy: .public)")
+        logger.info("MediaTransport input command=\(command.rawValue, privacy: .public) source=\(source.rawValue, privacy: .public) overlayVisible=\(self.overlayController.isVisible, privacy: .public) chooserActive=\(self.chooserSession.isActive, privacy: .public) canRoute=\(self.mediaRemoteController.canRouteCommands, privacy: .public) targetCount=\(self.mediaSourceStore.targets.count, privacy: .public)")
         trace(
             "input",
             command: command,
@@ -153,7 +156,7 @@ final class MediaTransportActionController {
     }
 
     func currentRouteStatus() -> MediaRouteStatus {
-        let targets = sortedTargets(mediaRemoteController.targets)
+        let targets = sortedTargets(mediaSourceStore.targets)
         guard !targets.isEmpty else {
             return MediaRouteStatus(kind: .unavailable, target: nil, targetCount: 0)
         }
@@ -176,7 +179,7 @@ final class MediaTransportActionController {
 
         return MediaRouteStatus(
             kind: .chooser,
-            target: mediaRemoteController.activeTarget ?? targets.first,
+            target: activeSourceTarget ?? targets.first,
             targetCount: targets.count
         )
     }
@@ -225,7 +228,7 @@ final class MediaTransportActionController {
         }
 
         let commandName = command?.rawValue ?? "none"
-        let cached = sortedTargets(mediaRemoteController.targets)
+        let cached = sortedTargets(mediaSourceStore.targets)
         let refreshQueued = mediaRemoteController.refreshSnapshot()
 
         logger.info("MediaTransport chooser_show command=\(commandName, privacy: .public) source=\(source.rawValue, privacy: .public) targetCount=\(cached.count, privacy: .public) refreshQueued=\(refreshQueued, privacy: .public) targets=\(MediaTransportCommandRules.targetLogSummary(cached), privacy: .public)")
@@ -253,7 +256,7 @@ final class MediaTransportActionController {
         metadata: MediaTransportInputMetadata?,
         commandCenterMetadata: MediaCommandCenterInputMetadata?
     ) {
-        let targets = sortedTargets(mediaRemoteController.targets)
+        let targets = sortedTargets(mediaSourceStore.targets)
         guard !targets.isEmpty else {
             mediaRemoteController.refreshSnapshot()
             StatusHUD.shared.finish(
@@ -335,7 +338,7 @@ final class MediaTransportActionController {
 
         overlayController.show(
             command: command,
-            targets: targets,
+            rows: sourceRows(for: targets),
             onChoose: { [weak self] target, command in
                 guard let self else { return }
                 self.logger.info("MediaTransport chooser_select requestedCommand=\(command?.rawValue ?? "none", privacy: .public) target=\(target.appName, privacy: .public) targetID=\(target.id, privacy: .public) playing=\(target.isCurrentlyPlaying, privacy: .public)")
@@ -343,7 +346,7 @@ final class MediaTransportActionController {
                     "chooser_select",
                     command: command,
                     target: target,
-                    targetCount: self.mediaRemoteController.targets.count
+                    targetCount: self.mediaSourceStore.targets.count
                 )
 
                 guard let command else {
@@ -352,7 +355,7 @@ final class MediaTransportActionController {
                         "chooser_closed_without_command",
                         command: nil,
                         target: target,
-                        targetCount: self.mediaRemoteController.targets.count
+                        targetCount: self.mediaSourceStore.targets.count
                     )
                     self.mediaRemoteController.refreshSnapshot()
                     StatusHUD.shared.finish(
@@ -372,7 +375,7 @@ final class MediaTransportActionController {
                     "chooser_closed_for_dispatch",
                     command: command,
                     target: target,
-                    targetCount: self.mediaRemoteController.targets.count
+                    targetCount: self.mediaSourceStore.targets.count
                 )
                 if let desktopTransport = self.desktopTransportName(target: target) {
                     self.trace(
@@ -406,7 +409,7 @@ final class MediaTransportActionController {
                     "chooser_closed_for_focus",
                     command: command,
                     target: target,
-                    targetCount: self.mediaRemoteController.targets.count
+                    targetCount: self.mediaSourceStore.targets.count
                 )
                 self.relaxRouteShield?("chooser_focus")
                 self.rememberTarget(target)
@@ -428,6 +431,20 @@ final class MediaTransportActionController {
             targets,
             preferredTargetID: targetSelectionMemory.recentTargetID
         )
+    }
+
+    private func sourceRows(for targets: [MediaRemoteTarget]) -> [SourceRow] {
+        let rowsByID = Dictionary(mediaSourceStore.rows.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
+        return targets.map { target in
+            rowsByID[target.id] ?? SourceRow(target: target)
+        }
+    }
+
+    private var activeSourceTarget: MediaRemoteTarget? {
+        guard let activeTargetID = mediaRemoteController.activeTargetID else {
+            return nil
+        }
+        return mediaSourceStore.targets.first { $0.id == activeTargetID }
     }
 
     private func rememberTarget(_ target: MediaRemoteTarget) {

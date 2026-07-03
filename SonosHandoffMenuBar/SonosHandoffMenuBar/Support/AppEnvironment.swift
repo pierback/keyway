@@ -31,6 +31,7 @@ struct AppEnvironment: @unchecked Sendable {
     let chromiumNativeMessagingHostInstaller: ChromiumNativeMessagingHostInstaller
     let chromiumBrowserExtensionController: ChromiumBrowserExtensionController
     let mediaRemoteController: MediaRemoteController
+    let mediaSourceStore: MediaSourceStore
     let mediaAudioControlController: MediaAudioControlController
     let mediaTargetOverlayController: MediaTargetOverlayController
     let sourceFocusActionController: SourceFocusActionController
@@ -85,6 +86,7 @@ struct AppEnvironment: @unchecked Sendable {
         let mediaRemoteController = MediaRemoteController(
             chromiumBrowserExtensionController: chromiumBrowserExtensionController
         )
+        let mediaSourceStore = MediaSourceStore(mediaRemoteController: mediaRemoteController)
         let mediaAudioControlController = MediaAudioControlController(
             volumeService: spotifyConnectService,
             outputSelection: outputSelection,
@@ -101,6 +103,7 @@ struct AppEnvironment: @unchecked Sendable {
         )
         let mediaTransportActionController = MediaTransportActionController(
             mediaRemoteController: mediaRemoteController,
+            mediaSourceStore: mediaSourceStore,
             overlayController: mediaTargetOverlayController,
             chromiumBrowserExtensionController: chromiumBrowserExtensionController,
             sourceFocusActionController: sourceFocusActionController,
@@ -143,6 +146,7 @@ struct AppEnvironment: @unchecked Sendable {
             chromiumNativeMessagingHostInstaller: chromiumNativeMessagingHostInstaller,
             chromiumBrowserExtensionController: chromiumBrowserExtensionController,
             mediaRemoteController: mediaRemoteController,
+            mediaSourceStore: mediaSourceStore,
             mediaAudioControlController: mediaAudioControlController,
             mediaTargetOverlayController: mediaTargetOverlayController,
             sourceFocusActionController: sourceFocusActionController,

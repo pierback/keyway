@@ -9,6 +9,7 @@ struct MenuBarMediaSourceSection: View {
     private static let cachedTargetsGraceInterval: TimeInterval = 1.5
 
     @ObservedObject var mediaRemoteController: MediaRemoteController
+    @ObservedObject var mediaSourceStore: MediaSourceStore
     @ObservedObject var playback: PlaybackSyncController
     let mediaTransportActions: MediaTransportActionController
     let progressTick: UInt64
@@ -18,7 +19,7 @@ struct MenuBarMediaSourceSection: View {
     @State private var sessionHasOpened = false
 
     private var freshTargets: [MediaRemoteTarget] {
-        sortedTargets(mediaRemoteController.targets)
+        sortedTargets(mediaSourceStore.targets)
     }
 
     private var displayTargets: [MediaRemoteTarget] {
@@ -33,14 +34,6 @@ struct MenuBarMediaSourceSection: View {
             if let latestTarget = latestTargetsByID[sessionTarget.id] {
                 usedTargetIDs.insert(latestTarget.id)
                 return liveSessionTarget(sessionTarget, latestTarget: latestTarget)
-            }
-            if let replacementTarget = replacementTarget(
-                for: sessionTarget,
-                in: latestTargets,
-                usedTargetIDs: usedTargetIDs
-            ) {
-                usedTargetIDs.insert(replacementTarget.id)
-                return replacementTarget
             }
             if ChromiumBrowserExtensionTransport.isTarget(sessionTarget), !latestTargets.isEmpty {
                 return nil
@@ -127,8 +120,8 @@ struct MenuBarMediaSourceSection: View {
             sessionTargets = []
             sessionHasOpened = false
         }
-        .onReceive(mediaRemoteController.$targets) { targets in
-            let sortedTargets = sortedTargets(targets)
+        .onReceive(mediaSourceStore.$rows) { rows in
+            let sortedTargets = sortedTargets(rows.map(\.target))
             rememberTargets(sortedTargets)
             hydrateEmptySessionIfNeeded(with: sortedTargets)
         }
@@ -174,34 +167,6 @@ struct MenuBarMediaSourceSection: View {
             browserDisplayName: sessionTarget.browserDisplayName,
             browserBundleIdentifier: sessionTarget.browserBundleIdentifier
         )
-    }
-
-    private func replacementTarget(
-        for sessionTarget: MediaRemoteTarget,
-        in latestTargets: [MediaRemoteTarget],
-        usedTargetIDs: Set<String>
-    ) -> MediaRemoteTarget? {
-        guard ChromiumBrowserExtensionTransport.isTarget(sessionTarget) else {
-            return nil
-        }
-
-        let matchingTargets = latestTargets.filter { latestTarget in
-            guard ChromiumBrowserExtensionTransport.isTarget(latestTarget),
-                  latestTarget.id != sessionTarget.id,
-                  !usedTargetIDs.contains(latestTarget.id)
-            else {
-                return false
-            }
-            return latestTarget.browserBundleIdentifier == sessionTarget.browserBundleIdentifier
-                && latestTarget.browserDisplayName == sessionTarget.browserDisplayName
-                && latestTarget.title == sessionTarget.title
-                && latestTarget.artist == sessionTarget.artist
-                && latestTarget.album == sessionTarget.album
-        }
-        guard matchingTargets.count == 1 else {
-            return nil
-        }
-        return matchingTargets[0]
     }
 
     private func rememberTargets(_ targets: [MediaRemoteTarget]) {

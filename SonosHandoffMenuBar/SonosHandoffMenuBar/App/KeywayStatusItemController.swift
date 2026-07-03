@@ -149,6 +149,7 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
             rootView: KeywayControlCenterPopoverView(
                 playback: playback,
                 mediaRemoteController: environment.mediaRemoteController,
+                mediaSourceStore: environment.mediaSourceStore,
                 mediaTransportActions: environment.mediaTransportActionController,
                 openChooser: { [weak self] in self?.openChooserFromPopover() },
                 openSettings: { [weak self] in self?.openSettings() },
@@ -305,6 +306,7 @@ private struct KeywayControlCenterPopoverView: View {
 
     @ObservedObject private var playback: PlaybackSyncController
     @ObservedObject private var mediaRemoteController: MediaRemoteController
+    @ObservedObject private var mediaSourceStore: MediaSourceStore
 
     private let mediaTransportActions: MediaTransportActionController
     private let openChooser: @MainActor () -> Void
@@ -321,6 +323,7 @@ private struct KeywayControlCenterPopoverView: View {
     init(
         playback: PlaybackSyncController,
         mediaRemoteController: MediaRemoteController,
+        mediaSourceStore: MediaSourceStore,
         mediaTransportActions: MediaTransportActionController,
         openChooser: @escaping @MainActor () -> Void,
         openSettings: @escaping @MainActor () -> Void,
@@ -329,6 +332,7 @@ private struct KeywayControlCenterPopoverView: View {
     ) {
         self.playback = playback
         self.mediaRemoteController = mediaRemoteController
+        self.mediaSourceStore = mediaSourceStore
         self.mediaTransportActions = mediaTransportActions
         self.openChooser = openChooser
         self.openSettings = openSettings
@@ -342,6 +346,7 @@ private struct KeywayControlCenterPopoverView: View {
                 header
                 MenuBarMediaSourceSection(
                     mediaRemoteController: mediaRemoteController,
+                    mediaSourceStore: mediaSourceStore,
                     playback: playback,
                     mediaTransportActions: mediaTransportActions,
                     progressTick: progressTick
@@ -605,7 +610,7 @@ private struct KeywayControlCenterPopoverView: View {
 
     private var isBrowserOnlyRoutingAvailable: Bool {
         mediaRemoteController.canRouteCommands
-            && mediaRemoteController.targets.contains(where: ChromiumBrowserExtensionTransport.isTarget)
+            && mediaSourceStore.targets.contains(where: ChromiumBrowserExtensionTransport.isTarget)
     }
 
     private func card<Content: View>(
