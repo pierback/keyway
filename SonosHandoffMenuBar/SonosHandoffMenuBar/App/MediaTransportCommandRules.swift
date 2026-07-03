@@ -2,8 +2,22 @@ import Foundation
 import SonosHandoffCore
 
 enum MediaTransportCommandRules {
+    static let emptyDiscoveryInterval: TimeInterval = 1.5
+
     static func isPlayFamily(_ command: MediaRemoteTransportCommand) -> Bool {
         command == .playPause || command == .pause || command == .play
+    }
+
+    static func shouldOpenChooserForAutomaticRoute(reachability: MediaSourceReachability?) -> Bool {
+        guard let reachability else {
+            return true
+        }
+        switch reachability {
+        case .live:
+            return false
+        case .suspect, .gone:
+            return true
+        }
     }
 
     static func rowScopedCommand(

@@ -67,8 +67,8 @@ struct MediaTargetOverlayView: View {
             if model.targets.isEmpty {
                 emptyTargetRow
             } else {
-                ForEach(Array(model.targets.enumerated()), id: \.element.id) { index, target in
-                    targetRow(index: index, target: target)
+                ForEach(Array(model.rows.enumerated()), id: \.element.id) { index, row in
+                    targetRow(index: index, row: row)
                 }
             }
         }
@@ -94,10 +94,10 @@ struct MediaTargetOverlayView: View {
                 .frame(width: 32, height: 32)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Looking for media")
+                Text(emptyTitleText)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(.primary)
-                Text("Start Spotify, browser media, or QuickTime playback.")
+                Text(emptyDetailText)
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -114,8 +114,28 @@ struct MediaTargetOverlayView: View {
         .accessibilityIdentifier("mediaTargetOverlay.empty")
     }
 
-    private func targetRow(index: Int, target: MediaRemoteTarget) -> some View {
+    private var emptyDetailText: String {
+        switch model.emptyState {
+        case .discovering:
+            return "Start Spotify, browser media, or QuickTime playback."
+        case .confirmedEmpty(let detail):
+            return detail
+        }
+    }
+
+    private var emptyTitleText: String {
+        switch model.emptyState {
+        case .discovering:
+            return "Looking for media"
+        case .confirmedEmpty:
+            return "No sources found"
+        }
+    }
+
+    private func targetRow(index: Int, row: SourceRow) -> some View {
+        let target = row.target
         let selected = index == model.selectedIndex
+        let suspect = row.reachability.isSuspect
 
         return Button {
             if model.expanded {
@@ -158,12 +178,20 @@ struct MediaTargetOverlayView: View {
                                 )
                                 .lineLimit(1)
                         }
+
+                        if suspect {
+                            Text("not responding")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
                     }
                     Text(target.detailText)
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
+                .opacity(suspect ? 0.58 : 1)
 
                 Spacer()
 

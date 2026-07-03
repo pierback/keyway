@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 workdir="$(mktemp -d)"
 trap 'rm -rf "$workdir"' EXIT
+transport_controller="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportActionController.swift"
 
 cp "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaChooserSessionGuard.swift" "$workdir/MediaChooserSessionGuard.swift"
 
@@ -93,3 +94,66 @@ swiftc \
   -o "$workdir/verify_media_chooser_guard_semantics"
 
 "$workdir/verify_media_chooser_guard_semantics"
+
+overlay_controller="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTargetOverlayController.swift"
+
+python3 - "$transport_controller" "$overlay_controller" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+overlay_text = pathlib.Path(sys.argv[2]).read_text()
+
+def fail(message):
+    raise SystemExit(f"verify_media_chooser_guard_semantics: {message}")
+
+if "try!" in overlay_text:
+    fail("MediaTargetOverlayController must not use try! (crashes on task cancellation; use try?)")
+
+route_start = text.index("    private func routeFromCache(")
+route_end = text.index("\n    private func route(", route_start)
+route_body = text[route_start:route_end]
+required = [
+    "let routeStatus = currentRouteStatus(command: command)",
+    "guard routeStatus.kind != .unavailable else",
+    "mediaRemoteController.refreshSnapshot()",
+    "showChooserOverlay(",
+]
+for needle in required:
+    if needle not in route_body:
+        fail(f"empty route path must contain {needle!r}")
+if "StatusHUD.shared.finish" in route_body:
+    fail("zero-target routed input must open the chooser instead of ending in a HUD")
+if "No Media Target" in route_body:
+    fail("zero-target routed input must not use the old no-target HUD copy")
+
+show_start = text.index("    private func showChooserOverlay(")
+show_end = text.index("\n    private func sortedTargets", show_start)
+show_body = text[show_start:show_end]
+for needle in [
+    "rowUpdates: overlayRowUpdates()",
+    "emptyDiagnostics:",
+    "chooserReentryBlocked(",
+    "self.relaxRouteShield?(\"selected_row_dispatch\")",
+    "self.relaxRouteShield?(\"chooser_focus\")",
+    "self.relaxRouteShield?(\"chooser_dismissed\")",
+]:
+    if needle not in show_body:
+        fail(f"chooser overlay path must preserve re-entry/deferred semantics and contain {needle!r}")
+
+if "private func emptyDiscoveryDiagnostics()" not in text:
+    fail("empty discovery must expose transport diagnostics for the confirmed-empty chooser state")
+
+updates_start = text.index("    private func overlayRowUpdates()")
+updates_end = text.index("\n    }", updates_start)
+updates_code = "\n".join(
+    line for line in text[updates_start:updates_end].splitlines()
+    if not line.lstrip().startswith("//")
+)
+if "sourceRows(for:" in updates_code or "mediaSourceStore.rows" in updates_code:
+    fail(
+        "overlayRowUpdates must order and forward the EMITTED rows only: @Published emits from "
+        "willSet, so mediaSourceStore.rows is still the previous array during the emission -- "
+        "re-deriving rows from it hands the open chooser one-emission-stale reachability"
+    )
+PY

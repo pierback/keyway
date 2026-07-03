@@ -7,6 +7,11 @@ trap 'rm -rf "$workdir"' EXIT
 
 cp "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaSourceStore.swift" "$workdir/MediaSourceStore.swift"
 
+if grep -q 'try!' "$workdir/MediaSourceStore.swift"; then
+  echo "verify_source_store_semantics: MediaSourceStore.swift must not use try! (crashes on task cancellation; use try?)" >&2
+  exit 1
+fi
+
 cat >"$workdir/SourceStoreStubs.swift" <<'SWIFT'
 import Combine
 import Foundation
@@ -25,6 +30,25 @@ struct MediaRemoteTarget: Equatable, Identifiable, Sendable {
     let elapsedTime: Double?
     let elapsedTimestamp: Double?
     let supportedCommands: [MediaRemoteTransportCommand]?
+}
+
+struct MediaRemoteCommandResultEvent: Equatable, Sendable {
+    let targetID: String
+    let ok: Bool
+    let unsupported: Bool
+}
+
+@MainActor
+final class ChromiumBrowserExtensionController: ObservableObject {
+    @Published private(set) var suspectTargetIDs: Set<String>
+
+    init(suspectTargetIDs: Set<String> = []) {
+        self.suspectTargetIDs = suspectTargetIDs
+    }
+
+    func replaceSuspectTargetIDs(_ suspectTargetIDs: Set<String>) {
+        self.suspectTargetIDs = suspectTargetIDs
+    }
 }
 
 @MainActor
@@ -61,7 +85,11 @@ struct SourceStoreSemantics {
             supportedCommands: [.play, .pause]
         )
         let controller = MediaRemoteController(targets: [spotify, chromium])
-        let store = MediaSourceStore(mediaRemoteController: controller)
+        let chromiumController = ChromiumBrowserExtensionController()
+        let store = MediaSourceStore(
+            mediaRemoteController: controller,
+            chromiumBrowserExtensionController: chromiumController
+        )
 
         expectEqual(store.targets, controller.targets, "store targets must mirror initial MediaRemoteController targets")
         expectEqual(store.rows.map(\.id), controller.targets.map(\.id), "source row IDs must match target IDs")
@@ -82,6 +110,44 @@ struct SourceStoreSemantics {
         expectEqual(store.rows[0].capabilities.supportedCommands, [.pause], "capabilities must refresh from updated targets")
         expectEqual(store.rows[0].audioState.playbackRate, "0", "audio state must refresh from updated targets")
         assertAllLive(store.rows, "updated rows")
+
+        chromiumController.replaceSuspectTargetIDs([chromium.id])
+        drainMainQueue()
+        assertSuspect(store.rows.first { $0.id == chromium.id }, reason: "no_recent_snapshot", "chromium silence must overlay reachability")
+
+        let updatedSilentChromium = target(
+            id: chromium.id,
+            title: "Updated Video",
+            playbackRate: "1",
+            supportedCommands: [.play, .pause]
+        )
+        controller.replaceTargets([updatedSpotify, updatedSilentChromium])
+        drainMainQueue()
+        assertSuspect(store.rows.first { $0.id == chromium.id }, reason: "no_recent_snapshot", "updated(target:) must carry reachability forward before overlay recompute")
+
+        store.recordCommandResult(MediaRemoteCommandResultEvent(targetID: chromium.id, ok: false, unsupported: false))
+        assertSuspect(store.rows.first { $0.id == chromium.id }, reason: "command_failed", "command failures must override snapshot silence")
+
+        chromiumController.replaceSuspectTargetIDs([])
+        drainMainQueue()
+        assertSuspect(store.rows.first { $0.id == chromium.id }, reason: "command_failed", "snapshot/silence clearing must not clear command_failed")
+
+        store.recordCommandResult(MediaRemoteCommandResultEvent(targetID: chromium.id, ok: true, unsupported: false))
+        assertLive(store.rows.first { $0.id == chromium.id }, "successful command result must clear command_failed")
+
+        store.recordCommandResult(MediaRemoteCommandResultEvent(targetID: chromium.id, ok: false, unsupported: false))
+        // Poll instead of a single fixed-margin sleep: the 10s cooldown task resumes on
+        // the main executor whenever the run loop gets around to it, so a tight margin
+        // (10.25s) flakes under load. Exit as soon as the row clears, fail past 13s.
+        let cooldownDeadline = Date().addingTimeInterval(13)
+        while Date() < cooldownDeadline,
+              store.rows.first(where: { $0.id == chromium.id })?.reachability.isSuspect == true {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        }
+        assertLive(store.rows.first { $0.id == chromium.id }, "command_failed cooldown must clear after ten seconds")
+
+        store.recordCommandResult(MediaRemoteCommandResultEvent(targetID: chromium.id, ok: false, unsupported: true))
+        assertLive(store.rows.first { $0.id == chromium.id }, "unsupported commands must not mark reachability suspect")
 
         controller.replaceTargets([chromium, updatedSpotify])
         drainMainQueue()
@@ -117,12 +183,31 @@ struct SourceStoreSemantics {
 
     private static func assertAllLive(_ rows: [SourceRow], _ context: String) {
         for row in rows {
-            switch row.reachability {
-            case .live:
-                break
-            case .suspect, .gone:
-                fail("\(context): row \(row.id) must report live reachability")
-            }
+            assertLive(row, "\(context): row \(row.id) must report live reachability")
+        }
+    }
+
+    private static func assertLive(_ row: SourceRow?, _ message: String) {
+        guard let row else {
+            fail("\(message): missing row")
+        }
+        switch row.reachability {
+        case .live:
+            break
+        case .suspect, .gone:
+            fail(message)
+        }
+    }
+
+    private static func assertSuspect(_ row: SourceRow?, reason: String, _ message: String) {
+        guard let row else {
+            fail("\(message): missing row")
+        }
+        switch row.reachability {
+        case .suspect(let actualReason, _):
+            expectEqual(actualReason, reason, message)
+        case .live, .gone:
+            fail(message)
         }
     }
 

@@ -86,12 +86,16 @@ struct AppEnvironment: @unchecked Sendable {
         let mediaRemoteController = MediaRemoteController(
             chromiumBrowserExtensionController: chromiumBrowserExtensionController
         )
-        let mediaSourceStore = MediaSourceStore(mediaRemoteController: mediaRemoteController)
+        let mediaSourceStore = MediaSourceStore(
+            mediaRemoteController: mediaRemoteController,
+            chromiumBrowserExtensionController: chromiumBrowserExtensionController
+        )
         let mediaAudioControlController = MediaAudioControlController(
             volumeService: spotifyConnectService,
             outputSelection: outputSelection,
             activePlaybackObserver: spotifyConnectService,
-            chromiumBrowserExtensionController: chromiumBrowserExtensionController
+            chromiumBrowserExtensionController: chromiumBrowserExtensionController,
+            mediaSourceStore: mediaSourceStore
         )
         let mediaTargetOverlayController = MediaTargetOverlayController(
             audioController: mediaAudioControlController

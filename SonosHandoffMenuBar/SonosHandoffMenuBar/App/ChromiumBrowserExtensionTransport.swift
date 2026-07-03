@@ -270,6 +270,7 @@ enum ChromiumBrowserAudioCommand: Sendable {
 @MainActor
 final class ChromiumBrowserExtensionController: ObservableObject {
     private static let commandResultTimeoutNanoseconds: UInt64 = 350_000_000
+    private static let profileSuspectVisibleDuration: TimeInterval = 3
     private static let profileRetainVisibleDuration: TimeInterval = 10
 
     private struct SnapshotSource {
@@ -300,6 +301,7 @@ final class ChromiumBrowserExtensionController: ObservableObject {
 
     @Published private(set) var connected = false
     @Published private(set) var targets: [MediaRemoteTarget] = []
+    @Published private(set) var suspectTargetIDs: Set<String> = []
 
     private let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "ChromiumExtension")
     private let decoder = JSONDecoder()
@@ -437,6 +439,7 @@ final class ChromiumBrowserExtensionController: ObservableObject {
                 ?? chromiumTargets.compactMap(\.browserBundleIdentifier).first,
             visible: true
         )
+        clearSilentSuspects(profileGuid: profileGuid)
         connectionIDByProfileGuid[profileGuid] = connectionID
         rebuildConnectionState()
     }
@@ -447,6 +450,7 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         highestAcceptedEpochByProfileGuid = [:]
         connected = false
         targets = []
+        suspectTargetIDs = []
     }
 
     func backendName(for target: MediaRemoteTarget) -> String? {
@@ -908,8 +912,10 @@ final class ChromiumBrowserExtensionController: ObservableObject {
 
     private func hideSilentProfiles(now: Date) {
         var changed = false
+        var nextSuspectTargetIDs: Set<String> = []
         for (profileGuid, source) in snapshotSourcesByProfileGuid where source.visible {
-            if now.timeIntervalSince(source.lastSnapshotAt) > Self.profileRetainVisibleDuration {
+            let silenceDuration = now.timeIntervalSince(source.lastSnapshotAt)
+            if silenceDuration > Self.profileRetainVisibleDuration {
                 snapshotSourcesByProfileGuid[profileGuid] = SnapshotSource(
                     lastSnapshotAt: source.lastSnapshotAt,
                     targets: source.targets,
@@ -917,7 +923,12 @@ final class ChromiumBrowserExtensionController: ObservableObject {
                     visible: false
                 )
                 changed = true
+            } else if silenceDuration > Self.profileSuspectVisibleDuration {
+                nextSuspectTargetIDs.formUnion(source.targets.map(\.id))
             }
+        }
+        if suspectTargetIDs != nextSuspectTargetIDs {
+            suspectTargetIDs = nextSuspectTargetIDs
         }
         if changed {
             rebuildConnectionState()
@@ -936,7 +947,23 @@ final class ChromiumBrowserExtensionController: ObservableObject {
             connectionIDByProfileGuid.removeValue(forKey: profileGuid)
             highestAcceptedEpochByProfileGuid.removeValue(forKey: profileGuid)
         }
+        suspectTargetIDs.subtract(
+            suspectTargetIDs.filter { targetID in
+                guard let profileGuid = ChromiumBrowserExtensionTransport.profileGuid(targetID: targetID) else {
+                    return false
+                }
+                return terminatedProfileGuids.contains(profileGuid)
+            }
+        )
         rebuildConnectionState()
+    }
+
+    private func clearSilentSuspects(profileGuid: String) {
+        suspectTargetIDs.subtract(
+            suspectTargetIDs.filter { targetID in
+                ChromiumBrowserExtensionTransport.profileGuid(targetID: targetID) == profileGuid
+            }
+        )
     }
 
     private func armCommandResultTimeout(requestID: String) {

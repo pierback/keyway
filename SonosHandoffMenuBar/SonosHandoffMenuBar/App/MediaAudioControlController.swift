@@ -47,6 +47,7 @@ final class MediaAudioControlController {
     private let outputSelection: PlaybackOutputSelection
     private let activePlaybackObserver: any SpotifyActivePlaybackObserving
     private let chromiumBrowserExtensionController: ChromiumBrowserExtensionController
+    private let mediaSourceStore: MediaSourceStore?
     private let volumeCommands: SpeakerVolumeCommandQueue
     private let outputPreferenceResolver = SonosOutputPreferenceResolver()
 
@@ -55,12 +56,14 @@ final class MediaAudioControlController {
         outputSelection: PlaybackOutputSelection,
         activePlaybackObserver: any SpotifyActivePlaybackObserving,
         chromiumBrowserExtensionController: ChromiumBrowserExtensionController = ChromiumBrowserExtensionController(),
+        mediaSourceStore: MediaSourceStore? = nil,
         volumeCommands: SpeakerVolumeCommandQueue = .shared
     ) {
         self.volumeService = volumeService
         self.outputSelection = outputSelection
         self.activePlaybackObserver = activePlaybackObserver
         self.chromiumBrowserExtensionController = chromiumBrowserExtensionController
+        self.mediaSourceStore = mediaSourceStore
         self.volumeCommands = volumeCommands
     }
 
@@ -176,7 +179,8 @@ final class MediaAudioControlController {
         _ command: ChromiumBrowserAudioCommand,
         target: MediaRemoteTarget
     ) {
-        guard let sent = chromiumBrowserExtensionController.submit(audioCommand: command, target: target, onResult: { result in
+        guard let sent = chromiumBrowserExtensionController.submit(audioCommand: command, target: target, onResult: { [mediaSourceStore] result in
+            mediaSourceStore?.recordCommandResult(result)
             if result.ok {
                 StatusHUD.shared.finish(
                     title: "\(target.appName) \(command.displayName)",
@@ -200,6 +204,7 @@ final class MediaAudioControlController {
         }
 
         if !sent {
+            mediaSourceStore?.markCommandFailed(targetID: target.id)
             StatusHUD.shared.finish(
                 title: "Browser Command Failed",
                 message: "Keyway could not reach \(target.appName).",
@@ -259,6 +264,14 @@ final class MediaAudioControlController {
         }
         guard ChromiumBrowserExtensionTransport.isTarget(target) else {
             return .disabled(title: "Browser", detail: "Select a Chromium extension target")
+        }
+        if let mediaSourceStore {
+            guard let row = mediaSourceStore.rows.first(where: { $0.id == target.id }) else {
+                return .disabled(title: "Browser", detail: "Target not available")
+            }
+            guard !row.reachability.isSuspect else {
+                return .disabled(title: "Browser", detail: "Browser not responding")
+            }
         }
         guard chromiumBrowserExtensionController.connected else {
             return .disabled(title: "Browser", detail: "Extension disconnected")

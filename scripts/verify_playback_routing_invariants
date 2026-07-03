@@ -1458,14 +1458,16 @@ choose = text.index("choose?(target, command)")
 close = text.index("close(notifyDismiss: false)")
 if close > choose:
     raise SystemExit("verify_playback_routing_invariants: chooser must close the panel before selected-row dispatch")
-if "updateTargetsIfVisible" in text:
-    raise SystemExit("verify_playback_routing_invariants: open chooser rows must not be mutated by background target snapshots")
-if "updateTargetsPreservingSelection" in model:
-    raise SystemExit("verify_playback_routing_invariants: overlay model must not keep a live row-refresh path")
+if "rowUpdates: AnyPublisher<[SourceRow], Never>? = nil" not in text:
+    raise SystemExit("verify_playback_routing_invariants: chooser must accept live row updates while visible")
+if "updateRowsPreservingSelection" not in model:
+    raise SystemExit("verify_playback_routing_invariants: overlay model must preserve selection across live row updates")
 if "func update(\n        command: MediaRemoteTransportCommand?,\n        rows: [SourceRow]" not in model:
-    raise SystemExit("verify_playback_routing_invariants: overlay rows must be replaced only when opening a new session")
+    raise SystemExit("verify_playback_routing_invariants: overlay rows must still be replaced when opening a new session")
 if "selectedIndex = 0" not in model or "expanded = false" not in model:
     raise SystemExit("verify_playback_routing_invariants: new chooser sessions must reset selection and expanded controls")
+if "let selectedID = selectedTarget?.id" not in model or "selectedIndex = min(previousIndex, rows.count - 1)" not in model:
+    raise SystemExit("verify_playback_routing_invariants: live chooser updates must preserve selected row IDs and step gone rows")
 PY
 
 grep -q 'routeFromCache(' "$transport" \

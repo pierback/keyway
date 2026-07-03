@@ -34,6 +34,12 @@ enum MediaRouteStatusKind {
     case chooser
 }
 
+enum MediaSourceReachability: Equatable {
+    case live
+    case suspect(reason: String, since: Date)
+    case gone
+}
+
 struct MediaRemoteTarget: Equatable, Identifiable {
     let id: String
     let appName: String
@@ -72,6 +78,23 @@ struct CommandRuleSemantics {
             MediaTransportCommandRules.statusKind(for: .recent),
             .auto,
             "Remembered-target automatic routing must remain an automatic status"
+        )
+        expectFalse(
+            MediaTransportCommandRules.shouldOpenChooserForAutomaticRoute(reachability: .live),
+            "Live automatic route candidates may dispatch without chooser confirmation"
+        )
+        expectTrue(
+            MediaTransportCommandRules.shouldOpenChooserForAutomaticRoute(reachability: .suspect(reason: "command_failed", since: Date())),
+            "Suspect automatic route candidates must divert to the chooser"
+        )
+        expectTrue(
+            MediaTransportCommandRules.shouldOpenChooserForAutomaticRoute(reachability: nil),
+            "Absent rows must defensively divert automatic routing to the chooser"
+        )
+        expectEqual(
+            MediaTransportCommandRules.rowScopedCommand(.playPause, for: target(id: "suspect", playing: false)),
+            .play,
+            "Explicit suspect-row dispatch remains allowed and row scoped"
         )
 
         let newerSpotify = target(id: "spotify", name: "Spotify", playing: true, freshness: 300)
@@ -132,6 +155,18 @@ struct CommandRuleSemantics {
     ) {
         guard actual == expected else {
             fail("\(message): expected \(expected), got \(actual)")
+        }
+    }
+
+    private static func expectTrue(_ actual: Bool, _ message: String) {
+        guard actual else {
+            fail(message)
+        }
+    }
+
+    private static func expectFalse(_ actual: Bool, _ message: String) {
+        guard !actual else {
+            fail(message)
         }
     }
 

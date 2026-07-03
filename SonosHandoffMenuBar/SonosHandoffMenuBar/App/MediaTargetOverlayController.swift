@@ -1,4 +1,5 @@
 @preconcurrency import AppKit
+import Combine
 import SwiftUI
 
 @MainActor
@@ -11,6 +12,10 @@ final class MediaTargetOverlayController {
     private var onDismiss: (() -> Void)?
     private var isClosing = false
     private var audioSnapshotGeneration = 0
+    private var rowUpdatesSubscription: AnyCancellable?
+    private var emptyConfirmationTask: Task<Void, Never>?
+    private var emptyConfirmationGeneration = 0
+    private var emptyDiagnostics: () -> String = { "Helper running / bridge connected" }
     private var resignActiveObserver: NSObjectProtocol?
     private var workspaceActivationObserver: NSObjectProtocol?
 
@@ -56,6 +61,8 @@ final class MediaTargetOverlayController {
     func show(
         command: MediaRemoteTransportCommand?,
         rows: [SourceRow],
+        rowUpdates: AnyPublisher<[SourceRow], Never>? = nil,
+        emptyDiagnostics: @escaping () -> String = { "Helper running / bridge connected" },
         onChoose: @escaping (MediaRemoteTarget, MediaRemoteTransportCommand?) -> Void,
         onFocus: @escaping (MediaRemoteTarget) -> Void,
         onDismiss: @escaping () -> Void = {}
@@ -63,8 +70,11 @@ final class MediaTargetOverlayController {
         self.onChoose = onChoose
         self.onFocus = onFocus
         self.onDismiss = onDismiss
+        self.emptyDiagnostics = emptyDiagnostics
         isClosing = false
         model.update(command: command, rows: rows)
+        subscribeToRows(rowUpdates)
+        scheduleEmptyConfirmationIfNeeded(emptyDiagnostics: emptyDiagnostics)
         refreshAudioSnapshot()
 
         let panel = ensurePanel()
@@ -109,6 +119,9 @@ final class MediaTargetOverlayController {
         onChoose = nil
         onFocus = nil
         onDismiss = nil
+        rowUpdatesSubscription = nil
+        emptyConfirmationTask = nil
+        emptyConfirmationGeneration += 1
         isClosing = false
 
         if notifyDismiss {
@@ -291,6 +304,51 @@ final class MediaTargetOverlayController {
                 return
             }
             model.audioSnapshot = snapshot
+        }
+    }
+
+    private func subscribeToRows(_ rowUpdates: AnyPublisher<[SourceRow], Never>?) {
+        rowUpdatesSubscription = rowUpdates?.sink { [weak self] rows in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.model.updateRowsPreservingSelection(rows)
+                self.refreshAudioSnapshot()
+                self.scheduleEmptyConfirmationIfNeeded(emptyDiagnostics: self.emptyDiagnostics)
+                if let panel = self.panel {
+                    self.resizeAndPosition(panel)
+                }
+            }
+        }
+    }
+
+    private func scheduleEmptyConfirmationIfNeeded(emptyDiagnostics: @escaping () -> String) {
+        guard model.rows.isEmpty else {
+            emptyConfirmationTask = nil
+            emptyConfirmationGeneration += 1
+            model.emptyState = .discovering
+            return
+        }
+        guard emptyConfirmationTask == nil else {
+            return
+        }
+        emptyConfirmationGeneration += 1
+        let generation = emptyConfirmationGeneration
+        model.emptyState = .discovering
+        emptyConfirmationTask = Task { @MainActor [weak self] in
+            guard (try? await Task.sleep(
+                nanoseconds: UInt64(MediaTransportCommandRules.emptyDiscoveryInterval * 1_000_000_000)
+            )) != nil else {
+                return
+            }
+            guard let self,
+                  self.emptyConfirmationGeneration == generation,
+                  self.isVisible,
+                  self.model.rows.isEmpty
+            else {
+                return
+            }
+            self.emptyConfirmationTask = nil
+            self.model.emptyState = .confirmedEmpty(detail: emptyDiagnostics())
         }
     }
 

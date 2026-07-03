@@ -151,7 +151,7 @@ expect_absent "$source_section" ".animation(MenuBarMotion.rowUpdate, value: targ
 expect_absent "$source_section" ".animation(MenuBarMotion.rowUpdate, value: playback.outputRows)"
 expect_absent "$source_section" ".animation(MenuBarMotion.rowUpdate, value: playback.selectedRoomName)"
 expect_contains "$source_section" "ForEach(displayTargets)"
-expect_contains "$source_section" 'Text("No active media sources")'
+expect_contains "$source_section" 'Text("No media sources")'
 expect_contains "$source_section" "idleSpotifyConnectButton(row)"
 expect_contains "$source_section" "playback.connectSpotify(to: row)"
 expect_contains "$source_section" 'Text(selected ? "\(row.displayName) connected" : "Connect to \(row.displayName)")'
@@ -203,7 +203,7 @@ def fail(message):
     raise SystemExit(f"verify_menubar_source_first_semantics: {message}")
 
 focus_start = text.index("    func focus(target: MediaRemoteTarget) {")
-focus_end = text.index("\n    func currentRouteStatus()", focus_start)
+focus_end = text.index("\n    func currentRouteStatus(", focus_start)
 focus_body = text[focus_start:focus_end]
 remember = "rememberTarget(target)"
 delegate = "sourceFocusActionController.focus(target: target)"

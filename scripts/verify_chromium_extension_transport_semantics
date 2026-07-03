@@ -409,17 +409,44 @@ struct Semantics {
             resumed: false,
             now: Date(timeIntervalSince1970: 100)
         )
+        retentionController.hideSilentProfiles(now: Date(timeIntervalSince1970: 104))
+        expectEqual(
+            retentionController.suspectTargetIDs,
+            [target.id],
+            "Chromium profile targets must become suspect after 3s of snapshot silence"
+        )
+        retentionController.markConnected(
+            profileGuid: "chromium-profile-a",
+            connectionID: "connection-a",
+            targets: [target],
+            epoch: 2,
+            resumed: false,
+            now: Date(timeIntervalSince1970: 105)
+        )
+        expectTrue(
+            retentionController.suspectTargetIDs.isEmpty,
+            "A fresh Chromium snapshot must clear no_recent_snapshot suspicion for the profile"
+        )
         retentionController.hideSilentProfiles(now: Date(timeIntervalSince1970: 109))
         expectEqual(
             retentionController.targets.map(\.id),
             [target.id],
             "Chromium profile targets must stay published during the 10s reconnect grace"
         )
-        retentionController.hideSilentProfiles(now: Date(timeIntervalSince1970: 111))
+        expectEqual(
+            retentionController.suspectTargetIDs,
+            [target.id],
+            "Chromium profile targets must remain visible while suspect before the 10s hide"
+        )
+        retentionController.hideSilentProfiles(now: Date(timeIntervalSince1970: 116))
         expectEqual(
             retentionController.targets.map(\.id),
             [],
             "Chromium profile targets must hide after 10s of snapshot silence"
+        )
+        expectTrue(
+            retentionController.suspectTargetIDs.isEmpty,
+            "Hidden Chromium profile targets must leave the suspect set in the same timer tick"
         )
         expectTrue(
             retentionController.snapshotSourcesByProfileGuid.keys.contains("chromium-profile-a"),

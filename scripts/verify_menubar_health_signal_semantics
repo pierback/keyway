@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+status_controller="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/KeywayStatusItemController.swift"
+source_section="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MenuBarMediaSourceSection.swift"
+
+fail() {
+  printf 'verify_menubar_health_signal_semantics: %s\n' "$*" >&2
+  exit 1
+}
+
+expect_contains() {
+  local path="$1"
+  local text="$2"
+  grep -Fq "$text" "$path" || fail "$path missing expected text: $text"
+}
+
+python3 - "$status_controller" "$source_section" <<'PY'
+import pathlib
+import sys
+
+status = pathlib.Path(sys.argv[1]).read_text()
+source = pathlib.Path(sys.argv[2]).read_text()
+
+def fail(message):
+    raise SystemExit(f"verify_menubar_health_signal_semantics: {message}")
+
+dot_start = status.index("    private var helperDot: some View {")
+dot_end = status.index("\n    private var headerStatusTitle", dot_start)
+dot_body = status[dot_start:dot_end]
+if ".fill(transportsHealthy ? Color.green : Color.orange)" not in dot_body:
+    fail("health dot must be green only when transport health reports healthy")
+if "mediaSourceStore" in dot_body or "reachability" in dot_body or "suspect" in dot_body:
+    fail("row state must not affect the menu-bar health dot")
+
+health_start = status.index("    private var transportsHealthy: Bool {")
+health_end = status.index("\n    private var headerStatusTitle", health_start)
+health_body = status[health_start:health_end]
+if "mediaRemoteController.health.isHealthy" not in health_body:
+    fail("transport health must use the existing helper health state machine")
+if "mediaSourceStore.rows" in health_body or "suspect" in health_body:
+    fail("suspect rows must not degrade transport health")
+
+empty_start = source.index("    private var emptyRow: some View {")
+empty_end = source.index("\n    private func sourceRow", empty_start)
+empty_body = source[empty_start:empty_end]
+if 'Text("No media sources")' not in empty_body:
+    fail("empty popover headline must be neutral")
+if 'Text(mediaRemoteController.health.badgeTitle)' in empty_body:
+    fail("empty popover headline/detail must not directly render helper badgeTitle")
+if "if !mediaRemoteController.health.isHealthy" not in empty_body:
+    fail("helper diagnostics must appear only when a transport is unhealthy")
+
+row_start = source.index("    private func sourceRow(_ target: MediaRemoteTarget) -> some View {")
+row_end = source.index("\n    private var transportDiagnosticText", row_start)
+row_body = source[row_start:row_end]
+if "sourceReachability(target).isSuspect" not in row_body:
+    fail("popover rows must render suspect reachability")
+if 'Text("not responding")' not in row_body:
+    fail("suspect popover rows must include a subtle not-responding annotation")
+PY
+
+expect_contains "$source_section" "private var transportDiagnosticText: String"
+expect_contains "$source_section" "Helper \\(mediaRemoteController.health.badgeTitle.lowercased())"
+
+printf 'verify_menubar_health_signal_semantics=ok\n'

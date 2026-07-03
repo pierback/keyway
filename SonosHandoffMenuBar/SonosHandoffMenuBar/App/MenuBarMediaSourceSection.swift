@@ -6,7 +6,7 @@ import SwiftUI
 struct MenuBarMediaSourceSection: View {
     private static let accentColor = Color(nsColor: .controlAccentColor)
     private static let routeButtonHeight: CGFloat = 22
-    private static let cachedTargetsGraceInterval: TimeInterval = 1.5
+    private static let cachedTargetsGraceInterval = MediaTransportCommandRules.emptyDiscoveryInterval
 
     @ObservedObject var mediaRemoteController: MediaRemoteController
     @ObservedObject var mediaSourceStore: MediaSourceStore
@@ -185,14 +185,20 @@ struct MenuBarMediaSourceSection: View {
                     .frame(width: 26, height: 26)
 
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("No active media sources")
+                    Text("No media sources")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(.white.opacity(0.82))
-                    Text(mediaRemoteController.health.badgeTitle)
+                    Text("Start Spotify, browser media, or QuickTime playback.")
                         .font(.system(size: 11, weight: .regular))
                         .foregroundStyle(.white.opacity(0.48))
                 }
                 Spacer(minLength: 0)
+            }
+
+            if !mediaRemoteController.health.isHealthy {
+                Text(transportDiagnosticText)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.48))
             }
 
             if !playback.outputRows.isEmpty {
@@ -210,7 +216,9 @@ struct MenuBarMediaSourceSection: View {
     }
 
     private func sourceRow(_ target: MediaRemoteTarget) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
+        let suspect = sourceReachability(target).isSuspect
+
+        return VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 9) {
                 artworkView(target, size: 32)
 
@@ -223,12 +231,19 @@ struct MenuBarMediaSourceSection: View {
                         if let label = target.routeSourceLabel {
                             sourceBadge(label)
                         }
+                        if suspect {
+                            Text("not responding")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.46))
+                                .lineLimit(1)
+                        }
                     }
                     Text(sourceDetail(target))
                         .font(.system(size: 11, weight: .regular))
                         .foregroundStyle(.white.opacity(0.52))
                         .lineLimit(1)
                 }
+                .opacity(suspect ? 0.58 : 1)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 HStack(spacing: 7) {
@@ -249,6 +264,14 @@ struct MenuBarMediaSourceSection: View {
         }
         .padding(.vertical, 2)
         .accessibilityIdentifier("source-row-\(target.id)")
+    }
+
+    private var transportDiagnosticText: String {
+        "Helper \(mediaRemoteController.health.badgeTitle.lowercased())"
+    }
+
+    private func sourceReachability(_ target: MediaRemoteTarget) -> MediaSourceReachability {
+        mediaSourceStore.rows.first(where: { $0.id == target.id })?.reachability ?? .live
     }
 
     private func sourceDetail(_ target: MediaRemoteTarget) -> String {

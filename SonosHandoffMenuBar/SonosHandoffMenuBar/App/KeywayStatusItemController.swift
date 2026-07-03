@@ -591,9 +591,13 @@ private struct KeywayControlCenterPopoverView: View {
 
     private var helperDot: some View {
         Circle()
-            .fill(mediaRemoteController.health.isHealthy ? Color.green : Color.orange)
+            .fill(transportsHealthy ? Color.green : Color.orange)
             .frame(width: 8, height: 8)
             .accessibilityIdentifier("helper-status")
+    }
+
+    private var transportsHealthy: Bool {
+        mediaRemoteController.health.isHealthy
     }
 
     private var headerStatusTitle: String {

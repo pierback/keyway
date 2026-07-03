@@ -145,13 +145,17 @@ if "mediaRemoteController.canRouteCommands" in route_cache:
 assert_order(
     route_cache,
     [
+        "let routeStatus = currentRouteStatus(command: command)",
         "let targets = sortedTargets(mediaSourceStore.targets)",
-        "guard !targets.isEmpty else",
+        "guard routeStatus.kind != .unavailable else",
         "mediaRemoteController.refreshSnapshot()",
+        "showChooserOverlay(",
         "route(",
     ],
-    "cache routing must dispatch existing rows through their owning adapters"
+    "cache routing must open chooser-first discovery for empty rows and dispatch existing rows through their owning adapters"
 )
+if "StatusHUD.shared.finish" in route_cache:
+    fail("empty cache routing must not use the old HUD-only no-target path")
 
 automatic_target = function_body("automaticTarget", target_resolver)
 assert_order(

@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import os
 import SonosHandoffCore
 
@@ -155,17 +156,25 @@ final class MediaTransportActionController {
         sourceFocusActionController.focus(target: target)
     }
 
-    func currentRouteStatus() -> MediaRouteStatus {
+    func currentRouteStatus(command: MediaRemoteTransportCommand = .playPause) -> MediaRouteStatus {
         let targets = sortedTargets(mediaSourceStore.targets)
         guard !targets.isEmpty else {
             return MediaRouteStatus(kind: .unavailable, target: nil, targetCount: 0)
         }
+        let rowsByID = Dictionary(mediaSourceStore.rows.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
 
         if let decision = targetResolver.automaticTarget(
-            command: .playPause,
+            command: command,
             from: targets,
             recentTargetID: targetSelectionMemory.recentTargetID
         ) {
+            if MediaTransportCommandRules.shouldOpenChooserForAutomaticRoute(reachability: rowsByID[decision.target.id]?.reachability) {
+                return MediaRouteStatus(
+                    kind: .chooser,
+                    target: decision.target,
+                    targetCount: targets.count
+                )
+            }
             let kind: MediaRouteStatusKind = targets.count > 1
                 ? .chooser
                 : MediaTransportCommandRules.statusKind(for: decision.reason)
@@ -256,13 +265,16 @@ final class MediaTransportActionController {
         metadata: MediaTransportInputMetadata?,
         commandCenterMetadata: MediaCommandCenterInputMetadata?
     ) {
+        let routeStatus = currentRouteStatus(command: command)
         let targets = sortedTargets(mediaSourceStore.targets)
-        guard !targets.isEmpty else {
+        guard routeStatus.kind != .unavailable else {
             mediaRemoteController.refreshSnapshot()
-            StatusHUD.shared.finish(
-                title: "No Media Target",
-                message: "Start Spotify, a browser video, or QuickTime playback.",
-                dismissAfter: 2.4
+            showChooserOverlay(
+                command: command,
+                targets: [],
+                source: source,
+                metadata: metadata,
+                commandCenterMetadata: commandCenterMetadata
             )
             return
         }
@@ -284,7 +296,18 @@ final class MediaTransportActionController {
         metadata: MediaTransportInputMetadata?,
         commandCenterMetadata: MediaCommandCenterInputMetadata?
     ) {
+        let rowsByID = Dictionary(mediaSourceStore.rows.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
         if targets.count == 1 {
+            if MediaTransportCommandRules.shouldOpenChooserForAutomaticRoute(reachability: rowsByID[targets[0].id]?.reachability) {
+                showChooserOverlay(
+                    command: command,
+                    targets: targets,
+                    source: source,
+                    metadata: metadata,
+                    commandCenterMetadata: commandCenterMetadata
+                )
+                return
+            }
             send(command: command, to: targets[0], reason: .single)
             return
         }
@@ -305,6 +328,16 @@ final class MediaTransportActionController {
             from: targets,
             recentTargetID: targetSelectionMemory.recentTargetID
         ) {
+            if MediaTransportCommandRules.shouldOpenChooserForAutomaticRoute(reachability: rowsByID[decision.target.id]?.reachability) {
+                showChooserOverlay(
+                    command: command,
+                    targets: targets,
+                    source: source,
+                    metadata: metadata,
+                    commandCenterMetadata: commandCenterMetadata
+                )
+                return
+            }
             send(command: command, to: decision.target, reason: decision.reason)
             return
         }
@@ -339,6 +372,10 @@ final class MediaTransportActionController {
         overlayController.show(
             command: command,
             rows: sourceRows(for: targets),
+            rowUpdates: overlayRowUpdates(),
+            emptyDiagnostics: { [weak self] in
+                self?.emptyDiscoveryDiagnostics() ?? "Helper unavailable / bridge disconnected"
+            },
             onChoose: { [weak self] target, command in
                 guard let self else { return }
                 self.logger.info("MediaTransport chooser_select requestedCommand=\(command?.rawValue ?? "none", privacy: .public) target=\(target.appName, privacy: .public) targetID=\(target.id, privacy: .public) playing=\(target.isCurrentlyPlaying, privacy: .public)")
@@ -440,6 +477,36 @@ final class MediaTransportActionController {
         }
     }
 
+    private func overlayRowUpdates() -> AnyPublisher<[SourceRow], Never> {
+        // Order the emitted rows, but keep the rows themselves: @Published emits from
+        // willSet, so mediaSourceStore.rows still holds the PREVIOUS array during this
+        // emission -- re-deriving rows via sourceRows(for:) here would hand the open
+        // chooser reachability that is one emission stale (and default newly-appearing
+        // rows to .live even when suspect). The emitted array already carries the
+        // correct per-row reachability; only the ordering needs applying.
+        mediaSourceStore.$rows
+            .map { [weak self] rows in
+                MainActor.assumeIsolated {
+                    guard let self else {
+                        return rows
+                    }
+                    let rowsByID = Dictionary(rows.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
+                    return self.sortedTargets(rows.map(\.target)).compactMap { rowsByID[$0.id] }
+                }
+            }
+            .eraseToAnyPublisher()
+    }
+
+    private func emptyDiscoveryDiagnostics() -> String {
+        let helperStatus = mediaRemoteController.health.isHealthy
+            ? "Helper running"
+            : "Helper \(mediaRemoteController.health.badgeTitle.lowercased())"
+        let bridgeStatus = chromiumBrowserExtensionController.connected
+            ? "bridge connected"
+            : "bridge disconnected"
+        return "\(helperStatus) / \(bridgeStatus)"
+    }
+
     private var activeSourceTarget: MediaRemoteTarget? {
         guard let activeTargetID = mediaRemoteController.activeTargetID else {
             return nil
@@ -470,6 +537,7 @@ final class MediaTransportActionController {
         context: MediaTransportDispatchContext
     ) {
         if let result = desktopTransport.submit(command: command, target: target) {
+            mediaSourceStore.recordCommandResult(result)
             trace(result: result, transportBackend: result.backend)
             finishDispatch(id: dispatchID, fallback: false)
             mediaRemoteController.refreshSnapshot()
@@ -479,11 +547,13 @@ final class MediaTransportActionController {
         }
         if let sent = chromiumBrowserExtensionController.submit(command: command, target: target, onResult: { [weak self] result in
             guard let self else { return }
+            self.mediaSourceStore.recordCommandResult(result)
             self.trace(result: result, transportBackend: result.backend)
             self.finishDispatch(id: dispatchID, fallback: false)
             self.showCommandFailureIfNeeded(result: result, target: target)
         }) {
             guard sent else {
+                mediaSourceStore.markCommandFailed(targetID: target.id)
                 finishDispatch(id: dispatchID, fallback: true)
                 StatusHUD.shared.finish(
                     title: "Media Command Failed",
@@ -505,6 +575,7 @@ final class MediaTransportActionController {
         context: MediaTransportDispatchContext
     ) {
         guard sendMediaRemote(command: command, to: target, dispatchID: dispatchID, context: context) else {
+            mediaSourceStore.markCommandFailed(targetID: target.id)
             finishDispatch(id: dispatchID, fallback: true)
             logDispatchFailure(command: command, target: target, context: context)
             StatusHUD.shared.finish(
@@ -523,6 +594,7 @@ final class MediaTransportActionController {
         context: MediaTransportDispatchContext
     ) -> Bool {
         let sent = mediaRemoteController.submit(command: command, targetID: target.id) { [weak self] result in
+            self?.mediaSourceStore.recordCommandResult(result)
             self?.trace(result: result, transportBackend: Self.mediaRemotePlayerPathBackend)
             self?.finishDispatch(id: dispatchID, fallback: false)
             self?.showCommandFailureIfNeeded(result: result, target: target)

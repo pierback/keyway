@@ -7,11 +7,6 @@ trap 'rm -rf "$workdir"' EXIT
 
 cp "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTargetOverlayModel.swift" "$workdir/MediaTargetOverlayModel.swift"
 
-if grep -q 'updateTargetsPreservingSelection' "$workdir/MediaTargetOverlayModel.swift"; then
-  echo "verify_media_target_overlay_model_semantics: overlay rows must not update while the overlay is open" >&2
-  exit 1
-fi
-
 cat >"$workdir/ModelStubs.swift" <<'SWIFT'
 import Foundation
 
@@ -59,6 +54,9 @@ struct OverlayModelSemantics {
         newSessionResetsRowsAndSelection()
         movementStaysInsideTheVisibleSession()
         emptySessionClearsRows()
+        liveUpdatePreservesSelectionByID()
+        goneRowStepsToSameListPosition()
+        midSessionEmptyKeepsSessionState()
         print("verify_media_target_overlay_model_semantics=ok")
     }
 
@@ -108,6 +106,63 @@ struct OverlayModelSemantics {
         expectEqual(model.targets.map(\.id), [], "an empty new session must clear visible rows")
         expectEqual(model.selectedIndex, 0, "an empty new session must reset selection")
         expectEqual(model.selectedTarget?.id, nil, "an empty new session must clear selected target")
+    }
+
+    @MainActor
+    private static func liveUpdatePreservesSelectionByID() {
+        let model = MediaTargetOverlayModel()
+        model.update(command: .playPause, rows: [
+            row(id: "a", pid: 10, identity: "app.a", appName: "A"),
+            row(id: "b", pid: 20, identity: "app.b", appName: "B"),
+            row(id: "c", pid: 30, identity: "app.c", appName: "C"),
+        ])
+        model.select(index: 1)
+
+        model.updateRowsPreservingSelection([
+            row(id: "c", pid: 31, identity: "app.c", appName: "C"),
+            row(id: "b", pid: 21, identity: "app.b", appName: "B Updated"),
+            row(id: "a", pid: 11, identity: "app.a", appName: "A"),
+        ])
+
+        expectEqual(model.targets.map(\.id), ["c", "b", "a"], "live update must replace visible rows")
+        expectEqual(model.selectedIndex, 1, "live update must preserve selected row by stable ID")
+        expectEqual(model.selectedTarget?.appName, "B Updated", "selection must follow row data updates")
+    }
+
+    @MainActor
+    private static func goneRowStepsToSameListPosition() {
+        let model = MediaTargetOverlayModel()
+        model.update(command: .playPause, rows: [
+            row(id: "a", pid: 10, identity: "app.a", appName: "A"),
+            row(id: "b", pid: 20, identity: "app.b", appName: "B"),
+            row(id: "c", pid: 30, identity: "app.c", appName: "C"),
+        ])
+        model.select(index: 1)
+
+        model.updateRowsPreservingSelection([
+            row(id: "a", pid: 10, identity: "app.a", appName: "A"),
+            row(id: "c", pid: 30, identity: "app.c", appName: "C"),
+        ])
+
+        expectEqual(model.selectedIndex, 1, "gone selected row must step to the same list position")
+        expectEqual(model.selectedTarget?.id, "c", "gone selected row must select the row now occupying that position")
+    }
+
+    @MainActor
+    private static func midSessionEmptyKeepsSessionState() {
+        let model = MediaTargetOverlayModel()
+        model.update(command: .playPause, rows: [
+            row(id: "a", pid: 10, identity: "app.a", appName: "A"),
+        ])
+        model.expanded = true
+
+        model.updateRowsPreservingSelection([])
+
+        expectEqual(model.targets.map(\.id), [], "mid-session empty update must clear rows")
+        expectEqual(model.selectedIndex, 0, "mid-session empty update must clamp selection")
+        expectEqual(model.command, .playPause, "mid-session empty update must keep the pending command")
+        expectEqual(model.expanded, true, "mid-session empty update must not reset the session")
+        expectEqual(model.emptyState, .discovering, "mid-session empty update must keep the chooser in discovery/empty mode")
     }
 
     private static func target(
