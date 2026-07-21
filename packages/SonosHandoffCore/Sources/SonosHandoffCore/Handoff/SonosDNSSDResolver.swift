@@ -23,6 +23,7 @@ final class SonosDNSSDResolver: @unchecked Sendable {
         let browse = try await Task.detached(priority: .userInitiated) {
             try commandRunner.run(Self.browseCommand(timeoutSeconds: Self.browseTimeoutSeconds))
         }.value
+        try Self.validate(browse, operation: "discovery")
         return SonosDNSSDRecordParser.instances(fromBrowseOutput: browse.output)
     }
 
@@ -72,6 +73,7 @@ final class SonosDNSSDResolver: @unchecked Sendable {
                 }
             )
         )
+        try validate(browse, operation: "discovery")
 
         guard let instance = browse.output
             .split(separator: "\n")
@@ -109,11 +111,22 @@ final class SonosDNSSDResolver: @unchecked Sendable {
         timeoutSeconds: TimeInterval
     ) throws -> String {
         let resolve = try commandRunner.run(resolveCommand(instance: instance, timeoutSeconds: timeoutSeconds))
+        try validate(resolve, operation: "resolve")
         guard let host = SonosDNSSDRecordParser.host(fromResolveOutput: resolve.output) else {
             throw ConnectHandoffError(.targetNotVisible, "Could not resolve host for \(instance)")
         }
 
         return host
+    }
+
+    private static func validate(_ result: SonosDiscoveryCommandResult, operation: String) throws {
+        guard result.status == 0 else {
+            let detail = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            throw ConnectHandoffError(
+                .targetNotVisible,
+                detail.isEmpty ? "Sonos \(operation) command exited with status \(result.status)." : "Sonos \(operation) failed: \(detail)"
+            )
+        }
     }
 
     private static func browseCommand(

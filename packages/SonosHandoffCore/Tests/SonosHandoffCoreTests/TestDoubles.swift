@@ -42,38 +42,3 @@ struct FailingSaveTokenStore: TokenStoring {
 
     func deleteRefreshToken() throws {}
 }
-
-struct MockConnectTokenStatusStore: ConnectTokenStatusChecking {
-    let statusValue: ConnectTokenStatus
-
-    init(desktopTokenAvailable: Bool, projectTokenAvailable: Bool) {
-        self.statusValue = ConnectTokenStatus(
-            desktopTokenAvailable: desktopTokenAvailable,
-            projectTokenAvailable: projectTokenAvailable
-        )
-    }
-
-    func status() -> ConnectTokenStatus {
-        statusValue
-    }
-
-    func validatedStatus() async -> ConnectTokenStatus {
-        statusValue
-    }
-
-    func deleteProjectToken() throws {}
-}
-
-// MARK: - Accessibility
-
-final class MockAccessibilityAutomator: AccessibilityAutomating, @unchecked Sendable {
-    let permissionGranted: Bool
-
-    init(permissionGranted: Bool = true) {
-        self.permissionGranted = permissionGranted
-    }
-
-    func checkAccessibilityPermission() -> Bool {
-        permissionGranted
-    }
-}

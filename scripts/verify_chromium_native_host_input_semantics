@@ -82,6 +82,8 @@ for required in (
     "payload.data(using: .utf8)",
     "try? JSONSerialization.jsonObject(with: data)",
     'fputs("Keyway Chromium native host: ignoring malformed command payload.\\n", stderr)',
+    'if root["type"] as? String == "reloadExtension", root["connectionID"] == nil {',
+    "return data",
     'let payloadConnectionID = root["connectionID"] as? String',
     "guard payloadConnectionID == connectionID else {",
     'root.removeValue(forKey: "connectionID")',

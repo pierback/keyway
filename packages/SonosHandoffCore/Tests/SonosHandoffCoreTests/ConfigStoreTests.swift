@@ -28,6 +28,23 @@ struct ConfigStoreTests {
     }
 
     @Test
+    func loadIgnoresRemovedLegacyFields() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+        let configURL = root.appendingPathComponent("config.json")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data(#"{"spotifyClientID":"client-id","spotifyVirtualDisplayName":"legacy-login"}"#.utf8)
+            .write(to: configURL)
+
+        let config = try ConfigStore(configURL: configURL).load()
+
+        #expect(config == AppConfig(spotifyClientID: "client-id"))
+    }
+
+    @Test
     func loadThrowsForMalformedConfig() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

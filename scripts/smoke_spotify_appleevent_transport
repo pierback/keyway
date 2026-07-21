@@ -42,10 +42,6 @@ if (( rebound_iterations < 1 )); then
   fail "KEYWAY_SPOTIFY_APPLEEVENT_REBOUND_ITERATIONS must be at least 1"
 fi
 
-if [[ "$dry_run" != "1" ]] && ! pgrep -x Spotify >/dev/null; then
-  fail "Spotify must be running before AppleEvent smoke"
-fi
-
 if [[ "$dry_run" != "1" && "$prime_current_track" == "1" ]]; then
   prime_args=(
     swift run --package-path "$repo_root/packages/SonosHandoffCore" sonos-handoff-port playback-start
@@ -386,7 +382,10 @@ private func fourCharCode(_ value: String) -> OSType {
 }
 SWIFT
 
-swiftc "$workdir/SpotifyAppleEventSmoke.swift" -o "$workdir/spotify-appleevent-smoke"
+swiftc \
+  -module-cache-path "$workdir/module-cache" \
+  "$workdir/SpotifyAppleEventSmoke.swift" \
+  -o "$workdir/spotify-appleevent-smoke"
 
 if [[ "$dry_run" == "1" ]]; then
   printf 'smoke_spotify_appleevent_transport_dry_run=ok\n'

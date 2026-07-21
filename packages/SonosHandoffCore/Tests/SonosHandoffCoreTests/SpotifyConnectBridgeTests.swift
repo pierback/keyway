@@ -260,7 +260,7 @@ struct SpotifyConnectBridgeTests {
             expiresAt: Int(Date().timeIntervalSince1970) + 3600
         ))
         SpotifyBridgeURLProtocol.setPlayerResponses([
-            .success(deviceName: "Kitchen", volumePercent: 37),
+            .success(body: #"{"is_playing":true,"device":{"name":"Kitchen","type":"Speaker","is_restricted":false,"volume_percent":37},"item":{"name":"Test Track","uri":"spotify:track:test"}}"#),
         ])
 
         let sessionConfiguration = URLSessionConfiguration.ephemeral
@@ -273,7 +273,17 @@ struct SpotifyConnectBridgeTests {
 
         let status = try await bridge.activePlaybackDeviceStatus()
 
-        #expect(status == SpotifyPlaybackDeviceStatus(deviceName: "Kitchen", isPlaying: true, volumePercent: 37))
+        #expect(
+            status == SpotifyPlaybackDeviceStatus(
+                deviceName: "Kitchen",
+                type: "Speaker",
+                isRestricted: false,
+                isPlaying: true,
+                volumePercent: 37,
+                itemName: "Test Track",
+                itemURI: "spotify:track:test"
+            )
+        )
     }
 
     @Test
@@ -309,7 +319,7 @@ struct SpotifyConnectBridgeTests {
         let status = try await bridge.activePlaybackDeviceStatus()
 
         let urls = SpotifyBridgeURLProtocol.recordedURLs()
-        #expect(status == SpotifyPlaybackDeviceStatus(deviceName: "Kitchen", isPlaying: true, volumePercent: 37))
+        #expect(status == SpotifyPlaybackDeviceStatus(deviceName: "Kitchen", type: "Speaker", isRestricted: false, isPlaying: true, volumePercent: 37))
         #expect(urls.contains { $0.host == "accounts.spotify.com" && $0.path == "/api/token" })
         #expect(try tokenStore.load()?.accessToken == "refreshed-access-token")
     }
@@ -766,7 +776,7 @@ private final class SpotifyBridgeURLProtocol: URLProtocol, @unchecked Sendable {
         static func success(deviceName: String, restricted: Bool = false, volumePercent: Int = 42) -> PlayerResponse {
             PlayerResponse(
                 statusCode: 200,
-                body: #"{"is_playing":true,"device":{"name":"\#(deviceName)","is_restricted":\#(restricted),"volume_percent":\#(volumePercent)}}"#
+                body: #"{"is_playing":true,"device":{"name":"\#(deviceName)","type":"Speaker","is_restricted":\#(restricted),"volume_percent":\#(volumePercent)}}"#
             )
         }
 

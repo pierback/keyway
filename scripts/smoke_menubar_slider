@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PACKAGE_DIR="$ROOT_DIR/packages/SonosHandoffCore"
 APP_DIR="${KEYWAY_APP:-$HOME/Applications/Keyway.app}"
-ROOM="${1:-${SONOS_HANDOFF_ROOM:-Port}}"
+ROOM="${1:-${SONOS_HANDOFF_ROOM:?Pass a Sonos room or set SONOS_HANDOFF_ROOM}}"
 DELTA="${SONOS_HANDOFF_SLIDER_DELTA:-10}"
 RELAUNCH="${KEYWAY_RELAUNCH:-1}"
 PREPARE_PLAYBACK="${SONOS_HANDOFF_PREPARE_PLAYBACK:-1}"

@@ -4,6 +4,9 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 settings="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/Features/SettingsFeature.swift"
 controller="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaRemoteController.swift"
+app="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/SonosHandoffApp.swift"
+app_delegate="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/AppDelegate.swift"
+status_item="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/KeywayStatusItemController.swift"
 
 fail() {
   printf 'verify_settings_feature_semantics: %s\n' "$*" >&2
@@ -16,12 +19,62 @@ grep -q 'private func saveSpotifyClientID(showMessage: Bool) -> Bool' "$settings
 grep -q 'return false' "$settings" \
   || fail "Spotify Client ID validation and persistence failures must stop dependent flows"
 
-python3 - "$settings" "$controller" <<'PY'
+grep -q 'accessibilityGranted = AccessibilityPermission.isGranted()' "$settings" \
+  || fail "Settings must query the shared Accessibility permission API directly"
+
+if rg -q 'AccessibilityAutomating|SpotifyUIAutomator' \
+  "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar" \
+  "$repo_root/packages/SonosHandoffCore/Sources"; then
+  fail "Accessibility permission checks must not be hidden behind a one-method wrapper"
+fi
+
+python3 - "$settings" "$controller" "$app" "$app_delegate" "$status_item" <<'PY'
 import pathlib
 import sys
 
 text = pathlib.Path(sys.argv[1]).read_text()
 controller = pathlib.Path(sys.argv[2]).read_text()
+app = pathlib.Path(sys.argv[3]).read_text()
+app_delegate = pathlib.Path(sys.argv[4]).read_text()
+status_item = pathlib.Path(sys.argv[5]).read_text()
+
+if app.count("SettingsFeature(") + status_item.count("SettingsFeature(") != 1:
+    raise SystemExit("verify_settings_feature_semantics: one SwiftUI Settings scene must own the only SettingsFeature instance")
+if "private var settingsWindow: NSWindow?" in status_item or "private func makeSettingsWindow()" in status_item:
+    raise SystemExit("verify_settings_feature_semantics: the menu bar controller must not own a second Settings window")
+open_settings = status_item[
+    status_item.index("    private func openSettings() {"):
+    status_item.index("\n    }", status_item.index("    private func openSettings() {"))
+]
+activation = open_settings.index("_ = NSApp.setActivationPolicy(.regular)")
+foreground = open_settings.index("NSApp.activate(ignoringOtherApps: true)")
+show = open_settings.index("NSApp.sendAction(settingsAction, to: settingsItem.target, from: settingsItem)")
+if not activation < foreground < show:
+    raise SystemExit("verify_settings_feature_semantics: utility-menu Settings must make Keyway regular and active before opening the SwiftUI scene")
+for required in (
+    "guard let settingsItem = NSApp.mainMenu?.items.first?.submenu?.items",
+    '$0.keyEquivalent == "," && $0.keyEquivalentModifierMask.contains(.command)',
+    "let settingsAction = settingsItem.action",
+    "NSApp.sendAction(settingsAction, to: settingsItem.target, from: settingsItem)",
+):
+    if required not in open_settings:
+        raise SystemExit("verify_settings_feature_semantics: menu bar Settings must invoke the canonical application-menu command")
+if 'Selector(("showSettingsWindow:"))' in status_item:
+    raise SystemExit("verify_settings_feature_semantics: menu bar Settings must not use the inert legacy selector")
+if ".onAppear {\n            _ = NSApp.setActivationPolicy(.regular)\n        }" not in text:
+    raise SystemExit("verify_settings_feature_semantics: visible Settings must give Keyway normal Cmd-Tab presence")
+if ".onDisappear {\n            _ = NSApp.setActivationPolicy(.accessory)\n        }" not in text:
+    raise SystemExit("verify_settings_feature_semantics: closing Settings must restore menu-bar-only activation")
+if "NSWindow.willCloseNotification" in app_delegate:
+    raise SystemExit("verify_settings_feature_semantics: Settings view lifecycle must not be duplicated by a title-matching window observer")
+if "initialChromiumBridgeMessage: environment.chromiumNativeMessagingHostInstallMessage" not in app:
+    raise SystemExit("verify_settings_feature_semantics: the canonical Settings scene must retain the Chromium bridge install result")
+if "isSpotifyAuthenticated" in text:
+    raise SystemExit("verify_settings_feature_semantics: Spotify readiness must derive directly from the two credential states")
+if text.count("desktopTokenAvailable && webAPITokenAvailable") < 3:
+    raise SystemExit("verify_settings_feature_semantics: Spotify readiness must require both Desktop Connect and Web API credentials")
+if 'Button("Web API Sign Out")' not in text or 'Button("Sign Out")' in text:
+    raise SystemExit("verify_settings_feature_semantics: Spotify sign-out must identify the Web API credential it removes")
 start = text.index("    private func startSpotifySignIn()")
 end = text.index("    private func signOutSpotify()", start)
 body = text[start:end]

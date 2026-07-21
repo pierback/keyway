@@ -1,7 +1,7 @@
-if (!globalThis.__keywayMediaBridgeInstalled) {
-globalThis.__keywayMediaBridgeInstalled = true;
+if (globalThis.__keywayMediaBridgeRevision !== 2) {
+globalThis.__keywayMediaBridgeRevision = 2;
 
-const documentID = crypto.randomUUID();
+const documentID = crypto.getRandomValues(new Uint32Array(4)).join("-");
 const keywayMedia = new WeakMap();
 const observedMedia = new WeakSet();
 let nextMediaIndex = 1;
@@ -11,6 +11,7 @@ const baseSupportedCommands = ["play", "pause", "playPause", "mute", "volumeDelt
 const playbackControlSelectors = {
   play: [
     'button[aria-label="Play" i]',
+    'button[aria-label="Playbar: Play button" i]',
     '[role="button"][aria-label="Play" i]',
     'button[aria-label="Abspielen" i]',
     '[role="button"][aria-label="Abspielen" i]',
@@ -32,6 +33,7 @@ const playbackControlSelectors = {
   ],
   pause: [
     'button[aria-label="Pause" i]',
+    'button[aria-label="Playbar: Pause button" i]',
     '[role="button"][aria-label="Pause" i]',
     'button[aria-label="Pausieren" i]',
     '[role="button"][aria-label="Pausieren" i]',
@@ -69,6 +71,7 @@ const playbackControlSelectors = {
 };
 const trackControlSelectors = {
   next: [
+    'button[aria-label="Playbar: Next Song button" i]',
     '[data-testid="control-button-skip-forward"]',
     '[aria-label="Next"]',
     '[aria-label="Next track"]',
@@ -77,6 +80,7 @@ const trackControlSelectors = {
     ".ytp-next-button",
   ],
   previous: [
+    'button[aria-label="Playbar: Previous Song button" i]',
     '[data-testid="control-button-skip-back"]',
     '[aria-label="Previous"]',
     '[aria-label="Previous track"]',
@@ -274,16 +278,12 @@ function publishAll() {
   });
 }
 
-function commandTarget(mediaId) {
-  return runBridgeTask(() => mediaElements().find(element => mediaIdFor(element) === mediaId));
-}
-
 function applyCommand(message) {
   if (message.documentID !== documentID) {
     return Promise.resolve({ ok: false, message: "Media document is no longer available." });
   }
 
-  const element = commandTarget(message.mediaId);
+  const element = runBridgeTask(() => mediaElements().find(element => mediaIdFor(element) === message.mediaId));
   if (!element) {
     return Promise.resolve({ ok: false, message: "Media element is no longer available." });
   }

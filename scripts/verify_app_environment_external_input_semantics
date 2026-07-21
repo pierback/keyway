@@ -5,16 +5,14 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 environment="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/Support/AppEnvironment.swift"
 transport="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionTransport.swift"
 settings="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/Features/SettingsFeature.swift"
-status_item="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/KeywayStatusItemController.swift"
 
-python3 - "$environment" "$transport" "$settings" "$status_item" <<'PY'
+python3 - "$environment" "$transport" "$settings" <<'PY'
 import pathlib
 import sys
 
 environment = pathlib.Path(sys.argv[1]).read_text()
 transport = pathlib.Path(sys.argv[2]).read_text()
 settings = pathlib.Path(sys.argv[3]).read_text()
-status_item = pathlib.Path(sys.argv[4]).read_text()
 
 def fail(message):
     raise SystemExit(f"verify_app_environment_external_input_semantics: {message}")
@@ -74,8 +72,6 @@ for required in (
 
 if "try! chromiumNativeMessagingHostInstaller.install()" in settings:
     fail("Settings Repair Bridge action must not crash when Chromium native bridge install throws")
-if "initialChromiumBridgeMessage: environment.chromiumNativeMessagingHostInstallMessage" not in status_item:
-    fail("Settings window must receive the launch Chromium bridge install message")
 
 reveal = section(
     settings,

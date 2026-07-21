@@ -138,7 +138,8 @@ private actor PlayerStateSource {
         case let .state(deviceName, isPlaying):
             return ConnectPlayerState(
                 isPlaying: isPlaying,
-                device: ConnectPlayerDevice(name: deviceName, isRestricted: false, volumePercent: nil)
+                device: ConnectPlayerDevice(name: deviceName, type: "Speaker", isRestricted: false, volumePercent: nil),
+                item: nil
             )
         }
     }

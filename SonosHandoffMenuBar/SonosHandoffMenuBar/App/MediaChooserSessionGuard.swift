@@ -30,20 +30,13 @@ final class MediaChooserSessionGuard {
         return id
     }
 
-    func activeCommandRawValue(for id: UUID) -> String? {
-        activeCommand(for: id)?.rawValue
-    }
-
     func activeCommand(for id: UUID) -> MediaRemoteTransportCommand? {
         guard active?.id == id else { return nil }
         return active?.command
     }
 
     @discardableResult
-    func finish(
-        id: UUID,
-        selected: Bool = false
-    ) -> Bool {
+    func finish(id: UUID) -> Bool {
         guard active?.id == id else {
             return false
         }

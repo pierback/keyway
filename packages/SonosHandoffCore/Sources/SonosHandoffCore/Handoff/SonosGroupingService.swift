@@ -59,23 +59,6 @@ final class SonosGroupingService: @unchecked Sendable {
         )
     }
 
-    func removeCoordinator(
-        in group: SonosSpeakerGroup,
-        coordinatorRoomName: String,
-        replacementRoomName: String
-    ) async throws {
-        try await prepareCoordinatorRemoval(
-            in: group,
-            coordinatorRoomName: coordinatorRoomName,
-            replacementRoomName: replacementRoomName
-        )
-        try await finishCoordinatorRemoval(
-            in: group,
-            coordinatorRoomName: coordinatorRoomName,
-            replacementRoomName: replacementRoomName
-        )
-    }
-
     func prepareCoordinatorRemoval(
         in group: SonosSpeakerGroup,
         coordinatorRoomName: String,

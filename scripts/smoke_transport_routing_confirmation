@@ -31,16 +31,14 @@ fi
 close_created_quicktime_target() {
   [[ -n "$CREATED_TARGET_FILE" ]] || return 0
 
-  local target_name
-  target_name="$(basename "$CREATED_TARGET_FILE")"
-  osascript - "$target_name" >/dev/null 2>&1 <<'APPLESCRIPT' || true
-on run argv
-  set targetName to item 1 of argv
+  osascript - "$(basename "$CREATED_TARGET_FILE")" >/dev/null 2>&1 <<'APPLESCRIPT' || true
+on run arguments
+  set targetName to item 1 of arguments
   tell application "QuickTime Player"
-    repeat with mediaDocument in documents
-      try
-        if name of mediaDocument is targetName then close mediaDocument saving no
-      end try
+    repeat with mediaDocument in (get documents)
+      if (name of mediaDocument as text) is targetName then
+        close mediaDocument saving no
+      end if
     end repeat
   end tell
 end run
@@ -584,7 +582,8 @@ assert_routing_confirmation() {
     logs="$(recent_keyway_logs_since "$command_start")"
     if grep -Fq "action=transport_${command} source=media_key" <<<"$logs" \
       && grep -Fq "MediaTransport route command=${command} target=" <<<"$logs" \
-      && grep -Fq "reason=focused target" <<<"$logs"; then
+      && grep -Fq "reason=focused target" <<<"$logs" \
+      && grep -Fq "KeywayNotification delivered title=${expected_title}" <<<"$logs"; then
       break
     fi
   done
@@ -609,6 +608,11 @@ assert_routing_confirmation() {
   if grep -Fq "MediaTransport async_route_failed command=${command}" <<<"$logs"; then
     printf '%s\n' "$logs"
     echo "smoke_transport_routing_confirmation: focused transport route failed for $command" >&2
+    exit 1
+  fi
+  if ! grep -Fq "KeywayNotification delivered title=${expected_title}" <<<"$logs"; then
+    printf '%s\n' "$logs"
+    echo "smoke_transport_routing_confirmation: native routing confirmation was not delivered for $command" >&2
     exit 1
   fi
 

@@ -3,7 +3,6 @@ import Foundation
 public struct Logger: Sendable {
     public enum Level: String, Sendable {
         case info
-        case warning
         case error
     }
 
@@ -14,4 +13,3 @@ public struct Logger: Sendable {
         FileHandle.standardError.write(Data("[\(timestamp)] [\(level.rawValue)] \(message)\n".utf8))
     }
 }
-

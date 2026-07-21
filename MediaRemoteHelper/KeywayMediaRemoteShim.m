@@ -16,13 +16,19 @@ typedef pid_t (*MRNowPlayingClientGetProcessIdentifierFn)(id client);
 
 @interface MRPlayerPath : NSObject
 - (instancetype)initWithOrigin:(id)origin client:(id)client player:(id)player;
+@property (nonatomic, readonly, copy) id client;
+@end
+
+@interface MRCommandResult : NSObject
+@property (nonatomic, readonly, copy) NSError *error;
+@property (nonatomic, readonly, copy) MRPlayerPath *playerPath;
 @end
 
 @interface MRNowPlayingRequest : NSObject
 - (instancetype)initWithPlayerPath:(id)playerPath;
 - (void)requestNowPlayingInfoOnQueue:(dispatch_queue_t)queue completion:(void (^)(NSDictionary *info))completion;
-- (void)sendCommand:(unsigned int)command options:(NSDictionary *)options appOptions:(unsigned int)appOptions queue:(dispatch_queue_t)queue completion:(void (^)(id result))completion;
-- (void)sendCommand:(unsigned int)command options:(NSDictionary *)options queue:(dispatch_queue_t)queue completion:(void (^)(id result))completion;
+- (void)sendCommand:(unsigned int)command options:(NSDictionary *)options appOptions:(unsigned int)appOptions queue:(dispatch_queue_t)queue completion:(void (^)(MRCommandResult *result))completion;
+- (void)sendCommand:(unsigned int)command options:(NSDictionary *)options queue:(dispatch_queue_t)queue completion:(void (^)(MRCommandResult *result))completion;
 @end
 
 typedef struct {
@@ -390,12 +396,15 @@ static BOOL KeywaySubmitCommandToPlayerPath(
         return NO;
     }
 
-    void (^finish)(id) = ^(id result) {
-        if ([result isKindOfClass:[NSError class]]) {
-            NSError *error = (NSError *)result;
-            completion(NO, error.localizedDescription ?: @"MediaRemote command failed");
+    void (^finish)(MRCommandResult *) = ^(MRCommandResult *result) {
+        if (result == nil) {
+            completion(NO, @"MediaRemote returned no command result");
+        } else if (result.error != nil) {
+            completion(NO, result.error.localizedDescription);
+        } else if (!KeywaySameClient(result.playerPath.client, client)) {
+            completion(NO, @"MediaRemote redirected command away from requested player");
         } else {
-            completion(YES, @"submitted cached MediaRemote player path command");
+            completion(YES, @"MediaRemote player-path command completed");
         }
         (void)playerPath;
         (void)request;

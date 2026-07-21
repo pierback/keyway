@@ -7,10 +7,6 @@ struct MediaRemoteSnapshotRefreshGate {
         inFlightRequestID != nil
     }
 
-    var activeRequestID: String? {
-        inFlightRequestID
-    }
-
     mutating func begin(requestID: String = UUID().uuidString) -> String? {
         guard inFlightRequestID == nil else {
             return nil

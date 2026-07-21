@@ -54,7 +54,7 @@ slider = text[text.index("    func setVolumeFromSlider("):text.index("    func c
 if "StatusHUD.shared.showVolume(roomName: selectedRoomName, volume: volumeState.roundedValue, dismissAfter: 1.6)" not in slider:
     raise SystemExit("verify_volume_hud_semantics: dragging the menu slider must update the volume HUD")
 
-local = text[text.index("    private func applyLocalVolume("):text.index("    private func applyVolumeStatus", text.index("    private func applyLocalVolume("))]
+local = text[text.index("    private func applyLocalVolume("):text.index("    private func selectRoomName", text.index("    private func applyLocalVolume("))]
 if "StatusHUD.shared.showVolume(roomName: roomName, volume: volume, dismissAfter: 1.6)" not in local:
     raise SystemExit("verify_volume_hud_semantics: committed menu volume changes must update the volume HUD")
 PY

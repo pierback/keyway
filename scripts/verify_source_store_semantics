@@ -81,6 +81,7 @@ final class MediaRemoteController: ObservableObject {
 SWIFT
 
 cat >"$workdir/SourceStoreSemantics.swift" <<'SWIFT'
+import Combine
 import Foundation
 
 @main
@@ -109,9 +110,30 @@ struct SourceStoreSemantics {
             now: { currentDate }
         )
 
-        expectEqual(store.targets, controller.targets, "store targets must mirror initial MediaRemoteController targets")
+        expectEqual(store.rows.map(\.target), controller.targets, "store rows must mirror initial MediaRemoteController targets")
         expectEqual(store.rows.map(\.id), controller.targets.map(\.id), "source row IDs must match target IDs")
         assertAllLive(store.rows, "initial rows")
+
+        var unchangedRowPublicationCount = 0
+        let unchangedRowsSubscription = store.$rows.dropFirst().sink { _ in
+            unchangedRowPublicationCount += 1
+        }
+        var routeShieldPlaybackStates: [Bool] = []
+        let routeShieldPlaybackSubscription = store.$rows
+            .map { rows in rows.contains { $0.target.playbackRate == "1" } }
+            .removeDuplicates()
+            .dropFirst()
+            .sink { isPlaying in
+                routeShieldPlaybackStates.append(isPlaying)
+            }
+        controller.replaceTargets([spotify, chromium])
+        drainMainQueue()
+        expectEqual(
+            unchangedRowPublicationCount,
+            0,
+            "an identical MediaRemote snapshot must not republish source rows"
+        )
+        unchangedRowsSubscription.cancel()
 
         let updatedSpotify = target(
             id: "spotify:desktop",
@@ -124,10 +146,11 @@ struct SourceStoreSemantics {
         drainMainQueue()
 
         expectEqual(store.rows.map(\.id), stableIDsBefore, "same target IDs must update in the same row identity slots")
-        expectEqual(store.targets.map(\.title), ["Updated Song", "Video"], "same-ID updates must refresh target fields")
-        expectEqual(store.rows[0].capabilities.supportedCommands, [.pause], "capabilities must refresh from updated targets")
-        expectEqual(store.rows[0].audioState.playbackRate, "0", "audio state must refresh from updated targets")
-        expectEqual(store.rows.first { $0.id == chromium.id }?.audioState.muted, true, "browser audio state must preserve tab-level muted state")
+        expectEqual(store.rows.map(\.target.title), ["Updated Song", "Video"], "same-ID updates must refresh target fields")
+        expectEqual(store.rows[0].target.supportedCommands, [.pause], "commands must refresh from updated targets")
+        expectEqual(store.rows[0].target.playbackRate, "0", "playback state must refresh from updated targets")
+        expectEqual(routeShieldPlaybackStates, [false], "playing-to-paused rows must emit the new route-shield state")
+        expectEqual(store.rows.first { $0.id == chromium.id }?.target.muted, true, "browser targets must preserve tab-level muted state")
         assertAllLive(store.rows, "updated rows")
 
         chromiumController.replaceSuspectTargetIDs([chromium.id])
@@ -142,7 +165,9 @@ struct SourceStoreSemantics {
         )
         controller.replaceTargets([updatedSpotify, updatedSilentChromium])
         drainMainQueue()
-        assertSuspect(store.rows.first { $0.id == chromium.id }, reason: "no_recent_snapshot", "updated(target:) must carry reachability forward before overlay recompute")
+        expectEqual(routeShieldPlaybackStates, [false, true], "paused-to-playing rows must emit the new route-shield state")
+        routeShieldPlaybackSubscription.cancel()
+        assertSuspect(store.rows.first { $0.id == chromium.id }, reason: "no_recent_snapshot", "target updates must preserve snapshot-silence reachability")
 
         store.recordCommandResult(MediaRemoteCommandResultEvent(targetID: chromium.id, ok: false, unsupported: false))
         assertSuspect(store.rows.first { $0.id == chromium.id }, reason: "command_failed", "command failures must override snapshot silence")
@@ -171,7 +196,7 @@ struct SourceStoreSemantics {
         controller.replaceTargets([chromium, updatedSpotify])
         drainMainQueue()
 
-        expectEqual(store.targets, controller.targets, "store targets must mirror later MediaRemoteController targets")
+        expectEqual(store.rows.map(\.target), controller.targets, "store rows must mirror later MediaRemoteController targets")
         expectEqual(store.rows.map(\.id), ["chromium-tab:profile-a:22", "spotify:desktop"], "store row ordering must follow controller target ordering")
         assertAllLive(store.rows, "reordered rows")
 
@@ -258,7 +283,7 @@ struct SourceStoreSemantics {
         switch row.reachability {
         case .live:
             break
-        case .suspect, .gone:
+        case .suspect:
             fail(message)
         }
     }
@@ -270,7 +295,7 @@ struct SourceStoreSemantics {
         switch row.reachability {
         case .suspect(let actualReason, _):
             expectEqual(actualReason, reason, message)
-        case .live, .gone:
+        case .live:
             fail(message)
         }
     }

@@ -13,6 +13,8 @@ struct MediaTargetOverlayView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            commandHeader
+            Divider().opacity(0.42)
             targetList
             if model.expanded {
                 expandedSectionDivider
@@ -32,7 +34,18 @@ struct MediaTargetOverlayView: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .frame(width: 680)
-        .accessibilityIdentifier("mediaTargetOverlay")
+    }
+
+    private var commandHeader: some View {
+        HStack(spacing: 10) {
+            Image(systemName: model.command?.symbolName ?? "music.note.list")
+                .foregroundStyle(.secondary)
+            Text(model.command?.displayName ?? "Media Targets")
+                .font(.system(size: 16, weight: .semibold))
+            Spacer()
+        }
+        .padding(.horizontal, 22)
+        .frame(height: 52)
     }
 
     private var expandedSectionDivider: some View {
@@ -49,7 +62,7 @@ struct MediaTargetOverlayView: View {
 
     private var targetList: some View {
         Group {
-            if model.targets.count > 6 {
+            if model.rows.count > 6 {
                 ScrollView {
                     targetRows
                 }
@@ -59,12 +72,11 @@ struct MediaTargetOverlayView: View {
                 targetRows
             }
         }
-        .accessibilityIdentifier("mediaTargetOverlay.targetList")
     }
 
     private var targetRows: some View {
         LazyVStack(spacing: 3) {
-            if model.targets.isEmpty {
+            if model.rows.isEmpty {
                 emptyTargetRow
             } else {
                 ForEach(Array(model.rows.enumerated()), id: \.element.id) { index, row in
@@ -78,7 +90,7 @@ struct MediaTargetOverlayView: View {
     }
 
     private var targetListHeight: CGFloat {
-        let visibleRows = min(model.targets.count, 6)
+        let visibleRows = min(model.rows.count, 6)
         let topPad: CGFloat = 14
         let bottomPad: CGFloat = model.expanded ? 0 : 8
         return topPad
@@ -304,7 +316,6 @@ struct MediaTargetOverlayView: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 10)
-        .accessibilityIdentifier("mediaTargetOverlay.expandedControls")
     }
 
     private func audioRow<Trailing: View>(

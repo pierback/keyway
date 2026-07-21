@@ -40,28 +40,6 @@ struct SonosGroupingServiceTests {
     }
 
     @Test
-    func removeCoordinatorLeavesOldCoordinatorOutOfReplacementGroup() async throws {
-        GroupingServiceURLProtocol.reset()
-        let service = Self.groupingService()
-        let currentGroup = Self.group(coordinator: "Kitchen", members: ["Kitchen", "Port", "Office"])
-
-        try await service.removeCoordinator(
-            in: currentGroup,
-            coordinatorRoomName: "Kitchen",
-            replacementRoomName: "Port"
-        )
-
-        #expect(GroupingServiceURLProtocol.snapshot().contains { $0.url?.path == "/ZoneGroupTopology/Control" } == false)
-        let avTransportRequests = GroupingServiceURLProtocol.snapshot()
-            .filter { $0.url?.path == "/MediaRenderer/AVTransport/Control" }
-        #expect(avTransportRequests.map { $0.url?.host } == ["port.local", "office.local"])
-        #expect(avTransportRequests[0].soapAction == "\"urn:schemas-upnp-org:service:AVTransport:1#BecomeCoordinatorOfStandaloneGroup\"")
-        #expect(avTransportRequests[1].soapAction == "\"urn:schemas-upnp-org:service:AVTransport:1#SetAVTransportURI\"")
-        #expect(avTransportRequests[1].body.contains("<CurrentURI>x-rincon:RINCON_PORT</CurrentURI>"))
-        #expect(avTransportRequests.contains { $0.url?.host == "kitchen.local" } == false)
-    }
-
-    @Test
     func prepareCoordinatorRemovalOnlyMakesReplacementStandalone() async throws {
         GroupingServiceURLProtocol.reset()
         let service = Self.groupingService()
@@ -99,31 +77,6 @@ struct SonosGroupingServiceTests {
         #expect(avTransportRequests.allSatisfy { $0.body.contains("<CurrentURI>x-rincon:RINCON_PORT</CurrentURI>") })
         #expect(avTransportRequests.contains { $0.url?.host == "kitchen.local" } == false)
         #expect(avTransportRequests.contains { $0.url?.host == "port.local" } == false)
-    }
-
-    @Test
-    func removeCoordinatorUsesEffectiveCoordinatorWhenCoordinatorIDIsMissingFromMembers() async throws {
-        GroupingServiceURLProtocol.reset()
-        let service = Self.groupingService()
-        let currentGroup = SonosSpeakerGroup(
-            id: "RINCON_MISSING:123",
-            coordinatorID: "RINCON_MISSING",
-            members: ["Kitchen", "Port", "Office"].map(Self.speaker)
-        )
-
-        try await service.removeCoordinator(
-            in: currentGroup,
-            coordinatorRoomName: "Kitchen",
-            replacementRoomName: "Port"
-        )
-
-        #expect(GroupingServiceURLProtocol.snapshot().contains { $0.url?.path == "/ZoneGroupTopology/Control" } == false)
-        let avTransportRequests = GroupingServiceURLProtocol.snapshot()
-            .filter { $0.url?.path == "/MediaRenderer/AVTransport/Control" }
-        #expect(avTransportRequests.map { $0.url?.host } == ["port.local", "office.local"])
-        #expect(avTransportRequests[0].soapAction == "\"urn:schemas-upnp-org:service:AVTransport:1#BecomeCoordinatorOfStandaloneGroup\"")
-        #expect(avTransportRequests[1].body.contains("<CurrentURI>x-rincon:RINCON_PORT</CurrentURI>"))
-        #expect(avTransportRequests.contains { $0.url?.host == "kitchen.local" } == false)
     }
 
     @Test

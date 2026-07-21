@@ -67,6 +67,16 @@ struct SonosGroupMembershipChangePlannerTests {
     }
 
     @Test
+    func singleSpeakerCoordinatorRemovalIsNoOp() {
+        let change = planner.change(
+            for: row("Kitchen", membership: .coordinator, coordinatorRemovalAvailable: true),
+            in: group(coordinator: "Kitchen", members: ["Kitchen"])
+        )
+
+        #expect(change == .none)
+    }
+
+    @Test
     func rowThatDoesNotMatchGroupCoordinatorIsNoOp() {
         let change = planner.change(
             for: row("Port", membership: .coordinator, coordinatorRemovalAvailable: true),
@@ -74,6 +84,29 @@ struct SonosGroupMembershipChangePlannerTests {
         )
 
         #expect(change == .none)
+    }
+
+    @Test
+    func coordinatorRemovalUsesEffectiveCoordinatorWhenCoordinatorIDIsMissingFromMembers() {
+        let currentGroup = SonosSpeakerGroup(
+            id: "RINCON_MISSING:group",
+            coordinatorID: "RINCON_MISSING",
+            members: [
+                speaker("Kitchen"),
+                speaker("Port"),
+                speaker("Office"),
+            ]
+        )
+        let change = planner.change(
+            for: row("Kitchen", membership: .coordinator, coordinatorRemovalAvailable: true),
+            in: currentGroup
+        )
+
+        #expect(change == .removeCoordinator(
+            group: currentGroup,
+            coordinatorRoomName: "Kitchen",
+            replacement: speaker("Port")
+        ))
     }
 
     private func row(

@@ -3,29 +3,31 @@ import Foundation
 final class SonosVolumeService: @unchecked Sendable {
     private let directory: SonosDirectory
     private let renderingControl: SonosRenderingControl
-    private let spotifyPlayback: SpotifyPlaybackService
+    private let spotifyVolumeMirrorQueue: SpotifyVolumeMirrorQueue
 
     init(
         directory: SonosDirectory,
         renderingControl: SonosRenderingControl,
-        spotifyPlayback: SpotifyPlaybackService
+        spotifyBridge: SpotifyConnectBridge
     ) {
         self.directory = directory
         self.renderingControl = renderingControl
-        self.spotifyPlayback = spotifyPlayback
+        self.spotifyVolumeMirrorQueue = SpotifyVolumeMirrorQueue { [spotifyBridge] roomName, volume in
+            await spotifyBridge.setActiveDeviceVolumeIfNeeded(roomName: roomName, volume: volume)
+        }
     }
 
     func volumeDown(roomName: String, step: Int = 5) async throws -> Int {
         let target = try await directory.resolveTarget(named: roomName, needsSpotifyMetadata: false)
         let volume = try await renderingControl.volumeDown(on: target, step: step)
-        await spotifyPlayback.mirrorVolumeIfNeeded(roomName: target.roomName, volume: volume)
+        await spotifyVolumeMirrorQueue.enqueue(roomName: target.roomName, volume: volume)
         return volume
     }
 
     func volumeUp(roomName: String, step: Int = 5) async throws -> Int {
         let target = try await directory.resolveTarget(named: roomName, needsSpotifyMetadata: false)
         let volume = try await renderingControl.volumeUp(on: target, step: step)
-        await spotifyPlayback.mirrorVolumeIfNeeded(roomName: target.roomName, volume: volume)
+        await spotifyVolumeMirrorQueue.enqueue(roomName: target.roomName, volume: volume)
         return volume
     }
 
@@ -37,7 +39,7 @@ final class SonosVolumeService: @unchecked Sendable {
     func setVolume(roomName: String, volume: Int) async throws -> Int {
         let target = try await directory.resolveTarget(named: roomName, needsSpotifyMetadata: false)
         let confirmedVolume = try await renderingControl.setVolume(on: target, to: volume)
-        await spotifyPlayback.mirrorVolumeIfNeeded(roomName: target.roomName, volume: confirmedVolume)
+        await spotifyVolumeMirrorQueue.enqueue(roomName: target.roomName, volume: confirmedVolume)
         return confirmedVolume
     }
 
@@ -64,14 +66,14 @@ final class SonosVolumeService: @unchecked Sendable {
     func groupVolumeDown(coordinatorRoomName: String, step: Int = 5) async throws -> Int {
         let target = try await directory.resolveTarget(named: coordinatorRoomName, needsSpotifyMetadata: false)
         let volume = try await renderingControl.groupVolumeDown(on: target, step: step)
-        await spotifyPlayback.mirrorVolumeIfNeeded(roomName: target.roomName, volume: volume)
+        await spotifyVolumeMirrorQueue.enqueue(roomName: target.roomName, volume: volume)
         return volume
     }
 
     func groupVolumeUp(coordinatorRoomName: String, step: Int = 5) async throws -> Int {
         let target = try await directory.resolveTarget(named: coordinatorRoomName, needsSpotifyMetadata: false)
         let volume = try await renderingControl.groupVolumeUp(on: target, step: step)
-        await spotifyPlayback.mirrorVolumeIfNeeded(roomName: target.roomName, volume: volume)
+        await spotifyVolumeMirrorQueue.enqueue(roomName: target.roomName, volume: volume)
         return volume
     }
 
@@ -83,7 +85,7 @@ final class SonosVolumeService: @unchecked Sendable {
     func setGroupVolume(coordinatorRoomName: String, volume: Int) async throws -> Int {
         let target = try await directory.resolveTarget(named: coordinatorRoomName, needsSpotifyMetadata: false)
         let confirmedVolume = try await renderingControl.setGroupVolume(on: target, to: volume)
-        await spotifyPlayback.mirrorVolumeIfNeeded(roomName: target.roomName, volume: confirmedVolume)
+        await spotifyVolumeMirrorQueue.enqueue(roomName: target.roomName, volume: confirmedVolume)
         return confirmedVolume
     }
 

@@ -129,19 +129,14 @@ struct Semantics {
         )
 
         expectEqual(
-            adapter.backendName(command: .next, target: helium),
+            adapter.backendName(for: helium),
             nil,
             "Helium desktop targets must not be owned by a fallback backend"
-        )
-        expectEqual(
-            adapter.backendName(command: .playPause, target: helium),
-            nil,
-            "Helium desktop play/pause must require the Chromium extension route"
         )
         expectEqual(adapter.submit(command: .playPause, target: helium), nil, "Helium desktop targets must fail closed without fallback commands")
 
         expectEqual(
-            adapter.backendName(command: .playPause, target: heliumExtension),
+            adapter.backendName(for: heliumExtension),
             nil,
             "Helium extension rows must not be claimed by the Helium desktop automation backend"
         )
@@ -152,11 +147,11 @@ struct Semantics {
         )
 
         expectEqual(
-            adapter.backendName(command: .next, target: spotify),
-            MediaDesktopTransportBackend.spotifyAppleEvent.rawValue,
-            "Spotify next must be owned by Spotify AppleEvents"
+            adapter.backendName(for: spotify),
+            "spotify_apple_event",
+            "Spotify targets must be owned by Spotify AppleEvents"
         )
-        expectEqual(adapter.backendName(command: .next, target: other), nil, "Unknown targets must not claim a desktop backend")
+        expectEqual(adapter.backendName(for: other), nil, "Unknown targets must not claim a desktop backend")
         expectEqual(adapter.submit(command: .next, target: other), nil, "Unknown targets must remain unhandled by the desktop adapter")
 
         print("verify_desktop_transport_semantics=ok")
@@ -230,6 +225,22 @@ def assert_order(needles, message):
     positions = [index(needle) for needle in needles]
     if positions != sorted(positions):
         fail(message)
+
+if "MediaDesktopTransportBackend" in source or "backend(for target:" in source:
+    fail("single-backend desktop transport must not retain an enum or backend selector")
+
+if 'private static let spotifyAppleEventBackend = "spotify_apple_event"' not in source:
+    fail("Spotify desktop transport must expose its backend name as a static constant")
+
+if source.count("guard !ChromiumBrowserExtensionTransport.isTarget(target) else") != 1 \
+        or source.count("guard Self.isSpotifyTarget(target) else") != 1:
+    fail("desktop transport eligibility must have one canonical Spotify target guard")
+
+if "guard backendName(for: target) != nil else" not in source:
+    fail("desktop command submission must reuse backend-name eligibility")
+
+if "switch backend" in source:
+    fail("single-backend desktop transport must dispatch directly without a switch")
 
 assert_order(
     [

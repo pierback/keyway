@@ -62,7 +62,7 @@ if [[ -z "$browser_path" ]]; then
 fi
 
 playwright_module="$(
-  bun --input-type=module -e "console.log(await import.meta.resolve('playwright'))" \
+  node --input-type=module -e "console.log(await import.meta.resolve('playwright'))" \
     || fail "Playwright must be available to launch Chromium with extension support"
 )"
 
@@ -168,7 +168,7 @@ JS
 
 browser_ready_file="$workdir/browser-ready"
 browser_log_file="$workdir/browser.log"
-bun "$workdir/launch-browser.mjs" \
+node "$workdir/launch-browser.mjs" \
   "$playwright_module" \
   "$browser_path" \
   "$profile_dir" \
@@ -335,7 +335,6 @@ const targetScriptURL = `chrome-extension://${extensionID}/service_worker.js`;
 const socket = new WebSocket(`ws://127.0.0.1:${port}${wsPath}`);
 const pending = new Map();
 let nextID = 1;
-let versions = [];
 
 socket.addEventListener("message", event => {
   const message = JSON.parse(event.data);
@@ -348,9 +347,6 @@ socket.addEventListener("message", event => {
       resolve(message.result || {});
     }
     return;
-  }
-  if (message.method === "ServiceWorker.workerVersionUpdated") {
-    versions = message.params.versions || [];
   }
 });
 
@@ -365,25 +361,15 @@ function send(method, params = {}) {
   });
 }
 
-async function waitForVersion() {
-  const deadline = Date.now() + 5000;
-  while (Date.now() < deadline) {
-    const version = versions.find(candidate => candidate.scriptURL === targetScriptURL && candidate.runningStatus === "running")
-      || versions.find(candidate => candidate.scriptURL === targetScriptURL);
-    if (version) return version;
-    await new Promise(resolve => setTimeout(resolve, 50));
-  }
-  throw new Error(`did not find extension service worker version for ${targetScriptURL}`);
-}
-
-await send("ServiceWorker.enable");
-const version = await waitForVersion();
-await send("ServiceWorker.stopWorker", { versionId: version.versionId });
+const { targetInfos } = await send("Target.getTargets");
+const worker = targetInfos.find(target => target.type === "service_worker" && target.url === targetScriptURL);
+if (!worker) throw new Error(`did not find extension service worker for ${targetScriptURL}`);
+await send("Target.closeTarget", { targetId: worker.targetId });
 socket.close();
-console.log(`chromium_worker_suspension_stopped_version=${version.versionId}`);
+console.log(`chromium_worker_suspension_stopped_target=${worker.targetId}`);
 JS
 
-bun "$workdir/stop-worker.mjs" "$devtools_active_port" "$extension_id"
+node "$workdir/stop-worker.mjs" "$devtools_active_port" "$extension_id"
 
 for _ in {1..500}; do
   if [[ -s "$monitor_done_file" || -s "$monitor_fail_file" ]]; then

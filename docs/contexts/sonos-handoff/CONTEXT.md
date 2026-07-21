@@ -6,21 +6,17 @@
 
 The product flow that activates a Sonos speaker as the Spotify playback device while keeping Spotify as the controller. It does not rely on Spotify Web API available-device transfer because Sonos speakers may be omitted from that device list.
 
-### Sonos Runtime
+### Spotify Connect Handoff Service
 
-The core Module that assembles the Spotify Connect Handoff runtime graph behind the public `SpotifyConnectHandoffService` Adapter. It delegates discovery, volume, Spotify playback, and transfer workflows to narrower Modules so callers do not know zeroconf paths, SOAP actions, DNS-SD parsing, token file formats, or active-device polling rules.
+The public core Adapter that assembles the shared Sonos Directory, Spotify Connect Bridge, transfer, grouping, volume, and AVTransport Modules. Callers use its narrow Interfaces without knowing zeroconf paths, SOAP actions, DNS-SD parsing, token formats, or active-device polling rules.
 
 ### Sonos Directory
 
-The core actor that owns Output target resolution, Spotify zeroconf metadata lookup, visible speaker discovery, and the short-lived target cache. The menu app's Output list and Sonos Runtime's handoff path both depend on this Module so discovery behavior stays consistent.
+The core actor that owns Output target resolution, Spotify zeroconf metadata lookup, visible speaker discovery, and the short-lived target cache. The menu app's Output list and the handoff path both depend on this Module so discovery behavior stays consistent.
 
 ### Sonos Volume Service
 
-The core Module that owns Sonos Output volume actions at the room-name Interface. It resolves the Output through Sonos Directory, delegates RenderingControl SOAP calls to Sonos Rendering Control, and asks Spotify Playback Service to mirror confirmed local volume writes back to Spotify when the Output is active.
-
-### Spotify Playback Service
-
-The core Module that owns active Spotify device lookup, active-device verification, and best-effort Spotify active-device volume mirroring. It is the playback-state seam used by startup sync, transfer verification, and volume mirroring.
+The core Module that owns Sonos Output volume actions at the room-name Interface. It resolves the Output through Sonos Directory, delegates RenderingControl SOAP calls to Sonos Rendering Control, and queues confirmed local volume writes for Spotify Connect Bridge to mirror when the Output is active.
 
 ### Spotify Connect Transfer Service
 
@@ -38,9 +34,9 @@ The core Module that owns room-name normalization and equality across Spotify, S
 
 The core Module that chooses the selected Output from the currently visible Sonos speakers and the current menu selection. It preserves a visible current Output and finally chooses the first visible Output, so discovery-driven Output removal and startup fallback use one tested rule.
 
-### Sonos Output Preference Resolver
+### Media Audio Sonos Target
 
-The core Module that owns Output fallback policy: the `Port` fallback and the ordered preferred room list used by shortcut volume fallback. Shortcut Volume Actions use this Module so missing-selection fallback cannot drift.
+The menu app's Audio Controls path normalizes the live selected Output before sending Sonos volume or mute actions. A selected Output in a multi-speaker group uses group actions; standalone selections use member actions. When no Output is selected, this path alone falls back to `Port` with member scope. Shortcut Volume Actions instead fall back to Spotify when no Sonos Output is selected.
 
 ### Sonos DNS-SD Resolver
 
@@ -64,7 +60,7 @@ The core Module that owns the selected Output volume-control state transitions u
 
 ### Sonos Spotify Zeroconf Client
 
-The core Adapter for Sonos `/spotifyzc` calls. It owns the HTTP method, form encoding, response validation, and metadata extraction used by the Sonos Directory and Sonos Runtime.
+The core Adapter for Sonos `/spotifyzc` calls. It owns the HTTP method, form encoding, response validation, and metadata extraction used by Sonos Directory and Spotify Connect Transfer Service.
 
 ### Spotify Connect Bridge
 
@@ -148,7 +144,7 @@ The menu app Module that executes menu-triggered Output volume reads and writes 
 
 ### Playback Transfer Actions
 
-The menu app Module that executes menu-triggered Output transfer. It owns calls through the Sonos Runtime Adapter and transfer logging; Playback Sync owns only the loading, selection, and failure state, and validates that transfer results still belong to the current in-flight Output generation.
+The menu app Module that executes menu-triggered Output transfer. It calls the Room Handoff Interface and owns transfer logging; Playback Sync owns only the loading, selection, and failure state, and validates that transfer results still belong to the current in-flight Output generation.
 
 ### Volume Monitor
 

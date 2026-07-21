@@ -57,14 +57,6 @@ struct MediaTransportInputMetadata: Equatable {
             && sourceGroupID == other.sourceGroupID
     }
 
-    func matchesSameHIDSystemSource(as other: MediaTransportInputMetadata) -> Bool {
-        isPhysicalHIDSystemSource
-            && other.isPhysicalHIDSystemSource
-            && sourceUnixProcessID == other.sourceUnixProcessID
-            && sourceUserID == other.sourceUserID
-            && sourceGroupID == other.sourceGroupID
-    }
-
     private func eventTimestampsMatch(_ lhs: UInt64, _ rhs: UInt64) -> Bool {
         let delta = lhs > rhs ? lhs - rhs : rhs - lhs
         return delta <= 1_000_000

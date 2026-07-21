@@ -16,10 +16,10 @@ def configure_base_settings(target, bundle_id:, deployment_target:, info_plist: 
     settings['MACOSX_DEPLOYMENT_TARGET'] = deployment_target
     settings['PRODUCT_BUNDLE_IDENTIFIER'] = bundle_id if bundle_id
     settings['PRODUCT_NAME'] = product_name if product_name
-    settings['CODE_SIGN_IDENTITY'] = '-'
-    settings['CODE_SIGN_STYLE'] = 'Automatic'
-    settings['DEVELOPMENT_TEAM'] = ''
-    settings['ENABLE_HARDENED_RUNTIME'] = 'NO'
+    settings['CODE_SIGN_IDENTITY'] = 'Developer ID Application'
+    settings['CODE_SIGN_STYLE'] = 'Manual'
+    settings['DEVELOPMENT_TEAM'] = '7Q44SDV7BM'
+    settings['ENABLE_HARDENED_RUNTIME'] = 'YES'
     settings['GENERATE_INFOPLIST_FILE'] = info_plist.nil? ? 'YES' : 'NO'
     settings['INFOPLIST_FILE'] = info_plist if info_plist
   end
@@ -67,6 +67,7 @@ def add_mediaremote_helper_build_phase(target)
 
     /usr/bin/xcrun lipo -create "${ARCH_OUTPUTS[@]}" -output "$HELPER_LIB"
     rm -f "${ARCH_OUTPUTS[@]}"
+    /usr/bin/codesign --force --options runtime --timestamp --sign "$EXPANDED_CODE_SIGN_IDENTITY" "$HELPER_LIB"
 
     cp "$HELPER_SRC/keyway-mediaremote-helper.pl" "$HELPER_DEST/keyway-mediaremote-helper.pl"
     chmod +x "$HELPER_DEST/keyway-mediaremote-helper.pl"
@@ -83,26 +84,34 @@ end
 
 def add_chromium_native_host_build_phase(target)
   phase = target.new_shell_script_build_phase('Build Chromium Native Host')
+  phase.shell_path = '/bin/bash'
   phase.shell_script = <<~SH
     set -euo pipefail
 
     PACKAGE_DIR="$SRCROOT/../packages/SonosHandoffCore"
     HELPER_DEST="$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers"
+    HELPER="$HELPER_DEST/keyway-chromium-native-host"
     SWIFT_CONFIGURATION="$(printf '%s' "$CONFIGURATION" | tr '[:upper:]' '[:lower:]')"
-
-    case "$SWIFT_CONFIGURATION" in
-      debug|release) ;;
-      *) SWIFT_CONFIGURATION=debug ;;
-    esac
-
-    swift build \\
-      --package-path "$PACKAGE_DIR" \\
-      --product keyway-chromium-native-host \\
-      -c "$SWIFT_CONFIGURATION"
+    SDK_PATH="$(xcrun --sdk macosx --show-sdk-path)"
+    ARCH_OUTPUTS=()
 
     mkdir -p "$HELPER_DEST"
-    cp "$PACKAGE_DIR/.build/$SWIFT_CONFIGURATION/keyway-chromium-native-host" "$HELPER_DEST/keyway-chromium-native-host"
-    chmod +x "$HELPER_DEST/keyway-chromium-native-host"
+    for ARCH in ${ARCHS:?ARCHS must be set}; do
+      SCRATCH_PATH="$PROJECT_TEMP_DIR/keyway-chromium-native-host-$ARCH"
+      swift build \\
+        --package-path "$PACKAGE_DIR" \\
+        --product keyway-chromium-native-host \\
+        --configuration "$SWIFT_CONFIGURATION" \\
+        --triple "$ARCH-apple-macosx$MACOSX_DEPLOYMENT_TARGET" \\
+        --sdk "$SDK_PATH" \\
+        --scratch-path "$SCRATCH_PATH"
+      ARCH_OUTPUT="$SCRATCH_PATH/$ARCH-apple-macosx/$SWIFT_CONFIGURATION/keyway-chromium-native-host"
+      ARCH_OUTPUTS+=("$ARCH_OUTPUT")
+    done
+
+    /usr/bin/xcrun lipo -create "${ARCH_OUTPUTS[@]}" -output "$HELPER"
+    chmod +x "$HELPER"
+    /usr/bin/codesign --force --options runtime --timestamp --sign "$EXPANDED_CODE_SIGN_IDENTITY" "$HELPER"
   SH
   phase.input_paths = [
     '$(SRCROOT)/../packages/SonosHandoffCore/Sources/KeywayChromiumNativeHost/main.swift',
@@ -209,9 +218,12 @@ def build_menu_bar_project
 
   add_local_package_dependency(project, target, '../packages/SonosHandoffCore', 'SonosHandoffCore')
 
-  create_shared_scheme(project, 'Keyway', target)
   normalize_system_framework_refs(project, 'Cocoa.framework')
+  project.root_object.attributes['LastSwiftUpdateCheck'] = '1600'
+  project.root_object.attributes['LastUpgradeCheck'] = '1600'
+  Xcodeproj::Project::UUIDGenerator.new(project).generate!
   project.save
+  create_shared_scheme(project, 'Keyway', target)
 end
 
 def write_workspace

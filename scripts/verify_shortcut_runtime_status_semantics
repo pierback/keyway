@@ -4,13 +4,15 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 status_file="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutRuntimeStatus.swift"
 command_center_file="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaCommandCenterInterceptor.swift"
+hotkey_file="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/VolumeHotkeyController.swift"
 
-python3 - "$status_file" "$command_center_file" <<'PY'
+python3 - "$status_file" "$command_center_file" "$hotkey_file" <<'PY'
 import pathlib
 import sys
 
 text = pathlib.Path(sys.argv[1]).read_text()
 command_center = pathlib.Path(sys.argv[2]).read_text()
+hotkeys = pathlib.Path(sys.argv[3]).read_text()
 start = text.index("    private func persistSnapshot()")
 end = text.index("\n}\n\nextension Notification.Name", start)
 body = text[start:end]
@@ -56,6 +58,28 @@ for label, source in (
     for forbidden in ("try!", "} catch {}", "preconditionFailure(", "fatalError("):
         if forbidden in source:
             raise SystemExit(f"verify_shortcut_runtime_status_semantics: {label} must not force-crash or silently catch diagnostics failures: {forbidden}")
+
+retry_start = hotkeys.index("    private func schedulePermissionRetry()")
+retry_end = hotkeys.index("\n    private func stopPermissionRetry()", retry_start)
+retry_body = hotkeys[retry_start:retry_end]
+refresh_start = hotkeys.index("    func refreshMediaFallback(promptIfMissing: Bool) -> Bool")
+refresh_guard = hotkeys.index("        guard accessibilityGranted, listenEventGranted else {", refresh_start)
+refresh_prefix = hotkeys[refresh_start:refresh_guard]
+if "lastReportedPermissionState = (accessibilityGranted, listenEventGranted)" not in refresh_prefix:
+    raise SystemExit("verify_shortcut_runtime_status_semantics: every full permission refresh must synchronize retry deduplication state")
+denied_start = retry_body.index("            guard accessibilityGranted, listenEventGranted else {")
+denied_end = retry_body.index("\n                return", denied_start)
+denied_body = retry_body[denied_start:denied_end]
+for needle in (
+    "self.lastReportedPermissionState?.accessibilityGranted != accessibilityGranted",
+    "self.lastReportedPermissionState?.listenEventGranted != listenEventGranted",
+    "self.lastReportedPermissionState = (accessibilityGranted, listenEventGranted)",
+    "self.runtimeReporter.mediaFallbackPermissionDenied(",
+    "accessibilityGranted: accessibilityGranted",
+    "listenEventGranted: listenEventGranted",
+):
+    if needle not in denied_body:
+        raise SystemExit(f"verify_shortcut_runtime_status_semantics: permission retries must report changed partial permission state once: {needle}")
 PY
 
 printf 'verify_shortcut_runtime_status_semantics=ok\n'

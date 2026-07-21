@@ -21,7 +21,7 @@ cat >"$ok_status" <<'JSON'
 {
   "accessibilityGranted": true,
   "activeEventTap": "cghid",
-  "appPath": "/Users/f.pieringer/Applications/Keyway.app",
+  "appPath": "/Applications/Keyway.app",
   "commandCenterRouteRunning": true,
   "eventTapRunning": true,
   "listenEventGranted": true,
@@ -112,7 +112,7 @@ cat >"$no_input_status" <<'JSON'
 {
   "accessibilityGranted": true,
   "activeEventTap": "cghid",
-  "appPath": "/Users/f.pieringer/Applications/Keyway.app",
+  "appPath": "/Applications/Keyway.app",
   "commandCenterRouteRunning": true,
   "eventTapRunning": true,
   "listenEventGranted": true,
@@ -127,7 +127,7 @@ cat >"$unhandled_system_defined_status" <<'JSON'
 {
   "accessibilityGranted": true,
   "activeEventTap": "cghid",
-  "appPath": "/Users/f.pieringer/Applications/Keyway.app",
+  "appPath": "/Applications/Keyway.app",
   "commandCenterRouteRunning": true,
   "eventTapRunning": true,
   "listenEventGranted": true,
@@ -152,7 +152,7 @@ cat >"$capped_status" <<'JSON'
 {
   "accessibilityGranted": true,
   "activeEventTap": "cghid",
-  "appPath": "/Users/f.pieringer/Applications/Keyway.app",
+  "appPath": "/Applications/Keyway.app",
   "commandCenterRouteRunning": true,
   "eventTapRunning": true,
   "listenEventGranted": true,
@@ -176,7 +176,7 @@ cat >"$preflight_one_target_status" <<'JSON'
 {
   "accessibilityGranted": true,
   "activeEventTap": "cghid",
-  "appPath": "/Users/f.pieringer/Applications/Keyway.app",
+  "appPath": "/Applications/Keyway.app",
   "commandCenterRouteRunning": true,
   "eventTapRunning": true,
   "listenEventGranted": true,

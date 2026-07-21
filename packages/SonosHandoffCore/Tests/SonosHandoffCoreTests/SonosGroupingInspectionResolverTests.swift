@@ -28,10 +28,10 @@ struct SonosGroupingInspectionResolverTests {
     }
 
     @Test
-    func reportsNoSelectedGroupWithoutActiveVisiblePlayback() {
+    func doesNotTreatAVisibleGroupAsActiveWithoutPlayback() {
         let state = SonosGroupState(groups: [
-            group(coordinator: "Kitchen", members: ["Kitchen", "Port"]),
             standalone("Office"),
+            group(coordinator: "Kitchen", members: ["Kitchen", "Port"]),
         ])
 
         let report = resolver.report(

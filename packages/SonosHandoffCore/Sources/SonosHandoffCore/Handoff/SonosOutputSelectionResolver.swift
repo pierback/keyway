@@ -13,7 +13,6 @@ public struct SonosOutputSelectionResolver: Sendable {
             return matchingGroup.coordinator?.roomName
         }
 
-        // A selected output is active Spotify-on-Sonos playback, not a configured fallback target.
         return nil
     }
 }

@@ -164,6 +164,9 @@ for required in ("restartAttempts = 0", "cancelRecoveryTask()"):
     if required not in ready_body:
         raise SystemExit(f"verify_media_remote_helper_process_semantics: successful start must reset relaunch schedule: {required}")
 
+if "ignored_unowned_termination" in text:
+    raise SystemExit("verify_media_remote_helper_process_semantics: an owned unexpected termination must always schedule recovery")
+
 failure_probe = pathlib.Path(sys.argv[1]).with_name("MediaTransportActionController.swift").read_text()
 if "self?.mediaRemoteController.probeHelperLiveness()" not in failure_probe:
     raise SystemExit("verify_media_remote_helper_process_semantics: MediaRemote command failures must trigger an out-of-cycle liveness probe")

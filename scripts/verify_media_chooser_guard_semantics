@@ -38,7 +38,7 @@ struct ChooserGuardSemantics {
         let chooserID = guardStore.begin(command: .playPause)
         expectTrue(guardStore.isActive, "pending chooser command must create active guard state")
         expectEqual(guardStore.stateName, "visible", "new chooser must start visible")
-        expectEqual(guardStore.activeCommandRawValue(for: chooserID), "playPause", "active command must be visible for dismiss logging")
+        expectEqual(guardStore.activeCommand(for: chooserID)?.rawValue, "playPause", "active command must be visible for dismiss logging")
         expectEqual(guardStore.activeCommand(for: chooserID), .playPause, "active command must be accessible before selection")
         expectFalse(guardStore.finish(id: staleID), "stale finish must not clear visible chooser")
         expectTrue(guardStore.isActive, "stale finish must leave visible chooser active")
@@ -47,9 +47,8 @@ struct ChooserGuardSemantics {
         expectEqual(guardStore.stateName, "inactive", "finished chooser must report inactive")
 
         let selectedID = guardStore.begin(command: .pause)
-        expectTrue(guardStore.finish(id: selectedID, selected: true), "selected finish must clear chooser guard immediately")
+        expectTrue(guardStore.finish(id: selectedID), "selected finish must clear chooser guard immediately")
         expectFalse(guardStore.isActive, "selected finish must not leave post-selection routing state")
-        expectNil(guardStore.activeCommandRawValue(for: selectedID), "selected finish must clear active command lookup")
         expectNil(guardStore.activeCommand(for: selectedID), "selected finish must clear active command")
 
         let newerID = guardStore.begin(command: .next)
@@ -115,8 +114,8 @@ route_start = text.index("    private func routeFromCache(")
 route_end = text.index("\n    private func route(", route_start)
 route_body = text[route_start:route_end]
 required = [
-    "let routeStatus = currentRouteStatus(command: command)",
-    "guard routeStatus.kind != .unavailable else",
+    "let targets = sortedTargets(mediaSourceStore.rows.map(\\.target))",
+    "guard !targets.isEmpty else",
     "mediaRemoteController.refreshSnapshot()",
     "showChooserOverlay(",
 ]
@@ -135,12 +134,14 @@ for needle in [
     "rowUpdates: overlayRowUpdates()",
     "emptyDiagnostics:",
     "chooserReentryBlocked(",
-    "self.relaxRouteShield?(\"selected_row_dispatch\")",
+    "self.dispatchFromChooser(",
     "self.relaxRouteShield?(\"chooser_focus\")",
     "self.relaxRouteShield?(\"chooser_dismissed\")",
 ]:
     if needle not in show_body:
         fail(f"chooser overlay path must preserve re-entry/deferred semantics and contain {needle!r}")
+if "selected_row_dispatch\")" in show_body or "RouteShieldReleaseDelayNanoseconds" in show_body or "Task.sleep" in show_body:
+    fail("chooser row selection must dispatch immediately; MediaRemote fallback owns route-shield release")
 
 if "private func emptyDiscoveryDiagnostics()" not in text:
     fail("empty discovery must expose transport diagnostics for the confirmed-empty chooser state")

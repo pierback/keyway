@@ -68,26 +68,6 @@ struct RouteSourceSemantics {
             physical.matchesSameGeneratedMediaKey(as: nextPress),
             "fresh physical key presses must not match old generated-event identity"
         )
-        expectTrue(
-            physical.matchesSameHIDSystemSource(as: nextPress),
-            "chooser rebound suppression must recognize regenerated HID-system callbacks from the same source"
-        )
-        let rewrittenSourceHID = metadata(
-            sourceUnixProcessID: 999,
-            sourceStateID: 1,
-            sourceUserData: 0,
-            targetUnixProcessID: 456,
-            eventTimestamp: 10_000_200
-        )
-        expectFalse(
-            physical.matchesSameHIDSystemSource(as: rewrittenSourceHID),
-            "strict HID source matching must remain source-pid aware for diagnostics"
-        )
-        expectFalse(
-            physical.matchesSameHIDSystemSource(as: generatedProcessEvent),
-            "chooser rebound suppression must not treat ordinary process-generated callbacks as HID-system rebounds"
-        )
-
         print("verify_media_transport_route_source_semantics=ok")
     }
 

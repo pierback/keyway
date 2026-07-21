@@ -52,7 +52,6 @@ struct RefreshGateSemantics {
         let first = gate.begin(requestID: "first")
         expectEqual(first, "first", "first refresh must begin")
         expectTrue(gate.isRefreshing, "begun refresh must be visible")
-        expectEqual(gate.activeRequestID, "first", "active request id must be inspectable")
         expectNil(gate.begin(requestID: "second"), "second refresh must coalesce while first is in flight")
         expectTrue(gate.isRefreshing, "coalesced refresh must leave first in flight")
 

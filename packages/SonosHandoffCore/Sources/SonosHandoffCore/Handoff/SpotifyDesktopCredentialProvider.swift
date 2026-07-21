@@ -15,7 +15,8 @@ struct SpotifyDesktopCredentialProvider: Sendable {
         tokenClient: SpotifyConnectTokenClient,
         tokenRefreshLeewaySeconds: Int = 120
     ) {
-        self.preferredLoginID = preferredLoginID?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        let preferredLoginID = preferredLoginID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.preferredLoginID = preferredLoginID?.isEmpty == false ? preferredLoginID : nil
         self.desktopTokenURL = applicationSupportDirectory.appendingPathComponent("spotify-desktop-connect-tokens.json")
         self.tokenClient = tokenClient
         self.tokenRefreshLeewaySeconds = tokenRefreshLeewaySeconds
@@ -68,7 +69,9 @@ struct SpotifyDesktopCredentialProvider: Sendable {
         }
         token.expiresAt = Int(Date().timeIntervalSince1970) + refreshed.expiresIn
         tokens[key] = token
-        try ProjectWebAPITokenStore.writeSensitiveFileData(JSONEncoder.pretty.encode(tokens), to: desktopTokenURL)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try ProjectWebAPITokenStore.writeSensitiveFileData(encoder.encode(tokens), to: desktopTokenURL)
         return ConnectDesktopCredential(loginID: loginID, token: token)
     }
 }

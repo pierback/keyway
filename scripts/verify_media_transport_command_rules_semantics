@@ -20,24 +20,9 @@ enum MediaRemoteTransportCommand: String, Equatable {
     case pause
 }
 
-enum MediaTransportRoutingReason {
-    case single
-    case focused
-    case current
-    case recent
-    case chooser
-}
-
-enum MediaRouteStatusKind {
-    case auto
-    case focused
-    case chooser
-}
-
 enum MediaSourceReachability: Equatable {
     case live
     case suspect(reason: String, since: Date)
-    case gone
 }
 
 struct MediaRemoteTarget: Equatable, Identifiable {
@@ -73,11 +58,6 @@ struct CommandRuleSemantics {
             MediaTransportCommandRules.rowScopedCommand(.next, for: target(id: "playing", playing: true)),
             .next,
             "Non-Play/Pause row dispatch must keep the requested command"
-        )
-        expectEqual(
-            MediaTransportCommandRules.statusKind(for: .recent),
-            .auto,
-            "Remembered-target automatic routing must remain an automatic status"
         )
         expectFalse(
             MediaTransportCommandRules.shouldOpenChooserForAutomaticRoute(reachability: .live),

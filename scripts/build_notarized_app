@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+OUTPUT_DIR="$ROOT_DIR/.build/distribution"
+ARCHIVE_PATH="$OUTPUT_DIR/Keyway.xcarchive"
+EXPORT_PATH="$OUTPUT_DIR/notarized"
+APP_PATH="$EXPORT_PATH/Keyway.app"
+NOTARIZATION_MAX_ATTEMPTS="${KEYWAY_NOTARIZATION_MAX_ATTEMPTS:-90}"
+NOTARIZATION_POLL_SECONDS="${KEYWAY_NOTARIZATION_POLL_SECONDS:-20}"
+
+if [[ ! "$NOTARIZATION_MAX_ATTEMPTS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "error: KEYWAY_NOTARIZATION_MAX_ATTEMPTS must be a positive integer" >&2
+  exit 1
+fi
+
+if [[ ! "$NOTARIZATION_POLL_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "error: KEYWAY_NOTARIZATION_POLL_SECONDS must be a positive integer" >&2
+  exit 1
+fi
+
+rm -rf "$ARCHIVE_PATH" "$OUTPUT_DIR/upload" "$EXPORT_PATH"
+mkdir -p "$OUTPUT_DIR"
+
+xcodebuild \
+  -workspace "$ROOT_DIR/Keyway.xcworkspace" \
+  -scheme Keyway \
+  -configuration Release \
+  -destination 'generic/platform=macOS' \
+  -archivePath "$ARCHIVE_PATH" \
+  archive
+
+xcodebuild \
+  -exportArchive \
+  -archivePath "$ARCHIVE_PATH" \
+  -exportPath "$OUTPUT_DIR/upload" \
+  -exportOptionsPlist "$ROOT_DIR/scripts/developer_id_export_options.plist" \
+  -allowProvisioningUpdates
+
+for ((attempt = 1; attempt <= NOTARIZATION_MAX_ATTEMPTS; attempt++)); do
+  if export_output="$(
+    xcodebuild \
+      -exportNotarizedApp \
+      -archivePath "$ARCHIVE_PATH" \
+      -exportPath "$EXPORT_PATH" \
+      2>&1
+  )"; then
+    break
+  fi
+
+  if [[ "$export_output" != *'is processing and not ready for distribution'* ]]; then
+    printf '%s\n' "$export_output" >&2
+    exit 1
+  fi
+
+  if (( attempt == NOTARIZATION_MAX_ATTEMPTS )); then
+    echo "error: notarization was still processing after $NOTARIZATION_MAX_ATTEMPTS attempts" >&2
+    printf '%s\n' "$export_output" >&2
+    exit 1
+  fi
+
+  sleep "$NOTARIZATION_POLL_SECONDS"
+done
+
+codesign --verify --deep --strict --verbose=4 "$APP_PATH"
+xcrun stapler validate "$APP_PATH"
+spctl --assess --type execute --verbose=4 "$APP_PATH"
+
+VERSION="$(plutil -extract CFBundleShortVersionString raw -o - "$APP_PATH/Contents/Info.plist")"
+ZIP_PATH="$OUTPUT_DIR/Keyway-$VERSION.zip"
+rm -f "$ZIP_PATH"
+ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
+
+printf 'notarized_app=%s\nrelease_zip=%s\n' "$APP_PATH" "$ZIP_PATH"

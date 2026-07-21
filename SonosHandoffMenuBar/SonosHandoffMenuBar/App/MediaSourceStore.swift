@@ -4,59 +4,26 @@ import Foundation
 enum MediaSourceReachability: Equatable, Sendable {
     case live
     case suspect(reason: String, since: Date)
-    case gone
 
     var isSuspect: Bool {
         switch self {
         case .suspect:
             return true
-        case .live, .gone:
+        case .live:
             return false
         }
-    }
-}
-
-struct MediaSourceCapabilities: Equatable, Sendable {
-    let supportedCommands: [MediaRemoteTransportCommand]?
-
-    init(target: MediaRemoteTarget) {
-        self.supportedCommands = target.supportedCommands
-    }
-}
-
-struct MediaSourceAudioState: Equatable, Sendable {
-    let playbackRate: String
-    let duration: Double?
-    let elapsedTime: Double?
-    let elapsedTimestamp: Double?
-    let muted: Bool
-
-    init(target: MediaRemoteTarget) {
-        self.playbackRate = target.playbackRate
-        self.duration = target.duration
-        self.elapsedTime = target.elapsedTime
-        self.elapsedTimestamp = target.elapsedTimestamp
-        self.muted = target.muted == true
     }
 }
 
 struct SourceRow: Equatable, Identifiable, Sendable {
     let target: MediaRemoteTarget
     let reachability: MediaSourceReachability
-    let capabilities: MediaSourceCapabilities
-    let audioState: MediaSourceAudioState
 
     var id: String { target.id }
 
     init(target: MediaRemoteTarget, reachability: MediaSourceReachability = .live) {
         self.target = target
         self.reachability = reachability
-        self.capabilities = MediaSourceCapabilities(target: target)
-        self.audioState = MediaSourceAudioState(target: target)
-    }
-
-    func updated(target: MediaRemoteTarget) -> SourceRow {
-        SourceRow(target: target, reachability: reachability)
     }
 }
 
@@ -76,10 +43,6 @@ final class MediaSourceStore: ObservableObject {
     private var latestControllerTargets: [MediaRemoteTarget] = []
     private var retainedMediaRemoteTargets: [MediaRemoteTarget] = []
     private let now: () -> Date
-
-    var targets: [MediaRemoteTarget] {
-        rows.map(\.target)
-    }
 
     init(
         mediaRemoteController: MediaRemoteController,
@@ -150,12 +113,13 @@ final class MediaSourceStore: ObservableObject {
     }
 
     private func rebuildRows() {
-        let targets = rowTargets()
-        let previousRowsByID = Dictionary(rows.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
-        rows = targets.map { target in
-            let row = previousRowsByID[target.id]?.updated(target: target) ?? SourceRow(target: target)
-            return row.withReachability(reachability(for: target))
+        let updatedRows = rowTargets().map { target in
+            SourceRow(target: target, reachability: reachability(for: target))
         }
+        guard updatedRows != rows else {
+            return
+        }
+        rows = updatedRows
     }
 
     private func replaceChromiumSilentSuspects(_ suspectTargetIDs: Set<String>) {
@@ -252,11 +216,5 @@ final class MediaSourceStore: ObservableObject {
             self.retainedMediaRemoteTargets = []
             self.rebuildRows()
         }
-    }
-}
-
-private extension SourceRow {
-    func withReachability(_ reachability: MediaSourceReachability) -> SourceRow {
-        SourceRow(target: target, reachability: reachability)
     }
 }

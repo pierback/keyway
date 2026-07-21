@@ -151,7 +151,9 @@ struct SonosTransferVerifierTests {
             playbackPollDelayNanoseconds: playbackPollDelayNanoseconds
         )
         return SonosTransferVerifier(
-            soapClient: SonosSOAPClient(urlSession: URLSession(configuration: configuration)),
+            avTransport: SonosAVTransport(
+                soapClient: SonosSOAPClient(urlSession: URLSession(configuration: configuration))
+            ),
             timing: timing,
             sleep: sleep
         )

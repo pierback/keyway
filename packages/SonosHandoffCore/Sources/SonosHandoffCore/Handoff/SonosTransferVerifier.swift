@@ -64,16 +64,16 @@ struct SonosTransferVerifierTiming: Equatable, Sendable {
 }
 
 struct SonosTransferVerifier {
-    private let soapClient: SonosSOAPClient
+    private let avTransport: SonosAVTransport
     private let timing: SonosTransferVerifierTiming
     private let sleep: @Sendable (UInt64) async throws -> Void
 
     init(
-        soapClient: SonosSOAPClient,
+        avTransport: SonosAVTransport,
         timing: SonosTransferVerifierTiming = .full,
         sleep: @escaping @Sendable (UInt64) async throws -> Void = { try await Task.sleep(nanoseconds: $0) }
     ) {
-        self.soapClient = soapClient
+        self.avTransport = avTransport
         self.timing = timing
         self.sleep = sleep
     }
@@ -83,7 +83,7 @@ struct SonosTransferVerifier {
 
         var lastURI = ""
         for attempt in 0 ..< timing.activationPollAttempts {
-            lastURI = try await currentURI(on: target)
+            lastURI = try await avTransport.currentURI(on: target)
             if Self.isSpotifyConnectURI(lastURI) {
                 return
             }
@@ -97,9 +97,7 @@ struct SonosTransferVerifier {
     }
 
     func playAndVerifyReadiness(on target: ConnectSonosTarget) async throws -> SonosPlaybackReadiness {
-        _ = try await soapClient.call(host: target.host, service: "AVTransport", action: "Play", path: "/MediaRenderer/AVTransport/Control", body: """
-        <u:Play xmlns:u="urn:schemas-upnp-org:service:AVTransport:1"><InstanceID>0</InstanceID><Speed>1</Speed></u:Play>
-        """)
+        try await avTransport.play(on: target)
 
         return try await waitForPlaybackOrSpotifyConnectReadiness(on: target)
     }
@@ -107,7 +105,7 @@ struct SonosTransferVerifier {
     private func waitForPlaybackOrSpotifyConnectReadiness(on target: ConnectSonosTarget) async throws -> SonosPlaybackReadiness {
         var lastState: String?
         for attempt in 0 ..< timing.playbackPollAttempts {
-            lastState = try await transportState(on: target)
+            lastState = try await avTransport.transportState(on: target)
             if lastState == "PLAYING" || lastState == "TRANSITIONING" {
                 return .transportStarted
             }
@@ -117,26 +115,12 @@ struct SonosTransferVerifier {
             }
         }
 
-        let currentURI = try await currentURI(on: target)
+        let currentURI = try await avTransport.currentURI(on: target)
         guard Self.isSpotifyConnectURI(currentURI) else {
             throw ConnectHandoffError(.transferVerificationFailed, "\(target.roomName) left Spotify Connect mode; state=\(lastState ?? "unknown") CurrentURI=\(currentURI)")
         }
 
         return .spotifyConnectModeOnly
-    }
-
-    private func currentURI(on target: ConnectSonosTarget) async throws -> String {
-        let mediaInfo = try await soapClient.call(host: target.host, service: "AVTransport", action: "GetMediaInfo", path: "/MediaRenderer/AVTransport/Control", body: """
-        <u:GetMediaInfo xmlns:u="urn:schemas-upnp-org:service:AVTransport:1"><InstanceID>0</InstanceID></u:GetMediaInfo>
-        """)
-        return SonosRuntimeSupport.xmlUnescape(SonosRuntimeSupport.firstMatch(#"<CurrentURI>([^<]*)</CurrentURI>"#, in: mediaInfo) ?? "")
-    }
-
-    private func transportState(on target: ConnectSonosTarget) async throws -> String? {
-        let transportInfo = try await soapClient.call(host: target.host, service: "AVTransport", action: "GetTransportInfo", path: "/MediaRenderer/AVTransport/Control", body: """
-        <u:GetTransportInfo xmlns:u="urn:schemas-upnp-org:service:AVTransport:1"><InstanceID>0</InstanceID></u:GetTransportInfo>
-        """)
-        return SonosRuntimeSupport.firstMatch(#"<CurrentTransportState>([^<]*)</CurrentTransportState>"#, in: transportInfo)
     }
 
     private static func isSpotifyConnectURI(_ currentURI: String) -> Bool {

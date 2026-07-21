@@ -4,6 +4,34 @@ import Testing
 
 struct SonosDiscoveryCommandRunnerTests {
     @Test
+    func runnerTreatsCollectionTimeoutAsSuccess() throws {
+        let result = try SonosShellDiscoveryCommandRunner().run(
+            SonosDiscoveryCommand(
+                executable: "/bin/sleep",
+                arguments: ["1"],
+                timeoutSeconds: 0.01
+            )
+        )
+
+        #expect(result.status == 0)
+    }
+
+    @Test
+    func resolverReportsBrowseCommandFailure() async {
+        let resolver = SonosDNSSDResolver(commandRunner: FailedSonosDiscoveryCommandRunner())
+
+        do {
+            _ = try await resolver.discoverInstances()
+            Issue.record("Expected failed dns-sd browse to throw.")
+        } catch let error as ConnectHandoffError {
+            #expect(error.code == .targetNotVisible)
+            #expect(error.message.contains("DNSServiceBrowse failed"))
+        } catch {
+            Issue.record("Expected ConnectHandoffError, got \(error).")
+        }
+    }
+
+    @Test
     func outputBufferKeepsOnlyRecentBoundedOutput() {
         let buffer = SonosDiscoveryCommandOutputBuffer(stopWhen: nil)
         let oversized = String(repeating: "a", count: SonosDiscoveryCommandOutputBuffer.outputBytesMax + 12)
@@ -26,5 +54,11 @@ struct SonosDiscoveryCommandRunnerTests {
 
         buffer.append(Data(" trailing".utf8))
         #expect(buffer.shouldStop)
+    }
+}
+
+private struct FailedSonosDiscoveryCommandRunner: SonosDiscoveryCommandRunning {
+    func run(_ command: SonosDiscoveryCommand) throws -> SonosDiscoveryCommandResult {
+        SonosDiscoveryCommandResult(output: "DNSServiceBrowse failed -65563", status: 1)
     }
 }

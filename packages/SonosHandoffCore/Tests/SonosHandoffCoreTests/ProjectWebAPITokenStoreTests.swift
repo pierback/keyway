@@ -50,6 +50,21 @@ struct ProjectWebAPITokenStoreTests {
         #expect(!store.hasCompleteToken())
     }
 
+    @Test
+    func rejectsTokenWithoutExpiry() throws {
+        let directory = try temporaryApplicationSupportDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        try Data(#"{"access_token":"access-token","refresh_token":"refresh-token","client_id":"client-id"}"#.utf8)
+            .write(to: directory.appendingPathComponent("project-webapi-token.json"))
+
+        let store = ProjectWebAPITokenStore(applicationSupportDirectory: directory)
+
+        #expect(!store.hasCompleteToken())
+    }
+
     private func temporaryApplicationSupportDirectory() throws -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("sonos-handoff-project-token-\(UUID().uuidString)", isDirectory: true)

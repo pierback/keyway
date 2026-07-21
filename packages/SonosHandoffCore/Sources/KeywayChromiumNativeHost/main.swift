@@ -265,6 +265,9 @@ func payloadByMatchingConnectionID(_ payload: String) -> Data? {
         fputs("Keyway Chromium native host: ignoring malformed command payload.\n", stderr)
         return nil
     }
+    if root["type"] as? String == "reloadExtension", root["connectionID"] == nil {
+        return data
+    }
     guard let payloadConnectionID = root["connectionID"] as? String else {
         return nil
     }

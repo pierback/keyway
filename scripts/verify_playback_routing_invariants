@@ -22,6 +22,7 @@ remote_helper_process="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/Me
 status_item="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/KeywayStatusItemController.swift"
 menu_bar_media_sources="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MenuBarMediaSourceSection.swift"
 app_environment="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/Support/AppEnvironment.swift"
+app_delegate="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/AppDelegate.swift"
 info_plist="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/Resources/Info.plist"
 runtime_status="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutRuntimeStatus.swift"
 runtime_reporter="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutRuntimeReporter.swift"
@@ -142,7 +143,7 @@ text = pathlib.Path(sys.argv[1]).read_text()
 target_resolver = pathlib.Path(sys.argv[2]).read_text()
 route_body = text[
     text.index("    private func route("):
-    text.index("    func showChooser(command:", text.index("    private func route("))
+    text.index("    func showTargetChooser(", text.index("    private func route("))
 ]
 if "routeFromCache(\n            command: command,\n            source: source,\n            metadata: metadata,\n            commandCenterMetadata: commandCenterMetadata\n        )" not in route_body:
     raise SystemExit("verify_playback_routing_invariants: cache routing must preserve source metadata for ambiguous target chooser dispatch")
@@ -179,7 +180,7 @@ for required in (
         raise SystemExit(f"verify_playback_routing_invariants: chooser reentry helper is missing required behavior: {required}")
 if "chooserReentryBlocked(" not in show_chooser_immediately:
     raise SystemExit("verify_playback_routing_invariants: direct chooser entry must check reentry before refreshing cached targets")
-if show_chooser_immediately.index("chooserReentryBlocked(") > show_chooser_immediately.index("let cached = sortedTargets(mediaSourceStore.targets)"):
+if show_chooser_immediately.index("chooserReentryBlocked(") > show_chooser_immediately.index("let cached = sortedTargets(mediaSourceStore.rows.map(\\.target))"):
     raise SystemExit("verify_playback_routing_invariants: direct chooser entry must block reentry before refreshing cached targets")
 if "chooserReentryBlocked(" not in show_chooser_overlay:
     raise SystemExit("verify_playback_routing_invariants: chooser presentation path must guard reentry")
@@ -256,18 +257,23 @@ for forbidden in (
 ):
     if forbidden in text:
         raise SystemExit(f"verify_playback_routing_invariants: hard-cutover must remove the obsolete Spotify fallback surface: {forbidden}")
-failure_body = text[
-    text.index("    private func showCommandFailureIfNeeded(result: MediaRemoteCommandResultEvent, target: MediaRemoteTarget) {"):
-    text.index("\n    }\n\n}", text.index("    private func showCommandFailureIfNeeded(result: MediaRemoteCommandResultEvent, target: MediaRemoteTarget) {"))
-]
+result_start = text.index("    private func showCommandResult(")
+result_body = text[result_start:text.index("\n    }\n\n}", result_start)]
 automation_check = 'if result.message.contains("-1743") {'
 unsupported_check = "if result.unsupported {"
-if automation_check not in failure_body:
+if automation_check not in result_body:
     raise SystemExit("verify_playback_routing_invariants: Automation denial hint must be handled explicitly")
-if unsupported_check not in failure_body:
+if unsupported_check not in result_body:
     raise SystemExit("verify_playback_routing_invariants: generic unsupported HUD branch is missing")
-if failure_body.index(automation_check) > failure_body.index(unsupported_check):
+if result_body.index(automation_check) > result_body.index(unsupported_check):
     raise SystemExit("verify_playback_routing_invariants: Automation denial hint must be checked before the generic unsupported branch")
+for required in (
+    "if result.ok",
+    "guard case .programmatic = context",
+    'title: "\\(command.displayName) → \\(target.appName)"',
+):
+    if required not in result_body:
+        raise SystemExit("verify_playback_routing_invariants: automatic routing confirmation is incomplete")
 PY
 
 if grep -q 'cgSessionEventTap\|case session' "$event_tap"; then
@@ -445,10 +451,7 @@ grep -q 'decision_current_targets' "$transport" \
   || fail "play, pause, play/pause, previous, and next must share current-target ambiguity routing"
 
 grep -q 'MediaTransportCommandRules.rowScopedCommand(command, for: target)' "$transport" \
-  || fail "chooser Play/Pause must resolve normal targets from the selected row state, not a post-key refreshed target state"
-
-grep -q 'desktopTransport.keepsPlayPauseToggle(for: target)' "$transport" \
-  || fail "desktop chooser Play/Pause must keep app-owned transport toggles because MediaRemote playbackRate can be stale"
+  || fail "MediaRemote Play/Pause must resolve from the target's visible playback state"
 
 grep -q 'com.spotify.client' "$desktop_adapter" \
   || fail "Spotify must have a selected-row desktop transport when MediaRemote player-path commands are stale"
@@ -476,14 +479,20 @@ fi
 grep -q 'NSAppleEventsUsageDescription' "$info_plist" \
   || fail "in-process Spotify Apple Events must declare Automation usage"
 
-grep -q 'transportBackendName(command: command, target: target)' "$transport" \
+[[ -n "$(plutil -extract NSLocalNetworkUsageDescription raw "$info_plist" 2>/dev/null)" ]] \
+  || fail "Sonos discovery must declare why Keyway uses the local network"
+
+[[ "$(plutil -extract NSBonjourServices.0 raw "$info_plist" 2>/dev/null)" == '_sonos._tcp' ]] \
+  || fail "Sonos discovery must declare its Bonjour service type"
+
+grep -q 'let transportBackend = desktopTransportName(target: target)' "$transport" \
   || fail "chooser dispatch traces must expose the selected transport backend"
 
 grep -q 'transportBackend: result.backend' "$transport" \
   || fail "desktop helper results must preserve their selected transport backend"
 
-grep -q 'selected_row_dispatch_route_shield_kept' "$transport" \
-  || fail "desktop selected-row dispatch must keep the route shield armed"
+! grep -q 'selected_row_dispatch_route_shield_kept' "$transport" \
+  || fail "desktop route-shield retention must be structural, not duplicated as chooser-only trace state"
 
 grep -q 'return target.isCurrentlyPlaying ? .pause : .play' "$command_rules" \
   || fail "normal chooser Play/Pause must not send a global toggle when the selected row already tells us play state"
@@ -543,49 +552,57 @@ after_overlay = chooser_from_cache[chooser_from_cache.index("showChooserOverlay(
 if "refreshSnapshot()" in after_overlay:
     raise SystemExit("verify_playback_routing_invariants: chooser open must not queue a MediaRemote refresh that can block selected-row dispatch")
 on_choose = text.index("onChoose: {")
-on_dismiss = text.index("onDismiss:", on_choose)
-choose_body = text[on_choose:on_dismiss]
+on_focus = text.index("onFocus:", on_choose)
+choose_body = text[on_choose:on_focus]
 if "self.currentTarget(matching: target)" in choose_body:
     raise SystemExit("verify_playback_routing_invariants: chooser clicks must not rewrite the selected row id before dispatch")
 if "to: target" not in choose_body:
     raise SystemExit("verify_playback_routing_invariants: chooser clicks must dispatch exactly the selected row target")
-finish_marker = "self.finishChooser("
-if finish_marker not in choose_body or "selected: true" not in choose_body:
+finish_marker = "self.chooserSession.finish(id: chooserID)"
+if finish_marker not in choose_body:
     raise SystemExit("verify_playback_routing_invariants: chooser row selection must clear visible chooser state immediately")
 if "selectedTargetExpectation" in choose_body or "selectedTargetReachedExpectedState" in text:
     raise SystemExit("verify_playback_routing_invariants: chooser row selection must not depend on stale selected-target expectation state")
 if '"chooser_closed_for_dispatch"' not in choose_body:
     raise SystemExit("verify_playback_routing_invariants: chooser row selection must trace the overlay close before selected-row dispatch")
 if "dispatchFromChooser(" not in choose_body:
-    raise SystemExit("verify_playback_routing_invariants: chooser row selection must dispatch after releasing the route shield")
-if "relaxRouteShield?(\"selected_row_dispatch\")" not in choose_body:
-    raise SystemExit("verify_playback_routing_invariants: non-desktop chooser row selection must stop the Command Center route shield before selected-target dispatch")
-if "selectedRowDispatchRouteShieldReleaseDelayNanoseconds" not in choose_body:
-    raise SystemExit("verify_playback_routing_invariants: selected-target dispatch must wait only for the explicit route-shield release delay")
+    raise SystemExit("verify_playback_routing_invariants: chooser row selection must dispatch immediately through the adapter-aware transport boundary")
+if "relaxRouteShield" in choose_body or "RouteShieldReleaseDelayNanoseconds" in choose_body or "Task.sleep" in choose_body:
+    raise SystemExit("verify_playback_routing_invariants: chooser selection must not own MediaRemote route-shield release or delay")
 if choose_body.index(finish_marker) > choose_body.index("dispatchFromChooser("):
     raise SystemExit("verify_playback_routing_invariants: chooser visible guard must clear before selected-row dispatch")
 if choose_body.index('"chooser_closed_for_dispatch"') > choose_body.index("dispatchFromChooser("):
     raise SystemExit("verify_playback_routing_invariants: chooser close trace must happen before selected-row dispatch")
-route_shield_branch = choose_body[
-    choose_body.index("if let desktopTransport = self.desktopTransportName(target: target) {"):
-    choose_body.index("Task { @MainActor [weak self] in")
-]
-if "} else {" not in route_shield_branch:
-    raise SystemExit("verify_playback_routing_invariants: chooser row selection must separate desktop route-shield retention from non-desktop release")
-if '"selected_row_dispatch_route_shield_kept"' not in route_shield_branch:
-    raise SystemExit("verify_playback_routing_invariants: desktop chooser row selection must trace route-shield retention in the desktop branch")
-if route_shield_branch.index('"selected_row_dispatch_route_shield_kept"') > route_shield_branch.index("} else {"):
-    raise SystemExit("verify_playback_routing_invariants: desktop route-shield retention must stay inside the desktop-only chooser branch")
-if route_shield_branch.index('self.relaxRouteShield?("selected_row_dispatch")') < route_shield_branch.index("} else {"):
-    raise SystemExit("verify_playback_routing_invariants: non-desktop chooser row selection must relax the route shield only after the desktop branch")
-route_shield_delay = re.search(r'selectedRowDispatchRouteShieldReleaseDelayNanoseconds: UInt64 = ([0-9_]+)', text)
+route_shield_delay = re.search(r'mediaRemoteRouteShieldReleaseDelayNanoseconds: UInt64 = ([0-9_]+)', text)
 if not route_shield_delay:
-    raise SystemExit("verify_playback_routing_invariants: selected-row dispatch route-shield release delay must be explicit")
+    raise SystemExit("verify_playback_routing_invariants: MediaRemote route-shield release delay must be explicit")
 route_shield_delay_value = int(route_shield_delay.group(1).replace("_", ""))
-if route_shield_delay_value <= 0 or route_shield_delay_value > 250_000_000:
-    raise SystemExit("verify_playback_routing_invariants: selected-row dispatch route-shield release delay must stay below visible cooldown territory")
-dispatch_from_chooser = text[text.index("private func dispatchFromChooser"):text.index("private func finishChooser")]
-if "sendFromChooser(command: command, to: target, dispatchID: dispatchID)" not in dispatch_from_chooser:
+if route_shield_delay_value != 180_000_000:
+    raise SystemExit("verify_playback_routing_invariants: MediaRemote route-shield release delay must remain the proven 180ms propagation interval")
+fallback_start = text.index("    private func fallbackMediaRemote(")
+fallback_end = text.index("\n    private func sendMediaRemote(", fallback_start)
+fallback_body = text[fallback_start:fallback_end]
+for needle in (
+    "let routedCommand = MediaTransportCommandRules.rowScopedCommand(command, for: target)",
+    'relaxRouteShield?("mediaremote_dispatch")',
+    "Task.sleep(nanoseconds: Self.mediaRemoteRouteShieldReleaseDelayNanoseconds)",
+    "self.sendMediaRemote(command: routedCommand, to: target, dispatchID: dispatchID, context: context)",
+):
+    if needle not in fallback_body:
+        raise SystemExit(f"verify_playback_routing_invariants: MediaRemote fallback must contain {needle!r}")
+if not (
+    fallback_body.index("let routedCommand = MediaTransportCommandRules.rowScopedCommand(command, for: target)")
+    < fallback_body.index('relaxRouteShield?("mediaremote_dispatch")')
+    < fallback_body.index("Task.sleep(nanoseconds: Self.mediaRemoteRouteShieldReleaseDelayNanoseconds)")
+    < fallback_body.index("self.sendMediaRemote(command: routedCommand, to: target, dispatchID: dispatchID, context: context)")
+):
+    raise SystemExit("verify_playback_routing_invariants: MediaRemote fallback must scope Play/Pause, release the route shield, wait for propagation, then submit")
+if text.count('relaxRouteShield?("mediaremote_dispatch")') != 1:
+    raise SystemExit("verify_playback_routing_invariants: MediaRemote route-shield release must have one transport-boundary owner")
+if text.count("MediaTransportCommandRules.rowScopedCommand(command, for: target)") != 1:
+    raise SystemExit("verify_playback_routing_invariants: MediaRemote fallback must be the single target-state command-scoping owner")
+dispatch_from_chooser = text[text.index("private func dispatchFromChooser"):text.index("private func logDispatch")]
+if "send(command: command, to: target, dispatchID: dispatchID, context: .chooser)" not in dispatch_from_chooser:
     raise SystemExit("verify_playback_routing_invariants: chooser dispatch must send the selected command without waiting for guard release")
 if "targetUnixProcessID: Int64(target.pid)" not in dispatch_from_chooser:
     raise SystemExit("verify_playback_routing_invariants: chooser dispatch must bind targeted HID echo suppression to the selected row process")
@@ -593,12 +610,17 @@ if "applicationUnixProcessID: Int64(ProcessInfo.processInfo.processIdentifier)" 
     raise SystemExit("verify_playback_routing_invariants: chooser dispatch must also bind targeted HID echo suppression to Keyway for macOS-retargeted row echoes")
 if "chooserID" in dispatch_from_chooser:
     raise SystemExit("verify_playback_routing_invariants: chooser dispatch must not carry delayed session state after row selection")
-send_from_chooser = text[text.index("private func sendFromChooser"):text.index("private func chooserScopedCommand")]
-if "releaseChooserAfterDispatchEchoWindow" in send_from_chooser:
+for name, body in (
+    ("chooser selection", choose_body),
+    ("chooser dispatch", dispatch_from_chooser),
+):
+    if "Task {" in body or "await " in body or "Task.sleep" in body:
+        raise SystemExit(f"verify_playback_routing_invariants: {name} must stay synchronous; MediaRemote fallback owns the release delay")
+if "releaseChooserAfterDispatchEchoWindow" in dispatch_from_chooser:
     raise SystemExit("verify_playback_routing_invariants: chooser dispatch must not wait on a post-send release window")
-if "commandCenterFilter.finishProgrammaticDispatch(command: command)" in send_from_chooser:
+if "commandCenterFilter.finishProgrammaticDispatch(command: command)" in dispatch_from_chooser:
     raise SystemExit("verify_playback_routing_invariants: chooser dispatch must not tie echo cleanup to helper completion")
-if "defer" in send_from_chooser:
+if "defer" in dispatch_from_chooser:
     raise SystemExit("verify_playback_routing_invariants: chooser dispatch must not defer routing-state cleanup around helper latency")
 release_delay = re.search(r'chooserDispatchReleaseDelayNanoseconds: UInt64 = ([0-9_]+)', text)
 if release_delay:
@@ -636,13 +658,41 @@ if "pending.kind.rawValue" not in fallback_body:
     raise SystemExit("verify_playback_routing_invariants: dispatch fallback must preserve the dispatch echo kind in logs")
 if "commandCenterFilter.finish" in fallback_body:
     raise SystemExit("verify_playback_routing_invariants: dispatch fallback must not close the time-bounded echo guard")
+begin_programmatic = text[
+    text.index("private func beginBoundedProgrammaticDispatch"):
+    text.index("    private func beginBoundedChooserDispatch")
+]
+begin_chooser = text[
+    text.index("private func beginBoundedChooserDispatch"):
+    text.index("    private func finishDispatch")
+]
+if "scheduleProgrammaticDispatchFallback" in begin_programmatic or "scheduleProgrammaticDispatchFallback" in begin_chooser:
+    raise SystemExit("verify_playback_routing_invariants: dispatch timeout must not start before transport submission")
+send_media_remote = text[
+    text.index("    private func sendMediaRemote("):
+    text.index("    private func dispatchFromChooser(")
+]
+if "scheduleProgrammaticDispatchFallback(id: dispatchID)" not in send_media_remote:
+    raise SystemExit("verify_playback_routing_invariants: MediaRemote submission must start its bounded completion timeout")
+if send_media_remote.index("mediaRemoteController.submit(") > send_media_remote.index("scheduleProgrammaticDispatchFallback(id: dispatchID)"):
+    raise SystemExit("verify_playback_routing_invariants: MediaRemote completion timeout must start after command submission")
+finish_dispatch = text[
+    text.index("    private func finishDispatch("):
+    text.index("    private func scheduleProgrammaticDispatchFallback")
+]
+if "programmaticDispatchFallbackTasks.removeValue(forKey: id)?.cancel()" not in finish_dispatch:
+    raise SystemExit("verify_playback_routing_invariants: dispatch completion must cancel its fallback timeout")
+if "private var programmaticDispatchFallbackTasks: [UUID: Task<Void, Error>]" not in text:
+    raise SystemExit("verify_playback_routing_invariants: dispatch fallback timeouts must have explicit lifecycle ownership")
+if "try? await Task.sleep" in fallback_body:
+    raise SystemExit("verify_playback_routing_invariants: MediaRemote route-shield propagation must not hide cancellation")
 if "await mediaRemoteController.send" in text:
     raise SystemExit("verify_playback_routing_invariants: UI routing must not await helper command acknowledgement")
 if "mediaRemoteController.submit(command: command, targetID: target.id)" not in text:
     raise SystemExit("verify_playback_routing_invariants: automatic routing must submit commands without request/response latency")
-if "send(command: command, to: target, dispatchID: dispatchID, context: .chooser)" not in send_from_chooser:
+if "send(command: command, to: target, dispatchID: dispatchID, context: .chooser)" not in dispatch_from_chooser:
     raise SystemExit("verify_playback_routing_invariants: chooser routing must submit through the adapter-aware selected-row path without request/response latency")
-if "Routed by chooser" in send_from_chooser:
+if "Routed by chooser" in dispatch_from_chooser:
     raise SystemExit("verify_playback_routing_invariants: chooser success must not leave a 1.35s HUD after row selection")
 send_body = text[text.index("private func send(command:"):text.index("private func dispatchFromChooser")]
 if "Routed by " in send_body:
@@ -651,7 +701,7 @@ if "defer" in send_body or "commandCenterFilter.finishProgrammaticDispatch(comma
     raise SystemExit("verify_playback_routing_invariants: automatic dispatch must not tie echo cleanup to helper completion")
 if "beginBoundedProgrammaticDispatch(command: command)" not in send_body:
     raise SystemExit("verify_playback_routing_invariants: automatic dispatch must use bounded programmatic echo handling")
-route_body = text[text.index("private func route("):text.index("    func showChooser(command:")]
+route_body = text[text.index("private func route("):text.index("    func showTargetChooser(")]
 if "chooserSession.isDispatching" in route_body or "chooser_dispatch_input_ignored" in route_body:
     raise SystemExit("verify_playback_routing_invariants: route boundary must not block a real next key press during chooser dispatch")
 programmatic_command_center = re.search(r'programmaticCommandCenterEchoWindow: TimeInterval = ([0-9.]+)', text)
@@ -697,7 +747,7 @@ import sys
 
 text = pathlib.Path(sys.argv[1]).read_text()
 route_start = text.index("    private func route(")
-route_end = text.index("    func showChooser", route_start)
+route_end = text.index("    func showTargetChooser", route_start)
 route_body = text[route_start:route_end]
 command_center_start = route_body.index("        case .commandCenter:")
 command_center_end = route_body.index("        case .userInterface:", command_center_start)
@@ -1049,6 +1099,36 @@ grep -q 'AVAudioEngine' "$command_center" \
 grep -q 'startRouteShieldAudio()' "$command_center" \
   || fail "Command Center route shield must start silent audio before publishing Now Playing state"
 
+! grep -q 'routeShieldRefreshTimer' "$command_center" \
+  || fail "Command Center route shield must not republish its own Now Playing session on a timer"
+
+grep -Fq 'mediaSourceStore.$rows' "$command_center" \
+  || fail "Command Center route shield must observe media playback state changes"
+
+grep -Fq '.removeDuplicates()' "$command_center" \
+  || fail "Command Center route shield must ignore unchanged playback-state snapshots"
+
+grep -Fq '.sink { [weak self] isPlaying in' "$command_center" \
+  || fail "Command Center route shield must consume the newly emitted playback state"
+
+grep -Fq 'self?.publishNowPlayingRoute(isPlaying: isPlaying)' "$command_center" \
+  || fail "Command Center route shield must publish the emitted state instead of rereading @Published rows during willSet"
+
+grep -Fq 'private func publishNowPlayingRoute(isPlaying: Bool)' "$command_center" \
+  || fail "Command Center route shield publishing must require an explicit playback state"
+
+grep -Fq 'mediaSourceStore.rows.contains { $0.target.isCurrentlyPlaying }' "$command_center" \
+  || fail "Command Center route shield must derive playback state from visible media targets"
+
+grep -Fq 'MPNowPlayingInfoPropertyPlaybackRate: playbackRate' "$command_center" \
+  || fail "Command Center route shield must publish the derived playback rate"
+
+grep -Fq 'playbackState = isPlaying ? .playing : .paused' "$command_center" \
+  || fail "Command Center route shield must keep macOS playback state aligned with visible media targets"
+
+grep -Fq 'mediaSourceStore: environment.mediaSourceStore' "$app_delegate" \
+  || fail "AppDelegate must wire the shared media source store into hotkey routing"
+
 grep -q 'commandCenterRoute=enabled' "$hotkeys" \
   || fail "command-center routing must be logged when it is published"
 
@@ -1152,6 +1232,30 @@ if "ensureCommandCenterRoute(reason: \"event_tap_running_route_shield\")" not in
     raise SystemExit("verify_playback_routing_invariants: existing event-tap ownership must keep the Command Center route shield active")
 if "commandCenterInterceptor.stop()" not in text:
     raise SystemExit("verify_playback_routing_invariants: command-center route must still unregister on controller shutdown")
+if "private var commandCenterRouteShieldRearmTask: Task<Void, Error>?" not in text:
+    raise SystemExit("verify_playback_routing_invariants: command-center route-shield rearming must have one owned task")
+stop_start = text.index("    private func stopCommandCenterRoute(")
+stop_end = text.index("    private func schedulePermissionRetry", stop_start)
+stop_body = text[stop_start:stop_end]
+for required in (
+    "commandCenterRouteShieldRearmTask?.cancel()",
+    "commandCenterRouteShieldRearmTask = nil",
+):
+    if required not in stop_body:
+        raise SystemExit(f"verify_playback_routing_invariants: stopping command-center routing must contain {required!r}")
+suspend_start = text.index("    func suspendCommandCenterRouteShield(")
+suspend_end = text.index("    private func acceptTransportInput", suspend_start)
+suspend_body = text[suspend_start:suspend_end]
+if "commandCenterRouteShieldRearmTask = Task" not in suspend_body:
+    raise SystemExit("verify_playback_routing_invariants: each route-shield suspension must replace the owned rearm task")
+if suspend_body.index("stopCommandCenterRoute(reason: reason)") > suspend_body.index("commandCenterRouteShieldRearmTask = Task"):
+    raise SystemExit("verify_playback_routing_invariants: a new route-shield suspension must cancel the prior rearm before replacing it")
+if "try? await Task.sleep" in suspend_body:
+    raise SystemExit("verify_playback_routing_invariants: route-shield rearming must not hide cancellation")
+deinit_start = text.index("    deinit {")
+deinit_end = text.index("    func start()", deinit_start)
+if "commandCenterRouteShieldRearmTask?.cancel()" not in text[deinit_start:deinit_end]:
+    raise SystemExit("verify_playback_routing_invariants: controller shutdown must cancel route-shield rearming")
 PY
 
 grep -q 'command_center_media_key_shadow_ignored' "$command_filter" \
@@ -1207,10 +1311,8 @@ live_start = text.index("static func live()")
 live_body = text[live_start:]
 if "importLegacyState()" in live_body:
     raise SystemExit("verify_playback_routing_invariants: app startup must not block media-key routing on legacy config or Keychain import")
-if "let configImportReport: ConfigImportReport?" not in text:
-    raise SystemExit("verify_playback_routing_invariants: startup config import report must be optional so import can stay out of the hotkey startup path")
-if "configImportReport: nil" not in live_body:
-    raise SystemExit("verify_playback_routing_invariants: live startup must defer legacy config import until explicit settings action")
+if "configImportReport" in text:
+    raise SystemExit("verify_playback_routing_invariants: app environment must not retain a startup config import report when import is an explicit settings action")
 PY
 
 grep -q 'recordMediaTransportEvent' "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutRuntimeStatus.swift" \
@@ -1285,8 +1387,8 @@ grep -q '"requestID": result.requestID ?? ""' "$repo_root/SonosHandoffMenuBar/So
 grep -q 'trace(result: result, transportBackend:' "$transport" \
   || fail "transport dispatch callbacks must record helper command results with backend before closing echo state"
 
-grep -q 'showCommandFailureIfNeeded(result: result, target: target)' "$transport" \
-  || fail "async MediaRemote command failures must surface after accepted helper writes"
+grep -q 'showCommandResult(' "$transport" \
+  || fail "accepted helper results must surface through the shared command presenter"
 
 grep -q 'Privacy & Security > Automation' "$transport" \
   || fail "Apple Events TCC failures must show an actionable Automation recovery hint"
@@ -1550,13 +1652,6 @@ if fallback_nanoseconds <= 0 or fallback_nanoseconds > 250_000_000:
     raise SystemExit("verify_playback_routing_invariants: programmatic dispatch fallback must stay below visible cooldown territory")
 PY
 
-"$repo_root/scripts/verify_playback_filter_semantics" >/dev/null
-"$repo_root/scripts/verify_media_chooser_guard_semantics" >/dev/null
-"$repo_root/scripts/verify_playback_reentry_semantics" >/dev/null
-"$repo_root/scripts/verify_media_target_overlay_model_semantics" >/dev/null
-"$repo_root/scripts/verify_media_transport_command_rules_semantics" >/dev/null
-"$repo_root/scripts/verify_media_transport_route_source_semantics" >/dev/null
-
 grep -q 'MRMediaRemoteSetOverriddenNowPlayingApplication' "$command_center" \
   || fail "route shield must force Keyway as the overridden now-playing application"
 
@@ -1564,7 +1659,7 @@ grep -q 'MRMediaRemoteSetNowPlayingApplicationOverrideEnabled' "$command_center"
   || fail "route shield must enable the MediaRemote now-playing override"
 
 grep -q 'mediaRemoteRouteShield.disable()' "$command_center" \
-  || fail "route shield must disable its MediaRemote override when relaxed for selected-row MediaRemote dispatch"
+  || fail "route shield must disable its MediaRemote override when relaxed for MediaRemote dispatch"
 
 grep -q '0.0000001' "$command_center" \
   || fail "route shield audio must use tiny non-zero samples so macOS keeps Keyway eligible as active media route"
@@ -1602,8 +1697,8 @@ PY
 grep -q 'KeywayAddTargetRow(targets, clientsByTargetID, row, client)' "$helper" \
   || fail "MediaRemote snapshot caching must preserve duplicate clients instead of overwriting target ids"
 
-grep -q 'submitted cached MediaRemote player path command' "$helper" \
-  || fail "MediaRemote command results must identify instant player-path submission"
+grep -q 'MediaRemote player-path command completed' "$helper" \
+  || fail "MediaRemote command results must identify completed player-path dispatch"
 
 python3 - "$helper" <<'PY'
 import pathlib
@@ -1630,6 +1725,18 @@ if "fresh MediaRemote client cache unavailable" not in body or "target not found
 if "KeywaySubmitCommandToPlayerPath" not in body:
     raise SystemExit("verify_playback_routing_invariants: selected playback commands must submit through MRPlayerPath")
 submit = text[text.index("static BOOL KeywaySubmitCommandToPlayerPath"):text.index("void keyway_mediaremote_snapshot")]
+if "@interface MRCommandResult" not in text or "NSError *error" not in text or "MRPlayerPath *playerPath" not in text:
+    raise SystemExit("verify_playback_routing_invariants: helper must declare the MediaRemote command result error contract")
+if "result.error" not in submit:
+    raise SystemExit("verify_playback_routing_invariants: helper must derive command success from MRCommandResult.error")
+if "KeywaySameClient(result.playerPath.client, client)" not in submit:
+    raise SystemExit("verify_playback_routing_invariants: helper must reject commands redirected away from the requested player")
+if "MediaRemote redirected command away from requested player" not in submit:
+    raise SystemExit("verify_playback_routing_invariants: redirected MediaRemote commands must fail explicitly")
+if "result == nil" not in submit:
+    raise SystemExit("verify_playback_routing_invariants: a missing MediaRemote command result must fail explicitly")
+if "[result isKindOfClass:[NSError class]]" in submit:
+    raise SystemExit("verify_playback_routing_invariants: MRCommandResult must not be mistaken for a direct NSError callback")
 if "appOptions:(unsigned int)appOptions" not in text or "appOptions:0" not in submit:
     raise SystemExit("verify_playback_routing_invariants: MRNowPlayingRequest appOptions must use the runtime unsigned-int ABI, not an object")
 if "appOptions:@{}" in submit:

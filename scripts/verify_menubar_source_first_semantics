@@ -57,7 +57,7 @@ expect_contains "$status_controller" "action?()"
 expect_contains "$status_controller" "case .failed, .stopped:"
 expect_contains "$status_controller" 'return "Browser only"'
 expect_contains "$status_controller" "mediaRemoteController.canRouteCommands"
-expect_contains "$status_controller" "mediaSourceStore.targets.contains(where: ChromiumBrowserExtensionTransport.isTarget)"
+expect_contains "$status_controller" 'mediaSourceStore.rows.contains { ChromiumBrowserExtensionTransport.isTarget($0.target) }'
 expect_absent "$status_controller" "nowPlayingCard"
 expect_absent "$status_controller" '"Fallback room"'
 expect_absent "$status_controller" "mediaTransportActions.route(command: command)"
@@ -116,7 +116,7 @@ PY
 
 expect_contains "$source_section" 'Text("Active Sources")'
 expect_contains "$source_section" "@ObservedObject var mediaSourceStore: MediaSourceStore"
-expect_contains "$source_section" "mediaSourceStore.targets"
+expect_contains "$source_section" "mediaSourceStore.rows.map(\\.target)"
 expect_contains "$source_section" "private var targetIDs: [String]"
 expect_contains "$source_section" "displayTargets.map(\\.id)"
 expect_absent "$source_section" "cachedTargets"
@@ -204,7 +204,7 @@ def fail(message):
     raise SystemExit(f"verify_menubar_source_first_semantics: {message}")
 
 focus_start = text.index("    func focus(target: MediaRemoteTarget) {")
-focus_end = text.index("\n    func currentRouteStatus(", focus_start)
+focus_end = text.index("\n    private func showChooserFromCache(", focus_start)
 focus_body = text[focus_start:focus_end]
 remember = "rememberTarget(target)"
 delegate = "sourceFocusActionController.focus(target: target)"

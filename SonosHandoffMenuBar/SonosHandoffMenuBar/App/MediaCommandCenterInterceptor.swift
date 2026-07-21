@@ -1,4 +1,5 @@
 import AVFoundation
+import Combine
 import Darwin
 import Foundation
 import MediaPlayer
@@ -23,10 +24,11 @@ final class MediaCommandCenterInterceptor {
     }
 
     nonisolated private let logger = Logger(subsystem: AppIdentity.loggerSubsystem, category: "MediaCommandCenter")
+    private let mediaSourceStore: MediaSourceStore
     private let route: @MainActor (MediaRemoteTransportCommand, MediaCommandCenterInputMetadata) -> Void
     private let mediaRemoteRouteShield = MediaRemotePrivateRouteShield()
     private var commandTargets: [Any] = []
-    private var routeShieldRefreshTimer: DispatchSourceTimer?
+    private var routeShieldPlaybackSubscription: AnyCancellable?
     private let routeShieldEngine = AVAudioEngine()
     private var routeShieldSourceNode: AVAudioSourceNode?
     private var isRunning = false
@@ -34,7 +36,11 @@ final class MediaCommandCenterInterceptor {
     nonisolated(unsafe) private var lastAcceptedCommand: MediaRemoteTransportCommand?
     nonisolated(unsafe) private var lastAcceptedAt: TimeInterval = 0
 
-    init(route: @escaping @MainActor (MediaRemoteTransportCommand, MediaCommandCenterInputMetadata) -> Void) {
+    init(
+        mediaSourceStore: MediaSourceStore,
+        route: @escaping @MainActor (MediaRemoteTransportCommand, MediaCommandCenterInputMetadata) -> Void
+    ) {
+        self.mediaSourceStore = mediaSourceStore
         self.route = route
     }
 
@@ -106,7 +112,9 @@ final class MediaCommandCenterInterceptor {
                 self.logger.info("MediaCommandCenter event command=\(command.rawValue, privacy: .public) timestamp=\(metadata.eventTimestamp, privacy: .public)")
                 self.route(command, metadata)
                 if self.routeShieldSourceNode != nil {
-                    self.publishNowPlayingRoute()
+                    self.publishNowPlayingRoute(
+                        isPlaying: self.mediaSourceStore.rows.contains { $0.target.isCurrentlyPlaying }
+                    )
                 }
             }
             return .success
@@ -120,14 +128,16 @@ final class MediaCommandCenterInterceptor {
         guard startRouteShieldAudio() else {
             return
         }
-        publishNowPlayingRoute()
-        startRouteShieldRefreshIfNeeded()
+        publishNowPlayingRoute(
+            isPlaying: mediaSourceStore.rows.contains { $0.target.isCurrentlyPlaying }
+        )
+        observeRouteShieldPlaybackIfNeeded()
         logger.info("MediaCommandCenter routeShield=armed reason=\(reason, privacy: .public)")
     }
 
     func disarmRouteShield(reason: String) {
-        routeShieldRefreshTimer?.cancel()
-        routeShieldRefreshTimer = nil
+        routeShieldPlaybackSubscription?.cancel()
+        routeShieldPlaybackSubscription = nil
         stopRouteShieldAudio()
         mediaRemoteRouteShield.disable()
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
@@ -165,30 +175,31 @@ final class MediaCommandCenterInterceptor {
         }
     }
 
-    private func startRouteShieldRefreshIfNeeded() {
-        guard routeShieldRefreshTimer == nil else {
+    private func observeRouteShieldPlaybackIfNeeded() {
+        guard routeShieldPlaybackSubscription == nil else {
             return
         }
 
-        let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now() + 1, repeating: 1)
-        timer.setEventHandler { [weak self] in
-            self?.publishNowPlayingRoute()
-        }
-        routeShieldRefreshTimer = timer
-        timer.resume()
+        routeShieldPlaybackSubscription = mediaSourceStore.$rows
+            .map { rows in rows.contains { $0.target.isCurrentlyPlaying } }
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] isPlaying in
+                self?.publishNowPlayingRoute(isPlaying: isPlaying)
+            }
     }
 
-    private func publishNowPlayingRoute() {
+    private func publishNowPlayingRoute(isPlaying: Bool) {
+        let playbackRate = isPlaying ? 1.0 : 0.0
         let info: [String: Any] = [
             MPMediaItemPropertyTitle: "Keyway",
             MPMediaItemPropertyArtist: "Media key routing",
             MPNowPlayingInfoPropertyIsLiveStream: true,
-            MPNowPlayingInfoPropertyPlaybackRate: 1.0,
+            MPNowPlayingInfoPropertyPlaybackRate: playbackRate,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: ProcessInfo.processInfo.systemUptime,
         ]
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
-        MPNowPlayingInfoCenter.default().playbackState = .playing
+        MPNowPlayingInfoCenter.default().playbackState = isPlaying ? .playing : .paused
         mediaRemoteRouteShield.publish(info: info)
     }
 

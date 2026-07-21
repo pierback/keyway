@@ -6,15 +6,18 @@ actor SpotifyVolumeMirrorQueue {
     private struct PendingMirror: Sendable {
         let roomName: String
         let volume: Int
-        let operation: MirrorOperation
     }
 
+    private let operation: MirrorOperation
     private var running = false
     private var pendingMirror: PendingMirror?
-    private var idleWaiters: [CheckedContinuation<Void, Never>] = []
 
-    func enqueue(roomName: String, volume: Int, operation: @escaping MirrorOperation) {
-        let mirror = PendingMirror(roomName: roomName, volume: volume, operation: operation)
+    init(operation: @escaping MirrorOperation) {
+        self.operation = operation
+    }
+
+    func enqueue(roomName: String, volume: Int) {
+        let mirror = PendingMirror(roomName: roomName, volume: volume)
         guard running else {
             running = true
             run(mirror)
@@ -24,19 +27,10 @@ actor SpotifyVolumeMirrorQueue {
         pendingMirror = mirror
     }
 
-    func waitUntilIdle() async {
-        guard running || pendingMirror != nil else {
-            return
-        }
-
-        await withCheckedContinuation { continuation in
-            idleWaiters.append(continuation)
-        }
-    }
-
     private func run(_ mirror: PendingMirror) {
+        let operation = operation
         Task.detached(priority: .utility) {
-            await mirror.operation(mirror.roomName, mirror.volume)
+            await operation(mirror.roomName, mirror.volume)
             await self.completeCurrentMirror()
         }
     }
@@ -49,8 +43,5 @@ actor SpotifyVolumeMirrorQueue {
         }
 
         running = false
-        let waiters = idleWaiters
-        idleWaiters = []
-        waiters.forEach { $0.resume() }
     }
 }

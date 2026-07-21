@@ -133,48 +133,6 @@ struct MediaRemoteTarget: Codable, Equatable, Identifiable, Sendable {
         elapsedTimestamp ?? 0
     }
 
-    var elapsedFormatted: String? {
-        guard let duration, duration > 0, let elapsedTime else {
-            return nil
-        }
-        var elapsed = elapsedTime
-        if let elapsedTimestamp, elapsedTimestamp > 0 {
-            let now = Date().timeIntervalSince1970
-            let delta = now - elapsedTimestamp
-            if delta > 0, delta < 600, playbackRate == "1" {
-                elapsed += delta
-            }
-        }
-        elapsed = min(elapsed, duration)
-
-        return Self.formatTime(elapsed)
-    }
-
-    var remainingFormatted: String? {
-        guard let duration, duration > 0, let elapsedTime else {
-            return nil
-        }
-        var elapsed = elapsedTime
-        if let elapsedTimestamp, elapsedTimestamp > 0 {
-            let now = Date().timeIntervalSince1970
-            let delta = now - elapsedTimestamp
-            if delta > 0, delta < 600, playbackRate == "1" {
-                elapsed += delta
-            }
-        }
-        let remaining = max(0, duration - elapsed)
-
-        return "-\(Self.formatTime(remaining))"
-    }
-
-    private static func formatTime(_ seconds: Double) -> String {
-        let total = Int(seconds)
-        let m = total / 60
-        let s = total % 60
-
-        return String(format: "%d:%02d", m, s)
-    }
-
     var routingIdentity: String {
         if !parentBundleIdentifier.isEmpty {
             return parentBundleIdentifier

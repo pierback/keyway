@@ -3,6 +3,7 @@ set -euo pipefail
 
 status_file="${KEYWAY_STATUS_FILE:-$HOME/Library/Application Support/keyway/shortcut-runtime-status.json}"
 timeout_seconds="${KEYWAY_PROBE_TIMEOUT_SECONDS:-10}"
+physical_media_keys="${KEYWAY_PHYSICAL_MEDIA_KEYS:-0}"
 
 fail() {
   printf 'probe_playback_chooser_focus_dismiss: %s\n' "$1" >&2
@@ -31,42 +32,29 @@ print(json.dumps(payload.get("mediaTransportTrace", []), separators=(",", ":")))
 PY
 }
 
-post_physical_play_pause() {
-  swift - <<'SWIFT'
-import AppKit
-import ApplicationServices
-
-let playPauseKeyCode = 16
-let keyDownState = 0x0A
-let keyUpState = 0x0B
-let mediaKeySubtype: Int16 = 8
-
-func postMediaKey(state: Int) {
-    let data1 = (playPauseKeyCode << 16) | (state << 8)
-    guard let event = NSEvent.otherEvent(
-        with: .systemDefined,
-        location: .zero,
-        modifierFlags: [],
-        timestamp: ProcessInfo.processInfo.systemUptime,
-        windowNumber: 0,
-        context: nil,
-        subtype: mediaKeySubtype,
-        data1: data1,
-        data2: -1
-    ), let cgEvent = event.cgEvent else {
-        fatalError("failed to create media key event")
-    }
-    cgEvent.setIntegerValueField(.eventSourceUnixProcessID, value: 0)
-    cgEvent.setIntegerValueField(.eventSourceStateID, value: 1)
-    cgEvent.setIntegerValueField(.eventSourceUserData, value: 0)
-    cgEvent.setIntegerValueField(.eventTargetUnixProcessID, value: 0)
-    cgEvent.post(tap: .cghidEventTap)
+open_menu_chooser() {
+  osascript <<'APPLESCRIPT' >/dev/null
+tell application "System Events"
+  tell process "Keyway"
+    set frontmost to true
+    key code 53
+    click menu bar item 1 of menu bar 2
+    delay 0.4
+    set popoverRef to first UI element of menu bar 2 whose role is "AXPopover"
+    set scrollRef to UI element 1 of UI element 1 of popoverRef
+    perform action "AXPress" of first button of scrollRef
+  end tell
+end tell
+APPLESCRIPT
 }
 
-postMediaKey(state: keyDownState)
-usleep(35_000)
-postMediaKey(state: keyUpState)
-SWIFT
+trigger_chooser() {
+  if [[ "$physical_media_keys" == "1" ]]; then
+    [[ -r /dev/tty ]] || fail "physical media-key mode requires an interactive terminal"
+    printf '\nPress the physical Play/Pause media key now. Waiting for the chooser...\n' >/dev/tty
+  else
+    open_menu_chooser
+  fi
 }
 
 wait_for_event() {
@@ -170,7 +158,7 @@ trap close_chooser EXIT
 
 start_sequence="$(read_trace_sequence)"
 printf 'probe_playback_chooser_focus_dismiss: starting after trace sequence %s\n' "$start_sequence"
-post_physical_play_pause
+trigger_chooser
 wait_for_event "$start_sequence" "chooser_show" || fail "timed out waiting for chooser_show"
 sleep 0.35
 activate_other_app

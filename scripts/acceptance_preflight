@@ -6,7 +6,7 @@ PACKAGE_DIR="$ROOT_DIR/packages/SonosHandoffCore"
 APP_DIR="${KEYWAY_APP:-$HOME/Applications/Keyway.app}"
 LEGACY_SUPPORT_DIR="$HOME/Library/Application Support/sonos-handoff"
 KEYWAY_SUPPORT_DIR="$HOME/Library/Application Support/keyway"
-ROOM="${SONOS_HANDOFF_ROOM:-Port}"
+ROOM="${SONOS_HANDOFF_ROOM:?Set SONOS_HANDOFF_ROOM to the Sonos room to verify}"
 STATUS="pass"
 CONFIG_FILES=(config.json spotify-desktop-connect-tokens.json project-webapi-token.json)
 LEGACY_CHECKSUM_DIR="$(mktemp -d -t keyway-legacy-checksums.XXXXXX)"
@@ -209,7 +209,7 @@ if [[ -x "$helper_script" && -f "$helper_dylib" ]]; then
   else
     fail "helper did not return snapshot"
   fi
-  target_count="$(grep -o '"bundleIdentifier":"' <<<"$helper_output" | wc -l | tr -d ' ')"
+  target_count="$(awk '{ count += gsub(/"bundleIdentifier":"/, "") } END { print count + 0 }' <<<"$helper_output")"
   if (( target_count >= 2 )); then
     pass "helper reports $target_count media targets"
   else
@@ -229,13 +229,25 @@ shortcut_active_event_tap=""
 shortcut_command_center_route=""
 shortcut_app_path=""
 if [[ -f "$shortcut_status_file" ]]; then
-  shortcut_media_fallback="$(plutil -extract mediaFallback raw "$shortcut_status_file" 2>/dev/null || true)"
-  shortcut_accessibility="$(plutil -extract accessibilityGranted raw "$shortcut_status_file" 2>/dev/null || true)"
-  shortcut_listen_event="$(plutil -extract listenEventGranted raw "$shortcut_status_file" 2>/dev/null || true)"
-  shortcut_event_tap_running="$(plutil -extract eventTapRunning raw "$shortcut_status_file" 2>/dev/null || true)"
-  shortcut_active_event_tap="$(plutil -extract activeEventTap raw "$shortcut_status_file" 2>/dev/null || true)"
-  shortcut_command_center_route="$(plutil -extract commandCenterRouteRunning raw "$shortcut_status_file" 2>/dev/null || true)"
-  shortcut_app_path="$(plutil -extract appPath raw "$shortcut_status_file" 2>/dev/null || true)"
+  shortcut_status="$(python3 - "$shortcut_status_file" <<'PY'
+import json
+import pathlib
+import sys
+
+status = json.loads(pathlib.Path(sys.argv[1]).read_text())
+values = [
+    status["mediaFallback"],
+    status["accessibilityGranted"],
+    status["listenEventGranted"],
+    status["eventTapRunning"],
+    status.get("activeEventTap", ""),
+    status["commandCenterRouteRunning"],
+    status["appPath"],
+]
+print("\x1f".join(str(value).lower() if isinstance(value, bool) else str(value) for value in values))
+PY
+)"
+  IFS=$'\x1f' read -r shortcut_media_fallback shortcut_accessibility shortcut_listen_event shortcut_event_tap_running shortcut_active_event_tap shortcut_command_center_route shortcut_app_path <<<"$shortcut_status"
 fi
 
 hotkey_logs="$(/usr/bin/log show --last 30m --info --debug --style compact --predicate 'subsystem == "com.fpieringer.Keyway" && category == "Hotkeys"' 2>/dev/null || true)"
@@ -266,7 +278,7 @@ else
 fi
 
 section "Spotify And Sonos"
-if playback_output="$(swift run --package-path "$PACKAGE_DIR" sonos-handoff-port playback-status 2>&1)"; then
+if playback_output="$(swift run --disable-sandbox --package-path "$PACKAGE_DIR" sonos-handoff-port playback-status 2>&1)"; then
   printf '%s\n' "$playback_output"
   pass "Spotify playback status is readable"
 else
@@ -274,7 +286,7 @@ else
   block "Spotify playback status is not ready"
 fi
 
-if sonos_output="$(swift run --package-path "$PACKAGE_DIR" sonos-handoff-port sonos-status "$ROOM" 2>&1)"; then
+if sonos_output="$(swift run --disable-sandbox --package-path "$PACKAGE_DIR" sonos-handoff-port sonos-status "$ROOM" 2>&1)"; then
   printf '%s\n' "$sonos_output"
   pass "Sonos room '$ROOM' is discoverable"
 else

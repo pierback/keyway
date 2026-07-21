@@ -14,7 +14,7 @@ struct MenuBarOutputSection: View {
     @State private var forceGroupEditing = false
 
     private var canToggleGroupEditing: Bool {
-        !playback.outputRows.isEmpty || !playback.groupEditRows.isEmpty
+        !playback.outputRows.isEmpty || !playback.groupEditController.groupEditRows.isEmpty
     }
 
     private var groupEditingActive: Bool {
@@ -57,7 +57,7 @@ struct MenuBarOutputSection: View {
             rows
                 .animation(MenuBarMotion.modeSwitch, value: groupEditingActive)
                 .animation(MenuBarMotion.rowUpdate, value: playback.outputRows)
-                .animation(MenuBarMotion.rowUpdate, value: playback.groupEditRows)
+                .animation(MenuBarMotion.rowUpdate, value: playback.groupEditController.groupEditRows)
 
             if let menuMessage = playback.menuMessage {
                 Text(menuMessage)
@@ -91,10 +91,10 @@ struct MenuBarOutputSection: View {
 
     @ViewBuilder
     private var groupRows: some View {
-        if playback.groupEditRows.isEmpty {
+        if playback.groupEditController.groupEditRows.isEmpty {
             emptyGroupRow
         } else {
-            ForEach(playback.groupEditRows) { row in
+            ForEach(playback.groupEditController.groupEditRows) { row in
                 groupEditRow(for: row)
                     .transition(MenuBarMotion.rowTransition)
             }
@@ -162,19 +162,19 @@ struct MenuBarOutputSection: View {
             outputRow(for: row, selected: selected, mixerExpanded: mixerExpanded)
                 .task(id: mixerExpanded ? row.id : "collapsed-\(row.id)") {
                     if mixerExpanded {
-                        playback.loadMemberVolumes(for: row)
+                        playback.memberVolumeController.loadMemberVolumes(for: row)
                     }
                 }
 
             if mixerExpanded {
-                ForEach(playback.memberVolumeRows.filter { $0.groupID == row.id }) { memberRow in
+                ForEach(playback.memberVolumeController.memberVolumeRows.filter { $0.groupID == row.id }) { memberRow in
                     memberVolumeRow(memberRow)
                         .transition(MenuBarMotion.rowTransition)
                 }
             }
         }
         .animation(MenuBarMotion.rowUpdate, value: mixerExpanded)
-        .animation(MenuBarMotion.rowUpdate, value: playback.memberVolumeRows)
+        .animation(MenuBarMotion.rowUpdate, value: playback.memberVolumeController.memberVolumeRows)
     }
 
     private func outputRow(for row: PlaybackOutputRow, selected: Bool, mixerExpanded: Bool) -> some View {
@@ -225,7 +225,7 @@ struct MenuBarOutputSection: View {
 
                 if selected && row.isGroup {
                     Button {
-                        playback.toggleMixer(for: row)
+                        playback.memberVolumeController.toggleMixer(for: row)
                     } label: {
                         Image(systemName: mixerExpanded ? "chevron.down" : "chevron.right")
                             .font(.system(size: 10, weight: .semibold))
@@ -492,7 +492,7 @@ struct MenuBarOutputSection: View {
             return false
         }
 
-        return playback.isMixerPinned(for: row)
+        return playback.memberVolumeController.isMixerPinned(for: row)
     }
 
     private func directGroupJoinRow(for row: PlaybackOutputRow, selected: Bool) -> PlaybackGroupEditRow? {
@@ -500,7 +500,7 @@ struct MenuBarOutputSection: View {
             return nil
         }
 
-        return playback.groupEditRows.first { editRow in
+        return playback.groupEditController.groupEditRows.first { editRow in
             (editRow.id == row.id || editRow.speaker.id == row.coordinator.id)
                 && editRow.canToggle
                 && (editRow.membership == .available || editRow.membership == .availableGroup)
@@ -508,7 +508,7 @@ struct MenuBarOutputSection: View {
     }
 
     private func directGroupRemovalRow(for row: PlaybackMemberVolumeRow) -> PlaybackGroupEditRow? {
-        playback.groupEditRows.first { editRow in
+        playback.groupEditController.groupEditRows.first { editRow in
             editRow.speaker.id == row.speaker.id
                 && editRow.canToggle
                 && (editRow.membership == .member || editRow.membership == .coordinator)
@@ -599,7 +599,7 @@ private struct MemberVolumeSlider: View {
                     guard row.state.hasStatus, !row.state.outputFixed, !row.state.isBusy else {
                         return
                     }
-                    playback.setMemberVolumeFromSlider(
+                    playback.memberVolumeController.setMemberVolumeFromSlider(
                         rowID: row.id,
                         locationX: value.location.x,
                         width: trackWidth
@@ -609,7 +609,7 @@ private struct MemberVolumeSlider: View {
                     guard row.state.hasStatus, !row.state.outputFixed, !row.state.isBusy else {
                         return
                     }
-                    playback.setMemberVolumeFromSlider(
+                    playback.memberVolumeController.setMemberVolumeFromSlider(
                         rowID: row.id,
                         locationX: value.location.x,
                         width: trackWidth

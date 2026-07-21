@@ -4,7 +4,9 @@ set -euo pipefail
 APP_DIR="${KEYWAY_APP:-$HOME/Applications/Keyway.app}"
 HELPER_SCRIPT="$APP_DIR/Contents/Resources/MediaRemoteHelper/keyway-mediaremote-helper.pl"
 HELPER_DYLIB="$APP_DIR/Contents/Resources/MediaRemoteHelper/libkeyway_mediaremote.dylib"
+RUNTIME_STATUS_FILE="$HOME/Library/Application Support/keyway/shortcut-runtime-status.json"
 PHYSICAL_MEDIA_KEYS="${KEYWAY_PHYSICAL_MEDIA_KEYS:-0}"
+BROWSER_TARGET_MATCH="${KEYWAY_BROWSER_TARGET_MATCH:-}"
 TARGET_INFO_FILE="$(mktemp -t keyway-overlay-targets.XXXXXX)"
 VISIBLE_STATE_FILE="$(mktemp -t keyway-overlay-visible-apps.XXXXXX)"
 
@@ -180,70 +182,39 @@ APPLESCRIPT
   done <"$TARGET_INFO_FILE"
 }
 
-post_play_pause_media_key() {
-  /usr/bin/swift -e '
-import AppKit
-import Foundation
-
-let keyCode = 16
-let keyDownState = 0x0A
-let keyUpState = 0x0B
-
-func post(_ state: Int) {
-    let data1 = (keyCode << 16) | (state << 8)
-    guard let event = NSEvent.otherEvent(
-        with: .systemDefined,
-        location: .zero,
-        modifierFlags: [],
-        timestamp: ProcessInfo.processInfo.systemUptime,
-        windowNumber: 0,
-        context: nil,
-        subtype: 8,
-        data1: data1,
-        data2: -1
-    )?.cgEvent else {
-        exit(2)
-    }
-    event.post(tap: .cghidEventTap)
+open_menu_chooser() {
+  osascript <<'APPLESCRIPT'
+tell application "System Events"
+  tell process "Keyway"
+    set frontmost to true
+    key code 53
+    click menu bar item 1 of menu bar 2
+    delay 0.4
+    set popoverRef to first UI element of menu bar 2 whose role is "AXPopover"
+    set scrollRef to UI element 1 of UI element 1 of popoverRef
+    click first button of scrollRef
+  end tell
+end tell
+APPLESCRIPT
 }
 
-post(keyDownState)
-usleep(120_000)
-post(keyUpState)
-'
-}
-
-trigger_play_pause_media_key() {
+trigger_overlay() {
   if [[ "$PHYSICAL_MEDIA_KEYS" == "1" ]]; then
     printf '\nPress the physical Play/Pause media key now. Waiting for the Keyway chooser...\n' >/dev/tty
   else
-    post_play_pause_media_key
+    open_menu_chooser
   fi
 }
 
 keyway_window_text() {
   osascript <<'APPLESCRIPT'
-on collectTexts(e, depth)
-  if depth > 8 then return ""
-  tell application "System Events"
-    set output to ""
-    try
-      if role of e is "AXStaticText" then set output to output & (value of e as text) & linefeed
-    end try
-    try
-      repeat with c in UI elements of e
-        set output to output & my collectTexts(c, depth + 1)
-      end repeat
-    end try
-    return output
-  end tell
-end collectTexts
-
 tell application "System Events"
   tell process "Keyway"
     set frontmost to true
     if (count of windows) is 0 then return ""
-    return my collectTexts(window 1, 0)
+    set textValues to value of every static text of UI element 1 of window 1
+    set AppleScript's text item delimiters to linefeed
+    return textValues as text
   end tell
 end tell
 APPLESCRIPT
@@ -259,65 +230,97 @@ end tell
 APPLESCRIPT
 }
 
-click_overlay_button() {
-  local identifier="$1"
-  osascript - "$identifier" <<'APPLESCRIPT'
-on clickByIdentifier(e, wanted, depth)
-  if depth > 8 then return false
+overlay_button() {
+  local action_name="$1"
+  local identifier="$2"
+  osascript - "$action_name" "$identifier" <<'APPLESCRIPT'
+on actByIdentifier(e, wanted, actionName, depth)
+  if depth > 8 then return "missing"
   tell application "System Events"
     try
-      if role of e is "AXButton" then
-        try
-          if value of attribute "AXIdentifier" of e is wanted then
-            click e
-            return true
-          end if
-        end try
+      if role of e is "AXButton" and value of attribute "AXIdentifier" of e is wanted then
+        if actionName is "click" then
+          perform action "AXPress" of e
+          return "clicked"
+        end if
+        return (enabled of e as text)
       end if
     end try
     try
-      repeat with c in UI elements of e
-        if my clickByIdentifier(c, wanted, depth + 1) then return true
+      repeat with childElement in UI elements of e
+        set result to my actByIdentifier(childElement, wanted, actionName, depth + 1)
+        if result is not "missing" then return result
       end repeat
     end try
   end tell
-  return false
-end clickByIdentifier
+  return "missing"
+end actByIdentifier
 
 on run argv
-  set wanted to item 1 of argv
+  set actionName to item 1 of argv
+  set wanted to item 2 of argv
   tell application "System Events"
     tell process "Keyway"
       set frontmost to true
-      if (count of windows) is 0 then return "missing-window"
-      if my clickByIdentifier(window 1, wanted, 0) then return "clicked"
-      return "missing-button"
+      if (count of windows) is 0 then
+        if actionName is "click" then return "missing-window"
+        return "missing"
+      end if
+      set actionResult to my actByIdentifier(UI element 1 of window 1, wanted, actionName, 0)
+      if actionResult is "missing" and actionName is "click" then return "missing-button"
+      return actionResult
     end tell
   end tell
 end run
 APPLESCRIPT
 }
 
+wait_for_overlay_button_enabled() {
+  local identifier="$1"
+  local enabled="missing"
+  for _ in {1..8}; do
+    sleep 0.15
+    enabled="$(overlay_button enabled "$identifier")"
+    [[ "$enabled" == "true" ]] && break
+  done
+  printf '%s\n' "$enabled"
+}
+
 open "$APP_DIR"
 sleep 1.0
 close_overlay
-hide_media_windows_for_chooser
-open -a Finder
-sleep 0.6
-trigger_play_pause_media_key
+expected_header="Media Targets"
+if [[ "$PHYSICAL_MEDIA_KEYS" == "1" ]]; then
+  hide_media_windows_for_chooser
+  open -a Finder
+  sleep 0.6
+  expected_header="Play/Pause"
+else
+  : >"$VISIBLE_STATE_FILE"
+fi
+trace_sequence_before="$(python3 - "$RUNTIME_STATUS_FILE" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+print((json.loads(path.read_text()).get("mediaTransportTraceSequence") or 0) if path.is_file() else 0)
+PY
+)"
+trigger_overlay
 
 overlay_text=""
 for _ in {1..30}; do
   sleep 0.2
   overlay_text="$(keyway_window_text || true)"
-  if grep -q '^Media Targets$' <<<"$overlay_text"; then
+  if grep -qx "$expected_header" <<<"$overlay_text"; then
     break
   fi
 done
 
-if ! grep -q '^Media Targets$' <<<"$overlay_text"; then
+if ! grep -qx "$expected_header" <<<"$overlay_text"; then
   echo "$overlay_text"
-  echo "smoke_overlay_browser_controls: media target overlay did not open" >&2
+  echo "smoke_overlay_browser_controls: media target overlay did not expose $expected_header" >&2
   exit 1
 fi
 
@@ -325,45 +328,107 @@ send_overlay_key 48
 for _ in {1..20}; do
   sleep 0.2
   overlay_text="$(keyway_window_text || true)"
-  if grep -q '^Expanded Controls$' <<<"$overlay_text"; then
+  if grep -q '^Volume$' <<<"$overlay_text"; then
     break
   fi
 done
 
-if ! grep -q '^Expanded Controls$' <<<"$overlay_text"; then
+if ! grep -q '^Volume$' <<<"$overlay_text"; then
   echo "$overlay_text"
   echo "smoke_overlay_browser_controls: expanded controls did not open with Tab" >&2
   exit 1
 fi
 
-for _ in {1..30}; do
-  overlay_text="$(keyway_window_text || true)"
-  if grep -q '^Browser$' <<<"$overlay_text"; then
-    break
-  fi
-  sleep 0.2
-done
+browser_reduced_state_pattern='^(Select a Chromium extension target|Target not available|Browser not responding|Extension disconnected)$'
+browser_mute_enabled="missing"
+runtime_target_info="$(python3 - "$RUNTIME_STATUS_FILE" "$APP_DIR" "$BROWSER_TARGET_MATCH" "$trace_sequence_before" <<'PY'
+import json
+import pathlib
+import sys
 
-if ! grep -q '^Browser$' <<<"$overlay_text"; then
-  echo "$overlay_text"
-  echo "smoke_overlay_browser_controls: expanded controls did not expose the browser row" >&2
+status_path = pathlib.Path(sys.argv[1])
+app_path = sys.argv[2]
+target_match = sys.argv[3].casefold()
+trace_sequence_before = int(sys.argv[4])
+if not status_path.is_file():
+    raise SystemExit
+
+status = json.loads(status_path.read_text())
+if status.get("appPath") != app_path:
+    raise SystemExit
+
+chooser_shows = [
+    event
+    for event in status.get("mediaTransportTrace") or []
+    if event.get("event") == "chooser_show"
+    and int(event.get("sequence") or 0) > trace_sequence_before
+]
+targets = chooser_shows[-1].get("targets") if chooser_shows else status.get("mediaTargets")
+targets = targets or []
+print(f"target_count\t{len(targets)}")
+browser_targets = [
+    target
+    for target in targets
+    if str(target.get("id", "")).startswith("chromium-tab:")
+]
+if target_match:
+    browser_targets = [
+        target
+        for target in browser_targets
+        if target_match in " ".join(
+            str(target.get(key, "")) for key in ("app", "title", "artist")
+        ).casefold()
+    ]
+else:
+    non_youtube_targets = [
+        target
+        for target in browser_targets
+        if "youtube" not in " ".join(
+            str(target.get(key, "")) for key in ("app", "title", "artist")
+        ).casefold()
+    ]
+    browser_targets = non_youtube_targets or browser_targets
+
+if browser_targets:
+    print(f"browser_target_id\t{browser_targets[0]['id']}")
+PY
+)"
+runtime_target_count="$(awk -F '\t' '$1 == "target_count" { print $2; exit }' <<<"$runtime_target_info")"
+browser_target_id="$(awk -F '\t' '$1 == "browser_target_id" { print $2; exit }' <<<"$runtime_target_info")"
+selection_attempts="$target_count"
+if [[ "$runtime_target_count" =~ ^[0-9]+$ && "$runtime_target_count" -gt "$selection_attempts" ]]; then
+  selection_attempts="$runtime_target_count"
+fi
+
+if [[ -n "$BROWSER_TARGET_MATCH" && -z "$browser_target_id" ]]; then
+  echo "smoke_overlay_browser_controls: no live Chromium target matched '$BROWSER_TARGET_MATCH'" >&2
   exit 1
 fi
 
-for ((step = 0; step < target_count; step += 1)); do
-  overlay_text="$(keyway_window_text || true)"
-  if grep -q '^Volume disabled without browser extension$' <<<"$overlay_text"; then
-    break
+if [[ -n "$browser_target_id" ]]; then
+  click_result="$(overlay_button click "mediaTargetOverlay.target.$browser_target_id")"
+  if [[ "$click_result" != "clicked" ]]; then
+    echo "smoke_overlay_browser_controls: browser target row was not selectable ($click_result)" >&2
+    exit 1
   fi
-  send_overlay_key 125
   sleep 0.5
-done
+else
+  for ((step = 0; step < selection_attempts; step += 1)); do
+    overlay_text="$(keyway_window_text || true)"
+    browser_mute_enabled="$(overlay_button enabled "mediaTargetOverlay.browserMute")"
+    if [[ "$browser_mute_enabled" == "true" ]] || grep -Eq "$browser_reduced_state_pattern" <<<"$overlay_text"; then
+      break
+    fi
+    send_overlay_key 125
+    sleep 0.5
+  done
+fi
 
 for _ in {1..10}; do
   overlay_text="$(keyway_window_text || true)"
+  browser_mute_enabled="$(overlay_button enabled "mediaTargetOverlay.browserMute")"
   if grep -q '^Browser$' <<<"$overlay_text" \
-    && grep -q '^Disabled$' <<<"$overlay_text" \
-    && grep -q '^Volume disabled without browser extension$' <<<"$overlay_text"; then
+    && { [[ "$browser_mute_enabled" == "true" ]] || grep -Eq "$browser_reduced_state_pattern" <<<"$overlay_text"; }; then
     break
   fi
   sleep 0.2
@@ -376,25 +441,45 @@ if ! grep -q '^Browser$' <<<"$overlay_text"; then
   exit 1
 fi
 
-if grep -q '^Disabled$' <<<"$overlay_text"; then
-  if ! grep -q '^Volume disabled without browser extension$' <<<"$overlay_text"; then
-    echo "smoke_overlay_browser_controls: browser volume disabled explanation is missing" >&2
-    exit 1
-  fi
-else
-  click_result="$(click_overlay_button "mediaTargetOverlay.browserMute")"
+if [[ -n "$BROWSER_TARGET_MATCH" && "$browser_mute_enabled" != "true" ]]; then
+  echo "smoke_overlay_browser_controls: matched Chromium target did not expose live extension controls" >&2
+  exit 1
+fi
+
+if [[ "$browser_mute_enabled" == "true" ]]; then
+  click_result="$(overlay_button click "mediaTargetOverlay.browserMute")"
   if [[ "$click_result" != "clicked" ]]; then
     echo "$overlay_text"
     echo "smoke_overlay_browser_controls: browser mute button was not clickable ($click_result)" >&2
     exit 1
   fi
-  sleep 0.5
+  browser_mute_enabled="$(wait_for_overlay_button_enabled "mediaTargetOverlay.browserMute")"
+  if [[ "$browser_mute_enabled" != "true" ]]; then
+    echo "smoke_overlay_browser_controls: browser mute state was not reflected before the confirmation timeout" >&2
+    exit 1
+  fi
+
+  click_result="$(overlay_button click "mediaTargetOverlay.browserMute")"
+  if [[ "$click_result" != "clicked" ]]; then
+    echo "smoke_overlay_browser_controls: browser mute restore was not clickable ($click_result)" >&2
+    exit 1
+  fi
+  browser_mute_enabled="$(wait_for_overlay_button_enabled "mediaTargetOverlay.browserMute")"
+  if [[ "$browser_mute_enabled" != "true" ]]; then
+    echo "smoke_overlay_browser_controls: browser mute restore was not reflected before the confirmation timeout" >&2
+    exit 1
+  fi
+
   overlay_text="$(keyway_window_text || true)"
   if ! grep -q '^Browser$' <<<"$overlay_text"; then
     echo "$overlay_text"
     echo "smoke_overlay_browser_controls: overlay disappeared after browser mute toggle" >&2
     exit 1
   fi
+elif ! grep -Eq "$browser_reduced_state_pattern" <<<"$overlay_text"; then
+  echo "$overlay_text"
+  echo "smoke_overlay_browser_controls: no extension-backed browser controls or explicit reduced-capability state found" >&2
+  exit 1
 fi
 
 echo "smoke_overlay_browser_controls=ok"

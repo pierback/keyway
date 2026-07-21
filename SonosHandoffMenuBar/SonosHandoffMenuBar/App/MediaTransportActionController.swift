@@ -12,7 +12,7 @@ final class MediaTransportActionController {
     private static let physicalMediaKeyReboundWindow: TimeInterval = 0.25
     private static let chooserTargetedMediaKeyEchoWindow: TimeInterval = 1.25
     private static let programmaticDispatchFallbackDelayNanoseconds: UInt64 = 250_000_000
-    private static let selectedRowDispatchRouteShieldReleaseDelayNanoseconds: UInt64 = 180_000_000
+    private static let mediaRemoteRouteShieldReleaseDelayNanoseconds: UInt64 = 180_000_000
 
     private let logger = Logger(subsystem: AppIdentity.loggerSubsystem, category: "MediaTransport")
     private let mediaRemoteController: MediaRemoteController
@@ -28,6 +28,7 @@ final class MediaTransportActionController {
     private let targetResolver = MediaTransportTargetResolver()
     var relaxRouteShield: ((String) -> Void)?
     private var programmaticDispatches: [UUID: MediaTransportPendingDispatchEcho] = [:]
+    private var programmaticDispatchFallbackTasks: [UUID: Task<Void, Error>] = [:]
 
     init(
         mediaRemoteController: MediaRemoteController,
@@ -51,6 +52,12 @@ final class MediaTransportActionController {
             physicalMediaKeyReboundWindow: Self.physicalMediaKeyReboundWindow,
             chooserTargetedMediaKeyEchoWindow: Self.chooserTargetedMediaKeyEchoWindow
         )
+    }
+
+    deinit {
+        for task in programmaticDispatchFallbackTasks.values {
+            task.cancel()
+        }
     }
 
     func route(command: MediaRemoteTransportCommand) {
@@ -84,7 +91,7 @@ final class MediaTransportActionController {
         metadata: MediaTransportInputMetadata? = nil,
         commandCenterMetadata: MediaCommandCenterInputMetadata? = nil
     ) {
-        logger.info("MediaTransport input command=\(command.rawValue, privacy: .public) source=\(source.rawValue, privacy: .public) overlayVisible=\(self.overlayController.isVisible, privacy: .public) chooserActive=\(self.chooserSession.isActive, privacy: .public) canRoute=\(self.mediaRemoteController.canRouteCommands, privacy: .public) targetCount=\(self.mediaSourceStore.targets.count, privacy: .public)")
+        logger.info("MediaTransport input command=\(command.rawValue, privacy: .public) source=\(source.rawValue, privacy: .public) overlayVisible=\(self.overlayController.isVisible, privacy: .public) chooserActive=\(self.chooserSession.isActive, privacy: .public) canRoute=\(self.mediaRemoteController.canRouteCommands, privacy: .public) targetCount=\(self.mediaSourceStore.rows.count, privacy: .public)")
         trace(
             "input",
             command: command,
@@ -139,58 +146,19 @@ final class MediaTransportActionController {
         )
     }
 
-    func showChooser(command: MediaRemoteTransportCommand = .playPause) {
-        showChooserFromCache(command: command)
-    }
-
     func showTargetChooser() {
         showChooserFromCache(command: nil)
     }
 
     func route(command: MediaRemoteTransportCommand, to target: MediaRemoteTarget) {
-        send(command: command, to: target, reason: .current)
+        rememberTarget(target)
+        let dispatchID = beginBoundedProgrammaticDispatch(command: command)
+        send(command: command, to: target, dispatchID: dispatchID, context: .direct)
     }
 
     func focus(target: MediaRemoteTarget) {
         rememberTarget(target)
         sourceFocusActionController.focus(target: target)
-    }
-
-    func currentRouteStatus(command: MediaRemoteTransportCommand = .playPause) -> MediaRouteStatus {
-        let targets = sortedTargets(mediaSourceStore.targets)
-        guard !targets.isEmpty else {
-            return MediaRouteStatus(kind: .unavailable, target: nil, targetCount: 0)
-        }
-        let rowsByID = Dictionary(mediaSourceStore.rows.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
-
-        if let decision = targetResolver.automaticTarget(
-            command: command,
-            from: targets,
-            recentTargetID: targetSelectionMemory.recentTargetID
-        ) {
-            if MediaTransportCommandRules.shouldOpenChooserForAutomaticRoute(reachability: rowsByID[decision.target.id]?.reachability) {
-                return MediaRouteStatus(
-                    kind: .chooser,
-                    target: decision.target,
-                    targetCount: targets.count
-                )
-            }
-            let kind: MediaRouteStatusKind = targets.count > 1
-                ? .chooser
-                : MediaTransportCommandRules.statusKind(for: decision.reason)
-
-            return MediaRouteStatus(
-                kind: kind,
-                target: decision.target,
-                targetCount: targets.count
-            )
-        }
-
-        return MediaRouteStatus(
-            kind: .chooser,
-            target: activeSourceTarget ?? targets.first,
-            targetCount: targets.count
-        )
     }
 
     private func showChooserFromCache(command: MediaRemoteTransportCommand?) {
@@ -237,7 +205,7 @@ final class MediaTransportActionController {
         }
 
         let commandName = command?.rawValue ?? "none"
-        let cached = sortedTargets(mediaSourceStore.targets)
+        let cached = sortedTargets(mediaSourceStore.rows.map(\.target))
         let refreshQueued = mediaRemoteController.refreshSnapshot()
 
         logger.info("MediaTransport chooser_show command=\(commandName, privacy: .public) source=\(source.rawValue, privacy: .public) targetCount=\(cached.count, privacy: .public) refreshQueued=\(refreshQueued, privacy: .public) targets=\(MediaTransportCommandRules.targetLogSummary(cached), privacy: .public)")
@@ -265,9 +233,8 @@ final class MediaTransportActionController {
         metadata: MediaTransportInputMetadata?,
         commandCenterMetadata: MediaCommandCenterInputMetadata?
     ) {
-        let routeStatus = currentRouteStatus(command: command)
-        let targets = sortedTargets(mediaSourceStore.targets)
-        guard routeStatus.kind != .unavailable else {
+        let targets = sortedTargets(mediaSourceStore.rows.map(\.target))
+        guard !targets.isEmpty else {
             mediaRemoteController.refreshSnapshot()
             showChooserOverlay(
                 command: command,
@@ -383,16 +350,16 @@ final class MediaTransportActionController {
                     "chooser_select",
                     command: command,
                     target: target,
-                    targetCount: self.mediaSourceStore.targets.count
+                    targetCount: self.mediaSourceStore.rows.count
                 )
 
                 guard let command else {
-                    self.finishChooser(id: chooserID)
+                    self.chooserSession.finish(id: chooserID)
                     self.trace(
                         "chooser_closed_without_command",
                         command: nil,
                         target: target,
-                        targetCount: self.mediaSourceStore.targets.count
+                        targetCount: self.mediaSourceStore.rows.count
                     )
                     self.mediaRemoteController.refreshSnapshot()
                     StatusHUD.shared.finish(
@@ -403,52 +370,28 @@ final class MediaTransportActionController {
                     return
                 }
 
-                let routedCommand = self.chooserScopedCommand(command, for: target)
-                self.finishChooser(
-                    id: chooserID,
-                    selected: true
-                )
+                self.chooserSession.finish(id: chooserID)
                 self.trace(
                     "chooser_closed_for_dispatch",
                     command: command,
                     target: target,
-                    targetCount: self.mediaSourceStore.targets.count
+                    targetCount: self.mediaSourceStore.rows.count
                 )
-                if let desktopTransport = self.desktopTransportName(target: target) {
-                    self.trace(
-                        "selected_row_dispatch_route_shield_kept",
-                        command: command,
-                        target: target,
-                        reason: desktopTransport,
-                        transportBackend: desktopTransport
-                    )
-                } else {
-                    self.relaxRouteShield?("selected_row_dispatch")
-                }
-                Task { @MainActor [weak self] in
-                    guard (try? await Task.sleep(nanoseconds: Self.selectedRowDispatchRouteShieldReleaseDelayNanoseconds)) != nil else {
-                        return
-                    }
-                    self?.dispatchFromChooser(
-                        command: routedCommand,
-                        requestedCommand: command,
-                        to: target,
-                        metadata: metadata
-                    )
-                }
+                self.dispatchFromChooser(
+                    command: command,
+                    to: target,
+                    metadata: metadata
+                )
             },
             onFocus: { [weak self] target in
                 guard let self else { return }
                 self.logger.info("MediaTransport chooser_focus target=\(target.appName, privacy: .public) targetID=\(target.id, privacy: .public)")
-                self.finishChooser(
-                    id: chooserID,
-                    selected: true
-                )
+                self.chooserSession.finish(id: chooserID)
                 self.trace(
                     "chooser_closed_for_focus",
                     command: command,
                     target: target,
-                    targetCount: self.mediaSourceStore.targets.count
+                    targetCount: self.mediaSourceStore.rows.count
                 )
                 self.relaxRouteShield?("chooser_focus")
                 self.rememberTarget(target)
@@ -456,10 +399,10 @@ final class MediaTransportActionController {
             },
             onDismiss: { [weak self] in
                 guard let self else { return }
-                let activeCommand = self.chooserSession.activeCommandRawValue(for: chooserID) ?? "stale"
+                let activeCommand = self.chooserSession.activeCommand(for: chooserID)?.rawValue ?? "stale"
                 self.logger.info("MediaTransport chooser_dismissed command=\(activeCommand, privacy: .public)")
                 self.trace("chooser_dismissed", command: self.chooserSession.activeCommand(for: chooserID))
-                self.finishChooser(id: chooserID)
+                self.chooserSession.finish(id: chooserID)
                 self.relaxRouteShield?("chooser_dismissed")
             }
         )
@@ -509,19 +452,13 @@ final class MediaTransportActionController {
         return "\(helperStatus) / \(bridgeStatus)"
     }
 
-    private var activeSourceTarget: MediaRemoteTarget? {
-        guard let activeTargetID = mediaRemoteController.activeTargetID else {
-            return nil
-        }
-        return mediaSourceStore.targets.first { $0.id == activeTargetID }
-    }
-
     private func rememberTarget(_ target: MediaRemoteTarget) {
         targetSelectionMemory.remember(target)
     }
 
     private enum MediaTransportDispatchContext {
         case programmatic(reason: MediaTransportRoutingReason)
+        case direct
         case chooser
     }
 
@@ -543,7 +480,12 @@ final class MediaTransportActionController {
             trace(result: result, transportBackend: result.backend)
             finishDispatch(id: dispatchID, fallback: false)
             mediaRemoteController.refreshSnapshot()
-            showCommandFailureIfNeeded(result: result, target: target)
+            showCommandResult(
+                result: result,
+                command: command,
+                target: target,
+                context: context
+            )
             logDispatch(command: command, target: target, context: context, transport: result.backend ?? "desktop")
             return
         }
@@ -552,7 +494,12 @@ final class MediaTransportActionController {
             self.mediaSourceStore.recordCommandResult(result)
             self.trace(result: result, transportBackend: result.backend)
             self.finishDispatch(id: dispatchID, fallback: false)
-            self.showCommandFailureIfNeeded(result: result, target: target)
+            self.showCommandResult(
+                result: result,
+                command: command,
+                target: target,
+                context: context
+            )
         }) {
             guard sent else {
                 mediaSourceStore.markCommandFailed(targetID: target.id)
@@ -564,6 +511,7 @@ final class MediaTransportActionController {
                 )
                 return
             }
+            scheduleProgrammaticDispatchFallback(id: dispatchID)
             logDispatch(command: command, target: target, context: context, transport: "chromium_extension")
             return
         }
@@ -576,17 +524,26 @@ final class MediaTransportActionController {
         dispatchID: UUID,
         context: MediaTransportDispatchContext
     ) {
-        guard sendMediaRemote(command: command, to: target, dispatchID: dispatchID, context: context) else {
-            mediaRemoteController.probeHelperLiveness()
-            mediaSourceStore.markCommandFailed(targetID: target.id)
-            finishDispatch(id: dispatchID, fallback: true)
-            logDispatchFailure(command: command, target: target, context: context)
-            StatusHUD.shared.finish(
-                title: "Media Command Failed",
-                message: "Keyway could not reach \(target.appName).",
-                dismissAfter: 2.2
-            )
-            return
+        let routedCommand = MediaTransportCommandRules.rowScopedCommand(command, for: target)
+        relaxRouteShield?("mediaremote_dispatch")
+        Task { @MainActor [weak self] in
+            try await Task.sleep(nanoseconds: Self.mediaRemoteRouteShieldReleaseDelayNanoseconds)
+            try Task.checkCancellation()
+            guard let self else {
+                return
+            }
+            guard self.sendMediaRemote(command: routedCommand, to: target, dispatchID: dispatchID, context: context) else {
+                self.mediaRemoteController.probeHelperLiveness()
+                self.mediaSourceStore.markCommandFailed(targetID: target.id)
+                self.finishDispatch(id: dispatchID, fallback: true)
+                self.logDispatchFailure(command: command, target: target, context: context)
+                StatusHUD.shared.finish(
+                    title: "Media Command Failed",
+                    message: "Keyway could not reach \(target.appName).",
+                    dismissAfter: 2.2
+                )
+                return
+            }
         }
     }
 
@@ -603,9 +560,15 @@ final class MediaTransportActionController {
             self?.mediaSourceStore.recordCommandResult(result)
             self?.trace(result: result, transportBackend: Self.mediaRemotePlayerPathBackend)
             self?.finishDispatch(id: dispatchID, fallback: false)
-            self?.showCommandFailureIfNeeded(result: result, target: target)
+            self?.showCommandResult(
+                result: result,
+                command: command,
+                target: target,
+                context: context
+            )
         }
         if sent {
+            scheduleProgrammaticDispatchFallback(id: dispatchID)
             logDispatch(command: command, target: target, context: context, transport: Self.mediaRemotePlayerPathBackend)
         }
         return sent
@@ -613,13 +576,13 @@ final class MediaTransportActionController {
 
     private func dispatchFromChooser(
         command: MediaRemoteTransportCommand,
-        requestedCommand: MediaRemoteTransportCommand,
         to target: MediaRemoteTarget,
         metadata: MediaTransportInputMetadata?
     ) {
-        logger.info("MediaTransport chooser_dispatch requestedCommand=\(requestedCommand.rawValue, privacy: .public) routedCommand=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) targetID=\(target.id, privacy: .public) playing=\(target.isCurrentlyPlaying, privacy: .public)")
+        logger.info("MediaTransport chooser_dispatch command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) targetID=\(target.id, privacy: .public) playing=\(target.isCurrentlyPlaying, privacy: .public)")
         rememberTarget(target)
-        let transportBackend = transportBackendName(command: command, target: target)
+        let transportBackend = desktopTransportName(target: target)
+            ?? Self.mediaRemotePlayerPathBackend
         trace("chooser_dispatch", command: command, target: target, transportBackend: transportBackend)
         let dispatchID = beginBoundedChooserDispatch(
             command: command,
@@ -627,24 +590,6 @@ final class MediaTransportActionController {
             targetUnixProcessID: Int64(target.pid),
             applicationUnixProcessID: Int64(ProcessInfo.processInfo.processIdentifier)
         )
-        sendFromChooser(command: command, to: target, dispatchID: dispatchID)
-    }
-
-    private func finishChooser(
-        id: UUID,
-        selected: Bool = false
-    ) {
-        chooserSession.finish(
-            id: id,
-            selected: selected
-        )
-    }
-
-    private func sendFromChooser(
-        command: MediaRemoteTransportCommand,
-        to target: MediaRemoteTarget,
-        dispatchID: UUID
-    ) {
         send(command: command, to: target, dispatchID: dispatchID, context: .chooser)
     }
 
@@ -657,6 +602,8 @@ final class MediaTransportActionController {
         switch context {
         case .programmatic(let reason):
             logger.info("MediaTransport route command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) reason=\(reason.rawValue, privacy: .public) transport=\(transport, privacy: .public)")
+        case .direct:
+            logger.info("MediaTransport direct command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) transport=\(transport, privacy: .public)")
         case .chooser:
             logger.info("MediaTransport chooser command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) transport=\(transport, privacy: .public)")
         }
@@ -670,31 +617,14 @@ final class MediaTransportActionController {
         switch context {
         case .programmatic(let reason):
             logger.error("MediaTransport route_failed command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) reason=\(reason.rawValue, privacy: .public)")
+        case .direct:
+            logger.error("MediaTransport direct_failed command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public)")
         case .chooser:
             logger.error("MediaTransport chooser_failed command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public)")
         }
     }
 
-    private func chooserScopedCommand(
-        _ command: MediaRemoteTransportCommand,
-        for target: MediaRemoteTarget
-    ) -> MediaRemoteTransportCommand {
-        guard command == .playPause else {
-            return MediaTransportCommandRules.rowScopedCommand(command, for: target)
-        }
-        if desktopTransport.keepsPlayPauseToggle(for: target) {
-            return .playPause
-        }
-        return MediaTransportCommandRules.rowScopedCommand(command, for: target)
-    }
-
     private static let mediaRemotePlayerPathBackend = "mediaremote_player_path"
-
-    private func transportBackendName(command: MediaRemoteTransportCommand, target: MediaRemoteTarget) -> String {
-        desktopTransport.backendName(command: command, target: target)
-            ?? chromiumBrowserExtensionController.backendName(command: command, target: target)
-            ?? Self.mediaRemotePlayerPathBackend
-    }
 
     private func desktopTransportName(target: MediaRemoteTarget) -> String? {
         desktopTransport.backendName(for: target)
@@ -705,7 +635,6 @@ final class MediaTransportActionController {
         let id = UUID()
         programmaticDispatches[id] = MediaTransportPendingDispatchEcho(command: command, kind: .automatic)
         commandCenterFilter.beginProgrammaticDispatch(command: command)
-        scheduleProgrammaticDispatchFallback(id: id)
         return id
     }
 
@@ -723,11 +652,11 @@ final class MediaTransportActionController {
             targetUnixProcessID: targetUnixProcessID,
             applicationUnixProcessID: applicationUnixProcessID
         )
-        scheduleProgrammaticDispatchFallback(id: id)
         return id
     }
 
     private func finishDispatch(id: UUID, fallback: Bool) {
+        programmaticDispatchFallbackTasks.removeValue(forKey: id)?.cancel()
         guard let pending = programmaticDispatches.removeValue(forKey: id) else {
             return
         }
@@ -743,14 +672,20 @@ final class MediaTransportActionController {
     }
 
     private func scheduleProgrammaticDispatchFallback(id: UUID) {
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: Self.programmaticDispatchFallbackDelayNanoseconds)
-            guard let self,
-                  let pending = self.programmaticDispatches[id]
-            else {
+        guard programmaticDispatches[id] != nil else {
+            return
+        }
+        programmaticDispatchFallbackTasks[id]?.cancel()
+        programmaticDispatchFallbackTasks[id] = Task { @MainActor [weak self] in
+            try await Task.sleep(nanoseconds: Self.programmaticDispatchFallbackDelayNanoseconds)
+            try Task.checkCancellation()
+            guard let self else {
                 return
             }
-            self.programmaticDispatches[id] = nil
+            self.programmaticDispatchFallbackTasks[id] = nil
+            guard let pending = self.programmaticDispatches.removeValue(forKey: id) else {
+                return
+            }
             self.logger.error("MediaTransport programmatic_echo_window_fallback command=\(pending.command.rawValue, privacy: .public) kind=\(pending.kind.rawValue, privacy: .public)")
             self.trace(
                 "echo_window_fallback",
@@ -799,8 +734,21 @@ final class MediaTransportActionController {
         )
     }
 
-    private func showCommandFailureIfNeeded(result: MediaRemoteCommandResultEvent, target: MediaRemoteTarget) {
-        guard !result.ok else {
+    private func showCommandResult(
+        result: MediaRemoteCommandResultEvent,
+        command: MediaRemoteTransportCommand,
+        target: MediaRemoteTarget,
+        context: MediaTransportDispatchContext
+    ) {
+        if result.ok {
+            guard case .programmatic = context else {
+                return
+            }
+            StatusHUD.shared.finish(
+                title: "\(command.displayName) → \(target.appName)",
+                message: "Routed automatically",
+                dismissAfter: 2.2
+            )
             return
         }
 

@@ -73,7 +73,7 @@ struct OverlayModelSemantics {
             row(id: "arc:new", pid: 30, identity: "company.thebrowser.Browser", appName: "Arc"),
         ])
 
-        expectEqual(model.targets.map(\.id), ["arc:new"], "a new overlay session must use the rows passed at open time")
+        expectEqual(model.rows.map(\.id), ["arc:new"], "a new overlay session must use the rows passed at open time")
         expectEqual(model.selectedIndex, 0, "a new overlay session must reset selection")
         expectEqual(model.selectedTarget?.appName, "Arc", "a new overlay session must select the first visible row")
     }
@@ -87,7 +87,7 @@ struct OverlayModelSemantics {
         ])
         model.moveSelection(by: -1)
 
-        expectEqual(model.targets.map(\.id), ["helium:open", "spotify:open"], "keyboard movement must not mutate visible rows")
+        expectEqual(model.rows.map(\.id), ["helium:open", "spotify:open"], "keyboard movement must not mutate visible rows")
         expectEqual(model.selectedIndex, 1, "keyboard movement must wrap within the open-session rows")
         expectEqual(model.selectedTarget?.id, "spotify:open", "keyboard movement must select only a visible-session row")
     }
@@ -103,7 +103,7 @@ struct OverlayModelSemantics {
 
         model.update(command: .playPause, rows: [])
 
-        expectEqual(model.targets.map(\.id), [], "an empty new session must clear visible rows")
+        expectEqual(model.rows.map(\.id), [], "an empty new session must clear visible rows")
         expectEqual(model.selectedIndex, 0, "an empty new session must reset selection")
         expectEqual(model.selectedTarget?.id, nil, "an empty new session must clear selected target")
     }
@@ -124,7 +124,7 @@ struct OverlayModelSemantics {
             row(id: "a", pid: 11, identity: "app.a", appName: "A"),
         ])
 
-        expectEqual(model.targets.map(\.id), ["c", "b", "a"], "live update must replace visible rows")
+        expectEqual(model.rows.map(\.id), ["c", "b", "a"], "live update must replace visible rows")
         expectEqual(model.selectedIndex, 1, "live update must preserve selected row by stable ID")
         expectEqual(model.selectedTarget?.appName, "B Updated", "selection must follow row data updates")
     }
@@ -158,7 +158,7 @@ struct OverlayModelSemantics {
 
         model.updateRowsPreservingSelection([])
 
-        expectEqual(model.targets.map(\.id), [], "mid-session empty update must clear rows")
+        expectEqual(model.rows.map(\.id), [], "mid-session empty update must clear rows")
         expectEqual(model.selectedIndex, 0, "mid-session empty update must clamp selection")
         expectEqual(model.command, .playPause, "mid-session empty update must keep the pending command")
         expectEqual(model.expanded, true, "mid-session empty update must not reset the session")

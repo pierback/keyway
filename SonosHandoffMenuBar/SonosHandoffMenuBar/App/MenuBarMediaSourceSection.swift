@@ -17,7 +17,7 @@ struct MenuBarMediaSourceSection: View {
     @State private var sessionHasOpened = false
 
     private var freshTargets: [MediaRemoteTarget] {
-        sortedTargets(mediaSourceStore.targets)
+        sortedTargets(mediaSourceStore.rows.map(\.target))
     }
 
     private var displayTargets: [MediaRemoteTarget] {

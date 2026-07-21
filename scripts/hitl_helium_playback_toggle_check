@@ -184,7 +184,6 @@ key_down = first("transport_key_down")
 input_event = first("input")
 show = first("chooser_show")
 select = first("chooser_select")
-shield_kept = first("selected_row_dispatch_route_shield_kept")
 dispatch = first("chooser_dispatch")
 if key_down is None:
     fail("no hardware transport key-down was recorded")
@@ -215,10 +214,8 @@ if selected_id and dispatch_id and selected_id != dispatch_id:
     fail(f"selected targetID {selected_id} did not match dispatch targetID {dispatch_id}")
 if dispatch.get("transportBackend") != "chromium_extension":
     fail(f"chooser_dispatch transportBackend {dispatch.get('transportBackend')!r}; expected 'chromium_extension'")
-if shield_kept is None:
-    fail("Helium selected-row dispatch did not keep the route shield armed")
-if shield_kept.get("transportBackend") != "chromium_extension":
-    fail(f"route-shield keep backend {shield_kept.get('transportBackend')!r}; expected 'chromium_extension'")
+if payload.get("commandCenterRouteRunning") is not True:
+    fail("Command Center route shield was not active after Chromium dispatch")
 
 helper_results = [
     event for event in events[events.index(dispatch) + 1:]

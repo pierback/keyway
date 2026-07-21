@@ -109,7 +109,6 @@ final class PlaybackBackgroundSync {
             else {
                 hasShownAuthPrompt = false
                 clearSuggestions(currentHeadphoneOutputID: nil)
-                clearSelection(reason: "no_active_spotify_playback")
                 await refreshOutputCacheWithoutPlayback(discoveryRefreshStarted: discoveryRefreshStarted)
                 return
             }
@@ -117,7 +116,6 @@ final class PlaybackBackgroundSync {
             guard status.isPlaying else {
                 hasShownAuthPrompt = false
                 clearSuggestions(currentHeadphoneOutputID: nil)
-                clearSelection(reason: "spotify_playback_paused")
                 await refreshOutputCacheWithoutPlayback(discoveryRefreshStarted: discoveryRefreshStarted)
                 return
             }
@@ -136,7 +134,6 @@ final class PlaybackBackgroundSync {
                     cachedBaselineSpeakerIDs: cachedTransferBaselineSpeakerIDs
                 )
                 clearHeadphoneTransferSuggestion(currentHeadphoneOutputID: nil)
-                clearSelection(reason: "active_device_not_visible")
                 notifyOpenMenuAfterDiscoveryRefresh(
                     discoveryRefreshStarted: discoveryRefreshStarted,
                     currentRoomName: activeRoomName
@@ -164,7 +161,6 @@ final class PlaybackBackgroundSync {
         } catch {
             if SpotifyAuthRecovery.isAuthRequired(error) {
                 clearSuggestions(currentHeadphoneOutputID: nil)
-                clearSelection(reason: "spotify_auth_required")
                 showAuthPromptIfNeeded(error)
                 return
             }
@@ -350,12 +346,15 @@ final class PlaybackBackgroundSync {
         ]
         var seenNames = Set<String>()
         return rawCandidates.compactMap { candidate in
-            guard let name = candidate?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty else {
+            guard let name = SonosRoomName.normalized(candidate) else {
+
                 return nil
             }
             guard seenNames.insert(normalizedSpotifyDeviceName(name)).inserted else {
+
                 return nil
             }
+
             return name
         }
     }
@@ -649,8 +648,9 @@ final class PlaybackBackgroundSync {
     }
 
     private func transferFailureMessage(roomName: String, message: String) -> String {
-        message.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-            ?? "Could not move Spotify playback to \(roomName)."
+        let message = message.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return message.isEmpty ? "Could not move Spotify playback to \(roomName)." : message
     }
 
     private func headphoneTransferFailureMessage(suggestion: HeadphoneTransferSuggestion) -> String {
@@ -669,7 +669,6 @@ final class PlaybackBackgroundSync {
         } catch {
             if SpotifyAuthRecovery.isAuthRequired(error) {
                 clearSuggestions(currentHeadphoneOutputID: nil)
-                clearSelection(reason: "spotify_auth_required")
                 showAuthPromptIfNeeded(error)
                 return nil
             }
@@ -734,11 +733,5 @@ private struct PlaybackTransferSuggestionError: LocalizedError {
 
     var errorDescription: String? {
         message
-    }
-}
-
-private extension String {
-    var nilIfEmpty: String? {
-        isEmpty ? nil : self
     }
 }

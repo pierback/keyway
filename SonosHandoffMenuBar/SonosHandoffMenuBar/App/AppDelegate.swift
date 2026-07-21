@@ -15,10 +15,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             volumeService: environment.volumeService,
             outputSelection: environment.outputSelection,
             activePlaybackObserver: environment.activePlaybackObserver,
+            mediaSourceStore: environment.mediaSourceStore,
             mediaTransportActions: environment.mediaTransportActionController
         )
         environment.mediaTransportActionController.relaxRouteShield = { [weak volumeHotkeys] reason in
-            volumeHotkeys?.suspendCommandCenterRouteShieldForSelectedDispatch(reason: reason)
+            volumeHotkeys?.suspendCommandCenterRouteShield(reason: reason)
         }
         self.volumeHotkeys = volumeHotkeys
         statusItemController = KeywayStatusItemController(environment: environment)
@@ -42,22 +43,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
 
         volumeHotkeys.start()
-
-        NotificationCenter.default.addObserver(
-            forName: NSWindow.willCloseNotification,
-            object: nil,
-            queue: .main
-        ) { notification in
-            let closingWindow = notification.object as? NSWindow
-            DispatchQueue.main.async {
-                let hasVisibleSettings = NSApp.windows.contains { window in
-                    window !== closingWindow && window.isVisible && window.title.contains("Settings")
-                }
-                if !hasVisibleSettings {
-                    _ = NSApp.setActivationPolicy(.accessory)
-                }
-            }
-        }
     }
 
     nonisolated func userNotificationCenter(

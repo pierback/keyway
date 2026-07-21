@@ -161,6 +161,23 @@ started_at_ms="$(perl -MTime::HiRes=time -e 'printf "%.0f", time() * 1000')"
 elapsed_ms=()
 
 for command in "${commands[@]}"; do
+  case "$command" in
+    pause)
+      if ! playing_state_matches_once true; then
+        osascript -e 'tell application id "com.spotify.client" to play' >/dev/null
+        wait_for_playing_state true || fail "Could not prepare playing state before pause command"
+        restore_play=1
+      fi
+      ;;
+    play)
+      if playing_state_matches_once true; then
+        osascript -e 'tell application id "com.spotify.client" to pause' >/dev/null
+        wait_for_playing_state false || fail "Could not prepare paused state before play command"
+        restore_play=1
+      fi
+      ;;
+  esac
+
   command_started_at_ms="$(perl -MTime::HiRes=time -e 'printf "%.0f", time() * 1000')"
   if command_output="$("${cli[@]}" playback-command "$command" 2>&1)"; then
     command_finished_at_ms="$(perl -MTime::HiRes=time -e 'printf "%.0f", time() * 1000')"
@@ -202,10 +219,10 @@ if (( ${#elapsed_ms[@]} > 0 )); then
     printf '%s\n' "${elapsed_ms[@]}" | sort -n | awk '
       { values[NR] = $1 }
       END {
-        index = int((NR * 95 + 99) / 100)
-        if (index < 1) { index = 1 }
-        if (index > NR) { index = NR }
-        print values[index]
+        p95_index = int((NR * 95 + 99) / 100)
+        if (p95_index < 1) { p95_index = 1 }
+        if (p95_index > NR) { p95_index = NR }
+        print values[p95_index]
       }
     '
   )"

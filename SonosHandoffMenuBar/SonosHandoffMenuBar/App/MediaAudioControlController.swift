@@ -59,7 +59,6 @@ final class MediaAudioControlController: ObservableObject {
     private let mediaSourceStore: MediaSourceStore?
     private let volumeCommands: SpeakerVolumeCommandQueue
     private let browserMuteConfirmationTimeoutNanoseconds: UInt64
-    private let outputPreferenceResolver = SonosOutputPreferenceResolver()
     private var mediaSourceRowsSubscription: AnyCancellable?
     @Published private var pendingBrowserMutesByTargetID: [String: PendingBrowserMute] = [:]
 
@@ -105,10 +104,7 @@ final class MediaAudioControlController: ObservableObject {
     }
 
     func adjustSonosVolume(direction: MediaAudioVolumeDirection) {
-        guard let target = sonosVolumeTarget() else {
-            StatusHUD.shared.finish(title: "No Sonos Output", message: "Select or start a Sonos output first.", dismissAfter: 2.0)
-            return
-        }
+        let target = sonosVolumeTarget()
 
         let logger = logger
         Task.detached(priority: .userInitiated) { [volumeService, volumeCommands, logger] in
@@ -138,10 +134,7 @@ final class MediaAudioControlController: ObservableObject {
     }
 
     func toggleSonosMute() {
-        guard let target = sonosVolumeTarget() else {
-            StatusHUD.shared.finish(title: "No Sonos Output", message: "Select or start a Sonos output first.", dismissAfter: 2.0)
-            return
-        }
+        let target = sonosVolumeTarget()
 
         let logger = logger
         Task.detached(priority: .userInitiated) { [volumeService, volumeCommands, logger] in
@@ -295,9 +288,7 @@ final class MediaAudioControlController: ObservableObject {
     }
 
     private func sonosPresentation() async -> MediaAudioControlPresentation {
-        guard let target = sonosVolumeTarget() else {
-            return .disabled(title: "Sonos", detail: "No selected Sonos output")
-        }
+        let target = sonosVolumeTarget()
 
         do {
             let status: SpeakerVolumeStatus
@@ -370,8 +361,10 @@ final class MediaAudioControlController: ObservableObject {
 
     private func confirmedBrowserMuted(target: MediaRemoteTarget) -> Bool {
         if let row = mediaSourceStore?.rows.first(where: { $0.id == target.id }) {
-            return row.audioState.muted
+
+            return row.target.muted == true
         }
+
         return target.muted == true
     }
 
@@ -406,7 +399,7 @@ final class MediaAudioControlController: ObservableObject {
     private func confirmPendingBrowserMutes(rows: [SourceRow]) {
         for row in rows {
             guard let pending = pendingBrowserMutesByTargetID[row.id],
-                  row.audioState.muted == pending.expectedMuted
+                  (row.target.muted == true) == pending.expectedMuted
             else {
                 continue
             }
@@ -438,13 +431,12 @@ final class MediaAudioControlController: ObservableObject {
         )
     }
 
-    private func sonosVolumeTarget() -> (roomName: String, scope: PlaybackVolumeScope)? {
+    private func sonosVolumeTarget() -> (roomName: String, scope: PlaybackVolumeScope) {
         if let roomName = SonosRoomName.normalized(outputSelection.roomName) {
             return (roomName, volumeScope(roomName: roomName))
         }
 
-        let preferredRoomName = outputPreferenceResolver.preferredRoomName(selectedRoomName: nil)
-        return (preferredRoomName, .member)
+        return ("Port", .member)
     }
 
     private func volumeScope(roomName: String) -> PlaybackVolumeScope {

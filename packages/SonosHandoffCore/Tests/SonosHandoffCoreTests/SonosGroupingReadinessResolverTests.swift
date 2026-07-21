@@ -11,7 +11,7 @@ struct SonosGroupingReadinessResolverTests {
                 group(coordinator: "Kitchen", members: ["Kitchen", "Port"]),
                 standalone("Office"),
             ]),
-            playback: SpotifyPlaybackDeviceStatus(deviceName: "Kitchen", isPlaying: true, volumePercent: 0)
+            playback: SpotifyPlaybackDeviceStatus(deviceName: "Kitchen", type: "Speaker", isRestricted: false, isPlaying: true, volumePercent: 0)
         )
 
         #expect(report.issues.isEmpty)
@@ -63,7 +63,7 @@ struct SonosGroupingReadinessResolverTests {
             in: SonosGroupState(groups: [
                 standalone("Kitchen"),
             ]),
-            playback: SpotifyPlaybackDeviceStatus(deviceName: "Kitchen", isPlaying: true, volumePercent: 0)
+            playback: SpotifyPlaybackDeviceStatus(deviceName: "Kitchen", type: "Speaker", isRestricted: false, isPlaying: true, volumePercent: 0)
         )
 
         #expect(report.issues == [.noStandaloneCandidate, .noCoordinatorReplacement])
@@ -81,7 +81,7 @@ struct SonosGroupingReadinessResolverTests {
                 standalone("Kitchen"),
                 standalone("Office"),
             ]),
-            playback: SpotifyPlaybackDeviceStatus(deviceName: "Kitchen", isPlaying: true, volumePercent: 0)
+            playback: SpotifyPlaybackDeviceStatus(deviceName: "Kitchen", type: "Speaker", isRestricted: false, isPlaying: true, volumePercent: 0)
         )
 
         #expect(report.issues == [.noCoordinatorReplacement])
@@ -100,7 +100,7 @@ struct SonosGroupingReadinessResolverTests {
             in: SonosGroupState(groups: [
                 group(coordinator: "Kitchen", members: ["Kitchen", "Port"]),
             ]),
-            playback: SpotifyPlaybackDeviceStatus(deviceName: "Kitchen", isPlaying: true, volumePercent: 0)
+            playback: SpotifyPlaybackDeviceStatus(deviceName: "Kitchen", type: "Speaker", isRestricted: false, isPlaying: true, volumePercent: 0)
         )
 
         #expect(report.issues == [.noStandaloneCandidate])
@@ -118,7 +118,7 @@ struct SonosGroupingReadinessResolverTests {
             in: SonosGroupState(groups: [
                 standalone("Kitchen"),
             ]),
-            playback: SpotifyPlaybackDeviceStatus(deviceName: "Office", isPlaying: false, volumePercent: 0)
+            playback: SpotifyPlaybackDeviceStatus(deviceName: "Office", type: "Speaker", isRestricted: false, isPlaying: false, volumePercent: 0)
         )
 
         #expect(report.issues == [.spotifyPlaybackNotPlaying, .activeSpotifyRoomNotVisible])
@@ -136,7 +136,7 @@ struct SonosGroupingReadinessResolverTests {
                 group(coordinator: "Kitchen", members: ["Kitchen", "Port", "Bath"]),
                 standalone("Office"),
             ]),
-            playback: SpotifyPlaybackDeviceStatus(deviceName: "Kitchen + 2", isPlaying: true, volumePercent: 0)
+            playback: SpotifyPlaybackDeviceStatus(deviceName: "Kitchen + 2", type: "Speaker", isRestricted: false, isPlaying: true, volumePercent: 0)
         )
 
         #expect(report.issues.isEmpty)

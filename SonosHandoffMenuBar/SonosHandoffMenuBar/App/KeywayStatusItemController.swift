@@ -6,12 +6,11 @@ import SwiftUI
 final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
     private let environment: AppEnvironment
     private let playback: PlaybackSyncController
-    private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+    private lazy var statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private lazy var popover: NSPopover = makePopover()
     private var popoverLocalDismissMonitor: Any?
     private var popoverGlobalDismissMonitor: Any?
     private var appDeactivationObserver: NSObjectProtocol?
-    private var settingsWindow: NSWindow?
     private var postPopoverCloseAction: (@MainActor () -> Void)?
 
     init(environment: AppEnvironment) {
@@ -84,14 +83,20 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
 
     private func openSettings() {
         closePopover()
-        NSApp.setActivationPolicy(.regular)
-        let window = settingsWindow ?? makeSettingsWindow()
-        settingsWindow = window
-        if !window.isVisible {
-            window.center()
-        }
-        window.makeKeyAndOrderFront(nil)
+        _ = NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        guard let settingsItem = NSApp.mainMenu?.items.first?.submenu?.items
+            .first(where: {
+                $0.keyEquivalent == "," && $0.keyEquivalentModifierMask.contains(.command)
+            }),
+            let settingsAction = settingsItem.action
+        else {
+            preconditionFailure("SwiftUI Settings command is unavailable")
+        }
+        precondition(
+            NSApp.sendAction(settingsAction, to: settingsItem.target, from: settingsItem),
+            "SwiftUI Settings command has no target"
+        )
     }
 
     private func openChooserFromPopover() {
@@ -163,35 +168,6 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
         hostingController.view.layer?.isOpaque = false
         popover.contentViewController = hostingController
         return popover
-    }
-
-    private func makeSettingsWindow() -> NSWindow {
-        let hostingController = NSHostingController(
-            rootView: SettingsFeature(
-                configStore: environment.configStore,
-                tokenStore: environment.tokenStore,
-                connectTokenStatusStore: environment.connectTokenStatusStore,
-                authCoordinator: environment.authCoordinator,
-                accessibilityAutomator: environment.accessibilityAutomator,
-                configImportService: environment.configImportService,
-                chromiumNativeMessagingHostInstaller: environment.chromiumNativeMessagingHostInstaller,
-                initialConfigImportReport: environment.configImportReport,
-                initialChromiumBridgeMessage: environment.chromiumNativeMessagingHostInstallMessage,
-                mediaRemoteController: environment.mediaRemoteController,
-                chromiumBrowserExtensionController: environment.chromiumBrowserExtensionController
-            )
-        )
-        let window = NSWindow(
-            contentRect: NSRect(origin: .zero, size: SettingsFeature.preferredWindowSize),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = SettingsFeature.menuTitle
-        window.contentViewController = hostingController
-        window.minSize = SettingsFeature.preferredWindowSize
-        window.isReleasedWhenClosed = false
-        return window
     }
 
     private func startAppDeactivationObserver() {
@@ -619,7 +595,7 @@ private struct KeywayControlCenterPopoverView: View {
 
     private var isBrowserOnlyRoutingAvailable: Bool {
         mediaRemoteController.canRouteCommands
-            && mediaSourceStore.targets.contains(where: ChromiumBrowserExtensionTransport.isTarget)
+            && mediaSourceStore.rows.contains { ChromiumBrowserExtensionTransport.isTarget($0.target) }
     }
 
     private func card<Content: View>(

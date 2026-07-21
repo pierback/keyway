@@ -19,10 +19,6 @@ final class MediaTargetOverlayModel: ObservableObject {
         browser: .disabled(title: "Browser", detail: "Select a browser media target")
     )
 
-    var targets: [MediaRemoteTarget] {
-        rows.map(\.target)
-    }
-
     var selectedTarget: MediaRemoteTarget? {
         guard rows.indices.contains(selectedIndex) else {
             return nil

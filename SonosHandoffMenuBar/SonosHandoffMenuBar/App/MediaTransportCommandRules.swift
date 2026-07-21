@@ -15,7 +15,7 @@ enum MediaTransportCommandRules {
         switch reachability {
         case .live:
             return false
-        case .suspect, .gone:
+        case .suspect:
             return true
         }
     }
@@ -28,21 +28,6 @@ enum MediaTransportCommandRules {
             return command
         }
         return target.isCurrentlyPlaying ? .pause : .play
-    }
-
-    static func statusKind(for reason: MediaTransportRoutingReason) -> MediaRouteStatusKind {
-        switch reason {
-        case .single:
-            return .auto
-        case .focused:
-            return .focused
-        case .current:
-            return .auto
-        case .recent:
-            return .auto
-        case .chooser:
-            return .chooser
-        }
     }
 
     static func sortedTargets(

@@ -199,7 +199,7 @@ assert_order(
     [
         'case "playback-command":',
         "spotifyPlaybackCommandArgument()",
-        "SpotifyConnectHandoffService().sendActivePlaybackCommand(playbackCommand)",
+        "service.sendActivePlaybackCommand(playbackCommand)",
         'print("playback-command=ok")',
     ],
     "port CLI must expose direct Spotify Web API playback commands through the shared core service",
@@ -216,21 +216,30 @@ for needle in [
     if needle not in core_interfaces:
         fail("core Spotify Web API command surface must include play, pause, playPause, next, and previous")
 
-assert_order(
-    core_interfaces,
-    [
-        "func activePlaybackDeviceStatus() async throws -> SpotifyPlaybackDeviceStatus?",
-        "func setActivePlaybackDeviceVolume(_ volume: Int) async throws -> Int",
-        "func sendActivePlaybackCommand(_ command: SpotifyPlaybackCommand) async throws",
-    ],
-    "Spotify active playback protocol must expose command control beside status and volume"
-)
+observer_start = index(core_interfaces, "public protocol SpotifyActivePlaybackObserving")
+observer_end = core_interfaces.find("\n}\n", observer_start)
+if observer_end < 0:
+    fail("Spotify active playback protocol must have a closing brace")
+observer = core_interfaces[observer_start:observer_end]
+
+for needle in [
+    "func activePlaybackDeviceStatus() async throws -> SpotifyPlaybackDeviceStatus?",
+    "func availablePlaybackDevices() async throws -> [SpotifyAvailablePlaybackDevice]",
+    "func transferActivePlayback(deviceName: String?, deviceType: String?, play: Bool) async throws",
+    "func setActivePlaybackDeviceVolume(_ volume: Int) async throws -> Int",
+]:
+    if needle not in observer:
+        fail("Spotify active playback observer must expose app-consumed observation and transfer operations")
+
+for needle in ["startActivePlayback(", "sendActivePlaybackCommand("]:
+    if needle in observer:
+        fail("Spotify active playback observer must not expose concrete-service CLI commands")
 
 assert_order(
     spotify_service,
     [
         "public func sendActivePlaybackCommand(_ command: SpotifyPlaybackCommand) async throws",
-        "runtime.sendActivePlaybackCommand(command)",
+        "spotifyBridge.sendPlaybackCommand(command)",
     ],
     "public Spotify service must expose active playback commands to the app"
 )
@@ -309,6 +318,13 @@ for needle in [
 ]:
     if needle not in spotify_diagnostic:
         fail("Spotify readiness diagnostic must report local AppleScript, Web API status, and Web API devices")
+
+for needle in [
+    'print("spotify_item=\\(itemName)")',
+    'print("spotify_uri=\\(itemURI)")',
+]:
+    if needle not in port_cli:
+        fail("playback-status must preserve current Spotify item diagnostics")
 
 print("verify_media_routing_probe_semantics=ok")
 PY

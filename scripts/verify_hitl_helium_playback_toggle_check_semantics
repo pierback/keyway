@@ -13,7 +13,7 @@ cat >"$ok_status" <<'JSON'
 {
   "accessibilityGranted": true,
   "activeEventTap": "cghid",
-  "appPath": "/Users/f.pieringer/Applications/Keyway.app",
+  "appPath": "/Applications/Keyway.app",
   "commandCenterRouteRunning": true,
   "eventTapRunning": true,
   "listenEventGranted": true,
@@ -92,15 +92,6 @@ cat >"$ok_status" <<'JSON'
       "monotonicMilliseconds": 130
     },
     {
-      "sequence": 6,
-      "event": "selected_row_dispatch_route_shield_kept",
-      "command": "playPause",
-      "target": "Helium",
-      "targetID": "helium",
-      "transportBackend": "chromium_extension",
-      "monotonicMilliseconds": 131
-    },
-    {
       "sequence": 7,
       "event": "chooser_closed_for_dispatch",
       "command": "playPause",
@@ -151,7 +142,7 @@ wrong_target.write_text(json.dumps(wrong_target_payload))
 
 wrong_backend_payload = json.loads(json.dumps(payload))
 for event in wrong_backend_payload["mediaTransportTrace"]:
-    if event.get("event") in {"selected_row_dispatch_route_shield_kept", "chooser_dispatch", "helper_command_result"}:
+    if event.get("event") in {"chooser_dispatch", "helper_command_result"}:
         event["transportBackend"] = "mediaremote_player_path"
 wrong_backend.write_text(json.dumps(wrong_backend_payload))
 PY

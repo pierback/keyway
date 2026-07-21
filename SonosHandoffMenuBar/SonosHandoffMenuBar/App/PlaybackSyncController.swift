@@ -12,16 +12,12 @@ final class PlaybackSyncController: ObservableObject {
     @Published private(set) var outputRows: [PlaybackOutputRow] = []
     @Published private(set) var selectedRoomName: String?
     @Published private(set) var loadingRoomName: String?
-    var groupLoadingRoomName: String? { groupEditController.groupLoadingRoomName }
+    @Published private(set) var groupLoadingRoomName: String?
     @Published private(set) var volumeState = SpeakerVolumeControlState()
     @Published private(set) var isRefreshingOutputs = false
     @Published private(set) var menuMessage: String?
     @Published private(set) var spotifyAuthRequired = false
     @Published private(set) var spotifyAuthMessage = "Spotify sign-in expired. Sign in again to sync playback."
-    var groupEditRows: [PlaybackGroupEditRow] { groupEditController.groupEditRows }
-    var pinnedMixerGroupID: String? { memberVolumeController.pinnedMixerGroupID }
-    var memberVolumeRows: [PlaybackMemberVolumeRow] { memberVolumeController.memberVolumeRows }
-
     private let outputDirectory: PlaybackOutputDirectory
     private let outputSelectionResolver = SonosOutputSelectionResolver()
     private let outputSelection: PlaybackOutputSelection
@@ -29,6 +25,8 @@ final class PlaybackSyncController: ObservableObject {
     private let volumeMonitor: SonosVolumeMonitor
     private let volumeActions: PlaybackVolumeActionController
     private let transferActions: PlaybackTransferActionController
+    private let groupingEditor: any SonosGroupingEditing
+    private let groupMembershipChangePlanner = SonosGroupMembershipChangePlanner()
     let memberVolumeController: PlaybackMemberVolumeController
     let groupEditController: PlaybackGroupEditController
     private let shortcutLogger = os.Logger(subsystem: "com.fpieringer.Keyway", category: "Shortcuts")
@@ -65,14 +63,13 @@ final class PlaybackSyncController: ObservableObject {
         self.volumeMonitor = volumeMonitor
         self.volumeActions = resolvedVolumeActions
         self.transferActions = resolvedTransferActions
+        self.groupingEditor = environment.groupingEditor
         self.memberVolumeController = PlaybackMemberVolumeController(
             volumeActions: resolvedVolumeActions
         )
         self.groupEditController = PlaybackGroupEditController(
-            groupingEditor: environment.groupingEditor,
             groupSuggestionStore: environment.groupSuggestionStore,
-            groupSuggestionPresenter: environment.groupSuggestionPresenter,
-            transferActions: resolvedTransferActions
+            groupSuggestionPresenter: environment.groupSuggestionPresenter
         )
         self.memberVolumeController.onChange = { [weak self] in
             self?.objectWillChange.send()
@@ -121,20 +118,6 @@ final class PlaybackSyncController: ObservableObject {
         currentGroupState.groups.first { $0.contains(roomName: selectedRoomName) }
     }
 
-    func isMixerPinned(for row: PlaybackOutputRow) -> Bool {
-        memberVolumeController.isMixerPinned(for: row)
-    }
-
-    func toggleMixer(for row: PlaybackOutputRow) {
-        memberVolumeController.toggleMixer(for: row)
-        objectWillChange.send()
-    }
-
-    func loadMemberVolumes(for row: PlaybackOutputRow) {
-        memberVolumeController.loadMemberVolumes(for: row)
-        objectWillChange.send()
-    }
-
     func hasActiveSpotifyConnection(to row: PlaybackOutputRow) -> Bool {
         guard let activeSpotifyRoomName else {
             return false
@@ -142,16 +125,10 @@ final class PlaybackSyncController: ObservableObject {
         return row.contains(roomName: activeSpotifyRoomName)
     }
 
-    func setMemberVolumeFromSlider(rowID: String, locationX: CGFloat, width: CGFloat) {
-        memberVolumeController.setMemberVolumeFromSlider(rowID: rowID, locationX: locationX, width: width)
-        objectWillChange.send()
-    }
-
     func commitMemberVolume(rowID: String) {
         memberVolumeController.commitMemberVolume(rowID: rowID) { [weak self] message in
             self?.menuMessage = message
         }
-        objectWillChange.send()
     }
 
     func appear() {
@@ -336,14 +313,12 @@ final class PlaybackSyncController: ObservableObject {
                   let roomName = SonosRoomName.normalized(status.deviceName)
             else {
                 activeSpotifyRoomName = nil
-                selectRoomName(nil)
                 clearSpotifyAuthRequired()
                 return
             }
 
             guard status.isPlaying else {
                 activeSpotifyRoomName = nil
-                selectRoomName(nil)
                 clearSpotifyAuthRequired()
                 return
             }
@@ -361,7 +336,6 @@ final class PlaybackSyncController: ObservableObject {
             }
 
             activeSpotifyRoomName = nil
-            selectRoomName(nil)
             shortcutLogger.info("SonosHandoffSpotifyActiveDevice result=unavailable error=\(error.localizedDescription, privacy: .public)")
         }
     }
@@ -371,15 +345,23 @@ final class PlaybackSyncController: ObservableObject {
     }
 
     private func applyOutputRefresh(_ refresh: PlaybackOutputRefresh, selectedRoomName resolvedSelectedRoomName: String?) {
+        let resolvedSelectedRoomName = resolvedSelectedRoomName
+            ?? outputSelectionResolver.selectedRoomName(
+                currentRoomName: selectedRoomName ?? outputSelection.roomName,
+                groups: refresh.state.groups
+            )
+            ?? refresh.rows.first?.coordinator.roomName
         setOutputRows(refresh.rows)
         currentGroupState = refresh.state
         selectRoomName(resolvedSelectedRoomName)
         groupEditController.setGroupEditRows(refresh.groupEditRows)
         refreshPinnedMixerRows()
-        refreshPendingGroupSuggestions(from: refresh, selectedRoomName: resolvedSelectedRoomName)
+        groupEditController.refreshPendingGroupSuggestions(
+            from: refresh,
+            selectedRoomName: resolvedSelectedRoomName
+        )
 
         if let selectedRoomName = resolvedSelectedRoomName {
-            clearSpotifyAuthRequired()
             refreshVolumeStatus(roomName: selectedRoomName)
         } else {
             operationGate.cancelVolume()
@@ -388,16 +370,8 @@ final class PlaybackSyncController: ObservableObject {
         }
     }
 
-    private func refreshPendingGroupSuggestions(from refresh: PlaybackOutputRefresh, selectedRoomName: String?) {
-        groupEditController.refreshPendingGroupSuggestions(
-            from: refresh,
-            selectedRoomName: selectedRoomName,
-            currentGroupState: currentGroupState
-        )
-    }
-
     private func preferredCurrentRoomName() -> String? {
-        activeSpotifyRoomName
+        activeSpotifyRoomName ?? selectedRoomName ?? outputSelection.roomName
     }
 
     private func selectedRoomName(forActiveSpotifyRoomName roomName: String) -> String? {
@@ -495,7 +469,6 @@ final class PlaybackSyncController: ObservableObject {
     func selectSpeaker(row: PlaybackOutputRow) {
         let roomName = row.coordinator.roomName
         selectRoomName(roomName)
-        clearSpotifyAuthRequired()
         refreshVolumeStatus(roomName: roomName)
     }
 
@@ -506,21 +479,22 @@ final class PlaybackSyncController: ObservableObject {
         guard let group = selectedOutputGroup else {
             return
         }
+        let change = groupMembershipChangePlanner.change(for: row, in: group)
 
-        groupEditController.groupLoadingRoomName = row.displayName
+        groupLoadingRoomName = row.displayName
         menuMessage = nil
 
         Task { @MainActor in
             do {
-                let outcome = try await applyGroupMembershipChange(row, group: group)
-                groupEditController.groupLoadingRoomName = nil
+                let outcome = try await applyGroupMembershipChange(change)
+                groupLoadingRoomName = nil
                 if let message = outcome.menuMessage {
                     menuMessage = message
                 }
                 if outcome.shouldRefreshOutputs {
                     groupEditController.clearSuggestionsCoveredByGroupEdit(row)
-                    let optimisticRoomName = groupEditController.optimisticSelectedRoomNameAfterGroupMutation(row, previousGroup: group)
-                    if let observedRefresh = await refreshAfterGroupMutation(row, previousGroup: group) {
+                    let optimisticRoomName = optimisticSelectedRoomName(after: change, previousGroup: group)
+                    if let observedRefresh = await refreshAfterGroupMutation(change, row: row) {
                         applyOutputRefresh(
                             observedRefresh,
                             selectedRoomName: observedRefresh.selectedRoomName ?? optimisticRoomName
@@ -534,7 +508,7 @@ final class PlaybackSyncController: ObservableObject {
                     }
                 }
             } catch {
-                groupEditController.groupLoadingRoomName = nil
+                groupLoadingRoomName = nil
                 menuMessage = groupEditMessage(for: row.displayName, error: error)
                 shortcutLogger.error("SonosHandoffGroupEdit result=failure target=\(row.displayName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
                 await refreshOutputs(showLoading: false, preserveMenuMessage: true)
@@ -559,7 +533,7 @@ final class PlaybackSyncController: ObservableObject {
             }
 
             let outcome = await transferActions.transfer(to: speaker, verification: verification)
-            guard isCurrentTransferOperation(ticket) else {
+            guard operationGate.isCurrentTransfer(ticket, loadingRoomName: loadingRoomName) else {
                 return
             }
 
@@ -587,24 +561,26 @@ final class PlaybackSyncController: ObservableObject {
     }
 
     private func applyGroupMembershipChange(
-        _ row: PlaybackGroupEditRow,
-        group: SonosSpeakerGroup
+        _ change: SonosGroupMembershipChange
     ) async throws -> PlaybackGroupEditOutcome {
-        switch groupEditController.groupMembershipChangePlanner.change(for: row, in: group) {
+        switch change {
         case .none:
             return .unchanged
         case .join(let speakers, let coordinatorRoomName):
-            try await joinSpeakers(speakers, toCoordinatorRoomName: coordinatorRoomName)
+            try await groupingEditor.join(
+                roomNames: speakers.map(\.roomName),
+                toCoordinatorRoomName: coordinatorRoomName
+            )
             let joinedRoomNames = speakers.map(\.roomName).joined(separator: ",")
             shortcutLogger.info("SonosHandoffGroupEdit result=joined rooms=\(joinedRoomNames, privacy: .public) coordinator=\(coordinatorRoomName, privacy: .public)")
             return .changed()
         case .remove(let roomName):
-            try await groupEditController.groupingEditor.removeFromGroup(roomName: roomName)
+            try await groupingEditor.removeFromGroup(roomName: roomName)
             shortcutLogger.info("SonosHandoffGroupEdit result=removed room=\(roomName, privacy: .public)")
             return .changed()
         case .removeCoordinator(let group, let coordinatorRoomName, let replacement):
             let startedAt = ContinuousClock.now
-            try await groupEditController.groupingEditor.prepareCoordinatorRemoval(
+            try await groupingEditor.prepareCoordinatorRemoval(
                 in: group,
                 coordinatorRoomName: coordinatorRoomName,
                 replacementRoomName: replacement.roomName
@@ -621,7 +597,7 @@ final class PlaybackSyncController: ObservableObject {
                 clearSpotifyAuthRequired()
             case .failure(let code, _):
                 do {
-                    try await groupEditController.groupingEditor.join(
+                    try await groupingEditor.join(
                         roomName: replacement.roomName,
                         toCoordinatorRoomName: coordinatorRoomName
                     )
@@ -642,7 +618,7 @@ final class PlaybackSyncController: ObservableObject {
             }
 
             do {
-                try await groupEditController.groupingEditor.finishCoordinatorRemoval(
+                try await groupingEditor.finishCoordinatorRemoval(
                     in: group,
                     coordinatorRoomName: coordinatorRoomName,
                     replacementRoomName: replacement.roomName
@@ -663,21 +639,10 @@ final class PlaybackSyncController: ObservableObject {
         }
     }
 
-    private func joinSpeakers(
-        _ speakers: [SonosSpeaker],
-        toCoordinatorRoomName coordinatorRoomName: String
-    ) async throws {
-        try await groupEditController.groupingEditor.join(
-            roomNames: speakers.map(\.roomName),
-            toCoordinatorRoomName: coordinatorRoomName
-        )
-    }
-
     private func refreshAfterGroupMutation(
-        _ row: PlaybackGroupEditRow,
-        previousGroup: SonosSpeakerGroup
+        _ change: SonosGroupMembershipChange,
+        row: PlaybackGroupEditRow
     ) async -> PlaybackOutputRefresh? {
-        let change = groupEditController.groupMembershipChangePlanner.change(for: row, in: previousGroup)
         let currentRoomName = preferredCurrentRoomName() ?? selectedRoomName
         let visibleSpeakers = currentGroupState.speakers
 
@@ -712,13 +677,13 @@ final class PlaybackSyncController: ObservableObject {
         return nil
     }
 
-    private func optimisticSelectedRoomNameAfterGroupMutation(
-        _ row: PlaybackGroupEditRow,
+    private func optimisticSelectedRoomName(
+        after change: SonosGroupMembershipChange,
         previousGroup: SonosSpeakerGroup
     ) -> String? {
-        switch groupEditController.groupMembershipChangePlanner.change(for: row, in: previousGroup) {
+        switch change {
         case .none:
-            return selectedRoomName
+            return nil
         case .join(_, let coordinatorRoomName):
             return coordinatorRoomName
         case .remove:
@@ -780,7 +745,7 @@ final class PlaybackSyncController: ObservableObject {
                 guard isCurrentVolumeOperation(ticket) else {
                     return
                 }
-                applyVolumeStatus(status)
+                volumeState.applyStatus(status)
                 shortcutLogger.info("SonosHandoffVolumeStatus room=\(status.roomName, privacy: .public) host=\(status.host, privacy: .public) volume=\(status.volume, privacy: .public) muted=\(status.muted, privacy: .public) outputFixed=\(status.outputFixed, privacy: .public)")
             } catch {
                 guard isCurrentVolumeOperation(ticket) else {
@@ -872,10 +837,6 @@ final class PlaybackSyncController: ObservableObject {
         StatusHUD.shared.showVolume(roomName: roomName, volume: volume, dismissAfter: 1.6)
     }
 
-    private func applyVolumeStatus(_ status: SpeakerVolumeStatus) {
-        volumeState.applyStatus(status)
-    }
-
     private func selectRoomName(_ roomName: String?) {
         if !SonosRoomName.matches(selectedRoomName, roomName) {
             sliderCommitter.cancel()
@@ -898,7 +859,6 @@ final class PlaybackSyncController: ObservableObject {
         refreshGroupEditRowsFromCurrentOutputs()
         clearPinnedMixerIfSelectionChanged()
         if let selectedRoomName {
-            clearSpotifyAuthRequired()
             refreshVolumeStatus(roomName: selectedRoomName)
         } else {
             operationGate.cancelVolume()
@@ -912,11 +872,10 @@ final class PlaybackSyncController: ObservableObject {
 
     private func requireSpotifyAuth(message: String?) {
         activeSpotifyRoomName = nil
-        selectRoomName(nil)
-        operationGate.cancelVolume()
-        volumeState.clearStatus()
         spotifyAuthRequired = true
-        spotifyAuthMessage = message?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        spotifyAuthMessage = message
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .flatMap { $0.isEmpty ? nil : $0 }
             ?? "Spotify sign-in expired. Sign in again to sync playback."
         menuMessage = spotifyAuthMessage
         shortcutLogger.info("SonosHandoffSpotifyAuth state=required message=\(self.spotifyAuthMessage, privacy: .public)")
@@ -944,7 +903,6 @@ final class PlaybackSyncController: ObservableObject {
             currentGroupState: currentGroupState,
             selectedRoomName: selectedRoomName
         )
-        objectWillChange.send()
     }
 
     private func volumeScope(for roomName: String) -> PlaybackVolumeScope {
@@ -981,15 +939,6 @@ final class PlaybackSyncController: ObservableObject {
         operationGate.isCurrentVolume(ticket, selectedRoomName: selectedRoomName)
     }
 
-    private func isCurrentTransferOperation(_ ticket: PlaybackOperationTicket) -> Bool {
-        operationGate.isCurrentTransfer(ticket, loadingRoomName: loadingRoomName)
-    }
-}
-
-private extension String {
-    var nilIfEmpty: String? {
-        isEmpty ? nil : self
-    }
 }
 
 private enum PlaybackGroupEditOutcome {

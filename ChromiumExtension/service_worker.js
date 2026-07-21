@@ -113,14 +113,6 @@ function stopHeartbeat() {
   heartbeatMode = null;
 }
 
-function updateHeartbeatForTargets(targets) {
-  startHeartbeat(hasMediaSources(targets) ? "active" : "idle");
-}
-
-function hasMediaSources(targets) {
-  return sources.size > 0 || targets.length > 0 || (pendingResumeTargets && pendingResumeTargets.length > 0);
-}
-
 function setPendingResumeTargets(targets) {
   pendingResumeTargets = targets && targets.length > 0 ? targets : null;
   pendingResumeExpiresAt = pendingResumeTargets ? Date.now() + resumeBridgeMaxAgeMs : 0;
@@ -155,10 +147,6 @@ function publishKeepalive() {
     profileGuid,
     createdAt: Date.now(),
   });
-}
-
-function sourceID(message) {
-  return ["chromium-tab", message.profileGuid, message.tabId].join(":");
 }
 
 function candidateID(documentID, frameId, mediaId) {
@@ -234,7 +222,10 @@ function publishSnapshot() {
     [snapshotStorageKey]: targets,
     [snapshotEpochStorageKey]: snapshotEpoch,
   });
-  updateHeartbeatForTargets(targets);
+  const hasTargets = sources.size > 0
+    || targets.length > 0
+    || (pendingResumeTargets && pendingResumeTargets.length > 0);
+  startHeartbeat(hasTargets ? "active" : "idle");
 }
 
 function loadResumeState(callback) {
@@ -304,10 +295,7 @@ function clearSourcesForTab(tabId) {
 
 function upsertCandidate(browser, tab, frameId, message) {
   const now = Date.now();
-  const id = sourceID({
-    profileGuid,
-    tabId: tab.id,
-  });
+  const id = ["chromium-tab", profileGuid, tab.id].join(":");
   const candidateKey = candidateID(message.documentID, frameId, message.mediaId);
   const existingSource = sources.get(id);
   const source = existingSource || {

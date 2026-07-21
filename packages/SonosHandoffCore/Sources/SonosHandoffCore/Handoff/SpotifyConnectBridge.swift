@@ -109,8 +109,12 @@ struct SpotifyConnectBridge: Sendable {
 
         return SpotifyPlaybackDeviceStatus(
             deviceName: state.device.name,
+            type: state.device.type,
+            isRestricted: state.device.isRestricted,
             isPlaying: state.isPlaying,
-            volumePercent: state.device.volumePercent
+            volumePercent: state.device.volumePercent,
+            itemName: state.item?.name,
+            itemURI: state.item?.uri
         )
     }
 

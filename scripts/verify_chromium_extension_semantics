@@ -3,8 +3,6 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-"$repo_root/scripts/verify_chromium_service_worker_semantics"
-"$repo_root/scripts/verify_chromium_content_script_semantics"
 bash -n "$repo_root/scripts/setup_chromium_extension" >/dev/null
 bash -n "$repo_root/scripts/smoke_helium_chromium_extension_transport" >/dev/null
 
@@ -16,6 +14,7 @@ import sys
 repo_root = pathlib.Path(sys.argv[1])
 manifest = json.loads((repo_root / "ChromiumExtension/manifest.json").read_text())
 service_worker = (repo_root / "ChromiumExtension/service_worker.js").read_text()
+content_script = (repo_root / "ChromiumExtension/content_script.js").read_text()
 declared_permissions = set(manifest.get("permissions", []))
 chrome_api_to_permission = {
     "chrome.storage.": "storage",
@@ -190,179 +189,181 @@ expect(
     "chooser row buttons must not draw the system blue focus ring; overlay selection is model-owned",
 )
 expect(
-    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    service_worker,
     "const protocolVersion = 3",
     "Chromium extension service worker must speak protocol v3",
 )
 expect(
-    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    service_worker,
     "chrome.storage.local.get([profileGuidStorageKey]",
     "Chromium extension service worker must load profile GUIDs from local browser-profile storage",
 )
 expect(
-    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    service_worker,
     "chrome.storage.local.set({ [profileGuidStorageKey]: profileGuid }",
     "Chromium extension service worker must persist minted profile GUIDs",
 )
 expect(
-    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    service_worker,
     'type: "hello"',
     "Chromium extension service worker must announce hello to the native host",
 )
 expect(
-    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    service_worker,
     "profileGuid,",
     "Chromium extension service worker hello must include its stable profile GUID",
 )
 expect(
-    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    service_worker,
     "epoch: snapshotEpoch",
     "Chromium extension service worker hello must include the current snapshot epoch",
 )
 expect(
-    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    service_worker,
     "resumed: resume.resumed",
     "Chromium extension service worker hello must include resumed state",
 )
 expect(
-    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    service_worker,
     "chrome.storage.session.get([snapshotStorageKey, snapshotEpochStorageKey]",
     "Chromium extension service worker must rehydrate snapshots from session storage",
 )
 expect(
-    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    service_worker,
     "chrome.alarms.create(nativePortAlarmName, { periodInMinutes: 0.5 })",
     "Chromium extension service worker must register a 30s native-port dead-man alarm",
 )
 expect(
-    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    service_worker,
     "rejectUnsupportedProtocol(message)",
     "Chromium extension service worker must reject unsupported native protocol versions",
 )
 expect(
-    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    service_worker,
     "const targetStaleAfterMs = 15000",
     "Chromium extension service worker must expire stale media targets",
 )
 expect(
-    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    service_worker,
     "return target.hasPlaybackActivity",
     "Chromium extension service worker must keep paused media with prior playback activity visible",
 )
 expect(
-    repo_root.joinpath("ChromiumExtension/content_script.js").read_text(),
+    content_script,
     "hasPlaybackActivity",
     "Chromium content script must report playback activity for paused media after restart probes",
 )
 expect(
-    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    service_worker,
     "candidateID(documentID, frameId, mediaId)",
     "Chromium extension service worker must scope private routes to the content document",
 )
 expect(
-    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    service_worker,
     "!selected.supportedCommands.includes(message.command)",
     "Chromium extension service worker must capability-gate commands against the selected route",
 )
 expect(
-    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    service_worker,
     "browserFamily: source.browserFamily",
     "Chromium extension snapshots must expose browser family as typed metadata",
 )
 expect(
-    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    service_worker,
     "removeStaleSources()",
     "Chromium extension service worker must remove stale sources before snapshots",
 )
 expect(
-    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
-    'return ["chromium-tab", message.profileGuid, message.tabId].join(":")',
+    service_worker,
+    'const id = ["chromium-tab", profileGuid, tab.id].join(":")',
     "Chromium extension service worker must expose stable profile-and-tab source identities instead of media-element target identities",
 )
 expect(
-    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    service_worker,
     "source.tabTitle || selected.frameTitle ||",
     "Chromium extension service worker must prefer tab titles over frame titles for browser source rows",
 )
 expect(
-    repo_root.joinpath("ChromiumExtension/content_script.js").read_text(),
-    "const documentID = crypto.randomUUID",
-    "Chromium extension content script must stamp media routes with a document identity",
+    content_script,
+    "const documentID = crypto.getRandomValues(new Uint32Array(4))",
+    "Chromium extension content script must stamp media routes on plain HTTP pages",
 )
+if "crypto.randomUUID" in content_script:
+    raise SystemExit("verify_chromium_extension_semantics: Chromium content scripts must not require a secure context for document identity")
 expect(
-    repo_root.joinpath("ChromiumExtension/content_script.js").read_text(),
+    content_script,
     "function runtimeAvailable()",
     "Chromium extension content script must check runtime health before messaging",
 )
 expect(
-    repo_root.joinpath("ChromiumExtension/content_script.js").read_text(),
+    content_script,
     "function retireBridge()",
     "Chromium extension content script must retire invalidated extension contexts",
 )
 expect(
-    repo_root.joinpath("ChromiumExtension/content_script.js").read_text(),
+    content_script,
     "function sendRuntimeMessage(message)",
     "Chromium extension content script must route runtime messages through the lifecycle guard",
 )
 expect(
-    repo_root.joinpath("ChromiumExtension/content_script.js").read_text(),
+    content_script,
     "message.documentID !== documentID",
     "Chromium extension content script must reject stale document commands",
 )
 expect(
-    repo_root.joinpath("ChromiumExtension/content_script.js").read_text(),
+    content_script,
     "element.shadowRoot",
     "Chromium extension content script must discover media and controls inside shadow DOM",
 )
 expect(
-    repo_root.joinpath("ChromiumExtension/content_script.js").read_text(),
+    content_script,
     "metadata?.album",
     "Chromium extension content script must report Media Session album metadata",
 )
 expect(
-    repo_root.joinpath("ChromiumExtension/content_script.js").read_text(),
+    content_script,
     'Boolean(element.currentSrc || element.src || element.querySelector("source"))',
     "Chromium extension content script must keep stable targets during readyState=0 source transitions",
 )
 expect(
-    repo_root.joinpath("ChromiumExtension/content_script.js").read_text(),
+    content_script,
     "}).catch(error => {",
     "Chromium extension content script must answer rejected media commands with an explicit failure",
 )
 expect(
-    repo_root.joinpath("ChromiumExtension/content_script.js").read_text(),
+    content_script,
     "retireIfExtensionContextInvalidated(error)",
     "Chromium extension content script must retire rejected commands caused by invalidated extension contexts",
 )
 expect(
-    repo_root.joinpath("ChromiumExtension/content_script.js").read_text(),
+    content_script,
     "Chromium media command failed.",
     "Chromium extension content script must return a deterministic failed-command message",
 )
-if "error instanceof Error ? error.message" in repo_root.joinpath("ChromiumExtension/content_script.js").read_text():
+if "error instanceof Error ? error.message" in content_script:
     raise SystemExit("verify_chromium_extension_semantics: Chromium rejected-command errors must not expose browser-specific messages")
 expect(
-    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    service_worker,
     'if (message.type === "focusTarget")',
     "Chromium extension service worker must dispatch explicit focus requests",
 )
 expect(
-    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    service_worker,
     "chrome.tabs.get(source.tabId",
     "Chromium extension service worker must resolve the live tab before focusing",
 )
 expect(
-    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    service_worker,
     "chrome.windows.update(tab.windowId, { focused: true }",
     "Chromium extension service worker must focus the selected browser window",
 )
 expect(
-    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    service_worker,
     "chrome.tabs.update(tab.id, { active: true }",
     "Chromium extension service worker must activate the selected browser tab by id",
 )
 expect(
-    repo_root.joinpath("ChromiumExtension/service_worker.js").read_text(),
+    service_worker,
     "chrome.tabs.query({ active: true, windowId: tab.windowId }",
     "Chromium extension service worker must confirm the selected tab became active",
 )
@@ -445,6 +446,48 @@ expect(
     "let state = try chromiumNativeMessagingHostInstaller.install()",
     "app startup must install or repair Chromium native messaging manifests",
 )
+start_method = transport[
+    transport.index("    func start() {"):
+    transport.index("\n    func stop() {")
+]
+reload_payload = 'let reloadPayload = "{\\"type\\":\\"reloadExtension\\",\\"protocolVersion\\":\\(ChromiumBrowserExtensionTransport.protocolVersion)}"'
+expect(
+    start_method,
+    reload_payload,
+    "app startup must reload connected extensions so browsers replace stale native hosts after an app update",
+)
+if start_method.count(reload_payload) != 1:
+    raise SystemExit(
+        "verify_chromium_extension_semantics: app startup must request exactly one extension reload"
+    )
+expect(
+    start_method,
+    "ChromiumBrowserExtensionTransport.commandNotificationName",
+    "app startup must send extension reload through the native-host command channel",
+)
+expect(
+    start_method,
+    "object: ChromiumBrowserExtensionTransport.nativeMessagingHostName",
+    "app startup extension reload must target the native messaging host",
+)
+expect(
+    start_method,
+    'userInfo: ["payload": reloadPayload]',
+    "app startup extension reload must send the reload payload",
+)
+expect(
+    start_method,
+    "deliverImmediately: true",
+    "app startup extension reload must not wait for distributed-notification coalescing",
+)
+if "connectionID" in start_method:
+    raise SystemExit(
+        "verify_chromium_extension_semantics: app startup reload must reach every connected browser profile without a connection ID"
+    )
+if start_method.index("snapshotObserver =") > start_method.index(reload_payload):
+    raise SystemExit(
+        "verify_chromium_extension_semantics: app startup must observe the replacement extension hello before requesting reload"
+    )
 if "_ = try! chromiumNativeMessagingHostInstaller.install()" in environment:
     raise SystemExit(
         "verify_chromium_extension_semantics: app startup must not crash when the Chromium bridge install fails"
@@ -551,8 +594,13 @@ expect(
 )
 expect(
     worker_suspension_smoke,
-    "ServiceWorker.stopWorker",
-    "worker suspension smoke must stop the MV3 service worker via CDP without reloading the extension",
+    'send("Target.getTargets")',
+    "worker suspension smoke must locate the MV3 service worker through the browser CDP target list",
+)
+expect(
+    worker_suspension_smoke,
+    'send("Target.closeTarget", { targetId: worker.targetId })',
+    "worker suspension smoke must stop the MV3 service worker through the browser CDP target endpoint",
 )
 expect(
     worker_suspension_smoke,

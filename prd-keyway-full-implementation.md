@@ -1,6 +1,7 @@
 # PRD: Keyway Full Implementation
 
 **Date:** 2026-05-20
+**Last updated:** 2026-07-21
 
 ---
 
@@ -49,7 +50,7 @@ Keyway is a polished local macOS menu bar utility that routes play/pause, next, 
 1. User opens or expands the Media Overlay with `Tab`.
 2. Keyway reveals target-specific controls.
 3. Sonos and Spotify volume controls are available where the backend supports them.
-4. Browser volume controls are disabled when they would require a browser extension.
+4. Extension-backed Chromium targets expose reflected tab mute and element-level volume; non-extension browser targets remain app-level MediaRemote targets.
 
 #### User Flow: Settings
 
@@ -80,7 +81,7 @@ When this PRD is complete, the following will be true:
 - [ ] The Media Overlay supports compact routing, focused-target selection, expansion, number selection, cancellation, and command dispatch.
 - [ ] Native macOS notification confirmation appears after successful automatic routing.
 - [ ] Sonos and Spotify volume controls work where supported by existing or feasible backends.
-- [ ] Browser transport routing works where exposed through Now Playing; browser volume is clearly unsupported when no no-extension backend exists.
+- [ ] Browser transport routing works through MediaRemote without the extension, while the Chromium extension adds canonical per-tab targets, exact tab focus, reflected mute, and element-level volume.
 - [ ] Keyway Settings exposes the full configuration and diagnostics surface needed to run the app daily.
 - [ ] No commercial publishing, App Store, licensing, or marketing release work is required.
 
@@ -104,19 +105,17 @@ When this PRD is complete, the following will be true:
 
 ## Implementation Status
 
-As of 2026-05-20, the main implementation is present on branch `keyway-planning`. `scripts/acceptance_preflight` now reports `acceptance_preflight=pass` on the local machine when Spotify playback is active on the discoverable Sonos `Port` room. The deterministic regression gate and the real-device smoke gate pass. The remaining blockers are manual verification blockers, not accepted scope removals:
+As of 2026-07-21, all 250 tests in 44 suites, all 35 deterministic semantic verifiers, repository Bash syntax checks, and `git diff --check` pass. The installed-app checks passed for Safari Play/Pause routing, Touch Bar playing/paused reflection, MediaRemote helper recovery, every Settings section, isolated Chromium exact-tab focus/transport/mute/volume behavior, and real `Kitchen` Sonos volume and mute with the original state restored. With every media source paused, the popover also retained `Kitchen` as the selected output, showed its restored 8% volume, and the centered overlay rendered its full command header and footer without clipping.
 
-- Accessibility is granted to the installed `com.fpieringer.Keyway` bundle on the local machine, and Keyway persists `mediaFallback=enabled` in `~/Library/Application Support/keyway/shortcut-runtime-status.json`.
-- `SONOS_HANDOFF_REAL_DEVICE_SMOKE=1 SONOS_HANDOFF_ROOM=Port scripts/regression_gate` passes, including CLI Spotify-to-Sonos handoff, menu-bar handoff, and menu-bar Sonos volume smoke paths.
-- Sonos mute was verified directly through the local CLI and restored to its original state.
-- Expanded Controls browser volume disabled-state is verified by `scripts/smoke_overlay_browser_controls`, which opens the actual overlay, toggles controls with Tab, selects the browser target, and confirms the visible disabled no-extension state.
-- QuickTime target discovery has been verified with local media playback.
-- Settings normal-window behavior has been verified through the menu bar UI; System Events reports Keyway as visible and not background-only while Settings is open.
-- Focused Target routing now checks the global foreground Media Target first, then a prominently visible, unobscured Media Target window on the display containing the pointer before falling back to Recent Target or chooser when no single current target is already active.
-- Status feedback now uses native macOS notifications through `UNUserNotificationCenter`; the legacy top-of-screen custom HUD panel implementation has been removed from the app, and status notifications reuse a stable identifier so repeated route confirmations replace instead of stacking.
-- `scripts/smoke_transport_routing_confirmation` verifies focused-target automatic routing for Previous and Next, absence of chooser/legacy custom popup windows during automatic routing, and clean MediaRemote helper command parsing. Play/Pause is chooser-first and is covered by playback chooser probes/HITL checks.
-- Spotify Active Device Volume still needs a run against an unrestricted Spotify active device; the current active device is Sonos `Port`, which Spotify reports as `restricted=true`.
-- Live Helium hardware Play/Pause selected-row routing has passed. Full live hardware Next/Previous routing and overlay keyboard behavior still need manual runs.
+Spotify Web API authorization is complete: the project token exists with owner-only permissions, live playback state is readable, and the Web API transport smoke passed Play and Pause. This does not supply the separate Spotify Desktop Connect credential used by the Sonos activation flow.
+
+The final universal Developer ID build was notarized by Apple, stapled, installed, and accepted by Gatekeeper. Its bundle identifier, team identifier, and designated requirement match the previous installed version, so Accessibility and Input Monitoring remained granted. The final app restart also reloaded the Chromium extension once and replaced its stale native host with the helper inside the installed app, without restarting or reloading a browser tab. The exact-Suno overlay browser-controls smoke passed immediately before that lifecycle-only change; the final current build's live reconnect was then verified without commanding a user browser tab. A fresh MediaRemote helper-kill/recovery smoke also passed.
+
+The remaining acceptance blocker is explicit:
+
+- `spotify-desktop-connect-tokens.json` is absent on this Mac. It must be copied securely from a working Keyway Mac before the actual Spotify-to-`Kitchen` Sonos handoff can run.
+
+The only remaining hardware-only confirmation is one physical Touch Bar Play/Pause press; Keyway deliberately rejects generated media-key events.
 
 The current verification record is maintained in `docs/verification-log.md`.
 
@@ -168,7 +167,8 @@ The current verification record is maintained in `docs/verification-log.md`.
 - [ ] Command Header names the pending routing action.
 - [ ] Compact mode supports up/down, Enter, Escape, Tab, number quick-select, and Command-Enter focus.
 - [ ] Expanded Controls show target-specific volume/mute controls where supported.
-- [ ] Unsupported browser volume is visible as unsupported rather than silently absent.
+- [ ] Extension-backed Chromium targets show reflected tab mute and element-level volume controls.
+- [ ] Non-extension browser targets expose only the capabilities they actually support.
 - [ ] Overlay closes after dispatch or cancellation.
 
 ### Audio Target Control
@@ -176,14 +176,15 @@ The current verification record is maintained in `docs/verification-log.md`.
 - [ ] Sonos volume control is available through the existing Sonos backend.
 - [ ] Spotify volume means Spotify Active Device Volume.
 - [ ] Spotify volume works where Spotify token/device state allows.
-- [ ] Browser volume does not require a browser extension.
-- [ ] Browser volume controls may be disabled when no reliable no-extension backend exists.
+- [ ] Chromium per-tab mute is reflected from the browser tab state.
+- [ ] Chromium volume commands change only the selected tab's chosen media element.
+- [ ] Removing the extension removes per-tab capabilities without breaking MediaRemote transport routing.
 
 ### Settings
 
 - [ ] Keyway Settings is a normal macOS settings window.
 - [ ] Settings is reachable through Cmd-Tab while visible.
-- [ ] Settings covers General, Transport Routing, Overlay, Audio Controls, Sonos, Spotify, Shortcuts, and Advanced diagnostics.
+- [ ] Settings covers General, Transport Routing, Overlay, Audio Controls, Sonos, Spotify, Shortcuts, Permissions, Helper Status, and Diagnostics.
 - [ ] Menu Bar Item is always visible.
 - [ ] Settings exposes Accessibility/Input Monitoring status and recovery guidance.
 - [ ] Settings exposes helper status and restart/recovery actions.
@@ -194,16 +195,18 @@ The current verification record is maintained in `docs/verification-log.md`.
 
 ### Existing Patterns
 
-- `/Users/f.pieringer/projects/keyway/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutEventTap.swift` — existing Accessibility-gated CGEvent tap lifecycle.
-- `/Users/f.pieringer/projects/keyway/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutEventParser.swift` — existing media/function-key decoding pattern.
-- `/Users/f.pieringer/projects/keyway/SonosHandoffMenuBar/SonosHandoffMenuBar/App/StatusHUD.swift` — native macOS notification feedback facade.
-- `/Users/f.pieringer/projects/keyway/packages/SonosHandoffCore/Sources/SonosHandoffCore` — existing Sonos, Spotify, config, and volume behavior.
+- `SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutEventTap.swift` — Accessibility/Input Monitoring-gated CGEvent tap lifecycle.
+- `SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutEventParser.swift` — media/function-key decoding.
+- `SonosHandoffMenuBar/SonosHandoffMenuBar/App/StatusHUD.swift` — native macOS notification feedback facade.
+- `SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionTransport.swift` — extension/native-host transport and exact-tab focus.
+- `packages/SonosHandoffCore/Sources/SonosHandoffCore` — Sonos, Spotify, config, and volume behavior.
 
 ### System Dependencies
 
-- macOS Accessibility permission for event tap behavior.
+- macOS Accessibility and Input Monitoring permissions for event-tap behavior.
 - Private MediaRemote framework accessed through a Perl-hosted helper.
 - `/usr/bin/perl` as the helper host.
+- Unpacked Chromium extension plus the Keyway native-messaging host for tab-level browser capabilities.
 - Spotify Desktop Connect and Web API token files for existing Sonos and Spotify volume flows.
 - Local Sonos network discovery and SOAP control for Sonos Outputs.
 
@@ -223,7 +226,7 @@ The current verification record is maintained in `docs/verification-log.md`.
 | Private MediaRemote behavior changes | High | High | Isolate behind MediaRemote Helper and expose diagnostics |
 | Perl-hosted helper feels fragile | Medium | High | Long-running helper, NDJSON protocol, restart controls, smoke tests |
 | Sonos behavior regresses during rebrand | Medium | High | Treat Sonos capability as regression boundary and run existing tests |
-| Browser volume is impossible without extension | High | Medium | Mark unsupported while preserving browser transport routing |
+| Chromium extension or native host disconnects | Medium | Medium | Remove or mark suspect tab capabilities while preserving MediaRemote transport routing |
 | Shortcut/event tap conflicts with old app | Medium | Medium | Treat apps as distinct during development and expose Keyway registration status |
 | Overlay becomes too complex | Medium | Medium | Keep compact routing fast; move richer controls behind Tab |
 
@@ -245,12 +248,12 @@ The current verification record is maintained in `docs/verification-log.md`.
 - **Cons:** Product name would not match QuickTime/browser/Spotify media-key routing.
 - **Decision:** Rejected because Keyway is broader than Sonos.
 
-### Require Browser Extension for Browser Volume
+### Require Browser Extension for Tab-Level Browser Capabilities
 
-- **Description:** Build a companion extension for per-tab browser volume/mute.
-- **Pros:** Better browser control.
-- **Cons:** Adds installation, permissions, browser compatibility, and maintenance scope.
-- **Decision:** Rejected for the initial full implementation.
+- **Description:** Use a Chromium extension and native-messaging host for canonical per-tab targets, exact focus, reflected mute, and element-level volume.
+- **Pros:** Honest tab identity and deterministic exact-target commands.
+- **Cons:** Adds installation, permissions, browser compatibility, and lifecycle handling.
+- **Decision:** Accepted for Chromium-family browsers by ADR 0005. Transport routing must still work without it.
 
 ### Direct Native MediaRemote Calls
 
@@ -264,9 +267,9 @@ The current verification record is maintained in `docs/verification-log.md`.
 ## Non-Goals
 
 - App Store eligibility.
-- Commercial publishing, notarized distribution pipeline, licensing, or marketing.
-- Browser extension.
-- Browser per-tab volume control when it requires a browser extension.
+- Commercial publishing, licensing, or marketing.
+- Safari tab-level support until a separate Safari Web Extension design is accepted.
+- Firefox support.
 - Hardware volume/mute key interception.
 - Public website or onboarding funnel.
 - Multi-user support.
@@ -317,5 +320,5 @@ Cmd+Up/Down  Expanded mode: adjust supported selected-target volume
 - [ ] Update README from Sonos Handoff to Keyway.
 - [ ] Keep Sonos capability documentation under the Sonos context.
 - [ ] Document private API limitations and helper diagnostics.
-- [ ] Document browser volume non-goal.
+- [ ] Document Chromium extension installation, exact-tab capabilities, and extension-absent degradation.
 - [ ] Document local install/build flow for personal use.

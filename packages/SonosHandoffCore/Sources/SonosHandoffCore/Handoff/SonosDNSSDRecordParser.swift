@@ -25,12 +25,16 @@ enum SonosDNSSDRecordParser {
 
     static func instance(fromBrowseLine line: String) -> String? {
         let parts = line.components(separatedBy: sonosServiceMarker)
-        guard parts.count > 1,
-              let instance = parts.last?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .nilIfEmpty,
+        guard parts.count > 1, let rawInstance = parts.last else {
+
+            return nil
+        }
+        let instance = rawInstance.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !instance.isEmpty,
               roomName(fromInstance: instance) != nil
         else {
+
             return nil
         }
 
@@ -40,11 +44,9 @@ enum SonosDNSSDRecordParser {
     static func roomName(fromInstance instance: String) -> String? {
         let parts = instance.components(separatedBy: "@")
         guard parts.count >= 2,
-              let roomName = parts[1...]
-            .joined(separator: "@")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .nilIfEmpty
+              let roomName = SonosRoomName.normalized(parts[1...].joined(separator: "@"))
         else {
+
             return nil
         }
 
@@ -52,11 +54,16 @@ enum SonosDNSSDRecordParser {
     }
 
     static func speakerID(fromInstance instance: String) -> String? {
-        instance
+        guard let speakerID = instance
             .components(separatedBy: "@")
             .first?
             .trimmingCharacters(in: .whitespacesAndNewlines)
-            .nilIfEmpty
+        else {
+
+            return nil
+        }
+
+        return speakerID.isEmpty ? nil : speakerID
     }
 
     static func host(fromResolveOutput output: String) -> String? {

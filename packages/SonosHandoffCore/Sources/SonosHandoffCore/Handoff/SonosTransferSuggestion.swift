@@ -344,7 +344,7 @@ public struct SonosTransferSuggestionResolver: Sendable {
     ) -> SonosTransferSuggestionCandidate? {
         guard spotifyPlaying,
               selectedRoomName == nil,
-              let sourceDeviceName = normalizedDeviceName(activeDeviceName)
+              let sourceDeviceName = SonosRoomName.normalized(activeDeviceName)
         else {
             return nil
         }
@@ -397,7 +397,7 @@ public struct SonosTransferSuggestionResolver: Sendable {
     ) -> SonosTransferSuggestionCandidate? {
         guard spotifyPlaying,
               selectedRoomName == nil,
-              let sourceDeviceName = normalizedDeviceName(activeDeviceName),
+              let sourceDeviceName = SonosRoomName.normalized(activeDeviceName),
               let output = outputCandidates(in: state).first(where: { $0.speaker.id == speakerID })
         else {
             return nil
@@ -447,12 +447,6 @@ public struct SonosTransferSuggestionResolver: Sendable {
                 outputDisplayName: group.displayName
             )
         }
-    }
-
-    private func normalizedDeviceName(_ deviceName: String?) -> String? {
-        deviceName?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .nilIfEmpty
     }
 }
 

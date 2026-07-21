@@ -109,7 +109,7 @@ struct SpotifyDesktopCredentialProviderTests {
     }
 
     private static func writeDesktopTokens(_ tokens: [String: ConnectDesktopToken], to directory: URL) throws {
-        try JSONEncoder.pretty.encode(tokens)
+        try JSONEncoder().encode(tokens)
             .write(to: directory.appendingPathComponent("spotify-desktop-connect-tokens.json"))
     }
 

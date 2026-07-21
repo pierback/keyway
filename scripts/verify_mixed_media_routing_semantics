@@ -7,8 +7,7 @@ target_resolver="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTra
 desktop_transport="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaDesktopTransportAdapter.swift"
 
 ast-grep --pattern 'func automaticTarget($$$) -> $$$ { $$$ }' "$target_resolver" >/dev/null
-ast-grep --pattern 'private func showCommandFailureIfNeeded($$$) { $$$ }' "$controller" >/dev/null
-ast-grep --pattern 'private func transportBackendName($$$) -> $$$ { $$$ }' "$controller" >/dev/null
+ast-grep --pattern 'private func showCommandResult($$$) { $$$ }' "$controller" >/dev/null
 
 python3 - "$controller" "$target_resolver" "$desktop_transport" <<'PY'
 import sys
@@ -132,7 +131,7 @@ if "helper_not_running" in chooser_immediate or "MediaRemote helper is not runni
 assert_order(
     chooser_immediate,
     [
-        "let cached = sortedTargets(mediaSourceStore.targets)",
+        "let cached = sortedTargets(mediaSourceStore.rows.map(\\.target))",
         "let refreshQueued = mediaRemoteController.refreshSnapshot()",
         "showChooserOverlay(",
     ],
@@ -145,9 +144,8 @@ if "mediaRemoteController.canRouteCommands" in route_cache:
 assert_order(
     route_cache,
     [
-        "let routeStatus = currentRouteStatus(command: command)",
-        "let targets = sortedTargets(mediaSourceStore.targets)",
-        "guard routeStatus.kind != .unavailable else",
+        "let targets = sortedTargets(mediaSourceStore.rows.map(\\.target))",
+        "guard !targets.isEmpty else",
         "mediaRemoteController.refreshSnapshot()",
         "showChooserOverlay(",
         "route(",
@@ -207,7 +205,7 @@ assert_order(
         "trace(result: result, transportBackend: result.backend)",
         "finishDispatch(id: dispatchID, fallback: false)",
         "mediaRemoteController.refreshSnapshot()",
-        "showCommandFailureIfNeeded(result: result, target: target)",
+        "showCommandResult(",
         'logDispatch(command: command, target: target, context: context, transport: result.backend ?? "desktop")',
     ],
     "desktop transport results must be terminal and keep the shared dispatch bookkeeping"
@@ -230,9 +228,12 @@ if "desktopTransport.submit(command: command, target: target)" in mediaremote_fa
 assert_order(
     mediaremote_fallback,
     [
-        "guard sendMediaRemote(command: command, to: target, dispatchID: dispatchID, context: context)",
+        "let routedCommand = MediaTransportCommandRules.rowScopedCommand(command, for: target)",
+        'relaxRouteShield?("mediaremote_dispatch")',
+        "Task.sleep(nanoseconds: Self.mediaRemoteRouteShieldReleaseDelayNanoseconds)",
+        "guard self.sendMediaRemote(command: routedCommand, to: target, dispatchID: dispatchID, context: context)",
     ],
-    "MediaRemote fallback must dispatch through the shared player-path sender"
+    "MediaRemote fallback must scope Play/Pause, release the route shield, then use the shared player-path sender"
 )
 
 mediaremote = function_body("sendMediaRemote")
@@ -242,12 +243,12 @@ assert_order(
         "mediaRemoteController.submit(command: command, targetID: target.id)",
         "Self.mediaRemotePlayerPathBackend",
         "finishDispatch(id: dispatchID, fallback: false)",
-        "showCommandFailureIfNeeded(result: result, target: target)",
+        "showCommandResult(",
     ],
     "MediaRemote fallback must use the player path and preserve async result handling"
 )
 
-chooser_send = function_body("sendFromChooser")
+chooser_send = function_body("dispatchFromChooser")
 assert_order(
     chooser_send,
     [
@@ -275,47 +276,76 @@ for forbidden in (
     if forbidden in source:
         fail(f"Chromium and desktop routing must not retain obsolete fallback hooks: {forbidden}")
 
-failure = function_body("showCommandFailureIfNeeded")
+result_presentation = function_body("showCommandResult")
 automation_check = 'if result.message.contains("-1743") {'
 unsupported_check = "if result.unsupported {"
 generic_failure = 'message: "Keyway could not reach \\(target.appName)."'
 assert_contains(
-    failure,
+    result_presentation,
     automation_check,
     "Automation denial hint must be handled explicitly before generic unsupported failures"
 )
 assert_contains(
-    failure,
+    result_presentation,
     unsupported_check,
     "unsupported command results must still have a dedicated HUD branch"
 )
 assert_contains(
-    failure,
+    result_presentation,
     generic_failure,
     "generic command failures must still show the reachability HUD"
 )
-if failure.index(automation_check) > failure.index(unsupported_check):
+if result_presentation.index(automation_check) > result_presentation.index(unsupported_check):
     fail("Automation denial hint must be checked before the generic unsupported branch")
-if failure.index(unsupported_check) > failure.index(generic_failure):
+if result_presentation.index(unsupported_check) > result_presentation.index(generic_failure):
     fail("unsupported command results must be shown as unsupported rather than generic failures")
 
-backend = function_body("transportBackendName")
+for required in (
+    "if result.ok",
+    "guard case .programmatic = context",
+    'title: "\\(command.displayName) → \\(target.appName)"',
+    'message: "Routed automatically"',
+):
+    assert_contains(
+        result_presentation,
+        required,
+        "successful automatic routing must post a native confirmation naming the command and target",
+    )
+if source.count("showCommandResult(") != 4:
+    fail("all three terminal transport result paths must share one command-result presenter")
+if "showCommandFailureIfNeeded" in source or "showAutomaticRoutingConfirmationIfNeeded" in source:
+    fail("command-result presentation must not retain split failure and success helpers")
+
+direct_route = function_body("route(command: MediaRemoteTransportCommand, to target: MediaRemoteTarget)")
+assert_contains(
+    direct_route,
+    "context: .direct",
+    "explicit row actions must not masquerade as automatic routing confirmations",
+)
+
+backend = chooser_send
 assert_order(
     backend,
     [
-        "desktopTransport.backendName(command: command, target: target)",
-        "chromiumBrowserExtensionController.backendName(command: command, target: target)",
+        "let transportBackend =",
+        "desktopTransportName(target: target)",
         "Self.mediaRemotePlayerPathBackend",
+        'trace("chooser_dispatch", command: command, target: target, transportBackend: transportBackend)',
     ],
-    "backend names must follow the same desktop/Chromium/MediaRemote priority as dispatch"
+    "chooser traces must prefer desktop transports before MediaRemote"
+)
+desktop_backend = function_body("desktopTransportName")
+assert_order(
+    desktop_backend,
+    [
+        "desktopTransport.backendName(for: target)",
+        "chromiumBrowserExtensionController.backendName(for: target)",
+    ],
+    "desktop backend names must follow the same native/Chromium priority as dispatch"
 )
 
-chooser_scoped = function_body("chooserScopedCommand")
-assert_contains(
-    chooser_scoped,
-    "desktopTransport.keepsPlayPauseToggle(for: target)",
-    "chooser-scoped playPause must preserve desktop adapter toggles for Spotify"
-)
+if source.count("MediaTransportCommandRules.rowScopedCommand(command, for: target)") != 1:
+    fail("MediaRemote fallback must be the single target-state command-scoping owner")
 
 print("verify_mixed_media_routing_semantics=ok")
 PY

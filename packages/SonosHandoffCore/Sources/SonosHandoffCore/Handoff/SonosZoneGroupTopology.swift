@@ -81,12 +81,12 @@ private final class ZoneGroupStateParserDelegate: NSObject, XMLParserDelegate {
     ) {
         switch elementName {
         case "ZoneGroup":
-            guard let coordinatorID = attributeDict["Coordinator"]?.nilIfEmpty else {
+            guard let coordinatorID = attributeDict["Coordinator"], !coordinatorID.isEmpty else {
                 currentGroup = nil
                 return
             }
             currentGroup = PendingGroup(
-                id: attributeDict["ID"]?.nilIfEmpty ?? coordinatorID,
+                id: attributeDict["ID"].flatMap { $0.isEmpty ? nil : $0 } ?? coordinatorID,
                 coordinatorID: coordinatorID,
                 members: []
             )
@@ -137,8 +137,8 @@ private final class ZoneGroupStateParserDelegate: NSObject, XMLParserDelegate {
     }
 
     private func speaker(from attributes: [String: String]) -> SonosSpeaker? {
-        guard let id = attributes["UUID"]?.nilIfEmpty,
-              let roomName = attributes["ZoneName"]?.nilIfEmpty
+        guard let id = attributes["UUID"], !id.isEmpty,
+              let roomName = attributes["ZoneName"], !roomName.isEmpty
         else {
             return nil
         }
@@ -170,7 +170,12 @@ private final class ZoneGroupStateParserDelegate: NSObject, XMLParserDelegate {
     }
 
     private static func host(fromLocation location: String) -> String? {
-        URL(string: location)?.host?.nilIfEmpty
+        guard let host = URL(string: location)?.host, !host.isEmpty else {
+
+            return nil
+        }
+
+        return host
     }
 
     private func normalizedMembers(_ members: [SonosSpeaker], coordinatorID: String) -> [SonosSpeaker] {

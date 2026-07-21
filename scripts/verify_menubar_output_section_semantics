@@ -5,6 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 menu_section="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MenuBarOutputSection.swift"
 sync_controller="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/PlaybackSyncController.swift"
 group_edit_controller="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/PlaybackGroupEditController.swift"
+background_sync="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/PlaybackBackgroundSync.swift"
 
 fail() {
   printf 'verify_menubar_output_section_semantics: %s\n' "$*" >&2
@@ -35,6 +36,12 @@ expect_absent "$menu_section" "playback.groupSuggestions"
 expect_absent "$menu_section" "acceptGroupSuggestion"
 expect_absent "$menu_section" "ignoreGroupSuggestion"
 
+expect_absent "$background_sync" 'clearSelection(reason: "no_active_spotify_playback")'
+expect_absent "$background_sync" 'clearSelection(reason: "spotify_playback_paused")'
+expect_absent "$background_sync" 'clearSelection(reason: "active_device_not_visible")'
+expect_absent "$background_sync" 'clearSelection(reason: "spotify_auth_required")'
+expect_contains "$sync_controller" '?? refresh.rows.first?.coordinator.roomName'
+
 expect_contains "$menu_section" "if loading || selected"
 expect_contains "$menu_section" "rowStatus(loading: loading, selected: selected)"
 expect_contains "$menu_section" "} else if let groupJoinRow {"
@@ -49,5 +56,8 @@ expect_absent "$sync_controller" "func ignoreGroupSuggestion"
 expect_absent "$group_edit_controller" "private(set) var groupSuggestions"
 expect_absent "$group_edit_controller" "func setGroupSuggestions"
 expect_absent "$group_edit_controller" "func ignoreGroupSuggestion"
+expect_absent "$group_edit_controller" "groupLoadingRoomName"
+expect_contains "$sync_controller" "@Published private(set) var groupLoadingRoomName: String?"
+expect_absent "$menu_section" "groupEditController.groupLoadingRoomName"
 
 printf 'verify_menubar_output_section_semantics=ok\n'

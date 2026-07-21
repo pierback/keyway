@@ -11,8 +11,9 @@ struct PlaybackTransferOutcome: Sendable {
         case .success:
             return ""
         case .failure(_, let details):
-            return details.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-                ?? "Could not transfer to \(roomName)."
+            let details = details.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            return details.isEmpty ? "Could not transfer to \(roomName)." : details
         }
     }
 }
@@ -39,11 +40,5 @@ final class PlaybackTransferActionController {
         }
 
         return PlaybackTransferOutcome(roomName: roomName, result: result)
-    }
-}
-
-private extension String {
-    var nilIfEmpty: String? {
-        isEmpty ? nil : self
     }
 }

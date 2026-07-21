@@ -6,7 +6,6 @@ import SwiftUI
 
 @MainActor
 struct SettingsFeature: View {
-    static let menuTitle = "Settings"
     static let preferredWindowSize = CGSize(width: 720, height: 680)
     private static let callbackURLText = SpotifyAuthCoordinator.callbackPorts
         .map { "http://\(SpotifyAuthCoordinator.callbackHost):\($0)\(SpotifyAuthCoordinator.callbackPath)" }
@@ -21,22 +20,22 @@ struct SettingsFeature: View {
     private let tokenStore: TokenStoring
     private let connectTokenStatusStore: ConnectTokenStatusChecking
     private let authCoordinator: SpotifyAuthCoordinating
-    private let accessibilityAutomator: AccessibilityAutomating
     private let configImportService: ConfigImportService
     private let chromiumNativeMessagingHostInstaller: ChromiumNativeMessagingHostInstaller
     @ObservedObject private var mediaRemoteController: MediaRemoteController
     @ObservedObject private var chromiumBrowserExtensionController: ChromiumBrowserExtensionController
 
     @State private var spotifyClientID = ""
-    @State private var isSpotifyAuthenticated = false
     @State private var desktopTokenAvailable = false
     @State private var webAPITokenAvailable = false
+    @State private var spotifyAuthCheckError: String?
     @State private var authMessage: String?
     @State private var isSigningIn = false
     @State private var hasCheckedSpotifyAuthentication = false
     @State private var showSpotifyAdvanced = false
 
     @State private var accessibilityGranted = false
+    @State private var listenEventGranted = false
     @State private var notificationAuthorizationStatus: UNAuthorizationStatus = .notDetermined
     @State private var notificationAlertSetting: UNNotificationSetting = .notSupported
     @State private var notificationCenterSetting: UNNotificationSetting = .notSupported
@@ -53,18 +52,15 @@ struct SettingsFeature: View {
         tokenStore: TokenStoring = KeychainTokenStore(),
         connectTokenStatusStore: ConnectTokenStatusChecking = ConnectTokenStatusStore(),
         authCoordinator: SpotifyAuthCoordinating? = nil,
-        accessibilityAutomator: AccessibilityAutomating = SpotifyUIAutomator(),
         configImportService: ConfigImportService = ConfigImportService(),
         chromiumNativeMessagingHostInstaller: ChromiumNativeMessagingHostInstaller = ChromiumNativeMessagingHostInstaller(),
-        initialConfigImportReport: ConfigImportReport? = nil,
         initialChromiumBridgeMessage: String? = nil,
-        mediaRemoteController: MediaRemoteController = MediaRemoteController(),
-        chromiumBrowserExtensionController: ChromiumBrowserExtensionController = ChromiumBrowserExtensionController()
+        mediaRemoteController: MediaRemoteController,
+        chromiumBrowserExtensionController: ChromiumBrowserExtensionController
     ) {
         self.configStore = configStore
         self.tokenStore = tokenStore
         self.connectTokenStatusStore = connectTokenStatusStore
-        self.accessibilityAutomator = accessibilityAutomator
         self.configImportService = configImportService
         self.chromiumNativeMessagingHostInstaller = chromiumNativeMessagingHostInstaller
         self.authCoordinator = authCoordinator ?? SpotifyAuthCoordinator(
@@ -72,7 +68,6 @@ struct SettingsFeature: View {
             configStore: configStore,
             browserOpener: { NSWorkspace.shared.open($0) }
         )
-        _configImportReport = State(initialValue: initialConfigImportReport)
         _chromiumBridgeMessage = State(initialValue: initialChromiumBridgeMessage)
         _mediaRemoteController = ObservedObject(wrappedValue: mediaRemoteController)
         _chromiumBrowserExtensionController = ObservedObject(wrappedValue: chromiumBrowserExtensionController)
@@ -98,6 +93,9 @@ struct SettingsFeature: View {
         .frame(minHeight: Self.preferredWindowSize.height)
         .task {
             await reloadState()
+        }
+        .onAppear {
+            _ = NSApp.setActivationPolicy(.regular)
         }
         .onDisappear {
             _ = NSApp.setActivationPolicy(.accessory)
@@ -214,9 +212,9 @@ struct SettingsFeature: View {
         settingsPanel(title: "Transport Routing") {
             serviceStatusRow(
                 title: "Media keys",
-                available: accessibilityGranted,
+                available: accessibilityGranted && listenEventGranted,
                 availableText: "Play/Pause, Next, Previous",
-                missingText: "Accessibility required"
+                missingText: accessibilityGranted ? "Input Monitoring required" : "Accessibility required"
             )
             serviceStatusRow(
                 title: "Chromium extension",
@@ -275,8 +273,12 @@ struct SettingsFeature: View {
     private var audioControlsSection: some View {
         settingsPanel(title: "Audio Controls") {
             VStack(alignment: .leading, spacing: 7) {
-                serviceStatusRow(title: "Sonos", available: true, availableText: "Volume and mute", missingText: "")
-                serviceStatusRow(title: "Spotify", available: webAPITokenAvailable, availableText: "Active Device Volume", missingText: "Sign in required")
+                serviceStatusRow(
+                    title: "Spotify",
+                    available: spotifyAuthCheckError == nil && webAPITokenAvailable,
+                    availableText: "Active Device Volume",
+                    missingText: spotifyAuthCheckError == nil ? "Sign in required" : "Status check failed"
+                )
                 serviceStatusRow(title: "Browser", available: chromiumBrowserExtensionController.connected, availableText: chromiumBrowserAudioStatusText, missingText: "Extension disconnected")
             }
         }
@@ -285,9 +287,15 @@ struct SettingsFeature: View {
     private var sonosSection: some View {
         settingsPanel(title: "Sonos") {
             VStack(alignment: .leading, spacing: 7) {
-                serviceStatusRow(title: "Discovery", available: true, availableText: "Enabled", missingText: "")
-                serviceStatusRow(title: "Handoff", available: isSpotifyAuthenticated, availableText: "Ready", missingText: "Token files required")
-                serviceStatusRow(title: "Volume", available: true, availableText: "Enabled", missingText: "")
+                serviceStatusRow(
+                    title: "Handoff",
+                    available: spotifyAuthCheckError == nil && desktopTokenAvailable && webAPITokenAvailable,
+                    availableText: "Ready",
+                    missingText: spotifyAuthCheckError == nil ? "Token files required" : "Status check failed"
+                )
+                Text("Discovery, volume, and mute become available when Keyway finds a speaker on your local network.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -376,15 +384,15 @@ struct SettingsFeature: View {
                 VStack(alignment: .leading, spacing: 7) {
                     serviceStatusRow(
                         title: "Desktop Connect",
-                        available: desktopTokenAvailable,
+                        available: spotifyAuthCheckError == nil && desktopTokenAvailable,
                         availableText: "Token present",
-                        missingText: "Token missing"
+                        missingText: spotifyAuthCheckError == nil ? "Token missing" : "Check failed"
                     )
                     serviceStatusRow(
                         title: "Web API",
-                        available: webAPITokenAvailable,
+                        available: spotifyAuthCheckError == nil && webAPITokenAvailable,
                         availableText: "Sign-in valid",
-                        missingText: "Sign in again"
+                        missingText: spotifyAuthCheckError == nil ? "Sign in again" : "Check failed"
                     )
                 }
 
@@ -401,7 +409,7 @@ struct SettingsFeature: View {
     @ViewBuilder
     private var spotifyAuthActionButton: some View {
         if webAPITokenAvailable {
-            Button("Sign Out") {
+            Button("Web API Sign Out") {
                 signOutSpotify()
             }
             .controlSize(.small)
@@ -420,13 +428,13 @@ struct SettingsFeature: View {
         settingsPanel(title: "Shortcuts") {
             HStack(alignment: .center, spacing: 10) {
                 StatusBadge(
-                    title: accessibilityGranted ? "Enabled" : "Required",
-                    available: accessibilityGranted
+                    title: accessibilityGranted && listenEventGranted ? "Enabled" : "Required",
+                    available: accessibilityGranted && listenEventGranted
                 )
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Global keyboard control")
                         .font(.system(size: 13, weight: .medium))
-                    Text(accessibilityGranted ? "Keyboard routing can listen in the background." : "Required for media-key routing and expanded control shortcuts.")
+                    Text(accessibilityGranted && listenEventGranted ? "Keyboard routing can listen in the background." : "Accessibility and Input Monitoring are required for media-key routing.")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
@@ -443,7 +451,11 @@ struct SettingsFeature: View {
                 Button("Open Settings") {
                     AccessibilityPermission.requestPrompt()
                     refreshShortcutState()
-                    NSWorkspace.shared.open(accessibilitySettingsURL)
+                    NSWorkspace.shared.open(
+                        accessibilityGranted
+                            ? URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!
+                            : accessibilitySettingsURL
+                    )
                 }
                 .controlSize(.small)
             }
@@ -571,7 +583,7 @@ struct SettingsFeature: View {
 
     private var readinessRow: some View {
         HStack(alignment: .top, spacing: 10) {
-            StatusIcon(available: isSpotifyAuthenticated)
+            StatusIcon(available: spotifyAuthCheckError == nil && desktopTokenAvailable && webAPITokenAvailable)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(spotifyAuthStatusText)
@@ -653,27 +665,51 @@ struct SettingsFeature: View {
     }
 
     private var spotifyAuthStatusText: String {
-        if isSpotifyAuthenticated {
+        if spotifyAuthCheckError != nil {
+            return "Spotify status check failed"
+        }
+
+        if desktopTokenAvailable && webAPITokenAvailable {
             return "Ready for Sonos handoff"
         }
 
-        if hasCheckedSpotifyAuthentication {
-            return "Missing Sonos handoff token files"
+        guard hasCheckedSpotifyAuthentication else {
+            return "Authentication not checked"
         }
 
-        return "Authentication not checked"
+        if webAPITokenAvailable {
+            return "Desktop Connect token missing"
+        }
+
+        if desktopTokenAvailable {
+            return "Spotify Web API sign-in required"
+        }
+
+        return "Spotify setup incomplete"
     }
 
     private var spotifyAuthDetailText: String {
-        if isSpotifyAuthenticated {
+        if let spotifyAuthCheckError {
+            return "Could not verify Spotify credentials: \(spotifyAuthCheckError)"
+        }
+
+        if desktopTokenAvailable && webAPITokenAvailable {
             return "Spotify Desktop Connect and Web API tokens are available."
         }
 
-        if hasCheckedSpotifyAuthentication {
-            return "Sign in again if Spotify control stops syncing."
+        guard hasCheckedSpotifyAuthentication else {
+            return "Checking token files..."
         }
 
-        return "Checking token files..."
+        if webAPITokenAvailable {
+            return "Web API sign-in is valid. Copy the Desktop Connect token from a working Keyway Mac to enable Sonos handoff."
+        }
+
+        if desktopTokenAvailable {
+            return "Desktop Connect is ready. Sign in for Spotify playback verification and volume sync."
+        }
+
+        return "Sign in for Web API access, then copy the Desktop Connect token from a working Keyway Mac."
     }
 
     private var configImportBadgeTitle: String {
@@ -766,7 +802,7 @@ struct SettingsFeature: View {
         case .notAsked:
             return "Click Enable to ask macOS for notification permission."
         case .off:
-            return "Turn on Sonos Handoff notifications in System Settings."
+            return "Turn on Keyway notifications in System Settings."
         case .unknown:
             return "Notification permission is unavailable."
         }
@@ -882,15 +918,22 @@ struct SettingsFeature: View {
     }
 
     private func reloadSpotifyAuthState() async {
-        let tokenStatus = await connectTokenStatusStore.validatedStatus()
-        desktopTokenAvailable = tokenStatus.desktopTokenAvailable
-        webAPITokenAvailable = tokenStatus.projectTokenAvailable
-        isSpotifyAuthenticated = tokenStatus.isReadyForHandoff
+        do {
+            let tokenStatus = try await connectTokenStatusStore.validatedStatus()
+            desktopTokenAvailable = tokenStatus.desktopTokenAvailable
+            webAPITokenAvailable = tokenStatus.projectTokenAvailable
+            spotifyAuthCheckError = nil
+        } catch {
+            desktopTokenAvailable = false
+            webAPITokenAvailable = false
+            spotifyAuthCheckError = error.localizedDescription
+        }
         hasCheckedSpotifyAuthentication = true
     }
 
     private func refreshAccessibilityState() {
-        accessibilityGranted = accessibilityAutomator.checkAccessibilityPermission()
+        accessibilityGranted = AccessibilityPermission.isGranted()
+        listenEventGranted = CGPreflightListenEventAccess()
     }
 
     private func refreshShortcutState() {
@@ -957,15 +1000,16 @@ struct SettingsFeature: View {
 
     private func saveSpotifyClientID(showMessage: Bool) -> Bool {
         let trimmedClientID = spotifyClientID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let clientID = trimmedClientID.isEmpty ? nil : trimmedClientID
 
-        if let id = trimmedClientID.nilIfEmpty, id.wholeMatch(of: Self.spotifyClientIDPattern) == nil {
+        if let clientID, clientID.wholeMatch(of: Self.spotifyClientIDPattern) == nil {
             authMessage = "Invalid Client ID format. Expected 32 hex characters."
             return false
         }
 
         do {
             let config = try configStore.load()
-            guard config.spotifyClientID != trimmedClientID.nilIfEmpty else {
+            guard config.spotifyClientID != clientID else {
                 if showMessage {
                     authMessage = "Spotify Client ID unchanged."
                 }
@@ -974,8 +1018,7 @@ struct SettingsFeature: View {
 
             try configStore.save(
                 AppConfig(
-                    spotifyClientID: trimmedClientID.nilIfEmpty,
-                    spotifyVirtualDisplayName: config.spotifyVirtualDisplayName
+                    spotifyClientID: clientID
                 )
             )
             if showMessage {
@@ -1012,10 +1055,10 @@ struct SettingsFeature: View {
         do {
             try tokenStore.deleteRefreshToken()
             try connectTokenStatusStore.deleteProjectToken()
-            authMessage = "Removed Spotify sign-in tokens."
+            authMessage = "Removed Spotify Web API sign-in tokens."
             Task { await reloadSpotifyAuthState() }
         } catch {
-            authMessage = "Could not remove the Spotify token."
+            authMessage = "Could not remove the Spotify Web API token."
         }
     }
 
@@ -1054,12 +1097,6 @@ private enum NotificationPermissionViewState {
     case notAsked
     case off
     case unknown
-}
-
-private extension String {
-    var nilIfEmpty: String? {
-        isEmpty ? nil : self
-    }
 }
 
 private struct StatusDot: View {

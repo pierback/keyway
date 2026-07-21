@@ -4,7 +4,6 @@ import SonosHandoffCore
 
 struct AppEnvironment: @unchecked Sendable {
     let configImportService: ConfigImportService
-    let configImportReport: ConfigImportReport?
     let chromiumNativeMessagingHostInstallMessage: String?
     let configStore: any ConfigStoring
     let tokenStore: any TokenStoring
@@ -15,17 +14,13 @@ struct AppEnvironment: @unchecked Sendable {
     let groupingEditor: any SonosGroupingEditing
     let volumeService: any SpeakerVolumeAdjusting
     let activePlaybackObserver: any SpotifyActivePlaybackObserving
-    let accessibilityAutomator: any AccessibilityAutomating
     let outputSelection: PlaybackOutputSelection
     let outputDirectory: PlaybackOutputDirectory
     let groupSuggestionStore: PlaybackGroupSuggestionStore
-    let groupSuggestionNotifier: PlaybackGroupSuggestionNotifier
     let groupSuggestionPresenter: PlaybackGroupSuggestionPresenter
     let transferSuggestionStore: PlaybackTransferSuggestionStore
-    let transferSuggestionNotifier: PlaybackTransferSuggestionNotifier
     let transferSuggestionPresenter: PlaybackTransferSuggestionPresenter
     let headphoneTransferSuggestionStore: HeadphoneTransferSuggestionStore
-    let headphoneTransferSuggestionNotifier: HeadphoneTransferSuggestionNotifier
     let headphoneTransferSuggestionPresenter: HeadphoneTransferSuggestionPresenter
     let macAudioOutputMonitor: MacAudioOutputMonitor
     let chromiumNativeMessagingHostInstaller: ChromiumNativeMessagingHostInstaller
@@ -33,8 +28,6 @@ struct AppEnvironment: @unchecked Sendable {
     let mediaRemoteController: MediaRemoteController
     let mediaSourceStore: MediaSourceStore
     let mediaAudioControlController: MediaAudioControlController
-    let mediaTargetOverlayController: MediaTargetOverlayController
-    let sourceFocusActionController: SourceFocusActionController
     let mediaTransportActionController: MediaTransportActionController
     let mediaRoutingProbeController: MediaRoutingProbeController
 
@@ -50,7 +43,6 @@ struct AppEnvironment: @unchecked Sendable {
             configStore: configStore,
             browserOpener: { NSWorkspace.shared.open($0) }
         )
-        let accessibilityAutomator = SpotifyUIAutomator()
         let spotifyConnectService = SpotifyConnectHandoffService()
         let outputSelection = PlaybackOutputSelection()
         let groupSuggestionStore = PlaybackGroupSuggestionStore()
@@ -59,6 +51,7 @@ struct AppEnvironment: @unchecked Sendable {
             store: groupSuggestionStore,
             notifier: groupSuggestionNotifier
         )
+        groupSuggestionNotifier.prepare()
         let transferSuggestionStore = PlaybackTransferSuggestionStore()
         let transferSuggestionNotifier = PlaybackTransferSuggestionNotifier()
         let transferSuggestionPresenter = PlaybackTransferSuggestionPresenter(
@@ -123,7 +116,6 @@ struct AppEnvironment: @unchecked Sendable {
 
         return AppEnvironment(
             configImportService: configImportService,
-            configImportReport: nil,
             chromiumNativeMessagingHostInstallMessage: chromiumNativeMessagingHostInstallMessage,
             configStore: configStore,
             tokenStore: tokenStore,
@@ -134,17 +126,13 @@ struct AppEnvironment: @unchecked Sendable {
             groupingEditor: spotifyConnectService,
             volumeService: spotifyConnectService,
             activePlaybackObserver: spotifyConnectService,
-            accessibilityAutomator: accessibilityAutomator,
             outputSelection: outputSelection,
             outputDirectory: outputDirectory,
             groupSuggestionStore: groupSuggestionStore,
-            groupSuggestionNotifier: groupSuggestionNotifier,
             groupSuggestionPresenter: groupSuggestionPresenter,
             transferSuggestionStore: transferSuggestionStore,
-            transferSuggestionNotifier: transferSuggestionNotifier,
             transferSuggestionPresenter: transferSuggestionPresenter,
             headphoneTransferSuggestionStore: headphoneTransferSuggestionStore,
-            headphoneTransferSuggestionNotifier: headphoneTransferSuggestionNotifier,
             headphoneTransferSuggestionPresenter: headphoneTransferSuggestionPresenter,
             macAudioOutputMonitor: macAudioOutputMonitor,
             chromiumNativeMessagingHostInstaller: chromiumNativeMessagingHostInstaller,
@@ -152,8 +140,6 @@ struct AppEnvironment: @unchecked Sendable {
             mediaRemoteController: mediaRemoteController,
             mediaSourceStore: mediaSourceStore,
             mediaAudioControlController: mediaAudioControlController,
-            mediaTargetOverlayController: mediaTargetOverlayController,
-            sourceFocusActionController: sourceFocusActionController,
             mediaTransportActionController: mediaTransportActionController,
             mediaRoutingProbeController: mediaRoutingProbeController
         )

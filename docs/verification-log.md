@@ -1,199 +1,91 @@
 # Keyway Verification Log
 
-Last updated: 2026-06-17
+Last updated: 2026-07-21
 
-## Playback Routing Hardening Update (2026-05-31)
+This file records the current worktree, not a cumulative history. Git retains earlier device-run notes.
 
-- Branch: `keyway-planning`
-- Current good routing commits/tags:
-  - `d72307f Harden media dispatch backend tracing` / `good-media-routing-backend-traces`
-  - `f67ec58 Add Helium playback HITL regression` / `good-media-routing-helium-hitl`
-  - `2df9e3c Broaden Helium JavaScript media targeting` / `good-media-routing-helium-dom-targeting`
-  - `e7a2e51 Explain Apple Events automation failures` / `good-media-routing-tcc-recovery`
-  - `eca5bdd Handle deep Helium media while preserving fast path` / `good-media-routing-helium-deep-playing`
-  - `3b621c8 Filter stale Helium rows and dismiss chooser on focus loss` / `good-media-routing-modal-focus-helium-filter`
-- Installed app path verified: `/Users/f.pieringer/Applications/Keyway.app`.
-- Hardware Play/Pause routing now requires `activeEventTap=cghid`; Command Center callbacks are route-shield-only and do not open the chooser.
-- Selected-row dispatch now records structured `transportBackend` values:
-  - `mediaremote_player_path`
-  - `spotify_apple_event`
-  - `chromium_extension`
-- Spotify selected-row dispatch uses in-process Apple Events instead of MediaRemote player-path commands or `/usr/bin/osascript`.
-- Helium selected-row dispatch uses the Chromium extension route. The desktop JavaScript fallback is removed, so Helium rows are commandable only when extension targets are present.
-- Desktop selected-row dispatch keeps the route shield armed; normal MediaRemote selected-row dispatch suspends and rearms the route shield.
-- Apple Events/TCC failures now surface an actionable Automation permission recovery hint.
-- Verification passed after the final installed build:
-  - `xcodebuild -workspace Keyway.xcworkspace -scheme Keyway -configuration Debug build CODE_SIGNING_ALLOWED=NO`
-  - `scripts/install_menubar_app`
-  - `scripts/verify_playback_routing_invariants`
-  - `scripts/verify_hitl_helium_playback_toggle_check_semantics`
-  - `scripts/verify_hitl_playback_routing_check_semantics`
-  - `scripts/verify_hitl_playback_instant_reentry_check_semantics`
-  - `scripts/verify_playback_filter_semantics`
-  - `scripts/verify_playback_reentry_semantics`
-  - `scripts/probe_playback_routing_suite`
-  - `scripts/probe_display_brightness_passthrough`
-  - `scripts/verify_shortcut_event_parser_semantics`
-  - `KEYWAY_PROBE_ROUTING_SUITE_TARGETS=1 scripts/probe_playback_routing_suite` (Spotify/Helium selected-row probes run only when those filtered targets are visible)
-  - `scripts/hitl_helium_playback_toggle_check`
-  - `KEYWAY_APP="$HOME/Applications/Keyway.app" scripts/smoke_transport_routing_confirmation`
-  - `KEYWAY_TRANSPORT_UI_SMOKE=1 scripts/regression_gate`
-- Live Helium HITL expects `beforePlayingCount=1`, `afterPlayingCount=0`, a selected Helium extension target, and backend `chromium_extension`.
-- Transport routing smoke now covers focused-target Previous/Next only; Play/Pause is chooser-first and is covered by chooser/HITL probes.
-- Observed selected-row backend latency in probes:
-  - Spotify AppleEvent helper result: `0ms`
-  - Helium extension helper result: covered by the Chromium extension backend budget.
-- Display brightness keys were verified as pass-through after removing the mistaken `keyCode=2` Play/Pause mapping; `keyCode=2` is brightness-up, not Play/Pause.
-- Media chooser rows now use deterministic order: playing rows first, then the most recently selected/routed target, then app name, title, and id. Stopped recent targets never jump above currently playing rows; ordering no longer depends on MediaRemote freshness timestamps, active-route churn, or helper array order.
-- Helium chooser rows are now gated by extension-reported media availability, so stale MediaRemote Helium rows and desktop fallback rows are not commandable.
-- The chooser now dismisses without dispatch when Keyway loses focus or another app is activated; this is covered by `scripts/probe_playback_chooser_focus_dismiss`, which focuses a different foreground app to avoid no-op activation when Finder is already frontmost.
-- `scripts/acceptance_preflight` remains environment-blocked, not Keyway-routing-blocked:
-  - `sonos-handoff-port: Spotify has no active playback`
-  - App identity, installed helper, MediaRemote snapshot, cghid event-tap readiness, Command Center route shield readiness, config import, Sonos `Port` discovery, and legacy-file integrity passed before that block.
+## Passed in the current worktree
 
-## Verified In This Branch
+- The regression gate's non-installing checks completed successfully against the current reviewed worktree.
+  - All 250 tests in 44 suites passed, including the Spotify OAuth callback-listener and token-status tests.
+  - All 35 `scripts/verify_*` semantic verifiers passed, including strict CLI argument semantics.
+  - All repository Bash scripts passed syntax checking.
+  - `git diff --check` passed.
+  - Xcode project generation produced byte-identical project and scheme files across two consecutive runs.
+- That gate ran after the immutable-diff review fixes, including owned route-fallback timeouts, strict CLI parsing, exact-path installer process selection, explicit Developer ID propagation, bounded notarization polling, and deterministic Xcode identifiers.
+- Both live Settings entry paths now use one canonical SwiftUI scene.
+  - The first utility-menu `Settings...` invocation from menu-bar-only mode opened one `Keyway Settings` window and changed the Launch Services application type from `UIElement` to `Foreground`.
+  - Two subsequent Cmd+, invocations kept the window count at exactly one.
+  - Closing the only window restored the Launch Services application type to `UIElement`.
+- The visible menu-bar control center rendered its Brave, Chrome, Spotify, Sonos, and Web API states. The control-click utility menu exposed Settings, helper restart, and quit.
+- Killing both app-owned MediaRemote helpers produced replacement processes, kept the popover source list intact, and accepted the next targeted Safari transport command within five seconds.
+- Spotify AppleEvent transport passed play and pause (2/2 commands, 0 failures, 75 ms p95 acknowledgement).
+- Chromium extension transport passed its isolated live end-to-end run.
+  - All 9 command checks passed: pause, play, two play/pause toggles, two mute toggles, volume, next, and previous.
+  - Both exact-tab focus checks passed.
+  - All 10 alternating-target stress iterations passed with zero wrong-target, duplicate, or failed acknowledgements.
+  - Discovery took 147 ms and p95 acknowledgement was 227 ms.
+- Chromium Manifest V3 service-worker suspension and recovery passed in 18.1 seconds with no extension console or runtime errors.
+- The insecure-page extension regression is covered without `crypto.randomUUID`; Chrome control loaded the final content script on a non-secure LAN HTTP origin and reported zero extension warnings or errors. The user's existing media tab was not touched.
+- Safari Play and Pause both passed through the installed app's popover, with matching MediaRemote state and successful targeted-command traces.
+- `scripts/hitl_touchbar_playback_state_check` passed against the live route-shield state (`playbackRate=1` while Spotify was playing); Safari's paused state remained `playbackRate=0`.
+- All 10 Settings sections were opened through the installed app: General, Transport Routing, Overlay, Audio Controls, Sonos, Spotify, Shortcuts, Permissions, Helper Status, and Diagnostics.
+- Spotify Web API sign-in is valid. `project-webapi-token.json` exists with owner-only permissions, live playback state was readable, and `scripts/smoke_spotify_webapi_transport` passed Play and Pause (2/2 commands).
+- The `Kitchen` Sonos speaker was discovered on the local network. A real volume change and mute change passed and both values were restored to volume 8 and unmuted.
+- Pausing Spotify no longer clears the selected Sonos output. The live popover kept `Kitchen` selected and showed its restored volume at 8% while every media source was paused.
+- The centered media-target overlay was inspected live after its sizing fix; the command header, all three source rows, expanded area, and footer fit without clipping.
+- Spotify Settings now validates the Desktop Connect file contents and distinguishes missing credentials from corrupt files, network/server failures, and an invalid Web API sign-in instead of collapsing every failure into “token missing.”
+- Full-diff reuse, quality, efficiency, and focused permission-state reviews completed with no remaining accepted findings.
+- The current diff removes more than 2,000 net lines while retaining the verified behavior above.
 
-- Branch: `keyway-planning`
-- Implementation commits:
-  - `e2fd154 Document Keyway product direction`
-  - `7f8b8ab Add Keyway acceptance runbook`
-  - `2d66be1 Cut over app identity to Keyway`
-  - `9ac40cc Add MediaRemote helper bridge`
-  - `4b1137e Route media keys through Keyway overlay`
-  - `53e5590 Fix media target overlay chooser state`
-- Verification documentation updates are committed on top of the implementation commits.
-- `swift test --package-path packages/SonosHandoffCore`: passed with 236 tests.
-- `xcodebuild -workspace Keyway.xcworkspace -scheme Keyway -configuration Debug -destination 'platform=macOS' -derivedDataPath .build/xcode-derived-data build`: passed.
-- `scripts/install_menubar_app`: passed and installed `/Users/f.pieringer/Applications/Keyway.app`.
-- `scripts/regression_gate`: passed in default mode again at 2026-05-20 17:22 local time.
-- `scripts/regression_gate`: passed again after the Focused Target prominent-window routing change.
-- `KEYWAY_TRANSPORT_UI_SMOKE=1 scripts/regression_gate`: passed after the native notification cutover, including Swift package tests, `git diff --check`, reinstall, and `scripts/smoke_transport_routing_confirmation`.
-- `SONOS_HANDOFF_REAL_DEVICE_SMOKE=1 SONOS_HANDOFF_ROOM=Port scripts/regression_gate`: passed at 2026-05-20 18:38 local time, including:
-  - `smoke_port_handoff=ok`
-  - `smoke_menubar_handoff=ok`
-  - `smoke_menubar_slider=ok`
-- `scripts/acceptance_preflight`: now reports `acceptance_preflight=pass` on the local machine after the real-device gate.
-- `scripts/acceptance_preflight`: passed again after the native notification cutover; it reported the installed app running, helper responding, three media targets, persisted `mediaFallback=enabled`, discoverable Sonos `Port`, and unchanged legacy files.
-- Startup and shortcut refresh now request the macOS Accessibility prompt when the media-key event tap cannot be created.
-- Keyway now persists shortcut runtime readiness in `~/Library/Application Support/keyway/shortcut-runtime-status.json` so preflight is not dependent on volatile unified-log retention.
-- After reinstalling `/Users/f.pieringer/Applications/Keyway.app`, `scripts/acceptance_preflight` passed the Accessibility/media-key event-tap readiness check from the persisted status file:
-  - `pass: Keyway persisted shortcut runtime status is mediaFallback=enabled`
-- `scripts/acceptance_preflight` now waits briefly for the app-owned MediaRemote helper after a fresh launch, avoiding a false helper block during install/relaunch settling.
-- `scripts/acceptance_preflight` accepts validated newer Keyway-owned token state after runtime refreshes, and verifies the legacy Sonos Handoff files remain unchanged during the preflight.
-- `codex-review --parallel-tests "scripts/regression_gate"`: initially reported overlay chooser state findings; fixed in `53e5590`; rerun clean with no accepted/actionable findings.
-- Installed bundle id: `com.fpieringer.Keyway`.
-- Installed app signature uses identifier `com.fpieringer.Keyway` and TeamIdentifier `7Q44SDV7BM`.
-- Installed helper process observed:
-  - `/usr/bin/perl /Users/f.pieringer/Applications/Keyway.app/Contents/Resources/MediaRemoteHelper/keyway-mediaremote-helper.pl /Users/f.pieringer/Applications/Keyway.app/Contents/Resources/MediaRemoteHelper/libkeyway_mediaremote.dylib`
-- Installed helper NDJSON smoke returned Spotify and Helium browser-wrapper targets:
-  - Spotify: `com.spotify.client`, title `Journey Unknown`, artist `Fuga Ronto`
-  - Helium: `net.imput.helium`, title `Instagram`
-- QuickTime Player target discovery was verified by opening `/tmp/keyway-quicktime-check.aiff` in QuickTime:
-  - QuickTime Player: `com.apple.QuickTimePlayerX`, media type `kMRMediaRemoteNowPlayingInfoTypeAudio`
-- Helper failure/restart was verified by killing the app-owned helper:
-  - Keyway logged `MediaRemoteHelper failed=MediaRemote helper exited with status 15.`
-  - A new `/usr/bin/perl` helper was observed running within two seconds.
-- Settings was opened through the menu bar UI with `Cmd+,`:
-  - System Events reported `background only=false` and `visible=true` for process `Keyway`.
-  - The Settings window contained General, Transport Routing, Overlay, Audio Controls, Sonos, Spotify, Shortcuts, Permissions, Helper Status, and Diagnostics.
-  - Helper Status displayed `Running`, `MediaRemote snapshot loaded`, `targets=3`.
-- Config import copied legacy files into `~/Library/Application Support/keyway`.
-- `config.json` still matches the legacy checksum.
-- `spotify-desktop-connect-tokens.json` is now newer in Keyway after runtime refresh; `scripts/acceptance_preflight` verifies it has a complete Desktop Connect token schema and that the legacy token file remains unchanged.
-- Legacy support files under `~/Library/Application Support/sonos-handoff` remained byte-for-byte unchanged in the install/import and preflight checks.
-- Current Spotify readiness was verified through `sonos-handoff-port playback-status`:
-  - `spotify_device=Port type=AVR restricted=true`
-  - `spotify_device_volume=71`
-  - `spotify_playing=true`
-- Spotify-to-Sonos handoff was verified through the CLI smoke:
-  - `spotify_item=Break Your Heart`
-  - `sonos_transport=playing`
-  - `handoff=ok`
-- Sonos menu-bar handoff was verified through `scripts/smoke_menubar_handoff Port`.
-- Sonos menu-bar volume was verified through `scripts/smoke_menubar_slider Port`:
-  - `initial_volume=72`
-  - `target_volume=82`
-  - `observed_volume=82`
-  - `restored_volume=72`
-- Sonos mute was verified directly and restored:
-  - `initial_muted=false`
-  - `volume-mute-on=ok`
-  - `volume-mute-off=ok`
-  - `restored_muted=false`
-- `scripts/smoke_overlay_browser_controls`: passed against the installed app with Spotify, QuickTime Player, and Helium media targets active. The smoke opened the actual media-key chooser, toggled Expanded Controls with Tab, selected the browser-like target, and verified visible Accessibility text:
-  - `Expanded Controls`
-  - `Browser`
-  - `Disabled`
-  - `Volume disabled without browser extension`
-- User rejected the custom top-of-screen status popups. Keyway now routes status feedback through native macOS notifications with `UNUserNotificationCenter`; the legacy custom HUD panel source files have been removed.
-- Gemini UI pass flagged notification-card stacking as the concrete risk in the notification approach. Keyway status notifications now reuse `identifier=keyway.status` and clear matching pending/delivered notifications before delivery, so repeated confirmations replace instead of stacking unique cards.
-- `scripts/smoke_transport_routing_confirmation`: passed against the installed app with QuickTime Player as the safe focused target. The smoke posts synthetic Previous, Play/Pause, and Next media-key events through the HID event tap and verifies:
-  - Keyway intercepts the media-key down event.
-  - Keyway routes each command by `focused target`.
-  - Keyway logs a native notification request with stable `identifier=keyway.status`.
-  - No chooser or legacy custom Keyway popup window appears for automatic routing.
-  - No `MediaRemoteHelper parse_error` is emitted.
-- `scripts/smoke_transport_routing_confirmation` and `scripts/smoke_overlay_browser_controls` now support `KEYWAY_PHYSICAL_MEDIA_KEYS=1` for final acceptance. In physical mode the scripts prompt for real hardware media-key presses while keeping the same log/UI assertions; the transport script also verifies plain hardware Volume Up, Volume Down, and Mute do not produce Keyway media-key volume/mute interception logs.
-- Media-key constants for Play/Pause, Next, and Previous were checked against local SDK headers:
-  - `NX_KEYTYPE_PLAY = 16`
-  - `NX_KEYTYPE_NEXT = 17`
-  - `NX_KEYTYPE_PREVIOUS = 18`
-- Focused Target routing now includes a Prominent Window Target fallback: when the global foreground app is not a Media Target, Keyway checks prominently visible, unobscured layer-0 windows on the display containing the mouse pointer before falling back to Recent Target or chooser when no single current target is already active.
-- Antigravity/Gemini UI review was requested again for the popover spacing pass, but `agy --print` was blocked by Antigravity quota:
-  - `RESOURCE_EXHAUSTED (code 429): Individual quota reached.`
-  - Reset reported in the CLI log as roughly 162 hours.
-- Menu bar popover spacing pass completed against the installed app:
-  - Left-click opens the anchored Control Center-style popover.
-  - Popover screenshot saved at `/tmp/keyway-popover-final-spacing.png`.
-  - The popover now uses compact route and Sonos cards, a small `Change` affordance, restored Sonos output/group controls, a compact alternate-target strip, and no dead footer space.
-  - The popover background is transparent outside the rounded material; the previous black backing is gone.
-- Option-click and Command-click status item paths were verified with synthetic menu bar clicks:
-  - Option-click opened a centered chooser window.
-  - Command-click opened a centered chooser window.
-- Centered overlay focus-loss behavior was verified:
-  - Before activating Finder, System Events reported `keyway_windows_before_focus_loss=1`.
-  - After activating Finder, System Events reported `keyway_windows_after_focus_loss=0`.
-  - The final implementation relies on `NSPanel.hidesOnDeactivate` rather than closing on every `resignKey`, because the latter made Accessibility-driven keyboard smoke checks flaky while Keyway was still active.
-- `scripts/install_menubar_app`: passed after the final popover and overlay focus changes.
-- `swift test --package-path packages/SonosHandoffCore`: passed with 236 tests in 47 suites.
-- `scripts/smoke_transport_routing_confirmation`: passed after the final UI pass.
-- `scripts/smoke_overlay_browser_controls`: passed after the final UI pass, including Expanded Controls and browser disabled-state text.
-- Codex review found two popover regressions after the first pass:
-  - The new popover did not suppress volume/mute notifications while open.
-  - The new popover triggered `playback.appear()` twice per open.
-- Both review findings were fixed:
-  - The popover now suppresses volume notifications on appear and restores them on disappear.
-  - `playback.appear()` now runs only from the SwiftUI popover lifecycle.
-- After those fixes:
-  - `scripts/install_menubar_app`: passed.
-  - `swift test --package-path packages/SonosHandoffCore`: passed with 236 tests in 47 suites.
-  - `scripts/smoke_overlay_browser_controls`: passed.
-  - `scripts/smoke_transport_routing_confirmation`: passed when rerun alone. A concurrent run with the overlay smoke was discarded because the overlay smoke intentionally kept a chooser window open and interfered with transport's no-chooser assertion.
-- `scripts/acceptance_preflight`: still blocked by current local Spotify state:
-  - `sonos-handoff-port: Spotify has no active playback`
-  - App identity, config import, MediaRemote helper, Accessibility/media-key readiness, Sonos `Port` discovery, and legacy file integrity passed before that block.
-- Follow-up codex-review found one chooser startup race:
-  - Option-click/Command-click could refresh MediaRemote asynchronously and immediately report `No Media Target` before the helper returned its first snapshot.
-- The chooser startup race was fixed by retrying the direct chooser path against the refreshed snapshot before posting the no-target notification.
-- Final verification after that fix:
-  - `xcodebuild -workspace Keyway.xcworkspace -scheme Keyway -configuration Debug -destination 'platform=macOS' build CODE_SIGNING_ALLOWED=NO`: passed.
-  - `swift test --package-path packages/SonosHandoffCore`: passed with 236 tests in 47 suites.
-  - `scripts/install_menubar_app`: passed and installed `/Users/f.pieringer/Applications/Keyway.app`.
-  - `scripts/smoke_overlay_browser_controls`: passed on the installed app, including Expanded Controls and browser disabled-state text.
-  - `scripts/smoke_transport_routing_confirmation`: passed on the installed app with QuickTime Player as the safe target.
-  - `/Users/f.pieringer/.codex/skills/codex-review/scripts/codex-review --full-access`: clean, no accepted/actionable findings.
-  - Codex-review also ran a Release build successfully; the only reported warning was the pre-existing missing `AccentColor` asset catalog warning.
+## Release pipeline evidence
 
-## Not Yet Passed Locally
+- The final universal app and both embedded helpers were signed inside-out with `Developer ID Application: Fabian Pieringer (7Q44SDV7BM)`, notarized by Apple, stapled, and installed at `/Users/fabian/Applications/Keyway.app`.
+- The installed app contains both `x86_64` and `arm64` slices. Strict code-signature verification and staple validation passed, and Gatekeeper accepted it as `Notarized Developer ID`.
+- The distributable ZIP is `/Users/fabian/projects/keyway/.build/distribution/Keyway-0.1.0.zip`; its SHA-256 is `b4b9e285c3484c41a7823b269b8c1c1fe86d1c3d19d9da35fc7660c47eba4e96`.
+- The previous and final apps have the same bundle identifier, team identifier, and designated requirement. Accessibility and Input Monitoring remained granted after replacement.
+- The final app restart asked the already-installed Chromium extension to reload once, replacing the browser-owned stale native host without restarting or reloading any tab. The live host then ran from `/Users/fabian/Applications/Keyway.app/Contents/Helpers/keyway-chromium-native-host`, every manifest pointed at that path, and Settings reported the extension connected with no active browser media.
+- The exact-Suno overlay transport/state-restoration smoke passed immediately before this lifecycle-only reconnect change. The final installed build's reconnect was verified without commanding or focusing a user browser tab.
+- Killing both installed MediaRemote helpers produced replacements, and the next targeted QuickTime command succeeded. The isolated QuickTime document was then closed.
+- The final Spotify Settings wording was inspected live, and its `Check` action preserved the correct split state: Desktop Connect token missing, Web API sign-in valid.
 
-- Live physical-key verification is still needed for full Next, Previous behavior and overlay keyboard operation. Synthetic HID media-key routing now passes for focused-target Previous/Next; live Helium hardware Play/Pause selected-row routing now passes.
-- The physical-key verification scripts are ready but have not yet been run in this log:
-  - `KEYWAY_PHYSICAL_MEDIA_KEYS=1 scripts/smoke_transport_routing_confirmation`
-  - `KEYWAY_PHYSICAL_MEDIA_KEYS=1 scripts/smoke_overlay_browser_controls`
-- Spotify Active Device Volume still needs a run against an unrestricted Spotify active device. The current active device is Sonos `Port`, and Spotify reports it as `restricted=true`, so volume write-back is correctly skipped.
+## Bugs fixed in this pass
 
-## Next Required Acceptance Checks
+- Replaced content-script `crypto.randomUUID()` with one unconditional `crypto.getRandomValues` identifier path, so the extension can initialize on insecure HTTP pages.
+- Made the Command Center route shield publish actual playing/paused state instead of forcing the Touch Bar to remain in play mode.
+- Removed the duplicate AppKit Settings window. Cmd+, and both menu-bar Settings actions now invoke the one SwiftUI Settings scene, with regular-app activation only while it is visible.
+- Replaced the inert legacy `showSettingsWindow:` call with the canonical application-menu Settings command and its real menu-item sender.
+- Removed the one-method Accessibility automation wrapper and query the shared permission API directly.
+- Removed the one-case desktop transport backend enum/switch and dispatch Spotify AppleEvents through direct fail-closed target guards.
+- Reused that single desktop-target eligibility decision at submission time instead of maintaining a second copy.
+- Removed the unused combined Sonos coordinator-removal operation and narrowed the Spotify playback observer protocol to the operations consumed by the app.
+- Added `scripts/hitl_touchbar_playback_state_check` for the physical Touch Bar state transition.
+- Kept the shortcut runtime permission report synchronized when either Accessibility or Input Monitoring changes, while suppressing unchanged two-second status rewrites.
+- Removed the dead route-status model and duplicate automatic-target resolution, so each media command sorts and resolves the cached target set once.
+- Made DNS-SD command failures visible instead of converting them into an empty Sonos result, while treating the runner's expected collection timeout as success.
+- Declared Sonos Bonjour and local-network access in the app plist, and removed unconditional “enabled” Settings indicators that could not prove a speaker was visible.
+- Made the browser-audio verifier compile the production `SonosRoomName` implementation instead of maintaining a second copy.
+- Removed the unused `gone` media-source state and duplicate target-only views; `SourceRow` is now the canonical source/overlay model.
+- Removed unreachable optional Sonos-target branches and verified the selected-room/group scope plus `Port` member fallback through public volume and mute actions.
+- Removed duplicate group-edit orchestration and deleted the unused Sonos runtime, playback-service, output-preference, and coordinator-replacement layers.
+- Planned each Sonos group-membership change once, then reused that value for execution, optimistic selection, and observation.
+- Made the parent playback controller the sole owner of group-edit operation state and kept the child controller limited to rows and suggestions.
+- Kept the chosen Sonos room and volume controls available while Spotify is paused, playing on a non-Sonos device, or its Web API authorization needs attention, without falsely labeling an unmatched device as Spotify-on-Sonos.
+- Removed the one-use Spotify handoff readiness policy and switched directly on the two real readiness inputs.
+- Made Spotify token status truthful: corrupt Desktop files and service failures surface as check failures, missing or revoked credentials remain actionable unavailable states, and a server-rejected access token gets one refresh-and-retry before sign-in is declared invalid.
+- Sized the media-target overlay for its command header so the footer is no longer clipped.
+- Replaced three CLI argument scans and their hidden unchecked index dependency with one validated parsing pass.
+- Reworked the overlay browser smoke to toggle and restore mute only after reflected state arrives.
+- Made the QuickTime routing smoke close only the exact document it created.
+- Reloaded the Chromium extension once at app startup so an app update cannot leave the browser connected to a native host inside the discarded app bundle.
+- Removed stale browser-extension, modifier-click chooser, and machine-specific path claims from the current product and acceptance documentation.
 
-1. Re-run media-key checks with physical Play/Pause, Next, and Previous keys for chooser and focused-target routing.
-2. Re-run full overlay keyboard checks with live media-key presses.
-3. Move Spotify playback to an unrestricted active device, then verify Spotify Active Device Volume.
+## External checks still required
+
+1. Securely copy `spotify-desktop-connect-tokens.json` from a working Keyway Mac. The file is not present on this Mac, it does not sync through Spotify Web API sign-in, and it is required for Spotify-to-Sonos handoff.
+2. Run the actual Spotify-to-`Kitchen` Sonos handoff after that Desktop Connect credential is present.
+3. Press Play/Pause once on the physical Touch Bar for the final hardware-only confirmation; generated media-key events are intentionally rejected by Keyway.
+
+A real existing YouTube tab was intentionally left untouched. Exact-tab browser behavior passed against the user's Suno tab and in the isolated Chromium extension suite.
+
+Spotify Web API authorization is complete and is not the blocker. The only missing Spotify credential is the device-local Desktop Connect token file from a working Keyway installation.

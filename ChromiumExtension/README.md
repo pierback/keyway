@@ -25,7 +25,7 @@ The browser backend supports `play`, `pause`, `playPause`, `mute`, and volume de
 
 - `Repair Bridge` to reinstall the native host manifests.
 - `Reveal Extension` to show the bundled `Keyway.app/Contents/Resources/ChromiumExtension` folder.
-- `Open Extensions` to open `chrome://extensions`.
+- `Open Extensions` to open `chrome://extensions` (it prefers Helium when Helium is installed; use the script below to target a specific browser deterministically).
 
 3. Enable Developer Mode in the target browser and load the revealed `ChromiumExtension` folder as an unpacked extension.
 
@@ -47,7 +47,7 @@ The app and script install the host for common Chromium-family browsers on macOS
 
 ## Smoke Test
 
-The live smoke test launches a temporary Brave or Chrome profile with this unpacked extension, opens two local media tabs, sends exact-target commands through the native host, and verifies exact-tab focus by switching the active tab for each source:
+The live smoke requires Playwright to be resolvable by Node.js. It launches a temporary Brave or Chrome profile with this unpacked extension and two local media tabs, then verifies exact-tab focus, Play/Pause, reflected mute, isolated volume, and page-backed Next/Previous through the native host:
 
 ```bash
 scripts/smoke_chromium_extension_transport
@@ -58,5 +58,7 @@ For Helium specifically:
 ```bash
 scripts/smoke_helium_chromium_extension_transport
 ```
+
+Quit Helium before this smoke. If Helium is already running, set `KEYWAY_HELIUM_SMOKE_RESTART=1` to allow the script to quit it for the isolated run and restore it afterward.
 
 Set `KEYWAY_CHROMIUM_EXTENSION_ITERATIONS=10` for a shorter local pass. The regression gate runs this smoke only when `KEYWAY_CHROMIUM_EXTENSION_SMOKE=1` is set.

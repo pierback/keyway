@@ -51,19 +51,12 @@ final class MediaRemoteController: ObservableObject {
     private var pendingPingRolesByRequestID: [String: (role: MediaRemoteHelperRole, sentAt: Date)] = [:]
     private var lastPongAtByRole: [MediaRemoteHelperRole: Date] = [:]
 
-    var activeTarget: MediaRemoteTarget? {
-        guard let activeTargetID else {
-            return nil
-        }
-        return targets.first { $0.id == activeTargetID }
-    }
-
     var canRouteCommands: Bool {
         (health.state == .running && snapshotHelper.isRunning && commandHelper.isRunning)
             || chromiumBrowserExtensionController.hasRoutableTargets
     }
 
-    init(chromiumBrowserExtensionController: ChromiumBrowserExtensionController = ChromiumBrowserExtensionController()) {
+    init(chromiumBrowserExtensionController: ChromiumBrowserExtensionController) {
         self.chromiumBrowserExtensionController = chromiumBrowserExtensionController
         chromiumTargetsSubscription = chromiumBrowserExtensionController.$targets
             .receive(on: DispatchQueue.main)
@@ -72,13 +65,6 @@ final class MediaRemoteController: ObservableObject {
                     self?.mergeVisibleTargets()
                 }
             }
-    }
-
-    func hasFreshSnapshot(maxAge: TimeInterval) -> Bool {
-        guard let lastSnapshotAt = health.lastSnapshotAt else {
-            return false
-        }
-        return Date().timeIntervalSince(lastSnapshotAt) <= maxAge
     }
 
     func start() {
@@ -290,14 +276,15 @@ final class MediaRemoteController: ObservableObject {
                 let visibleTargets = chromiumBrowserExtensionController.targetsIncludingBrowserExtensionTargets(mediaRemoteTargets)
                 targets = visibleTargets
                 clearHelperDegraded()
-                activeTargetID = visibleTargets.contains { $0.id == snapshot.activeTargetID }
-                    ? Self.nilIfEmpty(snapshot.activeTargetID)
+                let rawActiveTargetID = snapshot.activeTargetID.flatMap { $0.isEmpty ? nil : $0 }
+                activeTargetID = visibleTargets.contains { $0.id == rawActiveTargetID }
+                    ? rawActiveTargetID
                     : nil
                 ShortcutRuntimeStatus.shared.updateMediaTargets(
                     visibleTargets,
                     activeTargetID: activeTargetID,
                     rawTargetCount: snapshot.targets.count,
-                    rawActiveTargetID: Self.nilIfEmpty(snapshot.activeTargetID)
+                    rawActiveTargetID: rawActiveTargetID
                 )
                 isRefreshingSnapshot = false
                 health = MediaRemoteHelperHealth(
@@ -425,11 +412,6 @@ final class MediaRemoteController: ObservableObject {
                 expectedTermination = false
             }
             logger.info("MediaRemoteHelper stopped_termination role=\(role.rawValue, privacy: .public) status=\(status, privacy: .public)")
-            return
-        }
-
-        if !expectedTermination, !snapshotHelper.isRunning, !commandHelper.isRunning {
-            logger.info("MediaRemoteHelper ignored_unowned_termination role=\(role.rawValue, privacy: .public) status=\(status, privacy: .public)")
             return
         }
 
@@ -780,13 +762,6 @@ final class MediaRemoteController: ObservableObject {
     private static func isIgnoredTarget(_ target: MediaRemoteTarget) -> Bool {
         ignoredBundleIdentifiers.contains(target.bundleIdentifier)
             || ignoredBundleIdentifiers.contains(target.parentBundleIdentifier)
-    }
-
-    private static func nilIfEmpty(_ value: String?) -> String? {
-        guard let value, !value.isEmpty else {
-            return nil
-        }
-        return value
     }
 
     private func commandElapsedMilliseconds(requestID: String?) -> Int {

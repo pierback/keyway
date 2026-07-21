@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+app_dir="${KEYWAY_APP:-$HOME/Applications/Keyway.app}"
+status_file="${KEYWAY_STATUS_FILE:-$HOME/Library/Application Support/keyway/shortcut-runtime-status.json}"
+helper="$app_dir/Contents/Resources/MediaRemoteHelper/keyway-mediaremote-helper.pl"
+dylib="$app_dir/Contents/Resources/MediaRemoteHelper/libkeyway_mediaremote.dylib"
+
+[[ -f "$status_file" ]]
+[[ -x "$helper" ]]
+[[ -f "$dylib" ]]
+
+stable_matches=0
+for _ in {1..12}; do
+  targets_updated_at_before="$(jq -r '.mediaTargetsUpdatedAt // ""' "$status_file")"
+  if jq -e 'any(.mediaTargets[]?; .playing == true)' "$status_file" >/dev/null; then
+    expected_rate=1
+  else
+    expected_rate=0
+  fi
+
+  snapshot="$(printf '%s\n' '{"type":"refresh","requestID":"touchbar-playback-state"}' \
+    | /usr/bin/perl "$helper" "$dylib" \
+    | jq -sc '[.[] | select(.type == "snapshot")][0]')"
+  keyway_id="$(jq -r '.targets[] | select(.bundleIdentifier == "com.fpieringer.Keyway") | .id' <<<"$snapshot")"
+  keyway_rate="$(jq -r --arg id "$keyway_id" '.targets[] | select(.id == $id) | .playbackRate' <<<"$snapshot")"
+  active_id="$(jq -r '.activeTargetID' <<<"$snapshot")"
+  targets_updated_at_after="$(jq -r '.mediaTargetsUpdatedAt // ""' "$status_file")"
+
+  if [[ -n "$keyway_id" \
+    && "$active_id" == "$keyway_id" \
+    && "$targets_updated_at_before" == "$targets_updated_at_after" \
+    && "$keyway_rate" == "$expected_rate" ]]; then
+    ((stable_matches += 1))
+    if (( stable_matches == 2 )); then
+      printf 'hitl_touchbar_playback_state_check=ok rate=%s\n' "$keyway_rate"
+      exit 0
+    fi
+  else
+    stable_matches=0
+  fi
+  sleep 0.25
+done
+
+printf 'hitl_touchbar_playback_state_check: FAIL: targets imply rate=%s but active target=%s and Keyway rate=%s\n' "$expected_rate" "$active_id" "$keyway_rate" >&2
+exit 1

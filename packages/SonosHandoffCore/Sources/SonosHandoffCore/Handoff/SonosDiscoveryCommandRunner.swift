@@ -50,14 +50,17 @@ struct SonosShellDiscoveryCommandRunner: SonosDiscoveryCommandRunning {
 
         try process.run()
         let deadline = Date().addingTimeInterval(command.timeoutSeconds)
+        var endedForCollection = false
         while process.isRunning, Date() < deadline {
             if outputBuffer.shouldStop {
+                endedForCollection = true
                 process.terminate()
                 break
             }
             Thread.sleep(forTimeInterval: 0.02)
         }
         if process.isRunning {
+            endedForCollection = true
             process.terminate()
         }
         process.waitUntilExit()
@@ -66,7 +69,10 @@ struct SonosShellDiscoveryCommandRunner: SonosDiscoveryCommandRunning {
         let remainingData = outputHandle.readDataToEndOfFile()
         outputBuffer.append(remainingData)
 
-        return SonosDiscoveryCommandResult(output: outputBuffer.output, status: process.terminationStatus)
+        return SonosDiscoveryCommandResult(
+            output: outputBuffer.output,
+            status: endedForCollection ? 0 : process.terminationStatus
+        )
     }
 }
 

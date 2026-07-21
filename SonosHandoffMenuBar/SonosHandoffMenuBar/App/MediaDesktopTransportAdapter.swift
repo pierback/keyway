@@ -2,51 +2,31 @@ import AppKit
 import ApplicationServices
 import Foundation
 
-enum MediaDesktopTransportBackend: String, Sendable {
-    case spotifyAppleEvent = "spotify_apple_event"
-}
-
 @MainActor
 final class MediaDesktopTransportAdapter {
     private static let spotifyBundleIdentifier = "com.spotify.client"
+    private static let spotifyAppleEventBackend = "spotify_apple_event"
 
     func backendName(for target: MediaRemoteTarget) -> String? {
-        backend(for: target)?.rawValue
-    }
+        guard !ChromiumBrowserExtensionTransport.isTarget(target) else {
+            return nil
+        }
+        guard Self.isSpotifyTarget(target) else {
+            return nil
+        }
 
-    func backendName(
-        command: MediaRemoteTransportCommand,
-        target: MediaRemoteTarget
-    ) -> String? {
-        backend(for: target)?.rawValue
-    }
-
-    func keepsPlayPauseToggle(for target: MediaRemoteTarget) -> Bool {
-        backend(for: target) != nil
+        return Self.spotifyAppleEventBackend
     }
 
     func submit(
         command: MediaRemoteTransportCommand,
         target: MediaRemoteTarget
     ) -> MediaRemoteCommandResultEvent? {
-        guard let backend = backend(for: target) else {
+        guard backendName(for: target) != nil else {
             return nil
         }
 
-        switch backend {
-        case .spotifyAppleEvent:
-            return submitSpotifyCommand(command: command, target: target)
-        }
-    }
-
-    private func backend(for target: MediaRemoteTarget) -> MediaDesktopTransportBackend? {
-        guard !ChromiumBrowserExtensionTransport.isTarget(target) else {
-            return nil
-        }
-        if Self.isSpotifyTarget(target) {
-            return .spotifyAppleEvent
-        }
-        return nil
+        return submitSpotifyCommand(command: command, target: target)
     }
 
     private func submitSpotifyCommand(
@@ -62,7 +42,7 @@ final class MediaDesktopTransportAdapter {
                 command: command.rawValue,
                 ok: false,
                 message: "Spotify AppleScript status failed: \(beforeStatus.error ?? "unknown")",
-                backend: MediaDesktopTransportBackend.spotifyAppleEvent.rawValue
+                backend: Self.spotifyAppleEventBackend
             )
         }
         guard let beforeState = beforeStatus.state,
@@ -77,7 +57,7 @@ final class MediaDesktopTransportAdapter {
                 command: command.rawValue,
                 ok: false,
                 message: "Spotify has no current desktop track; state=\(beforeStatus.state ?? "unknown").",
-                backend: MediaDesktopTransportBackend.spotifyAppleEvent.rawValue
+                backend: Self.spotifyAppleEventBackend
             )
         }
 
@@ -95,7 +75,7 @@ final class MediaDesktopTransportAdapter {
             command: command.rawValue,
             ok: ok,
             message: ok ? "submitted Spotify AppleEvent command event=\(eventID)" : "Spotify AppleEvent failed status=\(status)",
-            backend: MediaDesktopTransportBackend.spotifyAppleEvent.rawValue
+            backend: Self.spotifyAppleEventBackend
         )
     }
 

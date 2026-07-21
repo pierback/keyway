@@ -53,8 +53,8 @@ The existing Sonos handoff and Sonos volume behavior that Keyway must preserve w
 _Avoid_: Best-effort preservation
 
 **Media Target**:
-An app-level media session that macOS exposes through Now Playing and can plausibly receive media commands.
-_Avoid_: Audio source, browser tab, output stream
+A media session that can plausibly receive media commands: an app-level Now Playing client or a canonical extension-backed Chromium tab.
+_Avoid_: Audio source, output stream
 
 **Current Media Target**:
 The only actively playing Media Target when exactly one target is playing, used for automatic routing before focus or recent fallback.
@@ -121,7 +121,7 @@ _Avoid_: Active screen
 - A **Media Target Chooser** is the compact command-routing form of the **Media Overlay**.
 - The **Media Overlay** uses a **Command Palette Overlay** visual direction rather than an Alcove-style notch surface.
 - The **Command Palette Overlay** does not include search; it uses a **Command Header** instead.
-- A **Media Target** is included because it is visible to Now Playing, not because it is merely producing audio.
+- A **Media Target** is included because it is visible to Now Playing or reported as a canonical extension-backed Chromium tab, including its bounded suspect state after route loss, not because it is merely producing audio.
 - The **Target Selection Policy** prefers a single **Media Target**, then a **Current Media Target** when exactly one target is actively playing, then a **Focused Target**, then a **Recent Target**, then the **Media Target Chooser**.
 - A **Current Media Target** is automatic when exactly one target is actively playing.
 - A new **Media Target Chooser** session starts with row 1 selected.
@@ -136,9 +136,10 @@ _Avoid_: Active screen
 - In compact command-routing form, plain number keys `1` through `9` immediately dispatch the **Pending Command** to the corresponding visible target.
 - In **Expanded Controls**, `Command+Up` and `Command+Down` adjust the selected target's volume when supported, and mute is exposed through target-specific controls where available.
 - In **Expanded Controls**, number keys change selection without immediately dispatching a **Pending Command**.
-- **Audio Target Control** is required for Sonos and Spotify where controllable without companion browser software.
+- **Audio Target Control** is required for Sonos, Spotify, and extension-backed Chromium targets where their respective backends support it.
 - Spotify **Audio Target Control** means **Spotify Active Device Volume**, not a Mac app-local volume.
-- Browser **Media Target** transport routing is required, but browser **Audio Target Control** may be disabled when it would require a browser extension.
+- The Chromium extension is load-bearing for canonical per-tab **Media Targets**, exact-tab transport and focus, reflected tab mute, and element-level volume.
+- Without the Chromium extension, browser sessions remain app-level MediaRemote **Media Targets** and transport routing continues; tab-level capabilities disappear cleanly.
 - Keyway uses the **MediaRemote Helper** for private Now Playing session access.
 - The **MediaRemote Helper** is a long-running process so target snapshots and command dispatch stay low-latency.
 - Keyway and the **MediaRemote Helper** communicate using **Helper Messages**.
@@ -221,7 +222,7 @@ _Avoid_: Active screen
 > **Domain expert:** "No, the **Media Overlay** starts compact and can reveal **Expanded Controls** only when explicitly requested."
 
 > **Dev:** "Should browser targets expose volume sliders?"
-> **Domain expert:** "Only if Keyway can control them without a browser extension; browser transport routing remains required."
+> **Domain expert:** "Extension-backed Chromium targets expose tab mute and element-level volume. Without the extension, keep app-level MediaRemote transport and do not claim tab capabilities."
 
 > **Dev:** "Why does Keyway use `/usr/bin/perl` for media sessions?"
 > **Domain expert:** "Because direct third-party MediaRemote calls are filtered, so private API access is isolated in the **MediaRemote Helper**."

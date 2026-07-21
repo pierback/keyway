@@ -14,7 +14,6 @@ final class MediaTargetSelectionMemory {
 enum SourceFocusFailureReason: String, Codable {
     case missingApplication = "missing_application"
     case applicationActivationRejected = "application_activation_rejected"
-    case chromiumExtensionDisconnected = "chromium_extension_disconnected"
     case chromiumExtensionProtocolMismatch = "chromium_extension_protocol_mismatch"
     case chromiumExtensionPayloadEncodingFailed = "chromium_extension_payload_encoding_failed"
     case chromiumExtensionTimedOut = "chromium_extension_timed_out"
@@ -50,25 +49,6 @@ struct SourceFocusResult: Codable, Equatable {
     }
 }
 
-enum SourceFocusDestination: Equatable {
-    case chromiumExtension(targetID: String)
-    case application(pid: Int?, bundleIdentifiers: [String])
-
-    init(target: MediaRemoteTarget) {
-        if ChromiumBrowserExtensionTransport.isTarget(target) {
-            self = .chromiumExtension(targetID: target.id)
-            return
-        }
-
-        let bundleIdentifiers = [target.bundleIdentifier, target.parentBundleIdentifier]
-            .filter { !$0.isEmpty }
-        self = .application(
-            pid: target.pid > 0 ? target.pid : nil,
-            bundleIdentifiers: bundleIdentifiers
-        )
-    }
-}
-
 @MainActor
 final class SourceFocusActionController {
     private let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "SourceFocus")
@@ -93,13 +73,39 @@ final class SourceFocusActionController {
         logger.info("SourceFocus requested target=\(target.appName, privacy: .public) targetID=\(target.id, privacy: .public)")
         traceRecorder.record("source_focus_requested", target: target)
 
-        if chromiumBrowserExtensionController.focus(target: target, onResult: { [weak self] result in
-            self?.finish(result, target: target)
-        }) == true {
+        let chromiumHandled = chromiumBrowserExtensionController.focus(target: target, onResult: { [weak self] result in
+            self?.finishChromiumFocus(result, target: target)
+        })
+        if chromiumHandled == true {
             return
         }
 
+        if ChromiumBrowserExtensionTransport.isTarget(target) {
+            traceRecorder.record("source_focus_degraded_to_app", target: target)
+        }
         finish(nativeAppActivator.focus(target: target), target: target)
+    }
+
+    private func finishChromiumFocus(_ result: SourceFocusResult, target: MediaRemoteTarget) {
+        if !result.ok {
+            switch result.failureReason {
+            case .chromiumExtensionTimedOut,
+                 .browserActivationFailed,
+                 .browserTargetUnavailable:
+                traceRecorder.record("source_focus_degraded_to_app", target: target, result: result)
+                finish(nativeAppActivator.focus(target: target), target: target)
+
+                return
+            case .missingApplication,
+                 .applicationActivationRejected,
+                 .chromiumExtensionProtocolMismatch,
+                 .chromiumExtensionPayloadEncodingFailed,
+                 nil:
+                break
+            }
+        }
+
+        finish(result, target: target)
     }
 
     private func finish(_ result: SourceFocusResult, target: MediaRemoteTarget) {
@@ -123,6 +129,12 @@ private struct SourceFocusNativeAppActivator {
     func focus(target: MediaRemoteTarget) -> SourceFocusResult {
         let bundleIdentifiers = [target.bundleIdentifier, target.parentBundleIdentifier]
             .filter { !$0.isEmpty }
+        if !target.parentBundleIdentifier.isEmpty,
+           let app = NSRunningApplication.runningApplications(
+               withBundleIdentifier: target.parentBundleIdentifier
+           ).first {
+            return activate(app, target: target)
+        }
         if target.pid > 0,
            let app = NSRunningApplication(processIdentifier: pid_t(target.pid)),
            let bundleIdentifier = app.bundleIdentifier,
@@ -130,10 +142,9 @@ private struct SourceFocusNativeAppActivator {
             return activate(app, target: target)
         }
 
-        for bundleID in bundleIdentifiers {
-            if let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first {
-                return activate(app, target: target)
-            }
+        if !target.bundleIdentifier.isEmpty,
+           let app = NSRunningApplication.runningApplications(withBundleIdentifier: target.bundleIdentifier).first {
+            return activate(app, target: target)
         }
 
         return SourceFocusResult(

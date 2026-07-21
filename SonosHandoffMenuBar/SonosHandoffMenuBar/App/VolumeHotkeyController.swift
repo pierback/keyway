@@ -5,8 +5,11 @@ import SonosHandoffCore
 
 @MainActor
 final class VolumeHotkeyController {
+    private static let commandCenterRouteShieldRearmDelayNanoseconds: UInt64 = 600_000_000
+
     private let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "Hotkeys")
     private let volumeActions: ShortcutVolumeActionController
+    private let mediaSourceStore: MediaSourceStore
     private let mediaTransportActions: MediaTransportActionController
     private let runtimeReporter: ShortcutRuntimeReporter
     private let runtimeStatus = ShortcutRuntimeStatus.shared
@@ -16,10 +19,14 @@ final class VolumeHotkeyController {
     private var activeTransportKeyDownResetTimer: DispatchSourceTimer?
     private var repeatTimer: DispatchSourceTimer?
     private var permissionRetryTimer: DispatchSourceTimer?
+    private var commandCenterRouteShieldRearmTask: Task<Void, Error>?
+    private var lastReportedPermissionState: (accessibilityGranted: Bool, listenEventGranted: Bool)?
     private var repeatingDirection: VolumeDirection?
     private let transportKeyDownResetInterval: TimeInterval = 0.45
     private let eventParser = ShortcutEventParser()
-    private lazy var commandCenterInterceptor = MediaCommandCenterInterceptor { [weak self] command, metadata in
+    private lazy var commandCenterInterceptor = MediaCommandCenterInterceptor(
+        mediaSourceStore: mediaSourceStore
+    ) { [weak self] command, metadata in
         guard let self else { return }
         self.mediaTransportActions.routeFromCommandCenter(command: command, metadata: metadata)
     }
@@ -45,6 +52,7 @@ final class VolumeHotkeyController {
         volumeService: any SpeakerVolumeAdjusting,
         outputSelection: PlaybackOutputSelection,
         activePlaybackObserver: any SpotifyActivePlaybackObserving,
+        mediaSourceStore: MediaSourceStore,
         mediaTransportActions: MediaTransportActionController,
         volumeCommands: SpeakerVolumeCommandQueue = .shared,
         runtimeReporter: ShortcutRuntimeReporter = ShortcutRuntimeReporter()
@@ -55,6 +63,7 @@ final class VolumeHotkeyController {
             activePlaybackObserver: activePlaybackObserver,
             volumeCommands: volumeCommands
         )
+        self.mediaSourceStore = mediaSourceStore
         self.mediaTransportActions = mediaTransportActions
         self.runtimeReporter = runtimeReporter
     }
@@ -64,6 +73,7 @@ final class VolumeHotkeyController {
             activeTransportKeyDownResetTimer?.cancel()
             repeatTimer?.cancel()
             permissionRetryTimer?.cancel()
+            commandCenterRouteShieldRearmTask?.cancel()
             commandCenterInterceptor.stop()
             eventTap.stop()
         }
@@ -93,6 +103,7 @@ final class VolumeHotkeyController {
 
         let accessibilityGranted = AXIsProcessTrusted()
         let listenEventGranted = CGPreflightListenEventAccess()
+        lastReportedPermissionState = (accessibilityGranted, listenEventGranted)
         guard accessibilityGranted, listenEventGranted else {
             if eventTap.isRunning {
                 eventTap.stop()
@@ -176,6 +187,8 @@ final class VolumeHotkeyController {
     }
 
     private func stopCommandCenterRoute(reason: String) {
+        commandCenterRouteShieldRearmTask?.cancel()
+        commandCenterRouteShieldRearmTask = nil
         guard commandCenterInterceptor.running else {
             logger.info("SonosHandoffHotkeys commandCenterRoute=already_disabled reason=\(reason, privacy: .public)")
             runtimeReporter.commandCenterRouteRunning(false)
@@ -199,7 +212,17 @@ final class VolumeHotkeyController {
                 return
             }
 
-            guard AXIsProcessTrusted(), CGPreflightListenEventAccess() else {
+            let accessibilityGranted = AXIsProcessTrusted()
+            let listenEventGranted = CGPreflightListenEventAccess()
+            guard accessibilityGranted, listenEventGranted else {
+                if self.lastReportedPermissionState?.accessibilityGranted != accessibilityGranted
+                    || self.lastReportedPermissionState?.listenEventGranted != listenEventGranted {
+                    self.lastReportedPermissionState = (accessibilityGranted, listenEventGranted)
+                    self.runtimeReporter.mediaFallbackPermissionDenied(
+                        accessibilityGranted: accessibilityGranted,
+                        listenEventGranted: listenEventGranted
+                    )
+                }
                 return
             }
 
@@ -275,16 +298,19 @@ final class VolumeHotkeyController {
         }
     }
 
-    func suspendCommandCenterRouteShieldForSelectedDispatch(reason: String) {
+    func suspendCommandCenterRouteShield(reason: String) {
         stopCommandCenterRoute(reason: reason)
-        Task { @MainActor [weak self] in
-            guard (try? await Task.sleep(nanoseconds: 600_000_000)) != nil else {
+        commandCenterRouteShieldRearmTask = Task { @MainActor [weak self] in
+            try await Task.sleep(nanoseconds: Self.commandCenterRouteShieldRearmDelayNanoseconds)
+            try Task.checkCancellation()
+            guard let self else {
                 return
             }
-            guard let self, self.eventTap.isRunning else {
+            self.commandCenterRouteShieldRearmTask = nil
+            guard self.eventTap.isRunning else {
                 return
             }
-            self.ensureCommandCenterRoute(reason: "selected_row_dispatch_rearmed")
+            self.ensureCommandCenterRoute(reason: "route_shield_rearmed")
         }
     }
 

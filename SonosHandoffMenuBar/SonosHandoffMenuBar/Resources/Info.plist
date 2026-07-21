@@ -26,6 +26,12 @@
     <true/>
     <key>NSAppleEventsUsageDescription</key>
     <string>Keyway sends playback commands to selected media apps after you choose them.</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_sonos._tcp</string>
+    </array>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Keyway discovers and controls Sonos speakers on your local network.</string>
     <key>NSUserNotificationAlertStyle</key>
     <string>banner</string>
     <key>NSPrincipalClass</key>

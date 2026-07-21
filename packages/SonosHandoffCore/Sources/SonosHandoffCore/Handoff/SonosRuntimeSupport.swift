@@ -15,13 +15,18 @@ enum SonosRuntimeSupport {
     }
 
     static func formBody(_ parameters: [String: String]) -> Data {
-        Data(parameters.map { "\($0.key.urlEncoded)=\($0.value.urlEncoded)" }.sorted().joined(separator: "&").utf8)
+        let allowed = CharacterSet.urlQueryAllowed.subtracting(CharacterSet(charactersIn: "+&="))
+
+        return Data(parameters.map {
+            let key = $0.key.addingPercentEncoding(withAllowedCharacters: allowed)!
+            let value = $0.value.addingPercentEncoding(withAllowedCharacters: allowed)!
+
+            return "\(key)=\(value)"
+        }.sorted().joined(separator: "&").utf8)
     }
 
     static func firstMatch(_ pattern: String, in text: String) -> String? {
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators]) else {
-            return nil
-        }
+        let regex = try! NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators])
         let range = NSRange(text.startIndex ..< text.endIndex, in: text)
         guard let match = regex.firstMatch(in: text, range: range),
               match.numberOfRanges > 1,
@@ -37,7 +42,12 @@ enum SonosRuntimeSupport {
     }
 
     static func loginID(fromDesktopTokenKey key: String) -> String? {
-        key.split(separator: "/").last.map(String.init)?.nilIfEmpty
+        guard let loginID = key.split(separator: "/").last.map(String.init), !loginID.isEmpty else {
+
+            return nil
+        }
+
+        return loginID
     }
 
     static func xmlUnescape(_ value: String) -> String {
@@ -50,16 +60,6 @@ enum SonosRuntimeSupport {
     }
 }
 
-extension String {
-    var nilIfEmpty: String? {
-        isEmpty ? nil : self
-    }
-
-    var urlEncoded: String {
-        addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed.subtracting(CharacterSet(charactersIn: "+&="))) ?? self
-    }
-}
-
 extension Sequence {
     func uniqued<ID: Hashable>(by id: (Element) -> ID) -> [Element] {
         var seen = Set<ID>()
@@ -68,13 +68,5 @@ extension Sequence {
             values.append(element)
         }
         return values
-    }
-}
-
-extension JSONEncoder {
-    static var pretty: JSONEncoder {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        return encoder
     }
 }

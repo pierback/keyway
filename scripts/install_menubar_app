@@ -4,24 +4,29 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DERIVED_DATA_DIR="$ROOT_DIR/.build/xcode-derived-data"
 BUILT_APP="$DERIVED_DATA_DIR/Build/Products/Debug/Keyway.app"
-APP_ENTITLEMENTS="$DERIVED_DATA_DIR/Build/Intermediates.noindex/SonosHandoffMenuBar.build/Debug/Keyway.build/Keyway.app.xcent"
+STAGING_DIR="$HOME/Applications/.Keyway-install"
+STAGED_APP="$STAGING_DIR/Keyway.app"
+INSTALL_LOCK="$HOME/Applications/.Keyway-install.lock"
 APP_DIR="$HOME/Applications/Keyway.app"
 APP_PROCESS_NAME="Keyway"
-APP_PROCESS_PATTERN="$APP_DIR/Contents/MacOS/$APP_PROCESS_NAME"
+APP_EXECUTABLE="$APP_DIR/Contents/MacOS/$APP_PROCESS_NAME"
 SIGNING_IDENTITY="${KEYWAY_CODESIGN_IDENTITY:-}"
 
 if [[ -z "$SIGNING_IDENTITY" ]]; then
   SIGNING_IDENTITY="$(
     security find-identity -v -p codesigning 2>/dev/null \
-      | sed -n 's/.*"\(Apple Development:[^"]*\)".*/\1/p' \
-      | head -n 1
+      | awk '/"Developer ID Application:/ && !/CSSMERR/ { print $2; exit }'
   )"
 fi
 
-if [[ -z "$SIGNING_IDENTITY" ]]; then
-  SIGNING_IDENTITY="-"
-  echo "warning: no Apple Development signing identity found; falling back to ad-hoc signing" >&2
+if [[ -z "$SIGNING_IDENTITY" || "$SIGNING_IDENTITY" == "-" ]]; then
+  echo "error: Keyway requires a valid Developer ID Application certificate" >&2
+  exit 1
 fi
+
+mkdir -p "$HOME/Applications"
+mkdir "$INSTALL_LOCK"
+trap 'rm -rf "$STAGING_DIR"; rmdir "$INSTALL_LOCK"' EXIT
 
 xcodebuild \
   -workspace "$ROOT_DIR/Keyway.xcworkspace" \
@@ -29,26 +34,58 @@ xcodebuild \
   -configuration Debug \
   -destination 'platform=macOS' \
   -derivedDataPath "$DERIVED_DATA_DIR" \
+  CODE_SIGN_IDENTITY="$SIGNING_IDENTITY" \
   build
 
-if pgrep -f "$APP_PROCESS_PATTERN" >/dev/null; then
-  pkill -f "$APP_PROCESS_PATTERN"
+rm -rf "$STAGED_APP"
+mkdir -p "$STAGING_DIR"
+ditto "$BUILT_APP" "$STAGED_APP"
+codesign --verify --deep --strict "$STAGED_APP"
+
+if [[ -d "$APP_DIR" ]]; then
+  installed_requirement="$(codesign -d -r- "$APP_DIR" 2>&1 | sed -n 's/^designated => //p')"
+  staged_requirement="$(codesign -d -r- "$STAGED_APP" 2>&1 | sed -n 's/^designated => //p')"
+  if [[ -z "$installed_requirement" || -z "$staged_requirement" ]] \
+    || ! codesign --verify --deep --strict -R="$installed_requirement" "$STAGED_APP" >/dev/null 2>&1 \
+    || ! codesign --verify --deep --strict -R="$staged_requirement" "$APP_DIR" >/dev/null 2>&1; then
+    echo "error: refusing to replace Keyway because the update has a different designated requirement" >&2
+    echo "Installing it would make macOS request Accessibility and Input Monitoring again." >&2
+    exit 1
+  fi
+fi
+
+app_pids=()
+while IFS= read -r pid; do
+  if lsof -a -p "$pid" -d txt -Fn \
+    | awk -v executable="n$APP_EXECUTABLE" '$0 == executable { found = 1 } END { exit !found }'; then
+    app_pids+=("$pid")
+  fi
+done < <(pgrep -x "$APP_PROCESS_NAME")
+
+if (( ${#app_pids[@]} > 0 )); then
+  kill "${app_pids[@]}"
   for _ in {1..50}; do
-    if ! pgrep -f "$APP_PROCESS_PATTERN" >/dev/null; then
+    running_pids=()
+    for pid in "${app_pids[@]}"; do
+      if lsof -a -p "$pid" -d txt -Fn \
+        | awk -v executable="n$APP_EXECUTABLE" '$0 == executable { found = 1 } END { exit !found }'; then
+        running_pids+=("$pid")
+      fi
+    done
+    if (( ${#running_pids[@]} == 0 )); then
       break
     fi
     sleep 0.1
   done
+
+  if (( ${#running_pids[@]} > 0 )); then
+    echo "error: Keyway did not stop: ${running_pids[*]}" >&2
+    exit 1
+  fi
 fi
 
 rm -rf "$APP_DIR"
-ditto "$BUILT_APP" "$APP_DIR"
-if [[ -f "$APP_ENTITLEMENTS" ]]; then
-  codesign --force --deep --sign "$SIGNING_IDENTITY" --entitlements "$APP_ENTITLEMENTS" "$APP_DIR"
-else
-  codesign --force --deep --sign "$SIGNING_IDENTITY" "$APP_DIR"
-fi
-codesign --verify --deep --strict "$APP_DIR"
+mv "$STAGED_APP" "$APP_DIR"
 open "$APP_DIR"
 "$ROOT_DIR/scripts/reload_chromium_extension"
 

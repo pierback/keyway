@@ -57,7 +57,7 @@ public enum SensitiveFileError: Error, Equatable, Sendable {
 }
 
 public struct ProjectWebAPITokenStore: Sendable {
-    public let tokenURL: URL
+    let tokenURL: URL
 
     public init(applicationSupportDirectory: URL = ConfigPaths.applicationSupportDirectory) {
         self.tokenURL = applicationSupportDirectory.appendingPathComponent("project-webapi-token.json")

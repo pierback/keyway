@@ -25,7 +25,7 @@ struct PlaybackReentrySemantics {
         let guardStore = MediaChooserSessionGuard()
         let chooserID = guardStore.begin(command: .playPause)
         expectTrue(guardStore.isActive, "visible chooser must be guarded")
-        expectTrue(guardStore.finish(id: chooserID, selected: true), "row selection must close the chooser")
+        expectTrue(guardStore.finish(id: chooserID), "row selection must close the chooser")
         expectFalse(guardStore.isActive, "row selection must not leave chooser session state behind")
 
         let originalHID = MediaTransportInputMetadata(

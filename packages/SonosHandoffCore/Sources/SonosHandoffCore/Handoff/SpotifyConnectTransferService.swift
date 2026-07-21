@@ -3,17 +3,14 @@ import Foundation
 final class SpotifyConnectTransferService: @unchecked Sendable {
     private let directory: SonosDirectory
     private let spotifyBridge: SpotifyConnectBridge
-    private let spotifyPlayback: SpotifyPlaybackService
     private let zeroconfClient: SonosSpotifyZeroconfClient
     private let transferVerifier: SonosTransferVerifier
     private let coordinatorMigrationTransferVerifier: SonosTransferVerifier
     private let connectOnlyTransferVerifier: SonosTransferVerifier
-    private let readinessPolicy = SpotifyConnectTransferReadinessPolicy()
 
     init(
         directory: SonosDirectory,
         spotifyBridge: SpotifyConnectBridge,
-        spotifyPlayback: SpotifyPlaybackService,
         zeroconfClient: SonosSpotifyZeroconfClient,
         transferVerifier: SonosTransferVerifier,
         coordinatorMigrationTransferVerifier: SonosTransferVerifier,
@@ -21,7 +18,6 @@ final class SpotifyConnectTransferService: @unchecked Sendable {
     ) {
         self.directory = directory
         self.spotifyBridge = spotifyBridge
-        self.spotifyPlayback = spotifyPlayback
         self.zeroconfClient = zeroconfClient
         self.transferVerifier = transferVerifier
         self.coordinatorMigrationTransferVerifier = coordinatorMigrationTransferVerifier
@@ -64,18 +60,18 @@ final class SpotifyConnectTransferService: @unchecked Sendable {
     ) async throws {
         let verifier = transferVerifier(for: verification)
         try await verifier.waitForSpotifyConnectMode(on: target)
-        if verification == .connectOnly {
+        switch verification {
+        case .connectOnly:
             return
-        }
-
-        let readiness = try await verifier.playAndVerifyReadiness(on: target)
-        switch readinessPolicy.action(verification: verification, readiness: readiness) {
-        case .verifyIfAvailable:
-            await spotifyPlayback.verifyActiveDeviceIfAvailable(named: roomName)
-        case .verifyRequired:
-            _ = try await spotifyPlayback.verifyActiveDevice(named: roomName)
-        case .acceptSonosReadiness:
-            return
+        case .coordinatorMigration:
+            _ = try await verifier.playAndVerifyReadiness(on: target)
+        case .full:
+            switch try await verifier.playAndVerifyReadiness(on: target) {
+            case .transportStarted:
+                await spotifyBridge.verifyActiveDeviceIfAvailable(named: roomName)
+            case .spotifyConnectModeOnly:
+                _ = try await spotifyBridge.verifyActiveDevice(named: roomName)
+            }
         }
     }
 
@@ -87,32 +83,6 @@ final class SpotifyConnectTransferService: @unchecked Sendable {
             return coordinatorMigrationTransferVerifier
         case .connectOnly:
             return connectOnlyTransferVerifier
-        }
-    }
-}
-
-enum SpotifyConnectTransferReadinessAction: Equatable, Sendable {
-    case verifyIfAvailable
-    case verifyRequired
-    case acceptSonosReadiness
-}
-
-struct SpotifyConnectTransferReadinessPolicy: Sendable {
-    func action(
-        verification: RoomHandoffVerificationMode,
-        readiness: SonosPlaybackReadiness
-    ) -> SpotifyConnectTransferReadinessAction {
-        switch (verification, readiness) {
-        case (.full, .transportStarted):
-            return .verifyIfAvailable
-        case (.full, .spotifyConnectModeOnly):
-            return .verifyRequired
-        case (.coordinatorMigration, .transportStarted),
-             (.coordinatorMigration, .spotifyConnectModeOnly):
-            return .acceptSonosReadiness
-        case (.connectOnly, .transportStarted),
-             (.connectOnly, .spotifyConnectModeOnly):
-            return .acceptSonosReadiness
         }
     }
 }

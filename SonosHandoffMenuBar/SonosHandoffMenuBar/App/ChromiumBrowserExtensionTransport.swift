@@ -389,6 +389,14 @@ final class ChromiumBrowserExtensionController: ObservableObject {
                 self?.handleBrowserTermination(bundleIdentifier: bundleIdentifier)
             }
         }
+
+        let reloadPayload = "{\"type\":\"reloadExtension\",\"protocolVersion\":\(ChromiumBrowserExtensionTransport.protocolVersion)}"
+        DistributedNotificationCenter.default().postNotificationName(
+            ChromiumBrowserExtensionTransport.commandNotificationName,
+            object: ChromiumBrowserExtensionTransport.nativeMessagingHostName,
+            userInfo: ["payload": reloadPayload],
+            deliverImmediately: true
+        )
     }
 
     func stop() {
@@ -459,13 +467,6 @@ final class ChromiumBrowserExtensionController: ObservableObject {
             : nil
     }
 
-    func backendName(command: MediaRemoteTransportCommand, target: MediaRemoteTarget) -> String? {
-        guard ChromiumBrowserExtensionTransport.isTarget(target) else {
-            return nil
-        }
-        return ChromiumBrowserExtensionTransport.backendName
-    }
-
     func submit(
         command: MediaRemoteTransportCommand,
         target: MediaRemoteTarget,
@@ -527,27 +528,13 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         guard ChromiumBrowserExtensionTransport.isTarget(target) else {
             return nil
         }
-        guard connected else {
-            onResult(SourceFocusResult(
-                requestID: UUID().uuidString,
-                targetID: target.id,
-                ok: false,
-                message: "Chromium extension is disconnected.",
-                backend: ChromiumBrowserExtensionTransport.backendName,
-                failureReason: .chromiumExtensionDisconnected
-            ))
-            return true
-        }
-        guard let connectionID = connectionID(for: target) else {
-            onResult(SourceFocusResult(
-                requestID: UUID().uuidString,
-                targetID: target.id,
-                ok: false,
-                message: "Chromium extension is disconnected.",
-                backend: ChromiumBrowserExtensionTransport.backendName,
-                failureReason: .chromiumExtensionDisconnected
-            ))
-            return true
+        guard connected,
+              targets.contains(where: { $0.id == target.id }),
+              !suspectTargetIDs.contains(target.id),
+              let connectionID = connectionID(for: target)
+        else {
+
+            return nil
         }
 
         let requestID = UUID().uuidString

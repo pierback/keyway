@@ -207,18 +207,6 @@ struct Semantics {
             "Quick route must not select a missing row"
         )
 
-        let spotify = appTarget(
-            id: "spotify-row",
-            bundleIdentifier: "com.spotify.client",
-            displayName: "Spotify",
-            pid: 101
-        )
-        let heliumApp = appTarget(
-            id: "helium-app-row",
-            bundleIdentifier: "net.imput.helium",
-            displayName: "Helium",
-            pid: 202
-        )
         let chromeTab = browserTarget(
             browserRuntime: "chrome-runtime",
             tabID: 22,
@@ -227,28 +215,8 @@ struct Semantics {
         let heliumTab = browserTarget(
             browserRuntime: "helium-runtime",
             tabID: 44,
-            displayName: "Helium - Song B"
-        )
-
-        expectEqual(
-            SourceFocusDestination(target: spotify),
-            .application(pid: 101, bundleIdentifiers: ["com.spotify.client"]),
-            "Spotify app focus must preserve selected app pid and bundle identifier"
-        )
-        expectEqual(
-            SourceFocusDestination(target: heliumApp),
-            .application(pid: 202, bundleIdentifiers: ["net.imput.helium"]),
-            "Helium app focus must preserve selected app pid and bundle identifier"
-        )
-        expectEqual(
-            SourceFocusDestination(target: chromeTab),
-            .chromiumExtension(targetID: chromeTab.id),
-            "Chrome tab focus must preserve the selected browser source identity"
-        )
-        expectEqual(
-            SourceFocusDestination(target: heliumTab),
-            .chromiumExtension(targetID: heliumTab.id),
-            "Helium tab focus must preserve the selected browser source identity"
+            displayName: "Helium - Song B",
+            bundleIdentifier: "net.imput.helium"
         )
 
         let codableResult = SourceFocusResult(
@@ -295,25 +263,99 @@ struct Semantics {
         expectEqual(mediaRemote.refreshCount, 0, "Successful focus must not refresh stale targets")
         expectEqual(StatusHUD.shared.finishes.count, 0, "Successful focus must not show a failure HUD")
 
-        ShortcutRuntimeStatus.shared.events = []
-        chromium.focusCalls = []
-        chromium.nextFocusResult = SourceFocusResult(
-            requestID: "focus-3",
-            targetID: heliumTab.id,
-            ok: false,
-            message: "tab unavailable",
-            backend: ChromiumBrowserExtensionTransport.backendName,
-            failureReason: .browserTargetUnavailable
+        let degradableFailureReasons: [SourceFocusFailureReason] = [
+            .chromiumExtensionTimedOut,
+            .browserActivationFailed,
+            .browserTargetUnavailable,
+        ]
+        for (index, failureReason) in degradableFailureReasons.enumerated() {
+            SourceFocusRunningApplication.reset()
+            SourceFocusRunningApplication.register(
+                SourceFocusRunningApplication(pid: 303, bundleIdentifier: "net.imput.helium")
+            )
+            ShortcutRuntimeStatus.shared.events = []
+            StatusHUD.shared.finishes = []
+            chromium.focusCalls = []
+            chromium.nextFocusResult = SourceFocusResult(
+                requestID: "focus-degraded-\(index)",
+                targetID: heliumTab.id,
+                ok: false,
+                message: "tab route unavailable",
+                backend: ChromiumBrowserExtensionTransport.backendName,
+                failureReason: failureReason
+            )
+            controller.focus(target: heliumTab)
+            expectEqual(chromium.focusCalls, [heliumTab.id], "Selected Chromium row must win over competing browser tabs")
+            expectEqual(
+                SourceFocusRunningApplication.activationPIDs,
+                [303],
+                "Chromium route and lifecycle failures must degrade to native browser-app activation"
+            )
+            expectEqual(
+                ShortcutRuntimeStatus.shared.events.map(\.0),
+                ["source_focus_requested", "source_focus_degraded_to_app", "source_focus_succeeded"],
+                "Degraded Chromium focus must trace the capability loss and one terminal app-focus success"
+            )
+            expectEqual(mediaRemote.refreshCount, 0, "Successful browser-app degradation must not refresh targets")
+            expectEqual(StatusHUD.shared.finishes.count, 0, "Successful browser-app degradation must not show a failure HUD")
+        }
+
+        SourceFocusRunningApplication.reset()
+        SourceFocusRunningApplication.register(
+            SourceFocusRunningApplication(pid: 303, bundleIdentifier: "net.imput.helium")
         )
+        ShortcutRuntimeStatus.shared.events = []
+        StatusHUD.shared.finishes = []
+        chromium.focusReturn = nil
+        chromium.nextFocusResult = nil
         controller.focus(target: heliumTab)
-        expectEqual(chromium.focusCalls, [heliumTab.id], "Selected Chromium row must win over competing browser tabs")
+        expectEqual(
+            SourceFocusRunningApplication.activationPIDs,
+            [303],
+            "A Chromium route that declines exact-tab focus must activate its browser app"
+        )
         expectEqual(
             ShortcutRuntimeStatus.shared.events.map(\.0),
-            ["source_focus_requested", "source_focus_failed"],
-            "Failed browser focus must emit exactly one terminal failure trace"
+            ["source_focus_requested", "source_focus_degraded_to_app", "source_focus_succeeded"],
+            "Unavailable Chromium routes must trace app-focus degradation and one terminal success"
         )
-        expectEqual(mediaRemote.refreshCount, 1, "Failed browser focus must refresh stale targets")
-        expectEqual(StatusHUD.shared.finishes.count, 1, "Failed browser focus must fail visibly")
+        expectEqual(mediaRemote.refreshCount, 0, "Unavailable Chromium routes that activate the browser app must not refresh targets")
+        expectEqual(StatusHUD.shared.finishes.count, 0, "Unavailable Chromium routes that activate the browser app must not fail visibly")
+
+        let nonDegradableFailureReasons: [SourceFocusFailureReason] = [
+            .chromiumExtensionProtocolMismatch,
+            .chromiumExtensionPayloadEncodingFailed,
+        ]
+        chromium.focusReturn = true
+        for (index, failureReason) in nonDegradableFailureReasons.enumerated() {
+            SourceFocusRunningApplication.reset()
+            SourceFocusRunningApplication.register(
+                SourceFocusRunningApplication(pid: 303, bundleIdentifier: "net.imput.helium")
+            )
+            ShortcutRuntimeStatus.shared.events = []
+            StatusHUD.shared.finishes = []
+            chromium.nextFocusResult = SourceFocusResult(
+                requestID: "focus-invalid-\(index)",
+                targetID: heliumTab.id,
+                ok: false,
+                message: "invalid extension response",
+                backend: ChromiumBrowserExtensionTransport.backendName,
+                failureReason: failureReason
+            )
+            controller.focus(target: heliumTab)
+            expectEqual(
+                SourceFocusRunningApplication.activationPIDs,
+                [],
+                "Protocol and payload failures must remain visible instead of being hidden by app activation"
+            )
+            expectEqual(
+                ShortcutRuntimeStatus.shared.events.map(\.0),
+                ["source_focus_requested", "source_focus_failed"],
+                "Protocol and payload failures must emit exactly one terminal failure trace"
+            )
+            expectEqual(mediaRemote.refreshCount, index + 1, "Protocol and payload failures must refresh stale targets")
+            expectEqual(StatusHUD.shared.finishes.count, 1, "Protocol and payload failures must fail visibly")
+        }
 
         ShortcutRuntimeStatus.shared.events = []
         chromium.focusReturn = nil
@@ -329,7 +371,7 @@ struct Semantics {
             ["source_focus_requested", "source_focus_failed"],
             "Missing app focus must emit exactly one terminal failure trace"
         )
-        expectEqual(mediaRemote.refreshCount, 2, "Missing app focus must refresh stale targets")
+        expectEqual(mediaRemote.refreshCount, 3, "Missing app focus must refresh stale targets")
         expectEqual(StatusHUD.shared.finishes.count, 2, "Missing app focus must fail visibly")
 
         let nativeMediaRemote = MediaRemoteController()
@@ -371,6 +413,27 @@ struct Semantics {
         expectEqual(nativeMediaRemote.refreshCount, 0, "Fallback app focus must not refresh stale targets")
         expectEqual(StatusHUD.shared.finishes.count, 0, "Fallback app focus must not show a failure HUD")
 
+        SourceFocusRunningApplication.reset()
+        SourceFocusRunningApplication.register(
+            SourceFocusRunningApplication(pid: 7029, bundleIdentifier: "com.apple.WebKit.GPU")
+        )
+        SourceFocusRunningApplication.register(
+            SourceFocusRunningApplication(pid: 6211, bundleIdentifier: "com.apple.Safari")
+        )
+        let safariTarget = appTarget(
+            id: "com.apple.WebKit.GPU:7029:test",
+            bundleIdentifier: "com.apple.WebKit.GPU",
+            parentBundleIdentifier: "com.apple.Safari",
+            displayName: "Safari",
+            pid: 7029
+        )
+        nativeController.focus(target: safariTarget)
+        expectEqual(
+            SourceFocusRunningApplication.activationPIDs,
+            [6211],
+            "WebKit media targets must focus their parent Safari app instead of the GPU child process"
+        )
+
         print("activation_events_from_media_key=0")
         print("verify_source_focus_semantics=ok")
     }
@@ -378,13 +441,14 @@ struct Semantics {
     private static func appTarget(
         id: String,
         bundleIdentifier: String,
+        parentBundleIdentifier: String = "",
         displayName: String,
         pid: Int
     ) -> MediaRemoteTarget {
         MediaRemoteTarget(
             id: id,
             bundleIdentifier: bundleIdentifier,
-            parentBundleIdentifier: "",
+            parentBundleIdentifier: parentBundleIdentifier,
             displayName: displayName,
             pid: pid,
             playbackRate: "1",
@@ -395,11 +459,12 @@ struct Semantics {
     private static func browserTarget(
         browserRuntime: String,
         tabID: Int,
-        displayName: String
+        displayName: String,
+        bundleIdentifier: String = "com.google.Chrome"
     ) -> MediaRemoteTarget {
         MediaRemoteTarget(
             id: "chromium-tab:\(browserRuntime):\(tabID)",
-            bundleIdentifier: "com.fpieringer.keyway.chromium",
+            bundleIdentifier: bundleIdentifier,
             parentBundleIdentifier: "",
             displayName: displayName,
             pid: 0,
@@ -472,10 +537,14 @@ for event in ("source_focus_requested", "source_focus_succeeded", "source_focus_
     expect(source_focus, event, f"source focus must trace {event}")
 expect(source_focus, "NSRunningApplication(processIdentifier:", "app focus must prefer pid activation")
 expect(source_focus, "NSRunningApplication.runningApplications(withBundleIdentifier:", "app focus must fall back to bundle identifier activation")
-expect(source_focus, "let bundleIdentifiers = [target.bundleIdentifier, target.parentBundleIdentifier]", "app focus must validate stale pid activation against selected bundle identities")
-expect(source_focus, "bundleIdentifiers.contains(bundleIdentifier)", "app focus must reject reused pids that no longer match the selected source")
-expect(source_focus, "SourceFocusDestination", "source focus must expose a testable destination model")
-
+focus_body = function_body(source_focus, "func focus(target: MediaRemoteTarget) -> SourceFocusResult")
+expect(focus_body, "let bundleIdentifiers = [target.bundleIdentifier, target.parentBundleIdentifier]", "app focus must validate stale pid activation against selected bundle identities")
+expect(focus_body, "bundleIdentifiers.contains(bundleIdentifier)", "app focus must reject reused pids that no longer match the selected source")
+parent_lookup = 'withBundleIdentifier: target.parentBundleIdentifier'
+pid_lookup = 'NSRunningApplication(processIdentifier:'
+expect(focus_body, parent_lookup, "child media processes must resolve their parent application")
+if focus_body.index(parent_lookup) > focus_body.index(pid_lookup):
+    fail("parent application focus must take precedence over child media-process activation")
 for forbidden in (
     "NSWorkspace.shared.open",
     "NSWorkspace.shared.openApplication",

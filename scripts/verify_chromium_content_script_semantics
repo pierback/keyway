@@ -131,7 +131,7 @@ function makeContext(options = {}) {
 
   const context = {
     console,
-    crypto: { randomUUID: () => "doc-main" },
+    crypto: { getRandomValues: values => values.fill(1) },
     location: { href: "https://www.magentatv.de/watch" },
     navigator: { mediaSession: { metadata: { title: "Live TV", artist: "Magenta", album: "" } } },
     document,
@@ -301,7 +301,7 @@ function makeScopedPlaybackContext() {
   return {
     context: {
       console,
-      crypto: { randomUUID: () => "doc-main" },
+      crypto: { getRandomValues: values => values.fill(1) },
       location: { href: "https://www.magentatv.de/watch" },
       navigator: { mediaSession: { metadata: { title: "Live TV", artist: "Magenta", album: "" } } },
       document,
@@ -347,7 +347,7 @@ async function sendCommand(fixture, command, mediaId = "media-1") {
   fixture.runtimeMessageListener(
     {
       type: "keywayCommand",
-      documentID: "doc-main",
+      documentID: "1-1-1-1",
       mediaId,
       command,
     },
@@ -366,7 +366,10 @@ async function sendCommand(fixture, command, mediaId = "media-1") {
   vm.runInNewContext(code, live.context, { filename: contentScriptPath });
   assertEqual(live.intervals.length, 1, "content script must publish one heartbeat while the runtime is valid");
   assert(typeof live.runtimeMessageListener === "function", "content script must register runtime message listener when runtime is valid");
+  vm.runInNewContext(code, live.context, { filename: contentScriptPath });
+  assertEqual(live.intervals.length, 1, "reinjecting the same content-script revision must not duplicate the bridge");
   assertEqual(live.sentMessages.at(-1).type, "keywayMediaState", "content script must publish initial media state");
+  assertEqual(live.sentMessages.at(-1).documentID, "1-1-1-1", "content script must mint document identity without secure-context-only APIs");
   assert(!("muted" in live.sentMessages.at(-1)), "content script must leave tab-level mute state to the service worker");
   live.mutationCallback();
   assert(typeof live.events.get("timeupdate") === "function", "content script must observe media events after discovery");

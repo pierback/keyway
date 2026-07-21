@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PACKAGE_DIR="$ROOT_DIR/packages/SonosHandoffCore"
+SOURCE="$PACKAGE_DIR/Sources/SonosHandoffPortCLI/main.swift"
+
+swift build --disable-sandbox --package-path "$PACKAGE_DIR" --product sonos-handoff-port >/dev/null
+CLI="$(swift build --disable-sandbox --package-path "$PACKAGE_DIR" --show-bin-path)/sonos-handoff-port"
+
+python3 - "$SOURCE" "$CLI" <<'PY'
+import subprocess
+import sys
+
+source_path, cli = sys.argv[1:]
+source = open(source_path, encoding="utf-8").read()
+service_creation = source.index("let service = SpotifyConnectHandoffService")
+
+for validation in [
+    'fatalError("Duplicate option:',
+    'fatalError("\\(invalidOption) is not valid for',
+    'fatalError("volume-set requires --volume 0...100")',
+    'fatalError("\\(command) expects \\(expectedPositionalCount) positional argument(s)',
+]:
+    if source.index(validation) > service_creation:
+        raise SystemExit(f"verify_port_cli_argument_semantics: {validation} must run before service creation")
+
+cases = [
+    (["handoff", "Kitchen", "--login-id", "one", "--login-id=two"], "Duplicate option: --login-id"),
+    (["playback-status", "--step", "5"], "--step is not valid for playback-status"),
+    (["playback-status", "unexpected"], "playback-status expects 0 positional argument(s); got 1"),
+    (["volume-up"], "volume-up expects 1 positional argument(s); got 0"),
+    (["volume-set", "Kitchen"], "volume-set requires --volume 0...100"),
+    (["volume-set", "Kitchen", "--volume", "50", "75"], "volume-set expects 1 positional argument(s); got 2"),
+    (["playback-command", "play", "pause"], "playback-command expects 1 positional argument(s); got 2"),
+]
+
+for arguments, expected in cases:
+    result = subprocess.run([cli, *arguments], capture_output=True, text=True, timeout=5)
+    output = result.stdout + result.stderr
+    if result.returncode == 0:
+        raise SystemExit(f"verify_port_cli_argument_semantics: accepted invalid arguments: {arguments}")
+    if expected not in output:
+        raise SystemExit(
+            f"verify_port_cli_argument_semantics: expected {expected!r} for {arguments}, got {output!r}"
+        )
+
+print("verify_port_cli_argument_semantics=ok")
+PY

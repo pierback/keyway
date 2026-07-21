@@ -209,7 +209,7 @@ final class MediaTargetOverlayController {
             characters: characters,
             commandDown: modifiers.contains(.command),
             expanded: model.expanded,
-            targetCount: model.targets.count
+            targetCount: model.rows.count
         )
 
         switch action {
@@ -239,7 +239,7 @@ final class MediaTargetOverlayController {
             refreshAudioSnapshot()
             return true
         case .quickRoute(let index):
-            choose(model.targets[index])
+            choose(model.rows[index].target)
             return true
         case .quickSelect(let index):
             model.select(index: index)
@@ -365,7 +365,7 @@ final class MediaTargetOverlayController {
     }
 
     private func panelSize() -> NSSize {
-        let visibleRows = min(model.targets.count, 6)
+        let visibleRows = min(model.rows.count, 6)
         let rowHeight: CGFloat = 52
         let rowSpacing: CGFloat = 3
         let topPad: CGFloat = 14
@@ -375,8 +375,9 @@ final class MediaTargetOverlayController {
             + CGFloat(max(0, visibleRows - 1)) * rowSpacing
             + bottomPad
         let expandedHeight: CGFloat = model.expanded ? 120 : 0
+        let commandHeaderHeight: CGFloat = 53
         let footerHeight: CGFloat = 36
-        let height = min(600, listHeight + expandedHeight + footerHeight)
+        let height = min(600, commandHeaderHeight + listHeight + expandedHeight + footerHeight)
 
         return NSSize(width: 680, height: height)
     }

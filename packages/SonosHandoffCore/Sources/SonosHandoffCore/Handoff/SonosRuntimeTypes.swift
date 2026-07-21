@@ -27,20 +27,29 @@ struct ConnectDesktopCredential {
 struct ConnectPlayerState: Decodable, Sendable {
     let isPlaying: Bool
     let device: ConnectPlayerDevice
+    let item: ConnectPlayerItem?
 
     enum CodingKeys: String, CodingKey {
         case isPlaying = "is_playing"
         case device
+        case item
     }
+}
+
+struct ConnectPlayerItem: Decodable, Sendable {
+    let name: String
+    let uri: String
 }
 
 struct ConnectPlayerDevice: Decodable, Sendable {
     let name: String
+    let type: String
     let isRestricted: Bool
     let volumePercent: Int?
 
     enum CodingKeys: String, CodingKey {
         case name
+        case type
         case isRestricted = "is_restricted"
         case volumePercent = "volume_percent"
     }

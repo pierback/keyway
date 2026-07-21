@@ -112,7 +112,6 @@ struct MediaRemoteCommandResultEvent: Decodable {
 enum SourceFocusFailureReason: String, Codable {
     case missingApplication = "missing_application"
     case applicationActivationRejected = "application_activation_rejected"
-    case chromiumExtensionDisconnected = "chromium_extension_disconnected"
     case chromiumExtensionProtocolMismatch = "chromium_extension_protocol_mismatch"
     case chromiumExtensionPayloadEncodingFailed = "chromium_extension_payload_encoding_failed"
     case chromiumExtensionTimedOut = "chromium_extension_timed_out"
@@ -317,13 +316,19 @@ struct Semantics {
         expectEqual(missingRouteResult?.ok, false, "Missing Chromium routes must fail locally")
         expectEqual(missingRouteResult?.message, "Chromium extension is disconnected.", "Missing Chromium routes must not broadcast without a connection ID")
 
+        var staleFocusResult: SourceFocusResult?
+        let staleFocusHandled = controller.focus(target: replacement) { result in
+            staleFocusResult = result
+        }
+        expectEqual(staleFocusHandled, nil, "Chromium targets absent from the current live snapshot must decline exact-tab focus")
+        expectEqual(staleFocusResult, nil, "Stale Chromium targets must not claim exact-tab focus")
+
         var disconnectedFocusResult: SourceFocusResult?
         let disconnectedFocusHandled = disconnectedController.focus(target: target) { result in
             disconnectedFocusResult = result
         }
-        expectEqual(disconnectedFocusHandled, true, "Disconnected Chromium focus must be handled by the Chromium backend")
-        expectEqual(disconnectedFocusResult?.ok, false, "Disconnected Chromium focus must not report success")
-        expectEqual(disconnectedFocusResult?.failureReason, .chromiumExtensionDisconnected, "Disconnected Chromium focus must report a focus-specific failure reason")
+        expectEqual(disconnectedFocusHandled, nil, "Disconnected Chromium focus must decline exact-tab focus so the caller can activate the browser app")
+        expectEqual(disconnectedFocusResult, nil, "Disconnected Chromium focus must not emit a false exact-tab failure before app-focus degradation")
 
         let snapshotController = ChromiumBrowserExtensionController()
         snapshotController.handleSnapshotPayload("""
@@ -417,6 +422,12 @@ struct Semantics {
             [target.id],
             "Chromium profile targets must become suspect after 3s of snapshot silence"
         )
+        var suspectFocusResult: SourceFocusResult?
+        let suspectFocusHandled = retentionController.focus(target: target) { result in
+            suspectFocusResult = result
+        }
+        expectEqual(suspectFocusHandled, nil, "Suspect Chromium routes must decline exact-tab focus so the caller can activate the browser app")
+        expectEqual(suspectFocusResult, nil, "Suspect Chromium routes must not claim exact-tab focus")
         retentionController.markConnected(
             profileGuid: "chromium-profile-a",
             connectionID: "connection-a",
@@ -665,7 +676,7 @@ for forbidden in (
         fail(f"old Chromium identity mechanism must be removed from Swift/native host sources: {forbidden}")
 
 expect(service_worker, "const protocolVersion = 3", "service worker must speak Chromium extension protocol v3")
-expect(service_worker, 'return ["chromium-tab", message.profileGuid, message.tabId].join(":")', "service worker source IDs must use profile GUID plus tab ID")
+expect(service_worker, 'const id = ["chromium-tab", profileGuid, tab.id].join(":")', "service worker source IDs must use profile GUID plus tab ID")
 expect(service_worker, "chrome.storage.local.get([profileGuidStorageKey]", "service worker must load profile GUID from chrome.storage.local")
 expect(service_worker, "chrome.storage.local.set({ [profileGuidStorageKey]: profileGuid }", "service worker must persist minted profile GUIDs")
 expect(service_worker, 'type: "hello"', "service worker hello must include a hello type")

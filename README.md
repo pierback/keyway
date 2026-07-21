@@ -1,10 +1,10 @@
 # Keyway
 
-Keyway is a local macOS menu bar app for choosing which Now Playing app receives Play/Pause, Next, and Previous. It keeps the existing Sonos handoff and volume workflows, adds MediaRemote target discovery through a bundled `/usr/bin/perl` helper, and shows a centered Raycast-like chooser when routing is ambiguous.
+Keyway is a local macOS menu bar app for choosing which Now Playing app receives Play/Pause, Next, and Previous. It keeps the existing Sonos handoff and volume workflows, adds MediaRemote target discovery through a bundled `/usr/bin/perl` helper, and shows a centered Raycast-like chooser when routing is ambiguous. A Chromium extension adds exact per-tab targeting, focus, mute, and volume.
 
 Automatic routes use native macOS notifications for brief confirmation feedback. Keyway does not show custom top-of-screen status popups.
 
-Keyway is intentionally local-only for now. It does not include App Store, notarization, or commercial publishing scripts.
+Keyway supports local development and notarized Developer ID builds for installation on other Macs. App Store and commercial publishing work remain out of scope.
 
 ## Current Scope
 
@@ -16,99 +16,113 @@ Keyway is intentionally local-only for now. It does not include App Store, notar
 - Sonos discovery, Spotify-to-Sonos handoff, Sonos volume, mute, token readiness, and existing smoke scripts remain in the codebase.
 - MediaRemote helper runs as `/usr/bin/perl .../MediaRemoteHelper/keyway-mediaremote-helper.pl .../libkeyway_mediaremote.dylib` and speaks newline-delimited JSON.
 - Media keys handled by Keyway are only Play/Pause, Next, and Previous. Hardware volume and mute keys are not intercepted.
-- Browser volume is shown as disabled unless a future no-extension backend exists; no browser extension is required.
+- MediaRemote transport routing remains available when the Chromium extension is absent.
+- The Chromium extension is required for per-tab targets, exact tab focus, reflected mute, and element-level volume.
 
 ## Prerequisites
 
 - macOS with Xcode and Swift available.
 - Ruby with the `xcodeproj` gem when regenerating the Xcode project.
+- A Developer ID Application certificate for installs and Release builds; Xcode must be signed into the matching Apple Developer account for notarization.
 - Spotify and at least one browser or browser-wrapper Now Playing session for media-target checks.
+- The unpacked Keyway Chromium extension for per-tab browser checks; see [ChromiumExtension/README.md](ChromiumExtension/README.md).
 - Local Sonos network access for real-device Sonos smoke checks.
-- Accessibility permission for `/Users/f.pieringer/Applications/Keyway.app`; Keyway requests it when the media-key event tap cannot be created. macOS requires this for suppressing hardware media-key events.
+- Accessibility and Input Monitoring permission for `$HOME/Applications/Keyway.app`. Keyway requests recovery when its media-key event tap cannot be created; macOS requires both permissions for suppressing hardware media-key events.
 
 ## Build And Install
 
 From this checkout:
 
 ```bash
-/Users/f.pieringer/projects/keyway/scripts/bootstrap
+scripts/bootstrap
 ```
 
 Build only:
 
 ```bash
-xcodebuild -workspace /Users/f.pieringer/projects/keyway/Keyway.xcworkspace -scheme Keyway -configuration Debug -destination 'platform=macOS' -derivedDataPath /Users/f.pieringer/projects/keyway/.build/xcode-derived-data build
+xcodebuild -workspace Keyway.xcworkspace -scheme Keyway -configuration Debug -destination 'platform=macOS' -derivedDataPath .build/xcode-derived-data build
 ```
 
 Install and launch the local app:
 
 ```bash
-/Users/f.pieringer/projects/keyway/scripts/install_menubar_app
+scripts/install_menubar_app
 ```
+
+The installer uses the stable Developer ID identity and refuses updates with a different designated requirement. This keeps Accessibility and Input Monitoring permissions attached to Keyway across later versions.
+
+Build, submit, staple, verify, and package a release for other Macs:
+
+```bash
+scripts/build_notarized_app
+```
+
+The notarized app and versioned ZIP are written to `.build/distribution/`.
 
 Run the deterministic regression gate:
 
 ```bash
-/Users/f.pieringer/projects/keyway/scripts/regression_gate
+scripts/regression_gate
 ```
 
-Summarize the current local acceptance readiness:
+Summarize the current local acceptance readiness for a specific Sonos room:
 
 ```bash
-/Users/f.pieringer/projects/keyway/scripts/acceptance_preflight
+SONOS_HANDOFF_ROOM=<room-name> scripts/acceptance_preflight
 ```
 
-`acceptance_preflight=pass` means the installed app, helper, imported config, MediaRemote discovery, Accessibility readiness, Spotify state, Sonos discovery, and legacy-file integrity passed in the current local environment. `acceptance_preflight=blocked` means the installed app is intact but one or more required local conditions, such as active Spotify playback or a discoverable Sonos room, still prevents that readiness check from passing.
+`acceptance_preflight=pass` means the installed app, helper, imported config, MediaRemote discovery, media-key permissions, Spotify state, Sonos discovery, and legacy-file integrity passed in the current local environment. It does not exercise the Chromium extension, visible UI, or physical keys. `acceptance_preflight=blocked` means one or more required local conditions, such as active Spotify playback or a discoverable Sonos room, still prevents the core readiness check from passing.
 
 Run real-device smoke checks when the configured Sonos room is discoverable:
 
 ```bash
-SONOS_HANDOFF_REAL_DEVICE_SMOKE=1 SONOS_HANDOFF_ROOM=<room-name> /Users/f.pieringer/projects/keyway/scripts/regression_gate
+SONOS_HANDOFF_REAL_DEVICE_SMOKE=1 SONOS_HANDOFF_ROOM=<room-name> scripts/regression_gate
 ```
 
-Run the overlay browser-volume disabled-state smoke while at least two Now Playing targets are active, including one browser or browser-wrapper target:
+Run the overlay browser-control smoke while at least two Now Playing targets are active, including one browser or browser-wrapper target. It exercises extension-backed reflected mute when connected and verifies an explicit reduced-capability state otherwise:
 
 ```bash
-/Users/f.pieringer/projects/keyway/scripts/smoke_overlay_browser_controls
+scripts/smoke_overlay_browser_controls
 ```
 
 For final hardware-key acceptance, run the same overlay smoke in physical media-key mode and press the real Play/Pause key when prompted:
 
 ```bash
-KEYWAY_PHYSICAL_MEDIA_KEYS=1 /Users/f.pieringer/projects/keyway/scripts/smoke_overlay_browser_controls
+KEYWAY_PHYSICAL_MEDIA_KEYS=1 scripts/smoke_overlay_browser_controls
 ```
 
 Run the transport routing confirmation smoke while at least two Now Playing targets are active. It verifies focused-target routing for Previous/Next; Play/Pause chooser behavior is covered by the playback routing probes. The script can create a temporary silent QuickTime Player target when QuickTime is selected as the safe routing target:
 
 ```bash
-/Users/f.pieringer/projects/keyway/scripts/smoke_transport_routing_confirmation
+scripts/smoke_transport_routing_confirmation
 ```
 
 For final hardware-key acceptance, run the same transport smoke in physical media-key mode and press real Previous, Next, Volume Up, Volume Down, and Mute keys when prompted:
 
 ```bash
-KEYWAY_PHYSICAL_MEDIA_KEYS=1 /Users/f.pieringer/projects/keyway/scripts/smoke_transport_routing_confirmation
+KEYWAY_PHYSICAL_MEDIA_KEYS=1 scripts/smoke_transport_routing_confirmation
 ```
 
 ## Runtime Setup
 
-1. Launch `/Users/f.pieringer/Applications/Keyway.app`.
+1. Launch `$HOME/Applications/Keyway.app`.
 2. Left-click the menu bar icon for the compact Control Center-style daily controls.
-3. Option-click or Command-click the menu bar icon to open the centered media target chooser directly.
+3. Use the visible `Open Media Target Chooser` button in the popover header to open the centered chooser.
 4. Right-click the menu bar icon for the native utility menu.
 5. Open Settings from the menu bar app.
 6. Confirm `General` reports config import status.
 7. Confirm `Spotify` reports Desktop Connect and Web API token readiness.
-8. Confirm `Helper Status` reports the MediaRemote helper as running.
-9. Approve Accessibility for Keyway in System Settings if macOS shows the prompt or `Permissions` reports it missing.
+8. Confirm `Transport Routing` reports the Chromium extension connected when per-tab browser capabilities are needed.
+9. Confirm `Helper Status` reports the MediaRemote helper as running.
+10. Approve Accessibility and Input Monitoring for Keyway in System Settings if `Permissions` reports either missing.
 
-After Accessibility is granted, restart Keyway or use Settings to refresh shortcuts. Keyway writes shortcut readiness to `~/Library/Application Support/keyway/shortcut-runtime-status.json`; `mediaFallback=enabled` means the media-key event tap is ready.
+After both permissions are granted, quit and reopen Keyway or use Settings to refresh shortcuts. Keyway writes shortcut readiness to `~/Library/Application Support/keyway/shortcut-runtime-status.json`; `mediaFallback=enabled`, `eventTapRunning=true`, and `commandCenterRouteRunning=true` mean the complete route is ready.
 
 ## Acceptance
 
-The implementation target is [docs/acceptance-runbook.md](/Users/f.pieringer/projects/keyway/docs/acceptance-runbook.md). Keyway is complete only when that runbook passes on a fresh local install, or when the PRD and runbook explicitly move a failed check out of scope.
+The implementation target is [docs/acceptance-runbook.md](docs/acceptance-runbook.md). Keyway is complete only when that runbook passes on a fresh local install, or when the PRD and runbook explicitly move a failed check out of scope.
 
-Current local verification notes live in [docs/verification-log.md](/Users/f.pieringer/projects/keyway/docs/verification-log.md).
+Current local verification notes live in [docs/verification-log.md](docs/verification-log.md).
 
 ## Developer Tools
 
@@ -120,10 +134,10 @@ sonos-handoff-port volume-status <room>
 sonos-handoff-port volume-down <room>
 sonos-handoff-port volume-up <room>
 sonos-handoff-port volume-mute <room>
-/Users/f.pieringer/projects/keyway/scripts/smoke_port_handoff <room>
-/Users/f.pieringer/projects/keyway/scripts/smoke_menubar_handoff <room>
-/Users/f.pieringer/projects/keyway/scripts/smoke_menubar_slider <room>
-/Users/f.pieringer/projects/keyway/scripts/acceptance_preflight
+scripts/smoke_port_handoff <room>
+scripts/smoke_menubar_handoff <room>
+scripts/smoke_menubar_slider <room>
+SONOS_HANDOFF_ROOM=<room-name> scripts/acceptance_preflight
 ```
 
 ## Notes

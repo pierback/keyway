@@ -10,8 +10,6 @@ public enum SonosGroupMembershipChange: Equatable, Sendable {
 }
 
 public struct SonosGroupMembershipChangePlanner: Sendable {
-    private let coordinatorReplacementResolver = SonosCoordinatorReplacementResolver()
-
     public init() {}
 
     public func change(
@@ -25,6 +23,7 @@ public struct SonosGroupMembershipChangePlanner: Sendable {
         switch row.membership {
         case .available, .availableGroup:
             guard let coordinator = group.coordinator else {
+
                 return .none
             }
             return .join(
@@ -34,10 +33,11 @@ public struct SonosGroupMembershipChangePlanner: Sendable {
         case .member:
             return .remove(roomName: row.speaker.roomName)
         case .coordinator:
-            guard let replacement = coordinatorReplacementResolver.replacement(
-                in: group,
-                removingCoordinatorID: row.speaker.id
-            ) else {
+            guard group.coordinator?.id == row.speaker.id,
+                  group.members.count > 1,
+                  let replacement = group.members.first(where: { $0.id != row.speaker.id })
+            else {
+
                 return .none
             }
             return .removeCoordinator(

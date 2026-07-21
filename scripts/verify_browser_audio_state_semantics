@@ -123,15 +123,9 @@ enum MediaSourceReachability: Equatable, Sendable {
     }
 }
 
-struct MediaSourceAudioState: Equatable, Sendable {
-    let playbackRate: String
-    let muted: Bool
-}
-
 struct SourceRow: Equatable, Identifiable, Sendable {
     let target: MediaRemoteTarget
     var reachability: MediaSourceReachability = .live
-    let audioState: MediaSourceAudioState
 
     var id: String { target.id }
 }
@@ -179,7 +173,7 @@ final class ChromiumBrowserExtensionController: ObservableObject {
     }
 }
 
-protocol SpeakerVolumeAdjusting {}
+protocol SpeakerVolumeAdjusting: Sendable {}
 protocol SpotifyActivePlaybackObserving {
     func activePlaybackDeviceStatus() async throws -> SpotifyActivePlaybackStatus?
     func setActivePlaybackDeviceVolume(_ volume: Int) async throws -> Int
@@ -190,27 +184,27 @@ struct SpotifyActivePlaybackStatus {
     let volumePercent: Int?
 }
 
-struct PlaybackOutputSelection {
-    var roomName: String?
-    var selectedGroup: PlaybackOutputGroup?
+@MainActor
+final class PlaybackOutputSelection: ObservableObject {
+    @Published private(set) var roomName: String?
+    @Published private(set) var selectedGroup: PlaybackOutputGroup?
+
+    init(roomName: String? = nil, selectedGroup: PlaybackOutputGroup? = nil) {
+        self.roomName = roomName
+        self.selectedGroup = selectedGroup
+    }
 }
 
 struct PlaybackOutputGroup {
     let members: [String]
-    func contains(roomName: String) -> Bool { members.contains(roomName) }
+    func contains(roomName: String) -> Bool {
+        members.contains { SonosRoomName.matches($0, roomName) }
+    }
 }
 
 enum PlaybackVolumeScope {
     case member
     case group
-}
-
-enum SonosRoomName {
-    static func normalized(_ roomName: String?) -> String? { roomName }
-}
-
-struct SonosOutputPreferenceResolver {
-    func preferredRoomName(selectedRoomName: String?) -> String { selectedRoomName ?? "Office" }
 }
 
 struct SpeakerVolumeStatus {
@@ -219,14 +213,53 @@ struct SpeakerVolumeStatus {
     let muted: Bool
 }
 
-final class SpeakerVolumeCommandQueue {
+enum SpeakerVolumeCommandCall: Equatable {
+    case volumeDown(roomName: String, step: Int)
+    case volumeUp(roomName: String, step: Int)
+    case groupVolumeDown(roomName: String, step: Int)
+    case groupVolumeUp(roomName: String, step: Int)
+    case toggleMute(roomName: String)
+    case toggleGroupMute(roomName: String)
+}
+
+actor SpeakerVolumeCommandQueue {
     static let shared = SpeakerVolumeCommandQueue()
-    func volumeDown(using: any SpeakerVolumeAdjusting, roomName: String, step: Int) async throws -> Int { 0 }
-    func volumeUp(using: any SpeakerVolumeAdjusting, roomName: String, step: Int) async throws -> Int { 0 }
-    func groupVolumeDown(using: any SpeakerVolumeAdjusting, coordinatorRoomName: String, step: Int) async throws -> Int { 0 }
-    func groupVolumeUp(using: any SpeakerVolumeAdjusting, coordinatorRoomName: String, step: Int) async throws -> Int { 0 }
-    func toggleMute(using: any SpeakerVolumeAdjusting, roomName: String) async throws -> Bool { false }
-    func toggleGroupMute(using: any SpeakerVolumeAdjusting, coordinatorRoomName: String) async throws -> Bool { false }
+    private var recordedCalls: [SpeakerVolumeCommandCall] = []
+
+    func calls() -> [SpeakerVolumeCommandCall] {
+
+        return recordedCalls
+    }
+    func volumeDown(using: any SpeakerVolumeAdjusting, roomName: String, step: Int) async throws -> Int {
+        recordedCalls.append(.volumeDown(roomName: roomName, step: step))
+
+        return 40
+    }
+    func volumeUp(using: any SpeakerVolumeAdjusting, roomName: String, step: Int) async throws -> Int {
+        recordedCalls.append(.volumeUp(roomName: roomName, step: step))
+
+        return 50
+    }
+    func groupVolumeDown(using: any SpeakerVolumeAdjusting, coordinatorRoomName: String, step: Int) async throws -> Int {
+        recordedCalls.append(.groupVolumeDown(roomName: coordinatorRoomName, step: step))
+
+        return 40
+    }
+    func groupVolumeUp(using: any SpeakerVolumeAdjusting, coordinatorRoomName: String, step: Int) async throws -> Int {
+        recordedCalls.append(.groupVolumeUp(roomName: coordinatorRoomName, step: step))
+
+        return 50
+    }
+    func toggleMute(using: any SpeakerVolumeAdjusting, roomName: String) async throws -> Bool {
+        recordedCalls.append(.toggleMute(roomName: roomName))
+
+        return true
+    }
+    func toggleGroupMute(using: any SpeakerVolumeAdjusting, coordinatorRoomName: String) async throws -> Bool {
+        recordedCalls.append(.toggleGroupMute(roomName: coordinatorRoomName))
+
+        return true
+    }
     func volumeStatus(using: any SpeakerVolumeAdjusting, roomName: String) async throws -> SpeakerVolumeStatus {
         SpeakerVolumeStatus(roomName: roomName, volume: 0, muted: false)
     }
@@ -270,7 +303,7 @@ struct Semantics {
     @MainActor
     static func main() async {
         let target = browserTarget(muted: false)
-        let store = MediaSourceStore(rows: [row(target: target, muted: false)])
+        let store = MediaSourceStore(rows: [SourceRow(target: target)])
         let chromium = ChromiumBrowserExtensionController()
         let controller = MediaAudioControlController(
             volumeService: VolumeService(),
@@ -283,14 +316,14 @@ struct Semantics {
 
         controller.toggleBrowserMute(target: target)
         expectEqual(controller.browserMuteState(for: target), BrowserMuteState(muted: true, isPending: true), "toggle must enter optimistic pending mute state")
-        store.replaceRows([row(target: target, muted: true)])
+        store.replaceRows([SourceRow(target: browserTarget(muted: true))])
         await drainMainQueue()
         expectEqual(controller.browserMuteState(for: target), BrowserMuteState(muted: true, isPending: false), "matching snapshot must confirm pending mute")
         expectEqual(store.directCommandFailures.count, 0, "confirmed mute must not mark command failure")
 
         var unmutedTarget = target
         unmutedTarget.muted = false
-        store.replaceRows([row(target: unmutedTarget, muted: false)])
+        store.replaceRows([SourceRow(target: unmutedTarget)])
         await drainMainQueue()
         controller.toggleBrowserMute(target: unmutedTarget)
         expectEqual(controller.browserMuteState(for: unmutedTarget), BrowserMuteState(muted: true, isPending: true), "second toggle must enter pending before timeout")
@@ -303,7 +336,7 @@ struct Semantics {
         expectEqual(store.directCommandFailures, [unmutedTarget.id], "timeout must surface command failure through the existing store path")
 
         store.resetDirectCommandFailures()
-        store.replaceRows([row(target: unmutedTarget, muted: false)])
+        store.replaceRows([SourceRow(target: unmutedTarget)])
         await drainMainQueue()
         controller.toggleBrowserMute(target: unmutedTarget)
         chromium.resultHandler?(MediaRemoteCommandResultEvent(
@@ -317,7 +350,72 @@ struct Semantics {
         expectEqual(store.recordCommandResults.count, 1, "command failure result must be recorded once")
         expectEqual(store.directCommandFailures.count, 0, "command failure result must not be double-marked by the pending loop")
 
+        await verifySonosVolumeTargets(chromium: chromium)
+
         print("verify_browser_audio_state_semantics=ok")
+    }
+
+    @MainActor
+    private static func verifySonosVolumeTargets(chromium: ChromiumBrowserExtensionController) async {
+        let groupCommands = SpeakerVolumeCommandQueue()
+        let groupController = MediaAudioControlController(
+            volumeService: VolumeService(),
+            outputSelection: PlaybackOutputSelection(
+                roomName: "  Kitchen\n",
+                selectedGroup: PlaybackOutputGroup(members: ["Kitchen", "Port"])
+            ),
+            activePlaybackObserver: PlaybackObserver(),
+            chromiumBrowserExtensionController: chromium,
+            volumeCommands: groupCommands
+        )
+        groupController.adjustSonosVolume(direction: .up)
+        await waitForCallCount(1, in: groupCommands)
+        groupController.toggleSonosMute()
+        await waitForCallCount(2, in: groupCommands)
+        expectEqual(
+            await groupCommands.calls(),
+            [.groupVolumeUp(roomName: "Kitchen", step: 5), .toggleGroupMute(roomName: "Kitchen")],
+            "normalized selected room in a multi-speaker group must use group volume and mute actions"
+        )
+
+        let memberCommands = SpeakerVolumeCommandQueue()
+        let memberController = MediaAudioControlController(
+            volumeService: VolumeService(),
+            outputSelection: PlaybackOutputSelection(
+                roomName: "  Office  ",
+                selectedGroup: PlaybackOutputGroup(members: ["Office"])
+            ),
+            activePlaybackObserver: PlaybackObserver(),
+            chromiumBrowserExtensionController: chromium,
+            volumeCommands: memberCommands
+        )
+        memberController.adjustSonosVolume(direction: .down)
+        await waitForCallCount(1, in: memberCommands)
+        memberController.toggleSonosMute()
+        await waitForCallCount(2, in: memberCommands)
+        expectEqual(
+            await memberCommands.calls(),
+            [.volumeDown(roomName: "Office", step: 5), .toggleMute(roomName: "Office")],
+            "normalized standalone selection must use member volume and mute actions"
+        )
+
+        let fallbackCommands = SpeakerVolumeCommandQueue()
+        let fallbackController = MediaAudioControlController(
+            volumeService: VolumeService(),
+            outputSelection: PlaybackOutputSelection(),
+            activePlaybackObserver: PlaybackObserver(),
+            chromiumBrowserExtensionController: chromium,
+            volumeCommands: fallbackCommands
+        )
+        fallbackController.adjustSonosVolume(direction: .up)
+        await waitForCallCount(1, in: fallbackCommands)
+        fallbackController.toggleSonosMute()
+        await waitForCallCount(2, in: fallbackCommands)
+        expectEqual(
+            await fallbackCommands.calls(),
+            [.volumeUp(roomName: "Port", step: 5), .toggleMute(roomName: "Port")],
+            "missing selection must fall back to Port with member volume and mute actions"
+        )
     }
 
     private static func browserTarget(muted: Bool) -> MediaRemoteTarget {
@@ -331,16 +429,17 @@ struct Semantics {
         return target
     }
 
-    private static func row(target: MediaRemoteTarget, muted: Bool) -> SourceRow {
-        SourceRow(
-            target: target,
-            audioState: MediaSourceAudioState(playbackRate: target.playbackRate, muted: muted)
-        )
-    }
-
     @MainActor
     private static func drainMainQueue() async {
         try? await Task.sleep(nanoseconds: 20_000_000)
+    }
+
+    private static func waitForCallCount(_ count: Int, in commands: SpeakerVolumeCommandQueue) async {
+        let deadline = Date().addingTimeInterval(1)
+        while Date() < deadline, await commands.calls().count < count {
+            await drainMainQueue()
+        }
+        expectEqual(await commands.calls().count, count, "Sonos action did not reach the volume command queue")
     }
 
     private static func expectEqual<T: Equatable>(_ actual: T, _ expected: T, _ message: String) {
@@ -358,6 +457,7 @@ SWIFT
 
 swiftc \
   -module-cache-path "$workdir/module-cache" \
+  "$repo_root/packages/SonosHandoffCore/Sources/SonosHandoffCore/Handoff/SonosRoomName.swift" \
   "$workdir/Stubs.swift" \
   "$workdir/MediaAudioControlController.swift" \
   "$workdir/Semantics.swift" \

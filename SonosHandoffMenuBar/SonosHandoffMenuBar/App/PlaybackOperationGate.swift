@@ -23,7 +23,8 @@ final class PlaybackOperationGate {
         operation: @escaping @MainActor @Sendable (PlaybackOperationTicket) async -> Void
     ) {
         volumeTask?.cancel()
-        let ticket = beginVolume(roomName: roomName)
+        volumeGeneration += 1
+        let ticket = PlaybackOperationTicket(generation: volumeGeneration, roomName: roomName)
         volumeTask = Task { @MainActor in
             await operation(ticket)
         }
@@ -40,37 +41,18 @@ final class PlaybackOperationGate {
         operation: @escaping @MainActor @Sendable (PlaybackOperationTicket) async -> Void
     ) {
         transferTask?.cancel()
-        let ticket = beginTransfer(roomName: roomName)
+        transferGeneration += 1
+        let ticket = PlaybackOperationTicket(generation: transferGeneration, roomName: roomName)
         transferTask = Task { @MainActor in
             await operation(ticket)
         }
     }
 
-    func cancelTransfer() {
-        transferTask?.cancel()
-        transferTask = nil
-        transferGeneration += 1
-    }
-
-    private func beginVolume(roomName: String) -> PlaybackOperationTicket {
-        volumeGeneration += 1
-        return PlaybackOperationTicket(generation: volumeGeneration, roomName: roomName)
-    }
-
     func isCurrentVolume(_ ticket: PlaybackOperationTicket, selectedRoomName: String?) -> Bool {
-        ticket.generation == volumeGeneration && Self.roomNamesMatch(ticket.roomName, selectedRoomName)
-    }
-
-    private func beginTransfer(roomName: String) -> PlaybackOperationTicket {
-        transferGeneration += 1
-        return PlaybackOperationTicket(generation: transferGeneration, roomName: roomName)
+        ticket.generation == volumeGeneration && SonosRoomName.matches(ticket.roomName, selectedRoomName)
     }
 
     func isCurrentTransfer(_ ticket: PlaybackOperationTicket, loadingRoomName: String?) -> Bool {
-        ticket.generation == transferGeneration && Self.roomNamesMatch(ticket.roomName, loadingRoomName)
-    }
-
-    private static func roomNamesMatch(_ lhs: String, _ rhs: String?) -> Bool {
-        SonosRoomName.matches(lhs, rhs)
+        ticket.generation == transferGeneration && SonosRoomName.matches(ticket.roomName, loadingRoomName)
     }
 }

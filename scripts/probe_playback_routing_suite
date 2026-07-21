@@ -97,7 +97,7 @@ if [[ "${KEYWAY_PROBE_ROUTING_SUITE_TARGETS:-0}" == "1" ]]; then
     KEYWAY_PROBE_EXPECT_TARGET_NAME=Spotify \
       "$repo_root/scripts/probe_playback_chooser_selection"
   else
-    printf 'probe_playback_routing_suite: skipping Spotify target probe; target not visible\n'
+    fail "Spotify target probe requested, but Spotify is not visible"
   fi
 
   restart_keyway
@@ -107,7 +107,7 @@ if [[ "${KEYWAY_PROBE_ROUTING_SUITE_TARGETS:-0}" == "1" ]]; then
     KEYWAY_PROBE_EXPECT_TARGET_NAME=Helium \
       "$repo_root/scripts/probe_playback_chooser_selection"
   else
-    printf 'probe_playback_routing_suite: skipping Helium target probe; no active-tab playable media visible\n'
+    fail "Helium target probe requested, but no active-tab playable media is visible"
   fi
 fi
 

@@ -15,10 +15,6 @@ public protocol SpeakerVolumeAdjusting: Sendable {
     func setGroupMute(coordinatorRoomName: String, muted: Bool) async throws -> Bool
 }
 
-public protocol SonosSpeakerDiscovering: Sendable {
-    func discoverSpeakers() async throws -> [SonosSpeaker]
-}
-
 public protocol SonosGroupingStateReading: Sendable {
     func discoverGroupState() async throws -> SonosGroupState
     func discoverGroupState(visibleSpeakers: [SonosSpeaker]) async throws -> SonosGroupState
@@ -39,11 +35,6 @@ public protocol SonosGroupingEditing: Sendable {
         coordinatorRoomName: String,
         replacementRoomName: String
     ) async throws
-    func removeCoordinator(
-        in group: SonosSpeakerGroup,
-        coordinatorRoomName: String,
-        replacementRoomName: String
-    ) async throws
 }
 
 public protocol RoomHandoffPerforming: Sendable {
@@ -59,10 +50,8 @@ public enum RoomHandoffVerificationMode: Equatable, Sendable {
 public protocol SpotifyActivePlaybackObserving: Sendable {
     func activePlaybackDeviceStatus() async throws -> SpotifyPlaybackDeviceStatus?
     func availablePlaybackDevices() async throws -> [SpotifyAvailablePlaybackDevice]
-    func startActivePlayback(spotifyURI: String?, deviceName: String?, deviceType: String?) async throws
     func transferActivePlayback(deviceName: String?, deviceType: String?, play: Bool) async throws
     func setActivePlaybackDeviceVolume(_ volume: Int) async throws -> Int
-    func sendActivePlaybackCommand(_ command: SpotifyPlaybackCommand) async throws
 }
 
 public enum SpotifyPlaybackCommand: String, Equatable, Sendable {
@@ -186,13 +175,29 @@ public struct SonosGroupState: Equatable, Sendable {
 
 public struct SpotifyPlaybackDeviceStatus: Equatable, Sendable {
     public let deviceName: String
+    public let type: String
+    public let isRestricted: Bool
     public let isPlaying: Bool
     public let volumePercent: Int?
+    public let itemName: String?
+    public let itemURI: String?
 
-    public init(deviceName: String, isPlaying: Bool, volumePercent: Int?) {
+    public init(
+        deviceName: String,
+        type: String,
+        isRestricted: Bool,
+        isPlaying: Bool,
+        volumePercent: Int?,
+        itemName: String? = nil,
+        itemURI: String? = nil
+    ) {
         self.deviceName = deviceName
+        self.type = type
+        self.isRestricted = isRestricted
         self.isPlaying = isPlaying
         self.volumePercent = volumePercent
+        self.itemName = itemName
+        self.itemURI = itemURI
     }
 }
 

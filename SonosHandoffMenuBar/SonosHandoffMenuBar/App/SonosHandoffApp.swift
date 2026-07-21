@@ -16,7 +16,6 @@ struct KeywayApp: App {
     init() {
         let environment = AppEnvironment.live()
         self.environment = environment
-        environment.groupSuggestionNotifier.prepare()
         let playbackBackgroundSync = PlaybackBackgroundSync(environment: environment)
         self.playbackBackgroundSync = playbackBackgroundSync
         appDelegate.configure(environment: environment)
@@ -116,10 +115,9 @@ struct KeywayApp: App {
                 tokenStore: environment.tokenStore,
                 connectTokenStatusStore: environment.connectTokenStatusStore,
                 authCoordinator: environment.authCoordinator,
-                accessibilityAutomator: environment.accessibilityAutomator,
                 configImportService: environment.configImportService,
                 chromiumNativeMessagingHostInstaller: environment.chromiumNativeMessagingHostInstaller,
-                initialConfigImportReport: environment.configImportReport,
+                initialChromiumBridgeMessage: environment.chromiumNativeMessagingHostInstallMessage,
                 mediaRemoteController: environment.mediaRemoteController,
                 chromiumBrowserExtensionController: environment.chromiumBrowserExtensionController
             )

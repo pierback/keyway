@@ -46,12 +46,6 @@ final class MediaTransportCommandCenterFilter {
         case commandCenterShadow = "media_key_command_center_shadow_ignored"
         case unpairedCommandCenterInput = "command_center_unpaired_input_ignored"
 
-        var isChooserEcho: Bool {
-            self == .programmaticEcho
-                || self == .programmaticMediaKeyEcho
-                || self == .mediaKeyRebound
-                || self == .chooserTargetedMediaKeyEcho
-        }
     }
 
     private let mediaKeyShadowInterval: TimeInterval

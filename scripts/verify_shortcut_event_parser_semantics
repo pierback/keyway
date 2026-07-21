@@ -66,9 +66,7 @@ func functionKeyEvent(keyCode: CGKeyCode, keyDown: Bool, shiftFunctionChord: Boo
         fatalError("failed to create function key event")
     }
 
-    if shiftFunctionChord {
-        event.flags = [.maskSecondaryFn, .maskShift]
-    }
+    event.flags = shiftFunctionChord ? [.maskSecondaryFn, .maskShift] : []
 
     event.setIntegerValueField(.eventSourceUnixProcessID, value: 0)
     event.setIntegerValueField(.eventSourceStateID, value: 1)

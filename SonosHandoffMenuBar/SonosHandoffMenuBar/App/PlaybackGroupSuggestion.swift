@@ -285,7 +285,17 @@ enum PlaybackSuggestionNotificationAuthorization {
         logger: os.Logger,
         completion: @escaping @Sendable (Bool) -> Void
     ) {
-        request(notificationCenter: notificationCenter, logger: logger, completion: completion)
+        notificationCenter.requestAuthorization(options: [.alert]) { [logger] granted, error in
+            if let error {
+                logger.error("SonosHandoffPlaybackNotification authorization=failure error=\(error.localizedDescription, privacy: .public)")
+                completion(false)
+
+                return
+            }
+
+            logger.info("SonosHandoffPlaybackNotification authorization=\(granted, privacy: .public)")
+            completion(granted)
+        }
     }
 
     static func deliver(
@@ -306,23 +316,6 @@ enum PlaybackSuggestionNotificationAuthorization {
                 logger: logger,
                 logCategory: logCategory
             )
-        }
-    }
-
-    private static func request(
-        notificationCenter: UNUserNotificationCenter,
-        logger: os.Logger,
-        completion: @escaping @Sendable (Bool) -> Void
-    ) {
-        notificationCenter.requestAuthorization(options: [.alert]) { [logger] granted, error in
-            if let error {
-                logger.error("SonosHandoffPlaybackNotification authorization=failure error=\(error.localizedDescription, privacy: .public)")
-                completion(false)
-                return
-            }
-
-            logger.info("SonosHandoffPlaybackNotification authorization=\(granted, privacy: .public)")
-            completion(granted)
         }
     }
 
@@ -527,11 +520,4 @@ enum PlaybackTransferSuggestionNotificationIdentifier {
             .flatMap(allIDs)
     }
 
-    static func isSuggestionID(_ identifier: String) -> Bool {
-        identifier.hasPrefix(suggestionPrefix) && !identifier.hasPrefix(failurePrefix)
-    }
-
-    static func isManagedID(_ identifier: String) -> Bool {
-        isSuggestionID(identifier) || identifier.hasPrefix(failurePrefix)
-    }
 }

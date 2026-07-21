@@ -633,9 +633,12 @@ if let commandTargets = state.smokeTargets(), commandSurfaceFailure == 0 {
     let other = commandTargets.1
     let otherVolume = other.volume
     let otherTitle = other.title
-    if !target.supportedCommands.contains("next") || !target.supportedCommands.contains("previous") {
+    let missingCommands = ["mute", "volumeDelta", "next", "previous"].filter {
+        !target.supportedCommands.contains($0)
+    }
+    if !missingCommands.isEmpty {
         commandSurfaceFailure += 1
-        FileHandle.standardError.write(Data("smoke_chromium_extension_transport_failure command_surface=track_controls supported_commands=\(target.supportedCommands)\n".utf8))
+        FileHandle.standardError.write(Data("smoke_chromium_extension_transport_failure command_surface=required_commands missing=\(missingCommands) supported_commands=\(target.supportedCommands)\n".utf8))
     }
 
     for check in [
@@ -667,6 +670,35 @@ if let commandTargets = state.smokeTargets(), commandSurfaceFailure == 0 {
                 wrongTarget += 1
             }
             FileHandle.standardError.write(Data("smoke_chromium_extension_transport_failure command_surface=\(check.0) target_state=\(String(describing: state.target(id: target.id))) other_state=\(String(describing: state.target(id: other.id)))\n".utf8))
+        }
+    }
+
+    let initialTargetMuted = state.target(id: target.id)?.muted ?? target.muted
+    let initialOtherMuted = state.target(id: other.id)?.muted ?? other.muted
+    for expectedMuted in [!initialTargetMuted, initialTargetMuted] {
+        guard let current = state.target(id: target.id),
+              let result = runCommand(state: state, target: current, command: "mute", ackLatencies: &ackLatencies),
+              result.ok,
+              result.unsupported != true,
+              result.targetID == target.id
+        else {
+            commandSurfaceFailure += 1
+            FileHandle.standardError.write(Data("smoke_chromium_extension_transport_failure command_surface=mute result_missing_or_failed\n".utf8))
+            continue
+        }
+
+        let observed = runLoop(until: Date(timeIntervalSinceNow: 2)) {
+            state.target(id: target.id)?.muted == expectedMuted
+                && state.target(id: other.id)?.muted == initialOtherMuted
+        }
+        if observed {
+            commandSurfaceSuccess += 1
+        } else {
+            commandSurfaceFailure += 1
+            if state.target(id: other.id)?.muted != initialOtherMuted {
+                wrongTarget += 1
+            }
+            FileHandle.standardError.write(Data("smoke_chromium_extension_transport_failure command_surface=mute target_state=\(String(describing: state.target(id: target.id))) other_state=\(String(describing: state.target(id: other.id)))\n".utf8))
         }
     }
 
@@ -752,7 +784,7 @@ for iteration in 0..<iterations {
     let expectedOtherVolume = expectedVolumes[other.id]!
     let requestID = UUID().uuidString
     let started = ProcessInfo.processInfo.systemUptime
-    postCommand(target: target, requestID: requestID, command: "volumeDelta", volumeDelta: volumeDelta)
+    postCommand(state: state, target: target, requestID: requestID, command: "volumeDelta", volumeDelta: volumeDelta)
 
     guard runLoop(until: Date(timeIntervalSinceNow: 2), condition: { state.result(requestID: requestID) != nil }),
           let result = state.result(requestID: requestID)
