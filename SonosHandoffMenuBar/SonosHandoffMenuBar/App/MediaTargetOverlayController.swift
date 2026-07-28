@@ -161,6 +161,9 @@ final class MediaTargetOverlayController {
             onChoose: { [weak self] target in
                 self?.choose(target)
             },
+            onFocus: { [weak self] target in
+                self?.focus(target)
+            },
             onSelect: { [weak self] index in
                 self?.model.select(index: index)
                 self?.refreshAudioSnapshot()

@@ -6,12 +6,13 @@ import SwiftUI
 
 @MainActor
 struct SettingsFeature: View {
-    static let preferredWindowSize = CGSize(width: 720, height: 680)
+    private static let preferredWindowSize = CGSize(width: 720, height: 520)
     private static let callbackURLText = SpotifyAuthCoordinator.callbackPorts
         .map { "http://\(SpotifyAuthCoordinator.callbackHost):\($0)\(SpotifyAuthCoordinator.callbackPath)" }
         .joined(separator: "\n")
     private static let panelCornerRadius: CGFloat = 12
     private let accessibilitySettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
+    private let inputMonitoringSettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!
     private let notificationSettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.notifications")!
     private let chromiumExtensionsURL = URL(string: "chrome://extensions")!
     private let heliumBundleIdentifier = "net.imput.helium"
@@ -73,7 +74,7 @@ struct SettingsFeature: View {
         _chromiumBrowserExtensionController = ObservedObject(wrappedValue: chromiumBrowserExtensionController)
     }
 
-    @State private var selectedSection: String = "General"
+    @State private var selectedSection: String = "Playback"
 
     var body: some View {
         HStack(spacing: 0) {
@@ -89,8 +90,7 @@ struct SettingsFeature: View {
                     .frame(maxWidth: .infinity, alignment: .topLeading)
             }
         }
-        .frame(width: Self.preferredWindowSize.width)
-        .frame(minHeight: Self.preferredWindowSize.height)
+        .frame(width: Self.preferredWindowSize.width, height: Self.preferredWindowSize.height)
         .task {
             await reloadState()
         }
@@ -104,23 +104,18 @@ struct SettingsFeature: View {
 
     private var sidebarList: some View {
         ScrollView {
-            VStack(spacing: 2) {
+            VStack(spacing: 3) {
                 ForEach(sidebarSections, id: \.self) { name in
                     Button {
                         withAnimation(.easeInOut(duration: 0.15)) {
                             selectedSection = name
                         }
                     } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: sidebarIcon(for: name))
-                                .font(.system(size: 12))
-                                .frame(width: 18)
-                            Text(name)
-                                .font(.system(size: 13))
-                            Spacer()
-                        }
+                        Label(name, systemImage: sidebarIcon(for: name))
+                            .font(.system(size: 13))
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 10)
-                        .frame(height: 30)
+                        .frame(height: 32)
                         .background(
                             selectedSection == name
                                 ? Color.accentColor.opacity(0.12)
@@ -130,6 +125,7 @@ struct SettingsFeature: View {
                         .foregroundStyle(selectedSection == name ? .primary : .secondary)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("settings.sidebar.\(name.lowercased())")
                 }
             }
             .padding(10)
@@ -137,45 +133,50 @@ struct SettingsFeature: View {
     }
 
     private var sidebarSections: [String] {
-        ["General", "Transport", "Overlay", "Audio", "Sonos", "Spotify", "Shortcuts", "Permissions", "Helper", "Diagnostics"]
+        ["Playback", "Spotify", "Permissions", "Support"]
     }
 
     private func sidebarIcon(for section: String) -> String {
         switch section {
-        case "General": return "slider.horizontal.3"
-        case "Transport": return "arrow.triangle.branch"
-        case "Overlay": return "rectangle.center.inset.filled"
-        case "Audio": return "speaker.wave.2"
-        case "Sonos": return "hifispeaker"
-        case "Spotify": return "music.note"
-        case "Shortcuts": return "keyboard"
-        case "Permissions": return "lock.shield"
-        case "Helper": return "terminal"
-        case "Diagnostics": return "stethoscope"
-        default: return "questionmark"
+        case "Playback":
+            return "play.rectangle.on.rectangle"
+        case "Spotify":
+            return "music.note"
+        case "Permissions":
+            return "lock.shield"
+        case "Support":
+            return "wrench.and.screwdriver"
+        default:
+            return "questionmark"
         }
     }
 
     @ViewBuilder
     private var sidebarDetailContent: some View {
         switch selectedSection {
-        case "General": generalSection
-        case "Transport": transportRoutingSection
-        case "Overlay": overlaySection
-        case "Audio": audioControlsSection
-        case "Sonos": sonosSection
+        case "Playback":
+            VStack(spacing: 12) {
+                transportRoutingSection
+                overlaySection
+                audioControlsSection
+                sonosSection
+            }
         case "Spotify": spotifySection
-        case "Shortcuts": shortcutsSection
         case "Permissions": permissionsSection
-        case "Helper": helperStatusSection
-        case "Diagnostics": diagnosticsSection
-        default: generalSection
+        case "Support":
+            VStack(spacing: 12) {
+                browserSetupSection
+                migrationSection
+                helperStatusSection
+                diagnosticsSection
+            }
+        default: transportRoutingSection
         }
     }
 
-    private var generalSection: some View {
-        settingsPanel(title: "General") {
-            VStack(alignment: .leading, spacing: 10) {
+    private var migrationSection: some View {
+        settingsPanel(title: "Migration") {
+            VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .top, spacing: 10) {
                     StatusBadge(
                         title: configImportBadgeTitle,
@@ -191,25 +192,27 @@ struct SettingsFeature: View {
                             .lineLimit(3)
                     }
                     .layoutPriority(1)
-
-                    Spacer()
-
-                    Button("Run Import") {
-                        runConfigImport()
-                    }
-                    .controlSize(.small)
                 }
 
                 VStack(alignment: .leading, spacing: 5) {
                     settingsPathRow(title: "Keyway", url: ConfigPaths.applicationSupportDirectory)
                     settingsPathRow(title: "Legacy", url: ConfigPaths.legacyApplicationSupportDirectory)
                 }
+
+                HStack {
+                    Spacer()
+                    Button("Import Existing Settings") {
+                        runConfigImport()
+                    }
+                    .controlSize(.small)
+                    .fixedSize()
+                }
             }
         }
     }
 
     private var transportRoutingSection: some View {
-        settingsPanel(title: "Transport Routing") {
+        settingsPanel(title: "Media Control") {
             serviceStatusRow(
                 title: "Media keys",
                 available: accessibilityGranted && listenEventGranted,
@@ -222,6 +225,11 @@ struct SettingsFeature: View {
                 availableText: chromiumExtensionStatusText,
                 missingText: "Disconnected"
             )
+        }
+    }
+
+    private var browserSetupSection: some View {
+        settingsPanel(title: "Browser Extension") {
             HStack(alignment: .center, spacing: 8) {
                 StatusDot(available: chromiumBrowserExtensionController.connected, size: 7)
                 VStack(alignment: .leading, spacing: 2) {
@@ -249,24 +257,15 @@ struct SettingsFeature: View {
                 }
                 .controlSize(.small)
             }
-            Text("Routing policy: Single Target, Current Media Target, Focused Target, Recent Target, chooser.")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
         }
     }
 
     private var overlaySection: some View {
-        settingsPanel(title: "Overlay") {
-            HStack(spacing: 8) {
-                StatusDot(available: true, size: 7)
-                Text("Centered on the display containing the mouse pointer")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text("Up/Down, Enter, Command+Enter, Escape, Tab, 1-9")
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(.secondary)
-            }
+        settingsPanel(title: "Source Chooser") {
+            Text("Click or press Enter to route; with volume controls open, click selects instead. Command-click or Command-Enter opens the selected app or browser tab. Tab shows volume controls.")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -303,22 +302,16 @@ struct SettingsFeature: View {
     private var spotifySection: some View {
         settingsPanel(title: "Spotify") {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .top, spacing: 12) {
-                    readinessRow
-                    Spacer()
-                    spotifyAuthActionButton
-                }
+                readinessRow
 
                 HStack(spacing: 8) {
-                    Button("Check") {
+                    Button("Refresh Status") {
                         Task {
                             await reloadSpotifyAuthState()
                         }
                     }
                     .controlSize(.small)
                     .disabled(isSigningIn)
-
-                    Spacer()
 
                     Button {
                         withAnimation(.easeInOut(duration: 0.18)) {
@@ -334,6 +327,10 @@ struct SettingsFeature: View {
                     .buttonStyle(.plain)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.secondary)
+
+                    Spacer()
+
+                    spotifyAuthActionButton
                 }
 
                 if showSpotifyAdvanced {
@@ -409,56 +406,18 @@ struct SettingsFeature: View {
     @ViewBuilder
     private var spotifyAuthActionButton: some View {
         if webAPITokenAvailable {
-            Button("Web API Sign Out") {
+            Button("Sign Out") {
                 signOutSpotify()
             }
             .controlSize(.small)
             .disabled(isSigningIn)
         } else {
-            Button(isSigningIn ? "Signing In..." : "Sign In") {
+            Button(isSigningIn ? "Signing In..." : "Sign In to Web API") {
                 startSpotifySignIn()
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.small)
             .disabled(isSigningIn)
-        }
-    }
-
-    private var shortcutsSection: some View {
-        settingsPanel(title: "Shortcuts") {
-            HStack(alignment: .center, spacing: 10) {
-                StatusBadge(
-                    title: accessibilityGranted && listenEventGranted ? "Enabled" : "Required",
-                    available: accessibilityGranted && listenEventGranted
-                )
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Global keyboard control")
-                        .font(.system(size: 13, weight: .medium))
-                    Text(accessibilityGranted && listenEventGranted ? "Keyboard routing can listen in the background." : "Accessibility and Input Monitoring are required for media-key routing.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
-                .layoutPriority(1)
-
-                Spacer()
-
-                Button("Refresh") {
-                    refreshShortcutState()
-                }
-                .controlSize(.small)
-
-                Button("Open Settings") {
-                    AccessibilityPermission.requestPrompt()
-                    refreshShortcutState()
-                    NSWorkspace.shared.open(
-                        accessibilityGranted
-                            ? URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!
-                            : accessibilitySettingsURL
-                    )
-                }
-                .controlSize(.small)
-            }
         }
     }
 
@@ -482,6 +441,26 @@ struct SettingsFeature: View {
                         AccessibilityPermission.requestPrompt()
                         refreshShortcutState()
                         NSWorkspace.shared.open(accessibilitySettingsURL)
+                    }
+                    .controlSize(.small)
+                }
+
+                HStack(alignment: .center, spacing: 10) {
+                    StatusBadge(
+                        title: listenEventGranted ? "Enabled" : "Required",
+                        available: listenEventGranted
+                    )
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Input Monitoring")
+                            .font(.system(size: 13, weight: .medium))
+                        Text(listenEventGranted ? "Keyway can receive media-key events." : "Enable Input Monitoring for media-key routing.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Open Settings") {
+                        refreshShortcutState()
+                        NSWorkspace.shared.open(inputMonitoringSettingsURL)
                     }
                     .controlSize(.small)
                 }
@@ -591,7 +570,8 @@ struct SettingsFeature: View {
                 Text(spotifyAuthDetailText)
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -603,12 +583,11 @@ struct SettingsFeature: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(title)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 15, weight: .semibold))
 
             content()
         }
-        .padding(14)
+        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background {
             RoundedRectangle(cornerRadius: Self.panelCornerRadius, style: .continuous)
@@ -1141,5 +1120,6 @@ private struct StatusBadge: View {
                 .fill((available ? Color.green : Color.orange).opacity(0.12))
         }
         .foregroundStyle(available ? Color.green : Color.orange)
+        .fixedSize(horizontal: true, vertical: false)
     }
 }

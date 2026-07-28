@@ -84,7 +84,8 @@ struct MediaRemoteTarget: Codable, Equatable, Identifiable, Sendable {
         if !artist.isEmpty {
             return artist
         }
-        return bundleIdentifier
+
+        return isCurrentlyPlaying ? "Playing" : "Paused"
     }
 
     var routeSourceLabel: String? {

@@ -503,6 +503,7 @@ repo_root = pathlib.Path(sys.argv[1])
 source_focus = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/SourceFocusActionController.swift").read_text()
 keyboard = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTargetOverlayKeyboardAction.swift").read_text()
 overlay = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTargetOverlayController.swift").read_text()
+overlay_view = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTargetOverlayView.swift").read_text()
 transport = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportActionController.swift").read_text()
 status_item = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/KeywayStatusItemController.swift").read_text()
 
@@ -559,6 +560,12 @@ for forbidden in (
 expect(keyboard, "case focusSelected", "chooser keyboard model must expose a focus action")
 expect(keyboard, "return commandDown ? .focusSelected : .routeSelected", "Command+Enter must be separated from Enter")
 expect(overlay, "MediaTargetOverlayKeyboardInterpreter.action(", "overlay must delegate keyboard semantics to the dedicated interpreter")
+expect(overlay, "onFocus: { [weak self] target in", "overlay must pass source-focus actions through its view")
+expect(overlay, "self?.focus(target)", "overlay view focus actions must use the controller focus path")
+expect(overlay_view, "let onFocus: (MediaRemoteTarget) -> Void", "overlay rows must expose a separate focus action")
+expect(overlay_view, "modifiers.contains(.command)", "Command-click must be distinguished from normal row clicks")
+expect(overlay_view, "onFocus(target)", "Command-click must focus the selected source")
+expect(overlay_view, 'footerHint("⌘click / ⌘↵", "Open")', "overlay footer must advertise both direct-open gestures")
 focus_case = overlay[overlay.index("case .focusSelected:"):overlay.index("case .close:", overlay.index("case .focusSelected:"))]
 if "focus(target)" not in focus_case or "choose(" in focus_case:
     fail("Command+Enter must focus the selected target without routing a media command")

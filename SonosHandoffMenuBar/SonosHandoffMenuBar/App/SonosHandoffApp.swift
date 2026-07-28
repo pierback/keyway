@@ -121,8 +121,6 @@ struct KeywayApp: App {
                 mediaRemoteController: environment.mediaRemoteController,
                 chromiumBrowserExtensionController: environment.chromiumBrowserExtensionController
             )
-                .frame(width: SettingsFeature.preferredWindowSize.width)
-                .frame(minHeight: SettingsFeature.preferredWindowSize.height)
         }
     }
 }

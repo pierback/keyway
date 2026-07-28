@@ -4,6 +4,7 @@ import SwiftUI
 struct MediaTargetOverlayView: View {
     @ObservedObject var model: MediaTargetOverlayModel
     let onChoose: (MediaRemoteTarget) -> Void
+    let onFocus: (MediaRemoteTarget) -> Void
     let onSelect: (Int) -> Void
     let onSonosVolume: (MediaAudioVolumeDirection) -> Void
     let onSonosMute: () -> Void
@@ -150,7 +151,11 @@ struct MediaTargetOverlayView: View {
         let suspect = row.reachability.isSuspect
 
         return Button {
-            if model.expanded {
+            let modifiers = (NSApp.currentEvent?.modifierFlags.intersection(.deviceIndependentFlagsMask) ?? [])
+                .union(NSEvent.modifierFlags.intersection(.deviceIndependentFlagsMask))
+            if modifiers.contains(.command) {
+                onFocus(target)
+            } else if model.expanded {
                 onSelect(index)
             } else {
                 onChoose(target)
@@ -373,13 +378,8 @@ struct MediaTargetOverlayView: View {
         HStack(spacing: 8) {
             footerHint("↑↓", "Select")
             footerHint("Enter", "Route")
-            footerHint("⌘↵", "Focus")
+            footerHint("⌘click / ⌘↵", "Open")
             footerHint("Esc", "Close")
-            footerHint("Tab", "Controls")
-            footerHint("1-9", "Quick select")
-            if model.expanded {
-                footerHint("⌘↑/⌘↓", "Volume")
-            }
             Spacer()
         }
         .padding(.horizontal, 16)

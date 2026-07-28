@@ -199,6 +199,35 @@ struct MenuBarMediaSourceSection: View {
 
         return VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 9) {
+                sourceIdentityButton(target, suspect: suspect)
+
+                HStack(spacing: 7) {
+                    sourceTransportButton(.previous, target: target)
+                    sourceTransportButton(target.isCurrentlyPlaying ? .pause : .play, target: target, emphasized: true)
+                    sourceTransportButton(.next, target: target)
+                    if ChromiumBrowserExtensionTransport.isTarget(target) {
+                        browserMuteButton(target)
+                    }
+                }
+            }
+
+            if target.duration != nil {
+                progressBar(target, tick: progressTick)
+            }
+
+            if target.isSpotify {
+                spotifyRouteRow(for: target)
+            }
+        }
+        .padding(.vertical, 2)
+        .accessibilityIdentifier("source-row-\(target.id)")
+    }
+
+    private func sourceIdentityButton(_ target: MediaRemoteTarget, suspect: Bool) -> some View {
+        Button {
+            mediaTransportActions.focus(target: target)
+        } label: {
+            HStack(spacing: 9) {
                 artworkView(target, size: 32)
 
                 VStack(alignment: .leading, spacing: 1) {
@@ -217,35 +246,23 @@ struct MenuBarMediaSourceSection: View {
                                 .lineLimit(1)
                         }
                     }
-                    Text(sourceDetail(target))
+                    Text(target.detailText)
                         .font(.system(size: 11, weight: .regular))
                         .foregroundStyle(.white.opacity(0.52))
                         .lineLimit(1)
                 }
                 .opacity(suspect ? 0.58 : 1)
                 .frame(maxWidth: .infinity, alignment: .leading)
-
-                HStack(spacing: 7) {
-                    sourceTransportButton(.previous, target: target)
-                    sourceTransportButton(target.isCurrentlyPlaying ? .pause : .play, target: target, emphasized: true)
-                    sourceTransportButton(.next, target: target)
-                    if ChromiumBrowserExtensionTransport.isTarget(target) {
-                        browserMuteButton(target)
-                    }
-                    focusButton(target)
-                }
             }
-
-            if target.duration != nil {
-                progressBar(target, tick: progressTick)
-            }
-
-            if target.isSpotify {
-                spotifyRouteRow(for: target)
-            }
+            .contentShape(Rectangle())
         }
-        .padding(.vertical, 2)
-        .accessibilityIdentifier("source-row-\(target.id)")
+        .buttonStyle(.plain)
+        .help("Open \(target.appName)")
+        .accessibilityIdentifier("source-\(target.id)-open")
+        .accessibilityLabel(
+            "\(target.appName), \(target.detailText)\(suspect ? ", not responding" : "")"
+        )
+        .accessibilityHint("Opens the app or browser tab")
     }
 
     private var transportDiagnosticText: String {
@@ -254,19 +271,6 @@ struct MenuBarMediaSourceSection: View {
 
     private func sourceReachability(_ target: MediaRemoteTarget) -> MediaSourceReachability {
         mediaSourceStore.rows.first(where: { $0.id == target.id })?.reachability ?? .live
-    }
-
-    private func sourceDetail(_ target: MediaRemoteTarget) -> String {
-        if !target.title.isEmpty, !target.artist.isEmpty {
-            return "\(target.title) - \(target.artist)"
-        }
-        if !target.title.isEmpty {
-            return target.title
-        }
-        if !target.artist.isEmpty {
-            return target.artist
-        }
-        return target.isCurrentlyPlaying ? "Playing" : "Paused"
     }
 
     private func sourceTransportButton(
@@ -290,22 +294,6 @@ struct MenuBarMediaSourceSection: View {
         .help(enabled ? command.displayName : "\(command.displayName) is not supported for \(target.appName)")
         .accessibilityIdentifier("source-\(target.id)-transport-\(command.rawValue)")
         .accessibilityLabel("\(command.displayName) \(target.appName)")
-    }
-
-    private func focusButton(_ target: MediaRemoteTarget) -> some View {
-        Button {
-            mediaTransportActions.focus(target: target)
-        } label: {
-            Image(systemName: "arrow.up.backward.and.arrow.down.forward")
-                .font(.system(size: 10, weight: .semibold))
-                .frame(width: 22, height: 22)
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(.white.opacity(0.62))
-        .help("Focus \(target.appName)")
-        .accessibilityIdentifier("source-\(target.id)-focus")
-        .accessibilityLabel("Focus \(target.appName)")
     }
 
     private func browserMuteButton(_ target: MediaRemoteTarget) -> some View {

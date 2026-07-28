@@ -168,6 +168,13 @@ expect_contains "$source_section" "mediaTransportActions.route(command: command,
 expect_absent "$source_section" "mediaTransportActions.route(command: command)"
 expect_contains "$source_section" ".disabled(!enabled)"
 expect_contains "$source_section" "mediaTransportActions.focus(target: target)"
+expect_contains "$source_section" "private func sourceIdentityButton("
+expect_contains "$source_section" '.help("Open \(target.appName)")'
+expect_contains "$source_section" '.accessibilityIdentifier("source-\(target.id)-open")'
+expect_contains "$source_section" '.accessibilityHint("Opens the app or browser tab")'
+expect_contains "$source_section" "Text(target.detailText)"
+expect_absent "$source_section" "private func sourceDetail("
+expect_absent "$source_section" 'arrow.up.backward.and.arrow.down.forward'
 expect_contains "$source_section" "if target.isSpotify"
 expect_contains "$source_section" "playback.transferSpotifyPlayback(source: source, to: row)"
 expect_contains "$source_section" "playback.hasActiveSpotifyConnection(to: row)"
