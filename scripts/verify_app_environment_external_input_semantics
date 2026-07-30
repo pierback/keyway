@@ -6,8 +6,10 @@ environment="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/Support/AppEnvir
 sonos_app="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/SonosHandoffApp.swift"
 transport="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionTransport.swift"
 settings="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/Features/SettingsFeature.swift"
+app_delegate="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/AppDelegate.swift"
+status_item="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/KeywayStatusItemController.swift"
 
-python3 - "$environment" "$sonos_app" "$transport" "$settings" <<'PY'
+python3 - "$environment" "$sonos_app" "$transport" "$settings" "$app_delegate" "$status_item" <<'PY'
 import pathlib
 import sys
 
@@ -15,6 +17,8 @@ environment = pathlib.Path(sys.argv[1]).read_text()
 sonos_app = pathlib.Path(sys.argv[2]).read_text()
 transport = pathlib.Path(sys.argv[3]).read_text()
 settings = pathlib.Path(sys.argv[4]).read_text()
+app_delegate = pathlib.Path(sys.argv[5]).read_text()
+status_item = pathlib.Path(sys.argv[6]).read_text()
 
 def fail(message):
     raise SystemExit(f"verify_app_environment_external_input_semantics: {message}")
@@ -55,13 +59,15 @@ for forbidden in (
 runtime_start = section(
     sonos_app,
     "    func start() {",
-    "\n    func stop()",
+    "\n    func enableSonos()",
 )
 for required in (
     "prepareNotifications()",
     "installChromiumNativeMessagingHost()",
     "chromiumBrowserExtensionController.start()",
     "mediaRemoteController.start()",
+    "mediaRoutingProbeController.start()",
+    "refreshMediaPermissions()",
 ):
     if required not in runtime_start:
         fail(f"AppRuntime.start() must own launch side effects: missing {required}")
@@ -69,6 +75,80 @@ if runtime_start.index("prepareNotifications()") > runtime_start.index("chromium
     fail("notification registration must finish before operational controllers start")
 if runtime_start.index("installChromiumNativeMessagingHost()") > runtime_start.index("chromiumBrowserExtensionController.start()"):
     fail("Chromium native host installation must precede bridge observation")
+for forbidden in (
+    "SonosVolumeMonitor.shared.start",
+    "outputDirectory.startBackgroundRefresh()",
+    "seedVolumeMonitor()",
+    "playbackBackgroundSync.start()",
+):
+    if forbidden in runtime_start:
+        fail(f"AppRuntime.start() must not activate Local Network work: found {forbidden}")
+
+sonos_enable = section(
+    sonos_app,
+    "    func enableSonos() {",
+    "\n    func stop()",
+)
+for required in (
+    "guard isStarted, !isSonosEnabled else",
+    "isSonosEnabled = true",
+    "SonosVolumeMonitor.shared.start(volumeService: volumeService)",
+    "await outputDirectory.startBackgroundRefresh()",
+    "await self?.seedVolumeMonitor()",
+    "playbackBackgroundSync.start()",
+):
+    if required not in sonos_enable:
+        fail(f"AppRuntime.enableSonos() must own Sonos activation: missing {required}")
+for forbidden in (
+    "chromiumBrowserExtensionController.start()",
+    "mediaRemoteController.start()",
+    "mediaRoutingProbeController.start()",
+    "volumeHotkeys.start()",
+):
+    if forbidden in sonos_enable:
+        fail(f"Sonos activation must not restart an unrelated capability: found {forbidden}")
+
+permission_refresh = section(
+    sonos_app,
+    "    func refreshMediaPermissions() {",
+    "\n    private func disableSonos()",
+)
+for required in (
+    "guard AccessibilityPermission.isGranted(), CGPreflightListenEventAccess() else",
+    "volumeHotkeys.stop()",
+    "volumeHotkeys.start()",
+    "volumeHotkeys.refreshMediaFallback()",
+):
+    if required not in permission_refresh:
+        fail(f"media input activation must follow its own permission boundary: missing {required}")
+
+launch = section(
+    app_delegate,
+    "    func applicationDidFinishLaunching(",
+    "\n    func applicationWillTerminate(",
+)
+if launch.index("runtime.start()") > launch.index("permissionOnboardingController!.presentIfNeeded()"):
+    fail("base media capabilities must start before onboarding presentation")
+for required in (
+    "PermissionOnboardingWindowController.localNetworkRequestedKey",
+    "runtime.enableSonos()",
+):
+    if required not in launch:
+        fail(f"launch must restore only persisted Sonos authorization: missing {required}")
+if "self?.runtime?.enableSonos()" not in app_delegate:
+    fail("the Local Network onboarding action must enable only the Sonos capability")
+if "self?.runtime?.start()" in app_delegate:
+    fail("the Local Network onboarding action must not own base runtime startup")
+
+for required in (
+    "private let isSonosEnabled: @MainActor () -> Bool",
+    "if isSonosEnabled() {",
+    "playback.appear()",
+    "sonosSetupTile",
+    'Button("Set Up", action: openSonosSetup)',
+):
+    if required not in status_item:
+        fail(f"the menu bar must not activate Sonos before Local Network opt-in: missing {required}")
 
 runtime_install = section(
     sonos_app,

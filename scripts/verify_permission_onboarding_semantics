@@ -58,27 +58,51 @@ if "volumeHotkeys.start()" in launch:
     fail("AppDelegate must not start operational hotkeys before Local Network consent")
 if launch.index("statusItemController?.start()") > launch.index("permissionOnboardingController!.presentIfNeeded()"):
     fail("the inert menu-bar shell must exist while permission onboarding is visible")
-if "if !permissionOnboardingController!.presentIfNeeded() {\n            runtime.start()\n        }" not in launch:
-    fail("completed onboarding must activate the centralized runtime")
+if launch.index("runtime.start()") > launch.index("permissionOnboardingController!.presentIfNeeded()"):
+    fail("base media capabilities must start before onboarding is presented")
+for required in (
+    "PermissionOnboardingWindowController.localNetworkRequestedKey",
+    "runtime.enableSonos()",
+):
+    if required not in launch:
+        fail(f"launch must restore only the persisted Sonos capability: missing {required}")
 
 runtime_start = section(
     sonos_app,
     "    func start() {",
-    "\n    func refreshMediaPermissions",
+    "\n    func enableSonos()",
 )
 for required in (
     "chromiumBrowserExtensionController.start()",
     "mediaRemoteController.start()",
     "mediaRoutingProbeController.start()",
+    "refreshMediaPermissions()",
+):
+    if required not in runtime_start:
+        fail(f"base startup must be owned by AppRuntime.start(): missing {required}")
+if "guard !isStarted else" not in runtime_start or "isStarted = true" not in runtime_start:
+    fail("AppRuntime.start() must be idempotent and publish activation before starting services")
+for forbidden in (
     "SonosVolumeMonitor.shared.start(",
     "await outputDirectory.startBackgroundRefresh()",
     "playbackBackgroundSync.start()",
-    "volumeHotkeys.start()",
 ):
-    if required not in runtime_start:
-        fail(f"operational startup must be owned by AppRuntime.start(): missing {required}")
-if "guard !isStarted else" not in runtime_start or "isStarted = true" not in runtime_start:
-    fail("AppRuntime.start() must be idempotent and publish activation before starting services")
+    if forbidden in runtime_start:
+        fail(f"base startup must not activate Local Network work: found {forbidden}")
+
+sonos_enable = section(
+    sonos_app,
+    "    func enableSonos() {",
+    "\n    func stop()",
+)
+for required in (
+    "guard isStarted, !isSonosEnabled else",
+    "SonosVolumeMonitor.shared.start(",
+    "await outputDirectory.startBackgroundRefresh()",
+    "playbackBackgroundSync.start()",
+):
+    if required not in sonos_enable:
+        fail(f"Sonos activation must stay inside AppRuntime.enableSonos(): missing {required}")
 
 runtime_stop = section(
     sonos_app,
@@ -86,15 +110,26 @@ runtime_stop = section(
     "\n    func refreshMediaPermissions",
 )
 for required in (
+    "disableSonos()",
     "volumeHotkeys.stop()",
-    "playbackBackgroundSync.stop()",
-    "SonosVolumeMonitor.shared.stop()",
     "mediaRoutingProbeController.stop()",
     "mediaRemoteController.stop()",
     "chromiumBrowserExtensionController.stop()",
 ):
     if required not in runtime_stop:
         fail(f"operational shutdown must be owned by AppRuntime.stop(): missing {required}")
+
+sonos_disable = section(
+    sonos_app,
+    "    private func disableSonos() {",
+    "\n    private func seedVolumeMonitor()",
+)
+for required in (
+    "playbackBackgroundSync.stop()",
+    "SonosVolumeMonitor.shared.stop()",
+):
+    if required not in sonos_disable:
+        fail(f"Sonos shutdown must stay inside its capability owner: missing {required}")
 
 termination = section(
     app_delegate,
@@ -157,11 +192,13 @@ for required in (
 for required in (
     "private var runtime: AppRuntime?",
     "runtime: AppRuntime",
-    "if !permissionOnboardingController!.presentIfNeeded()",
-    "self?.runtime?.start()",
+    "runtime.start()",
+    "self?.runtime?.enableSonos()",
 ):
     if required not in app_delegate:
-        fail(f"AppDelegate must gate centralized runtime startup behind onboarding: missing {required}")
+        fail(f"AppDelegate must keep base and Sonos activation separate: missing {required}")
+if "self?.runtime?.start()" in app_delegate:
+    fail("Local Network onboarding must not restart the base runtime")
 
 status_click = section(
     status_item,

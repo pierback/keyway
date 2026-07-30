@@ -32,6 +32,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             isRuntimeStarted: { [weak runtime] in
                 runtime?.isStarted == true
             },
+            isSonosEnabled: { [weak runtime] in
+                runtime?.isSonosEnabled == true
+            },
             presentPermissionOnboarding: { [weak self] in
                 _ = self?.permissionOnboardingController?.presentIfNeeded()
             }
@@ -41,7 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 runtime?.refreshMediaPermissions()
             },
             startLocalNetworkFeatures: { [weak self] in
-                self?.runtime?.start()
+                self?.runtime?.enableSonos()
             }
         )
     }
@@ -63,9 +66,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             return
         }
 
-        if !permissionOnboardingController!.presentIfNeeded() {
-            runtime.start()
+        runtime.start()
+        if UserDefaults.standard.bool(
+            forKey: PermissionOnboardingWindowController.localNetworkRequestedKey
+        ) {
+            runtime.enableSonos()
         }
+        _ = permissionOnboardingController!.presentIfNeeded()
     }
 
     func applicationWillTerminate(_ notification: Notification) {

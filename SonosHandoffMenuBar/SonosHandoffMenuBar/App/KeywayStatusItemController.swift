@@ -11,6 +11,7 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
     private let mediaAudioControlController: MediaAudioControlController
     private let mediaTransportActionController: MediaTransportActionController
     private let isRuntimeStarted: @MainActor () -> Bool
+    private let isSonosEnabled: @MainActor () -> Bool
     private let presentPermissionOnboarding: @MainActor () -> Void
     private lazy var statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private lazy var popover: NSPopover = makePopover()
@@ -28,6 +29,7 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
         mediaAudioControlController: MediaAudioControlController,
         mediaTransportActionController: MediaTransportActionController,
         isRuntimeStarted: @escaping @MainActor () -> Bool,
+        isSonosEnabled: @escaping @MainActor () -> Bool,
         presentPermissionOnboarding: @escaping @MainActor () -> Void
     ) {
         self.playback = playback
@@ -37,6 +39,7 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
         self.mediaAudioControlController = mediaAudioControlController
         self.mediaTransportActionController = mediaTransportActionController
         self.isRuntimeStarted = isRuntimeStarted
+        self.isSonosEnabled = isSonosEnabled
         self.presentPermissionOnboarding = presentPermissionOnboarding
         super.init()
     }
@@ -156,6 +159,11 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
         showCenteredChooser()
     }
 
+    private func openSonosSetupFromPopover() {
+        closePopover()
+        presentPermissionOnboarding()
+    }
+
     @objc private func openSettingsFromMenu(_ sender: Any?) {
         openSettings()
     }
@@ -206,7 +214,9 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
                 mediaSourceStore: mediaSourceStore,
                 mediaAudioControlController: mediaAudioControlController,
                 mediaTransportActions: mediaTransportActionController,
+                isSonosEnabled: isSonosEnabled,
                 openChooser: { [weak self] in self?.openChooserFromPopover() },
+                openSonosSetup: { [weak self] in self?.openSonosSetupFromPopover() },
                 openSettings: { [weak self] in self?.openSettings() },
                 restartMediaRemoteHelper: { [weak self] in self?.restartMediaRemoteHelper(nil) },
                 quit: { NSApp.terminate(nil) }
@@ -337,7 +347,9 @@ private struct KeywayControlCenterPopoverView: View {
     @ObservedObject private var mediaAudioControlController: MediaAudioControlController
 
     private let mediaTransportActions: MediaTransportActionController
+    private let isSonosEnabled: @MainActor () -> Bool
     private let openChooser: @MainActor () -> Void
+    private let openSonosSetup: @MainActor () -> Void
     private let openSettings: @MainActor () -> Void
     private let restartMediaRemoteHelper: @MainActor () -> Void
     private let quit: @MainActor () -> Void
@@ -355,7 +367,9 @@ private struct KeywayControlCenterPopoverView: View {
         mediaSourceStore: MediaSourceStore,
         mediaAudioControlController: MediaAudioControlController,
         mediaTransportActions: MediaTransportActionController,
+        isSonosEnabled: @escaping @MainActor () -> Bool,
         openChooser: @escaping @MainActor () -> Void,
+        openSonosSetup: @escaping @MainActor () -> Void,
         openSettings: @escaping @MainActor () -> Void,
         restartMediaRemoteHelper: @escaping @MainActor () -> Void,
         quit: @escaping @MainActor () -> Void
@@ -366,7 +380,9 @@ private struct KeywayControlCenterPopoverView: View {
         self.mediaSourceStore = mediaSourceStore
         self.mediaAudioControlController = mediaAudioControlController
         self.mediaTransportActions = mediaTransportActions
+        self.isSonosEnabled = isSonosEnabled
         self.openChooser = openChooser
+        self.openSonosSetup = openSonosSetup
         self.openSettings = openSettings
         self.restartMediaRemoteHelper = restartMediaRemoteHelper
         self.quit = quit
@@ -384,7 +400,11 @@ private struct KeywayControlCenterPopoverView: View {
                     mediaTransportActions: mediaTransportActions,
                     progressTick: progressTick
                 )
-                sonosTile
+                if isSonosEnabled() {
+                    sonosTile
+                } else {
+                    sonosSetupTile
+                }
             }
             .padding(12)
         }
@@ -413,7 +433,9 @@ private struct KeywayControlCenterPopoverView: View {
             progressTick &+= 1
         }
         .onAppear {
-            playback.appear()
+            if isSonosEnabled() {
+                playback.appear()
+            }
             mediaRemoteController.refreshSnapshot()
             startModifierMonitor()
         }
@@ -520,6 +542,36 @@ private struct KeywayControlCenterPopoverView: View {
         }
         .frame(height: 28)
         .padding(.horizontal, 2)
+    }
+
+    private var sonosSetupTile: some View {
+        card(cornerRadius: Metrics.cardCornerRadius, padding: 10) {
+            HStack(spacing: 9) {
+                Image(systemName: "hifispeaker.2")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.42))
+                    .frame(width: Metrics.primaryIconSize, height: Metrics.primaryIconSize)
+                    .background(.white.opacity(0.085), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Speakers")
+                        .font(Metrics.tileEyebrowFont)
+                        .foregroundStyle(.white.opacity(0.62))
+                    Text("Sonos is not enabled")
+                        .font(Metrics.tileTitleFont)
+                    Text("Allow Local Network access to discover speakers.")
+                        .font(Metrics.tileDetailFont)
+                        .foregroundStyle(.white.opacity(0.56))
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                Button("Set Up", action: openSonosSetup)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .accessibilityIdentifier("setup-sonos")
+            }
+        }
     }
 
     private var sonosTile: some View {

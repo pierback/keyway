@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import os
 import SonosHandoffCore
 import SwiftUI
@@ -72,6 +73,8 @@ final class AppRuntime {
     private var outputDirectoryTask: Task<Void, Never>?
     private var volumeMonitorSeedTask: Task<Void, Never>?
     private(set) var isStarted = false
+    private(set) var isMediaInputEnabled = false
+    private(set) var isSonosEnabled = false
 
     init(
         chromiumNativeMessagingHostInstaller: ChromiumNativeMessagingHostInstaller,
@@ -108,6 +111,16 @@ final class AppRuntime {
         chromiumBrowserExtensionController.start()
         mediaRemoteController.start()
         mediaRoutingProbeController.start()
+        refreshMediaPermissions()
+        logger.info("KeywayRuntime capability=base state=started")
+    }
+
+    func enableSonos() {
+        guard isStarted, !isSonosEnabled else {
+            return
+        }
+        isSonosEnabled = true
+
         SonosVolumeMonitor.shared.start(volumeService: volumeService)
         outputDirectoryTask = Task {
             await outputDirectory.startBackgroundRefresh()
@@ -116,8 +129,7 @@ final class AppRuntime {
             await self?.seedVolumeMonitor()
         }
         playbackBackgroundSync.start()
-        volumeHotkeys.start()
-        logger.info("KeywayRuntime state=started")
+        logger.info("KeywayRuntime capability=sonos state=enabled")
     }
 
     func stop() {
@@ -126,24 +138,52 @@ final class AppRuntime {
         }
         isStarted = false
 
-        volumeMonitorSeedTask?.cancel()
-        volumeMonitorSeedTask = nil
-        outputDirectoryTask?.cancel()
-        outputDirectoryTask = nil
-        volumeHotkeys.stop()
-        playbackBackgroundSync.stop()
-        SonosVolumeMonitor.shared.stop()
+        disableSonos()
+        if isMediaInputEnabled {
+            isMediaInputEnabled = false
+            volumeHotkeys.stop()
+        }
         mediaRoutingProbeController.stop()
         mediaRemoteController.stop()
         chromiumBrowserExtensionController.stop()
-        logger.info("KeywayRuntime state=stopped")
+        logger.info("KeywayRuntime capability=base state=stopped")
     }
 
     func refreshMediaPermissions() {
         guard isStarted else {
             return
         }
+
+        guard AccessibilityPermission.isGranted(), CGPreflightListenEventAccess() else {
+            if isMediaInputEnabled {
+                isMediaInputEnabled = false
+                volumeHotkeys.stop()
+                logger.info("KeywayRuntime capability=media_input state=disabled")
+            }
+            return
+        }
+
+        if !isMediaInputEnabled {
+            isMediaInputEnabled = true
+            volumeHotkeys.start()
+            logger.info("KeywayRuntime capability=media_input state=enabled")
+        }
         volumeHotkeys.refreshMediaFallback()
+    }
+
+    private func disableSonos() {
+        guard isSonosEnabled else {
+            return
+        }
+        isSonosEnabled = false
+
+        volumeMonitorSeedTask?.cancel()
+        volumeMonitorSeedTask = nil
+        outputDirectoryTask?.cancel()
+        outputDirectoryTask = nil
+        playbackBackgroundSync.stop()
+        SonosVolumeMonitor.shared.stop()
+        logger.info("KeywayRuntime capability=sonos state=disabled")
     }
 
     private func seedVolumeMonitor() async {
