@@ -78,14 +78,16 @@ if "source: .playbackTransaction" not in background:
 sync_start = controller.index("    private func syncActiveSpotifyOutput(generation: Int) async {")
 sync_end = controller.index("\n    private func applyOutputRefresh(", sync_start)
 sync_body = controller[sync_start:sync_end]
+ticket_index = sync_body.index("guard let ticket = operationGate.beginObservation() else")
 await_index = sync_body.index(
     "let status = try await activePlaybackObserver.activePlaybackDeviceStatus()"
 )
-generation_guard_index = sync_body.index("guard isCurrentAppearance(generation) else")
+generation_guard_index = sync_body.index("guard isCurrentAppearance(generation),")
+authority_guard_index = sync_body.index("operationGate.isCurrentObservation(ticket)")
 mutation_index = sync_body.index("activeSpotifyRoomName =")
-if not await_index < generation_guard_index < mutation_index:
+if not ticket_index < await_index < generation_guard_index <= authority_guard_index < mutation_index:
     raise SystemExit(
-        "verify_playback_output_selection_semantics: popover Spotify sync must reject late results before mutation"
+        "verify_playback_output_selection_semantics: popover Spotify sync must reject late appearance and operation results before mutation"
     )
 
 refresh_start = controller.index(
@@ -129,9 +131,17 @@ for required in (
         raise SystemExit(
             f"verify_playback_output_selection_semantics: background task ownership is incomplete: {required}"
         )
-if background.count("guard !Task.isCancelled else") < 12:
+if background.count("guard !Task.isCancelled else") < 3:
     raise SystemExit(
-        "verify_playback_output_selection_semantics: cancelled Sonos work must reject late async results"
+        "verify_playback_output_selection_semantics: notification transactions must reject work cancelled before they start"
+    )
+if background.count("guard isCurrentObservation(ticket) else") < 10:
+    raise SystemExit(
+        "verify_playback_output_selection_semantics: Sonos observations must reject stale authority after async boundaries"
+    )
+if background.count("guard operationGate.isCurrentTransaction(ticket) else") < 10:
+    raise SystemExit(
+        "verify_playback_output_selection_semantics: Sonos transactions must reject stale authority after async boundaries"
     )
 
 controller_bind = controller[
@@ -149,8 +159,8 @@ for required in (
     "for notificationTask in notificationTasks.values",
     "notificationTask.cancel()",
     "notificationTasks.removeAll()",
-    "groupMutationTask = Task { @MainActor [weak self] in",
-    "guard !Task.isCancelled else",
+    "operationGate.runTransaction(roomName:",
+    "guard operationGate.isCurrentTransaction(ticket, roomName:",
 ):
     if required not in controller:
         raise SystemExit(
@@ -161,10 +171,9 @@ stop_start = controller.index("    func stop() {")
 stop_end = controller.index("\n    private func runAppearanceTask(", stop_start)
 stop_body = controller[stop_start:stop_end]
 for required in (
-    "groupMutationTask?.cancel()",
     "sliderCommitter.cancel()",
     "operationGate.cancelVolume()",
-    "operationGate.cancelTransfer()",
+    "operationGate.cancelTransaction()",
     "monitorCancellable?.cancel()",
     "outputSelectionCancellable?.cancel()",
     "outputRefreshCancellable?.cancel()",
