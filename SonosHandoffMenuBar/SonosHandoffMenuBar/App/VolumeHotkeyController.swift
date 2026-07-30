@@ -15,16 +15,12 @@ final class VolumeHotkeyController {
     private let runtimeReporter: ShortcutRuntimeReporter
     private let runtimeStatus = ShortcutRuntimeStatus.shared
     private var lastCarbonAction: (direction: VolumeDirection, timestamp: CFAbsoluteTime)?
-    private var lastTransportKeyDown: (command: MediaRemoteTransportCommand, metadata: MediaTransportInputMetadata)?
-    private var activeTransportKeyDown: MediaRemoteTransportCommand?
-    private var activeTransportKeyDownResetTimer: DispatchSourceTimer?
     private var repeatTimer: DispatchSourceTimer?
     private var permissionRetryTimer: DispatchSourceTimer?
     private var commandCenterRouteShieldRearmTask: Task<Void, Error>?
     private var lastReportedPermissionState: (accessibilityGranted: Bool, listenEventGranted: Bool)?
     private var repeatingDirection: VolumeDirection?
     private var isStoppingCommandCenterRoute = false
-    private let transportKeyDownResetInterval: TimeInterval = 0.45
     private let eventParser = ShortcutEventParser()
     private lazy var commandCenterInterceptor = MediaCommandCenterInterceptor(
         mediaSourceStore: mediaSourceStore,
@@ -78,7 +74,6 @@ final class VolumeHotkeyController {
 
     deinit {
         MainActor.assumeIsolated {
-            activeTransportKeyDownResetTimer?.cancel()
             repeatTimer?.cancel()
             permissionRetryTimer?.cancel()
             commandCenterRouteShieldRearmTask?.cancel()
@@ -311,13 +306,17 @@ final class VolumeHotkeyController {
             guard acceptTransportInput(command: command, source: source, metadata: metadata, phase: "down") else {
                 return nil
             }
-            guard ensureCommandCenterRoute(reason: "media_key_down_route_shield") else {
-                failCommandCenterRoute()
+            if let reason = mediaTransportActions.ignoreReasonForMediaKeyDown(
+                command: command,
+                metadata: metadata
+            ) {
+                logger.info("SonosHandoffHotkeys \(reason.rawValue, privacy: .public) phase=down action=transport_\(command.rawValue, privacy: .public) source=\(source, privacy: .public) tap=\(self.activeTapName, privacy: .public) eventTimestamp=\(metadata.eventTimestamp, privacy: .public)")
+                traceTransportKey(reason.rawValue, command: command, source: source, metadata: metadata)
                 return nil
             }
-            guard acceptTransportKeyDown(command: command, metadata: metadata) else {
-                logger.info("SonosHandoffHotkeys transport_duplicate_ignored phase=down action=transport_\(command.rawValue, privacy: .public) source=\(source, privacy: .public) tap=\(self.activeTapName, privacy: .public) eventTimestamp=\(metadata.eventTimestamp, privacy: .public)")
-                traceTransportKey("transport_duplicate_ignored", command: command, source: source, metadata: metadata)
+            guard ensureCommandCenterRoute(reason: "media_key_down_route_shield") else {
+                mediaTransportActions.resetMediaKeyState()
+                failCommandCenterRoute()
                 return nil
             }
             logger.info("SonosHandoffHotkeys decision=swallow phase=down action=transport_\(command.rawValue, privacy: .public) source=\(source, privacy: .public) tap=\(self.activeTapName, privacy: .public)")
@@ -333,7 +332,7 @@ final class VolumeHotkeyController {
             }
             logger.info("SonosHandoffHotkeys decision=swallow phase=up action=transport_\(command.rawValue, privacy: .public) source=\(source, privacy: .public) tap=\(self.activeTapName, privacy: .public)")
             traceTransportKey("transport_key_up", command: command, source: source, metadata: metadata)
-            finishTransportKeyDown(command: command)
+            mediaTransportActions.noteMediaKeyUp(command: command)
             return nil
         case .volumeHoldStart(let direction, let source):
             logger.info("SonosHandoffHotkeys decision=swallow phase=down action=volume_\(direction.logName, privacy: .public) source=\(source, privacy: .public)_hold_start tap=\(self.activeTapName, privacy: .public)")
@@ -392,64 +391,8 @@ final class VolumeHotkeyController {
         return true
     }
 
-    private func acceptTransportKeyDown(
-        command: MediaRemoteTransportCommand,
-        metadata: MediaTransportInputMetadata
-    ) -> Bool {
-        if let lastTransportKeyDown,
-           lastTransportKeyDown.metadata.matchesSameGeneratedMediaKey(as: metadata),
-           commandsMatch(lastTransportKeyDown.command, command) {
-            return false
-        }
-
-        if let activeTransportKeyDown,
-           commandsMatch(activeTransportKeyDown, command) {
-            return false
-        }
-
-        activeTransportKeyDown = command
-        armTransportKeyDownReset(command: command)
-        lastTransportKeyDown = (command, metadata)
-        return true
-    }
-
-    private func finishTransportKeyDown(command: MediaRemoteTransportCommand) {
-        guard let activeTransportKeyDown,
-              commandsMatch(activeTransportKeyDown, command)
-        else {
-            return
-        }
-
-        self.activeTransportKeyDown = nil
-        activeTransportKeyDownResetTimer?.cancel()
-        activeTransportKeyDownResetTimer = nil
-    }
-
-    private func armTransportKeyDownReset(command: MediaRemoteTransportCommand) {
-        activeTransportKeyDownResetTimer?.cancel()
-
-        let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now() + transportKeyDownResetInterval)
-        timer.setEventHandler { [weak self] in
-            guard let self,
-                  let activeTransportKeyDown = self.activeTransportKeyDown,
-                  self.commandsMatch(activeTransportKeyDown, command)
-            else {
-                return
-            }
-
-            self.activeTransportKeyDown = nil
-            self.activeTransportKeyDownResetTimer = nil
-            self.logger.error("SonosHandoffHotkeys transport_key_down_reset reason=missing_key_up action=transport_\(command.rawValue, privacy: .public) tap=\(self.activeTapName, privacy: .public)")
-        }
-        activeTransportKeyDownResetTimer = timer
-        timer.resume()
-    }
-
     private func resetInputStateAfterTapInterruption(type: CGEventType) {
-        activeTransportKeyDown = nil
-        activeTransportKeyDownResetTimer?.cancel()
-        activeTransportKeyDownResetTimer = nil
+        mediaTransportActions.resetMediaKeyState()
         stopVolumeRepeat()
         logger.error("SonosHandoffHotkeys input_state_reset reason=event_tap_interrupted eventType=\(type.rawValue, privacy: .public) tap=\(self.activeTapName, privacy: .public)")
         guard eventTap.isRunning else {
@@ -461,21 +404,6 @@ final class VolumeHotkeyController {
             schedulePermissionRetry()
             return
         }
-    }
-
-    private func commandsMatch(
-        _ expected: MediaRemoteTransportCommand,
-        _ actual: MediaRemoteTransportCommand
-    ) -> Bool {
-        if expected == actual {
-            return true
-        }
-
-        return isPlayPauseFamily(expected) && isPlayPauseFamily(actual)
-    }
-
-    private func isPlayPauseFamily(_ command: MediaRemoteTransportCommand) -> Bool {
-        command == .playPause || command == .pause || command == .play
     }
 
     private func traceTransportKey(

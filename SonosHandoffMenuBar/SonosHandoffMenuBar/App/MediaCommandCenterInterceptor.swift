@@ -7,7 +7,6 @@ import SonosHandoffCore
 
 @MainActor
 final class MediaCommandCenterInterceptor {
-    nonisolated private static let duplicateCallbackInterval: TimeInterval = 0.15
     nonisolated(unsafe) private static let routeShieldRenderBlock: AVAudioSourceNodeRenderBlock = { _, _, _, audioBufferList -> OSStatus in
         for buffer in UnsafeMutableAudioBufferListPointer(audioBufferList) {
             guard let data = buffer.mData else {
@@ -34,9 +33,6 @@ final class MediaCommandCenterInterceptor {
     private var isRunning = false
     private(set) var isReady = false
     private var routeShieldRequestGeneration = 0
-    nonisolated private let lock = NSLock()
-    nonisolated(unsafe) private var lastAcceptedCommand: MediaRemoteTransportCommand?
-    nonisolated(unsafe) private var lastAcceptedAt: TimeInterval = 0
 
     init(
         mediaSourceStore: MediaSourceStore,
@@ -115,11 +111,6 @@ final class MediaCommandCenterInterceptor {
                 return .commandFailed
             }
             let metadata = MediaCommandCenterInputMetadata(eventTimestamp: event.timestamp)
-
-            guard self.acceptCommandCallback(command) else {
-                self.logger.info("MediaCommandCenter duplicate_ignored command=\(command.rawValue, privacy: .public)")
-                return .success
-            }
 
             Task { @MainActor in
                 self.logger.info("MediaCommandCenter event command=\(command.rawValue, privacy: .public) timestamp=\(metadata.eventTimestamp, privacy: .public)")
@@ -258,34 +249,4 @@ final class MediaCommandCenterInterceptor {
         readinessChanged(ready)
     }
 
-    private nonisolated func acceptCommandCallback(_ command: MediaRemoteTransportCommand) -> Bool {
-        let now = ProcessInfo.processInfo.systemUptime
-        lock.lock()
-        defer { lock.unlock() }
-
-        if let lastAcceptedCommand,
-           commandsMatch(lastAcceptedCommand, command),
-           now - lastAcceptedAt < Self.duplicateCallbackInterval {
-            return false
-        }
-
-        lastAcceptedCommand = command
-        lastAcceptedAt = now
-        return true
-    }
-
-    private nonisolated func commandsMatch(
-        _ expected: MediaRemoteTransportCommand,
-        _ actual: MediaRemoteTransportCommand
-    ) -> Bool {
-        if expected == actual {
-            return true
-        }
-
-        return isPlayPauseFamily(expected) && isPlayPauseFamily(actual)
-    }
-
-    private nonisolated func isPlayPauseFamily(_ command: MediaRemoteTransportCommand) -> Bool {
-        command == .playPause || command == .pause || command == .play
-    }
 }

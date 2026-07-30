@@ -81,7 +81,15 @@ struct AppEnvironment: @unchecked Sendable {
         )
         let mediaSourceStore = MediaSourceStore(
             mediaRemoteController: mediaRemoteController,
-            chromiumBrowserExtensionController: chromiumBrowserExtensionController
+            chromiumBrowserExtensionController: chromiumBrowserExtensionController,
+            targetsChanged: { targets, activeTargetID, rawTargetCount in
+                ShortcutRuntimeStatus.shared.updateMediaTargets(
+                    targets,
+                    activeTargetID: activeTargetID,
+                    rawTargetCount: rawTargetCount,
+                    rawActiveTargetID: activeTargetID
+                )
+            }
         )
         let mediaAudioControlController = MediaAudioControlController(
             volumeService: spotifyConnectService,

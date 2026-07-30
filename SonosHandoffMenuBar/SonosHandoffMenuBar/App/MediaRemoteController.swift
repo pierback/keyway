@@ -32,8 +32,6 @@ final class MediaRemoteController: ObservableObject {
     private let decoder = JSONDecoder()
     private lazy var snapshotHelper = MediaRemoteHelperProcess(role: .snapshot, logger: logger)
     private lazy var commandHelper = MediaRemoteHelperProcess(role: .command, logger: logger)
-    private var chromiumTargetsSubscription: AnyCancellable?
-    private var mediaRemoteTargets: [MediaRemoteTarget] = []
     private var refreshTimer: Timer?
     private var pingTimer: Timer?
     private var recoveryTask: Task<Void, Never>?
@@ -65,13 +63,6 @@ final class MediaRemoteController: ObservableObject {
 
     init(chromiumBrowserExtensionController: ChromiumBrowserExtensionController) {
         self.chromiumBrowserExtensionController = chromiumBrowserExtensionController
-        chromiumTargetsSubscription = chromiumBrowserExtensionController.$targets
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                Task { @MainActor [weak self] in
-                    self?.mergeVisibleTargets()
-                }
-            }
     }
 
     func start() {
@@ -330,28 +321,20 @@ final class MediaRemoteController: ObservableObject {
                 }
                 snapshotRefreshTimeout?.cancel()
                 snapshotRefreshTimeout = nil
-                mediaRemoteTargets = snapshot.targets.filter { !Self.isIgnoredTarget($0) }
-                let visibleTargets = chromiumBrowserExtensionController.targetsIncludingBrowserExtensionTargets(mediaRemoteTargets)
-                targets = visibleTargets
+                targets = snapshot.targets.filter { !Self.isIgnoredTarget($0) }
                 let rawActiveTargetID = snapshot.activeTargetID.flatMap { $0.isEmpty ? nil : $0 }
-                activeTargetID = visibleTargets.contains { $0.id == rawActiveTargetID }
+                activeTargetID = targets.contains { $0.id == rawActiveTargetID }
                     ? rawActiveTargetID
                     : nil
-                ShortcutRuntimeStatus.shared.updateMediaTargets(
-                    visibleTargets,
-                    activeTargetID: activeTargetID,
-                    rawTargetCount: snapshot.targets.count,
-                    rawActiveTargetID: rawActiveTargetID
-                )
                 isRefreshingSnapshot = false
                 health = MediaRemoteHelperHealth(
                     state: .running,
                     message: "MediaRemote snapshot loaded",
                     pid: health.pid,
                     lastSnapshotAt: Date(),
-                    targetCount: visibleTargets.count
+                    targetCount: targets.count
                 )
-                warmCommandClientCacheIfNeeded(targets: visibleTargets, reason: "snapshot_targets")
+                warmCommandClientCacheIfNeeded(targets: targets, reason: "snapshot_targets")
                 drainPendingRefreshIfNeeded()
             case "commandResult":
                 let result = try decoder.decode(MediaRemoteCommandResultEvent.self, from: line)
@@ -423,27 +406,6 @@ final class MediaRemoteController: ObservableObject {
         pendingRefreshRequested = false
         logger.info("MediaRemoteHelper refresh_followup reason=coalesced")
         refreshSnapshot()
-    }
-
-    private func mergeVisibleTargets() {
-        let visibleTargets = chromiumBrowserExtensionController.targetsIncludingBrowserExtensionTargets(mediaRemoteTargets)
-        targets = visibleTargets
-        if let activeTargetID, !visibleTargets.contains(where: { $0.id == activeTargetID }) {
-            self.activeTargetID = nil
-        }
-        ShortcutRuntimeStatus.shared.updateMediaTargets(
-            visibleTargets,
-            activeTargetID: activeTargetID,
-            rawTargetCount: mediaRemoteTargets.count,
-            rawActiveTargetID: activeTargetID
-        )
-        health = MediaRemoteHelperHealth(
-            state: health.state,
-            message: health.message,
-            pid: health.pid,
-            lastSnapshotAt: health.lastSnapshotAt,
-            targetCount: visibleTargets.count
-        )
     }
 
     private func armSnapshotRefreshTimeout(requestID: String) {
@@ -573,15 +535,13 @@ final class MediaRemoteController: ObservableObject {
     }
 
     private func clearMediaRemoteTargets() {
-        mediaRemoteTargets = []
-        mergeVisibleTargets()
+        targets = []
+        activeTargetID = nil
     }
 
     private func clearAllTargets() {
-        mediaRemoteTargets = []
         targets = []
         activeTargetID = nil
-        ShortcutRuntimeStatus.shared.updateMediaTargets([], activeTargetID: nil, rawTargetCount: 0)
     }
 
     private func clearCommandState() {

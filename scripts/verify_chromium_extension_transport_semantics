@@ -234,21 +234,6 @@ struct Semantics {
             connectionID: "connection-a",
             targets: [target]
         )
-        let chromiumLegacy = legacyTarget(
-            bundleIdentifier: "org.chromium.Chromium",
-            displayName: "Chromium"
-        )
-        let heliumLegacy = legacyTarget(
-            bundleIdentifier: "net.imput.helium",
-            displayName: "Helium",
-            title: "Unrelated Helium Video"
-        )
-        let merged = controller.targetsIncludingBrowserExtensionTargets([target, chromiumLegacy, heliumLegacy])
-        expectEqual(
-            merged.map(\.id),
-            [target.id, heliumLegacy.id],
-            "Merging browser extension targets must hide same-family legacy rows while preserving different-browser targets"
-        )
 
         let multiProfileController = ChromiumBrowserExtensionController()
         multiProfileController.markConnected(

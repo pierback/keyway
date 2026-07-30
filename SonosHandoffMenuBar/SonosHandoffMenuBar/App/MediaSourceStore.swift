@@ -33,37 +33,54 @@ final class MediaSourceStore: ObservableObject {
 
     @Published private(set) var rows: [SourceRow] = []
 
-    private var targetsSubscription: AnyCancellable?
+    private var mediaRemoteTargetsSubscription: AnyCancellable?
+    private var activeTargetSubscription: AnyCancellable?
+    private var chromiumTargetsSubscription: AnyCancellable?
     private var helperDegradedSubscription: AnyCancellable?
     private var chromiumSilentSubscription: AnyCancellable?
     private var chromiumSilentSuspectSinceByID: [String: Date] = [:]
     private var commandFailedSinceByID: [String: Date] = [:]
     private var helperDegradedSince: Date?
     private var helperRecoveryGraceTask: Task<Void, Never>?
-    private var latestControllerTargets: [MediaRemoteTarget] = []
+    private var latestMediaRemoteTargets: [MediaRemoteTarget] = []
+    private var latestChromiumTargets: [MediaRemoteTarget] = []
+    private var activeTargetID: String?
     private var retainedMediaRemoteTargets: [MediaRemoteTarget] = []
     private let now: () -> Date
+    private let targetsChanged: ([MediaRemoteTarget], String?, Int) -> Void
 
     init(
         mediaRemoteController: MediaRemoteController,
         chromiumBrowserExtensionController: ChromiumBrowserExtensionController,
-        now: @escaping () -> Date = Date.init
+        now: @escaping () -> Date = Date.init,
+        targetsChanged: @escaping ([MediaRemoteTarget], String?, Int) -> Void = { _, _, _ in }
     ) {
         self.now = now
-        replaceControllerTargets(mediaRemoteController.targets)
-        // Deliberately synchronous, not `.receive(on: .main)` + `Task { @MainActor }`:
-        // both hops defer via a fresh main-queue/executor turn even when already on
-        // the main thread, leaving a real window where `mediaRemoteController.targets`
-        // has changed but `rows` hasn't caught up -- observable by event-time readers
-        // (media-key/command-center callbacks interleave with queued blocks). All
-        // `targets` mutations on MediaRemoteController are @MainActor, so this
-        // publisher's emissions are always already on the main thread; `assumeIsolated`
-        // cannot trap here and keeps this update inside the controller's own willSet,
-        // matching the pre-extraction semantics exactly (event-time reads always fresh).
-        targetsSubscription = mediaRemoteController.$targets
+        self.targetsChanged = targetsChanged
+        latestMediaRemoteTargets = mediaRemoteController.targets
+        latestChromiumTargets = chromiumBrowserExtensionController.targets
+        activeTargetID = mediaRemoteController.activeTargetID
+        rememberMediaRemoteTargets(from: latestMediaRemoteTargets)
+        rebuildRows()
+
+        mediaRemoteTargetsSubscription = mediaRemoteController.$targets
             .sink { [weak self] targets in
                 MainActor.assumeIsolated {
-                    self?.replaceControllerTargets(targets)
+                    self?.replaceMediaRemoteTargets(targets)
+                }
+            }
+
+        activeTargetSubscription = mediaRemoteController.$activeTargetID
+            .sink { [weak self] activeTargetID in
+                MainActor.assumeIsolated {
+                    self?.replaceActiveTargetID(activeTargetID)
+                }
+            }
+
+        chromiumTargetsSubscription = chromiumBrowserExtensionController.$targets
+            .sink { [weak self] targets in
+                MainActor.assumeIsolated {
+                    self?.replaceChromiumTargets(targets)
                 }
             }
 
@@ -106,9 +123,19 @@ final class MediaSourceStore: ObservableObject {
         rebuildRows()
     }
 
-    private func replaceControllerTargets(_ targets: [MediaRemoteTarget]) {
-        latestControllerTargets = targets
+    private func replaceMediaRemoteTargets(_ targets: [MediaRemoteTarget]) {
+        latestMediaRemoteTargets = targets
         rememberMediaRemoteTargets(from: targets)
+        rebuildRows()
+    }
+
+    private func replaceActiveTargetID(_ activeTargetID: String?) {
+        self.activeTargetID = activeTargetID
+        publishTargets()
+    }
+
+    private func replaceChromiumTargets(_ targets: [MediaRemoteTarget]) {
+        latestChromiumTargets = targets
         rebuildRows()
     }
 
@@ -117,9 +144,19 @@ final class MediaSourceStore: ObservableObject {
             SourceRow(target: target, reachability: reachability(for: target))
         }
         guard updatedRows != rows else {
+            publishTargets()
             return
         }
         rows = updatedRows
+        publishTargets()
+    }
+
+    private func publishTargets() {
+        let targets = rows.map(\.target)
+        let visibleActiveTargetID = activeTargetID.flatMap { activeTargetID in
+            targets.contains { $0.id == activeTargetID } ? activeTargetID : nil
+        }
+        targetsChanged(targets, visibleActiveTargetID, latestMediaRemoteTargets.count)
     }
 
     private func replaceChromiumSilentSuspects(_ suspectTargetIDs: Set<String>) {
@@ -139,23 +176,41 @@ final class MediaSourceStore: ObservableObject {
         } else {
             helperRecoveryGraceTask?.cancel()
             helperRecoveryGraceTask = nil
-            rememberMediaRemoteTargets(from: latestControllerTargets)
+            rememberMediaRemoteTargets(from: latestMediaRemoteTargets)
         }
         rebuildRows()
     }
 
     private func rowTargets() -> [MediaRemoteTarget] {
+        let currentTargets = mergedTargets(
+            mediaRemoteTargets: latestMediaRemoteTargets,
+            chromiumTargets: latestChromiumTargets
+        )
         guard let helperDegradedSince,
               now().timeIntervalSince(helperDegradedSince) <= MediaRemoteController.helperRecoveryGraceInterval
         else {
-            return latestControllerTargets
+            return currentTargets
         }
 
-        let knownTargetIDs = Set(latestControllerTargets.map(\.id))
+        let knownTargetIDs = Set(currentTargets.map(\.id))
         let retainedTargets = retainedMediaRemoteTargets.filter { target in
             !knownTargetIDs.contains(target.id)
         }
-        return latestControllerTargets + retainedTargets
+        return currentTargets + retainedTargets
+    }
+
+    private func mergedTargets(
+        mediaRemoteTargets: [MediaRemoteTarget],
+        chromiumTargets: [MediaRemoteTarget]
+    ) -> [MediaRemoteTarget] {
+        let visibleMediaRemoteTargets = mediaRemoteTargets.filter { target in
+            !chromiumTargets.contains {
+                ChromiumBrowserExtensionTransport.shadowsLegacyTarget(extensionTarget: $0, legacyTarget: target)
+            }
+        }
+        return visibleMediaRemoteTargets + chromiumTargets.filter { chromiumTarget in
+            !visibleMediaRemoteTargets.contains { $0.id == chromiumTarget.id }
+        }
     }
 
     private func rememberMediaRemoteTargets(from targets: [MediaRemoteTarget]) {

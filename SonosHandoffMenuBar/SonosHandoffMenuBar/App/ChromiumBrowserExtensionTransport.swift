@@ -662,18 +662,6 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         return true
     }
 
-    func targetsIncludingBrowserExtensionTargets(_ mediaRemoteTargets: [MediaRemoteTarget]) -> [MediaRemoteTarget] {
-        let visibleMediaRemoteTargets = mediaRemoteTargets.filter { target in
-            !targets.contains {
-                ChromiumBrowserExtensionTransport.shadowsLegacyTarget(extensionTarget: $0, legacyTarget: target)
-            }
-        }
-
-        return visibleMediaRemoteTargets + targets.filter { extensionTarget in
-            !visibleMediaRemoteTargets.contains { $0.id == extensionTarget.id }
-        }
-    }
-
     private func connectionID(for target: MediaRemoteTarget) -> String? {
         guard let profileGuid = ChromiumBrowserExtensionTransport.profileGuid(targetID: target.id) else {
             return nil

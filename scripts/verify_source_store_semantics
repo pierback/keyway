@@ -37,6 +37,10 @@ enum ChromiumBrowserExtensionTransport {
     static func isTarget(_ target: MediaRemoteTarget) -> Bool {
         target.id.hasPrefix("chromium-tab:")
     }
+
+    static func shadowsLegacyTarget(extensionTarget: MediaRemoteTarget, legacyTarget: MediaRemoteTarget) -> Bool {
+        isTarget(extensionTarget) && legacyTarget.id == "legacy-chromium"
+    }
 }
 
 struct MediaRemoteCommandResultEvent: Equatable, Sendable {
@@ -47,10 +51,16 @@ struct MediaRemoteCommandResultEvent: Equatable, Sendable {
 
 @MainActor
 final class ChromiumBrowserExtensionController: ObservableObject {
+    @Published private(set) var targets: [MediaRemoteTarget]
     @Published private(set) var suspectTargetIDs: Set<String>
 
-    init(suspectTargetIDs: Set<String> = []) {
+    init(targets: [MediaRemoteTarget] = [], suspectTargetIDs: Set<String> = []) {
+        self.targets = targets
         self.suspectTargetIDs = suspectTargetIDs
+    }
+
+    func replaceTargets(_ targets: [MediaRemoteTarget]) {
+        self.targets = targets
     }
 
     func replaceSuspectTargetIDs(_ suspectTargetIDs: Set<String>) {
@@ -63,10 +73,12 @@ final class MediaRemoteController: ObservableObject {
     static let helperRecoveryGraceInterval: TimeInterval = 5
 
     @Published private(set) var targets: [MediaRemoteTarget]
+    @Published private(set) var activeTargetID: String?
     @Published private(set) var helperDegradedSince: Date?
 
     init(targets: [MediaRemoteTarget] = []) {
         self.targets = targets
+        self.activeTargetID = nil
         self.helperDegradedSince = nil
     }
 
@@ -102,16 +114,22 @@ struct SourceStoreSemantics {
             supportedCommands: [.play, .pause],
             muted: true
         )
-        let controller = MediaRemoteController(targets: [spotify, chromium])
-        let chromiumController = ChromiumBrowserExtensionController()
+        let legacyChromium = target(
+            id: "legacy-chromium",
+            title: "Shadowed Browser",
+            playbackRate: "1",
+            supportedCommands: [.playPause]
+        )
+        let controller = MediaRemoteController(targets: [spotify, legacyChromium])
+        let chromiumController = ChromiumBrowserExtensionController(targets: [chromium])
         let store = MediaSourceStore(
             mediaRemoteController: controller,
             chromiumBrowserExtensionController: chromiumController,
             now: { currentDate }
         )
 
-        expectEqual(store.rows.map(\.target), controller.targets, "store rows must mirror initial MediaRemoteController targets")
-        expectEqual(store.rows.map(\.id), controller.targets.map(\.id), "source row IDs must match target IDs")
+        expectEqual(store.rows.map(\.target), [spotify, chromium], "store must aggregate initial MediaRemote and Chromium targets")
+        expectEqual(store.rows.map(\.id), [spotify.id, chromium.id], "source row IDs must match the canonical aggregate")
         assertAllLive(store.rows, "initial rows")
 
         var unchangedRowPublicationCount = 0
@@ -126,7 +144,7 @@ struct SourceStoreSemantics {
             .sink { isPlaying in
                 routeShieldPlaybackStates.append(isPlaying)
             }
-        controller.replaceTargets([spotify, chromium])
+        controller.replaceTargets([spotify, legacyChromium])
         drainMainQueue()
         expectEqual(
             unchangedRowPublicationCount,
@@ -142,7 +160,7 @@ struct SourceStoreSemantics {
             supportedCommands: [.pause]
         )
         let stableIDsBefore = store.rows.map(\.id)
-        controller.replaceTargets([updatedSpotify, chromium])
+        controller.replaceTargets([updatedSpotify, legacyChromium])
         drainMainQueue()
 
         expectEqual(store.rows.map(\.id), stableIDsBefore, "same target IDs must update in the same row identity slots")
@@ -163,7 +181,7 @@ struct SourceStoreSemantics {
             playbackRate: "1",
             supportedCommands: [.play, .pause]
         )
-        controller.replaceTargets([updatedSpotify, updatedSilentChromium])
+        chromiumController.replaceTargets([updatedSilentChromium])
         drainMainQueue()
         expectEqual(routeShieldPlaybackStates, [false, true], "paused-to-playing rows must emit the new route-shield state")
         routeShieldPlaybackSubscription.cancel()
@@ -193,20 +211,21 @@ struct SourceStoreSemantics {
         store.recordCommandResult(MediaRemoteCommandResultEvent(targetID: chromium.id, ok: false, unsupported: true))
         assertLive(store.rows.first { $0.id == chromium.id }, "unsupported commands must not mark reachability suspect")
 
-        controller.replaceTargets([chromium, updatedSpotify])
+        controller.replaceTargets([updatedSpotify])
+        chromiumController.replaceTargets([chromium])
         drainMainQueue()
 
-        expectEqual(store.rows.map(\.target), controller.targets, "store rows must mirror later MediaRemoteController targets")
-        expectEqual(store.rows.map(\.id), ["chromium-tab:profile-a:22", "spotify:desktop"], "store row ordering must follow controller target ordering")
+        expectEqual(store.rows.map(\.target), [updatedSpotify, chromium], "store must remain the sole aggregate after later source updates")
+        expectEqual(store.rows.map(\.id), ["spotify:desktop", "chromium-tab:profile-a:22"], "store row ordering must keep MediaRemote sources before Chromium sources")
         assertAllLive(store.rows, "reordered rows")
 
         let degradedSince = currentDate
         controller.replaceHelperDegradedSince(degradedSince)
         drainMainQueue()
-        controller.replaceTargets([chromium])
+        controller.replaceTargets([])
         drainMainQueue()
 
-        expectEqual(store.rows.map(\.id), ["chromium-tab:profile-a:22", "spotify:desktop"], "store must retain MediaRemote rows during helper recovery")
+        expectEqual(store.rows.map(\.id), ["chromium-tab:profile-a:22", "spotify:desktop"], "store must retain MediaRemote rows alongside live Chromium rows during helper recovery")
         assertLive(store.rows.first { $0.id == chromium.id }, "helper recovery must not make Chromium rows suspect")
         assertSuspect(store.rows.first { $0.id == updatedSpotify.id }, reason: "helper_restarting", "helper recovery must mark retained MediaRemote rows suspect")
 
@@ -216,19 +235,18 @@ struct SourceStoreSemantics {
             playbackRate: "1",
             supportedCommands: [.playPause]
         )
-        let retainedIDsBeforeRecovery = store.rows.map(\.id)
-        controller.replaceTargets([chromium, recoveredSpotify])
+        controller.replaceTargets([recoveredSpotify])
         drainMainQueue()
         controller.replaceHelperDegradedSince(nil)
         drainMainQueue()
 
-        expectEqual(store.rows.map(\.id), retainedIDsBeforeRecovery, "fresh MediaRemote snapshot must update retained rows in place")
+        expectEqual(store.rows.map(\.id), [recoveredSpotify.id, chromium.id], "fresh MediaRemote snapshots must return to canonical MediaRemote-before-Chromium ordering")
         expectEqual(store.rows.first { $0.id == recoveredSpotify.id }?.target.title, "Recovered Song", "fresh MediaRemote snapshot must refresh retained target fields")
         assertAllLive(store.rows, "recovered rows")
 
         controller.replaceHelperDegradedSince(currentDate)
         drainMainQueue()
-        controller.replaceTargets([chromium])
+        controller.replaceTargets([])
         drainMainQueue()
         assertSuspect(store.rows.first { $0.id == recoveredSpotify.id }, reason: "helper_restarting", "second helper recovery must retain last-known MediaRemote rows")
         currentDate = currentDate.addingTimeInterval(MediaRemoteController.helperRecoveryGraceInterval + 0.1)

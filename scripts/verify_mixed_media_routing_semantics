@@ -73,8 +73,7 @@ assert_order(
         "case .commandCenter:",
         "commandCenterFilter.noteCommandCenterInput(command: command, metadata: commandCenterMetadata)",
         "case .userInterface:",
-        '"decision_current_targets"',
-        "routeFromCache(",
+        "routeAccepted(",
     ],
     "command-center input must enter the shared current-target gate after duplicate filtering"
 )
@@ -86,8 +85,9 @@ if "routePlayFamilyWithoutChooser(" in command_center_branch:
     fail("command-center play-family input must not bypass the chooser through direct routing")
 if "shouldRoutePlayFamilyWithoutChooser" in route_input or "routePlayFamilyWithoutChooser(" in route_input:
     fail("non-UI media input must not bypass the chooser through a targeted HID/PID route")
+route_accepted = function_body("routeAccepted")
 assert_order(
-    route_input,
+    route_accepted,
     [
         '"decision_current_targets"',
         "routeFromCache(",

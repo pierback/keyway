@@ -14,6 +14,7 @@ command_filter="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTran
 chooser_guard="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaChooserSessionGuard.swift"
 command_rules="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportCommandRules.swift"
 target_resolver="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportTargetResolver.swift"
+source_store="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaSourceStore.swift"
 desktop_adapter="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaDesktopTransportAdapter.swift"
 source_focus="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/SourceFocusActionController.swift"
 refresh_gate="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaRemoteSnapshotRefreshGate.swift"
@@ -400,11 +401,17 @@ grep -q 'refreshGate.reset()' "$remote_controller" \
 grep -q 'resolved MediaRemote player path from fresh command cache' "$helper" \
   || fail "command helper fresh target resolution must be visible in command results"
 
-grep -q 'warmCommandClientCacheIfNeeded(targets: visibleTargets, reason: "snapshot_targets")' "$remote_controller" \
-  || fail "snapshot updates must keep the command helper client cache warm for instant row dispatch"
+grep -q 'warmCommandClientCacheIfNeeded(targets: targets, reason: "snapshot_targets")' "$remote_controller" \
+  || fail "snapshot updates must keep the command helper client cache warm from MediaRemote-owned targets"
 
-grep -q 'ShortcutRuntimeStatus.shared.updateMediaTargets' "$remote_controller" \
-  || fail "MediaRemote snapshots must persist the filtered target cache for physical routing diagnosis"
+! grep -q 'targetsIncludingBrowserExtensionTargets\|mergeVisibleTargets' "$remote_controller" \
+  || fail "MediaRemoteController must expose only its adapter-owned targets"
+
+grep -q 'mergedTargets(' "$source_store" \
+  || fail "MediaSourceStore must own the canonical MediaRemote and Chromium target aggregate"
+
+grep -q 'targetsChanged:' "$app_environment" \
+  || fail "canonical source-store target updates must feed physical routing diagnostics"
 
 grep -q 'mediaTargets' "$runtime_status" \
   || fail "runtime status must expose the app-visible MediaRemote target cache"
@@ -888,7 +895,7 @@ if "extendProgrammatic" in text:
     raise SystemExit("verify_playback_routing_invariants: programmatic dispatch must not create a second post-completion echo window")
 if "private var programmaticCommandCenterEcho" in text or "private var programmaticMediaKeyEcho" in text:
     raise SystemExit("verify_playback_routing_invariants: programmatic dispatch must not keep a separate post-completion echo state")
-begin_chooser = text[text.index("    func beginChooserDispatch"):text.index("    func ignoreReasonForMediaKey")]
+begin_chooser = text[text.index("    func beginChooserDispatch"):text.index("    func ignoreReasonForMediaKey(")]
 if "beginProgrammaticDispatch(command: command)" not in begin_chooser:
     raise SystemExit("verify_playback_routing_invariants: chooser dispatch must suppress immediate command-center echoes before helper completion")
 if "mediaKeyReboundExpiresAt" not in begin_chooser:
@@ -915,7 +922,7 @@ if "inFlightProgrammaticCommandCenterEchoes = [" in begin_chooser:
     raise SystemExit("verify_playback_routing_invariants: chooser dispatch must keep Command Center echo handling on the normal bounded programmatic path")
 if begin_chooser.index("inFlightChooserTargetedMediaKeyEchoes = [") < begin_chooser.index("guard let metadata else"):
     raise SystemExit("verify_playback_routing_invariants: chooser dispatch without event-tap metadata must not arm broad targeted HID-shaped echo suppression")
-media_key_start = text.index("    func ignoreReasonForMediaKey")
+media_key_start = text.index("    func ignoreReasonForMediaKey(")
 media_key_end = text.index("    func ignoreReasonForCommandCenter", media_key_start)
 media_key_body = text[media_key_start:media_key_end]
 command_center_start = text.index("    func ignoreReasonForCommandCenter")
@@ -1007,11 +1014,8 @@ if body.index("close(notifyDismiss: false)") > body.index("choose?(target, comma
     raise SystemExit("verify_playback_routing_invariants: chooser row clicks must close the modal before MediaRemote dispatch")
 PY
 
-grep -q 'acceptCommandCallback(command)' "$command_center" \
-  || fail "command-center duplicate callbacks must be coalesced before scheduling async routing"
-
-grep -q 'duplicate_ignored command=' "$command_center" \
-  || fail "command-center duplicate callback suppression must be logged"
+! grep -q 'acceptCommandCallback\|duplicateCallbackInterval\|lastAcceptedCommand' "$command_center" \
+  || fail "command-center duplicate state must live in the central transport input policy"
 
 grep -q 'register(commandCenter.playCommand, command: .play)' "$command_center" \
   || fail "command-center play events must preserve the exact play command"
@@ -1019,19 +1023,17 @@ grep -q 'register(commandCenter.playCommand, command: .play)' "$command_center" 
 grep -q 'register(commandCenter.pauseCommand, command: .pause)' "$command_center" \
   || fail "command-center pause events must preserve the exact pause command"
 
-grep -q 'lastTransportKeyDown' "$hotkeys" \
-  || fail "event-tap transport duplicate suppression must keep only one bounded event marker"
+! grep -q 'lastTransportKeyDown\|activeTransportKeyDown\|activeTransportKeyDownResetTimer' "$hotkeys" \
+  || fail "event-tap duplicate state must not be split across VolumeHotkeyController"
 
-grep -q 'transport_duplicate_ignored' "$hotkeys" \
-  || fail "event-tap transport duplicate suppression must be logged"
-
-python3 - "$hotkeys" "$command_center" <<'PY'
+python3 - "$hotkeys" "$command_filter" "$transport" <<'PY'
 import pathlib
 import re
 import sys
 
 hotkeys = pathlib.Path(sys.argv[1]).read_text()
-command_center = pathlib.Path(sys.argv[2]).read_text()
+command_filter = pathlib.Path(sys.argv[2]).read_text()
+transport = pathlib.Path(sys.argv[3]).read_text()
 for stale_name in (
     "transportKeyPressAutoClearInterval",
     "transportKeyPressAutoClearNanoseconds",
@@ -1041,10 +1043,8 @@ for stale_name in (
 ):
     if stale_name in hotkeys:
         raise SystemExit(f"verify_playback_routing_invariants: transport key routing must not keep timed latch state: {stale_name}")
-if "acceptTransportKeyDown(command: command, metadata: metadata)" not in hotkeys:
-    raise SystemExit("verify_playback_routing_invariants: transport key duplicate detection must use CGEvent metadata")
 input_start = hotkeys.index("private func acceptTransportInput")
-input_end = hotkeys.index("    private func acceptTransportKeyDown", input_start)
+input_end = hotkeys.index("    private func resetInputStateAfterTapInterruption", input_start)
 input_body = hotkeys[input_start:input_end]
 if "metadata.isPhysicalHIDSystemSource || source == \"function_key\"" not in input_body:
     raise SystemExit("verify_playback_routing_invariants: event-tap transport routing must reject generated media-key callbacks while accepting raw F8 function-key media events")
@@ -1059,38 +1059,34 @@ handle_end = hotkeys.index("case .transportKeyUp", handle_start)
 handle_body = hotkeys[handle_start:handle_end]
 if handle_body.index('acceptTransportInput(command: command, source: source, metadata: metadata, phase: "down")') > handle_body.index("mediaTransportActions.routeFromMediaKey(command: command, metadata: metadata)"):
     raise SystemExit("verify_playback_routing_invariants: event-tap input boundary must run before routeFromMediaKey")
-accept_start = hotkeys.index("private func acceptTransportKeyDown")
-accept_end = hotkeys.index("    private func commandsMatch", accept_start)
-accept_body = hotkeys[accept_start:accept_end]
-if "matchesSameGeneratedMediaKey(as: metadata)" not in accept_body:
-    raise SystemExit("verify_playback_routing_invariants: transport key duplicate detection must key off the current CGEvent metadata")
-if "Task.sleep" in accept_body or "CFAbsoluteTimeGetCurrent" in accept_body:
-    raise SystemExit("verify_playback_routing_invariants: transport key duplicate detection must not add wall-clock delay")
-if "lastTransportKeyDown = (command, metadata)" not in accept_body:
-    raise SystemExit("verify_playback_routing_invariants: transport key duplicate detection must store exactly the accepted event marker")
-if "activeTransportKeyDown = command" not in accept_body:
-    raise SystemExit("verify_playback_routing_invariants: transport key duplicate detection must latch a held media key until key-up")
-if "armTransportKeyDownReset(command: command)" not in accept_body:
-    raise SystemExit("verify_playback_routing_invariants: transport key duplicate detection must arm a bounded reset in case key-up is missed")
-transport_reset = re.search(r'transportKeyDownResetInterval: TimeInterval = ([0-9.]+)', hotkeys)
+for required in (
+    "ignoreReasonForMediaKeyDown(",
+    "lastMediaKeyDown",
+    "activeMediaKeyDown",
+    "expected.matchesSameGeneratedMediaKey(as: actual)",
+    "func noteMediaKeyUp(",
+    "func resetMediaKeyState()",
+    "private let now: () -> Date",
+):
+    if required not in command_filter:
+        raise SystemExit(f"verify_playback_routing_invariants: central input policy is missing deterministic duplicate state: {required}")
+for required in (
+    "commandCenterFilter.ignoreReasonForMediaKeyDown",
+    "commandCenterFilter.noteMediaKeyUp",
+    "commandCenterFilter.resetMediaKeyState",
+):
+    if required not in transport:
+        raise SystemExit(f"verify_playback_routing_invariants: MediaTransportActionController must be the sole owner of the input policy: {required}")
+transport_reset = re.search(r'mediaKeyDownResetInterval: TimeInterval = ([0-9.]+)', transport)
 if not transport_reset:
     raise SystemExit("verify_playback_routing_invariants: transport key-down reset interval must be explicit")
 transport_reset_value = float(transport_reset.group(1))
 if transport_reset_value < 0.35 or transport_reset_value > 0.45:
     raise SystemExit("verify_playback_routing_invariants: missed key-up reset must cover a normal physical press without becoming a routing cooldown")
-if "private func finishTransportKeyDown" not in hotkeys:
-    raise SystemExit("verify_playback_routing_invariants: transport key duplicate detection must release the held media-key latch on key-up")
-if "activeTransportKeyDownResetTimer?.cancel()" not in hotkeys:
-    raise SystemExit("verify_playback_routing_invariants: transport key reset timer must be cancelled when the latch is released")
 if "resetInputStateAfterTapInterruption" not in hotkeys:
     raise SystemExit("verify_playback_routing_invariants: event-tap interruptions must clear held input state")
 if "onInterrupted:" not in hotkeys:
     raise SystemExit("verify_playback_routing_invariants: ShortcutEventTap must report timeout/user-input interruptions to the controller")
-duplicate_interval = re.search(r'duplicateCallbackInterval: TimeInterval = ([0-9.]+)', command_center)
-if not duplicate_interval:
-    raise SystemExit("verify_playback_routing_invariants: command-center duplicate callback interval must be explicit")
-if float(duplicate_interval.group(1)) > 0.15:
-    raise SystemExit("verify_playback_routing_invariants: command-center duplicate callback interval must stay below 150ms")
 PY
 
 grep -q 'AVAudioEngine' "$command_center" \
@@ -1357,8 +1353,11 @@ grep -q '"input_ignored"' "$transport" \
 grep -q 'traceTransportKey("transport_key_down"' "$hotkeys" \
   || fail "physical transport key-down capture must be visible in the persisted playback trace"
 
-grep -q 'traceTransportKey("transport_duplicate_ignored"' "$hotkeys" \
-  || fail "physical transport key duplicate suppression must be visible in the persisted playback trace"
+grep -q 'traceTransportKey(reason.rawValue' "$hotkeys" \
+  || fail "central input-policy suppression reasons must be visible in the persisted playback trace"
+
+grep -q 'media_key_duplicate_ignored' "$command_filter" \
+  || fail "physical transport key duplicate suppression must have a stable trace reason"
 
 grep -q 'programmatic_media_key_echo_ignored' "$command_filter" \
   || fail "generated media-key callback suppression must be visible in the persisted playback trace"
@@ -1413,16 +1412,16 @@ if "clearMediaRemoteTargets()" not in mark_failed:
 if "clearAllTargets()" in mark_failed:
     raise SystemExit("verify_playback_routing_invariants: MediaRemote helper failure must not clear Chromium extension-owned rows")
 if "targetCount: targets.count" not in mark_failed:
-    raise SystemExit("verify_playback_routing_invariants: MediaRemote helper failure health must report surviving extension rows")
+    raise SystemExit("verify_playback_routing_invariants: MediaRemote helper failure health must report its adapter-owned source count")
 recovery = text[text.index("    private func beginHelperRecovery"):text.index("    private func scheduleRelaunch")]
 if "helperDegradedSince = degradedSince" not in recovery or "clearMediaRemoteTargets()" not in recovery:
     raise SystemExit("verify_playback_routing_invariants: helper recovery must publish degraded state before clearing MediaRemote rows")
 clear_media = text[text.index("    private func clearMediaRemoteTargets"):text.index("    private func clearAllTargets")]
-if "mediaRemoteTargets = []" not in clear_media or "mergeVisibleTargets()" not in clear_media:
-    raise SystemExit("verify_playback_routing_invariants: clearing MediaRemote rows must re-merge Chromium extension rows")
+if "targets = []" not in clear_media or "activeTargetID = nil" not in clear_media:
+    raise SystemExit("verify_playback_routing_invariants: clearing MediaRemote state must clear only the adapter-owned snapshot")
 clear_all = text[text.index("    private func clearAllTargets"):]
-if "mediaRemoteTargets = []" not in clear_all or "targets = []" not in clear_all:
-    raise SystemExit("verify_playback_routing_invariants: full stop must still clear all visible rows")
+if "targets = []" not in clear_all or "activeTargetID = nil" not in clear_all:
+    raise SystemExit("verify_playback_routing_invariants: full stop must clear the complete MediaRemote adapter state")
 PY
 
 grep -q 'mediaTransportTrace json' "$repo_root/scripts/show_playback_trace" \

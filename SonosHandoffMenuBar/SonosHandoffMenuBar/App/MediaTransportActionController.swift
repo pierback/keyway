@@ -5,6 +5,7 @@ import SonosHandoffCore
 
 @MainActor
 final class MediaTransportActionController {
+    private static let mediaKeyDownResetInterval: TimeInterval = 0.45
     private static let commandCenterMediaKeyShadowInterval: TimeInterval = 0.25
     private static let commandCenterInputShadowInterval: TimeInterval = 0.15
     private static let programmaticCommandCenterEchoWindow: TimeInterval = 1.25
@@ -45,6 +46,7 @@ final class MediaTransportActionController {
         self.sourceFocusActionController = sourceFocusActionController
         self.targetSelectionMemory = targetSelectionMemory
         self.commandCenterFilter = MediaTransportCommandCenterFilter(
+            mediaKeyDownResetInterval: Self.mediaKeyDownResetInterval,
             mediaKeyShadowInterval: Self.commandCenterMediaKeyShadowInterval,
             commandCenterInputShadowInterval: Self.commandCenterInputShadowInterval,
             programmaticCommandCenterEchoWindow: Self.programmaticCommandCenterEchoWindow,
@@ -65,7 +67,33 @@ final class MediaTransportActionController {
     }
 
     func routeFromMediaKey(command: MediaRemoteTransportCommand, metadata: MediaTransportInputMetadata? = nil) {
-        route(command: command, source: .eventTap, metadata: metadata)
+        logInput(
+            command: command,
+            source: .eventTap,
+            metadata: metadata,
+            commandCenterMetadata: nil
+        )
+        routeAccepted(
+            command: command,
+            source: .eventTap,
+            metadata: metadata,
+            commandCenterMetadata: nil
+        )
+    }
+
+    func ignoreReasonForMediaKeyDown(
+        command: MediaRemoteTransportCommand,
+        metadata: MediaTransportInputMetadata
+    ) -> MediaTransportCommandCenterFilter.IgnoreReason? {
+        commandCenterFilter.ignoreReasonForMediaKeyDown(command: command, metadata: metadata)
+    }
+
+    func noteMediaKeyUp(command: MediaRemoteTransportCommand) {
+        commandCenterFilter.noteMediaKeyUp(command: command)
+    }
+
+    func resetMediaKeyState() {
+        commandCenterFilter.resetMediaKeyState()
     }
 
     func noteGeneratedMediaKeyIgnored(command: MediaRemoteTransportCommand, metadata: MediaTransportInputMetadata) {
@@ -91,9 +119,7 @@ final class MediaTransportActionController {
         metadata: MediaTransportInputMetadata? = nil,
         commandCenterMetadata: MediaCommandCenterInputMetadata? = nil
     ) {
-        logger.info("MediaTransport input command=\(command.rawValue, privacy: .public) source=\(source.rawValue, privacy: .public) overlayVisible=\(self.overlayController.isVisible, privacy: .public) chooserActive=\(self.chooserSession.isActive, privacy: .public) canRoute=\(self.mediaRemoteController.canRouteCommands, privacy: .public) targetCount=\(self.mediaSourceStore.rows.count, privacy: .public)")
-        trace(
-            "input",
+        logInput(
             command: command,
             source: source,
             metadata: metadata,
@@ -101,18 +127,7 @@ final class MediaTransportActionController {
         )
         switch source {
         case .eventTap:
-            if let reason = commandCenterFilter.ignoreReasonForMediaKey(command: command, metadata: metadata) {
-                logger.info("MediaTransport \(reason.rawValue, privacy: .public) command=\(command.rawValue, privacy: .public)")
-                trace(
-                    "input_ignored",
-                    command: command,
-                    source: source,
-                    reason: reason.rawValue,
-                    metadata: metadata
-                )
-                return
-            }
-            commandCenterFilter.noteMediaKey(command: command, metadata: metadata)
+            preconditionFailure("Media-key input must pass through the media-key state policy.")
         case .commandCenter:
             if let reason = commandCenterFilter.ignoreReasonForCommandCenter(command: command, metadata: commandCenterMetadata) {
                 logger.info("MediaTransport \(reason.rawValue, privacy: .public) command=\(command.rawValue, privacy: .public)")
@@ -130,6 +145,36 @@ final class MediaTransportActionController {
             break
         }
 
+        routeAccepted(
+            command: command,
+            source: source,
+            metadata: metadata,
+            commandCenterMetadata: commandCenterMetadata
+        )
+    }
+
+    private func logInput(
+        command: MediaRemoteTransportCommand,
+        source: MediaTransportRouteSource,
+        metadata: MediaTransportInputMetadata?,
+        commandCenterMetadata: MediaCommandCenterInputMetadata?
+    ) {
+        logger.info("MediaTransport input command=\(command.rawValue, privacy: .public) source=\(source.rawValue, privacy: .public) overlayVisible=\(self.overlayController.isVisible, privacy: .public) chooserActive=\(self.chooserSession.isActive, privacy: .public) canRoute=\(self.mediaRemoteController.canRouteCommands, privacy: .public) targetCount=\(self.mediaSourceStore.rows.count, privacy: .public)")
+        trace(
+            "input",
+            command: command,
+            source: source,
+            metadata: metadata,
+            commandCenterMetadata: commandCenterMetadata
+        )
+    }
+
+    private func routeAccepted(
+        command: MediaRemoteTransportCommand,
+        source: MediaTransportRouteSource,
+        metadata: MediaTransportInputMetadata?,
+        commandCenterMetadata: MediaCommandCenterInputMetadata?
+    ) {
         logger.info("MediaTransport decision=current_targets command=\(command.rawValue, privacy: .public) source=\(source.rawValue, privacy: .public)")
         trace(
             "decision_current_targets",

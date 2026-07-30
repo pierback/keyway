@@ -19,7 +19,7 @@ final class MediaTransportCommandCenterFilter {
             command: MediaRemoteTransportCommand,
             metadata: MediaTransportInputMetadata?,
             commandCenterMetadata: MediaCommandCenterInputMetadata?,
-            createdAt: Date = Date(),
+            createdAt: Date,
             expiresAt: Date,
             remainingMatches: Int?,
             expectedTargetUnixProcessID: Int64? = nil,
@@ -45,47 +45,57 @@ final class MediaTransportCommandCenterFilter {
         case commandCenterInputShadow = "command_center_input_shadow_ignored"
         case commandCenterShadow = "media_key_command_center_shadow_ignored"
         case unpairedCommandCenterInput = "command_center_unpaired_input_ignored"
-
+        case duplicateMediaKey = "media_key_duplicate_ignored"
     }
 
+    private let mediaKeyDownResetInterval: TimeInterval
     private let mediaKeyShadowInterval: TimeInterval
     private let commandCenterInputShadowInterval: TimeInterval
     private let programmaticCommandCenterEchoWindow: TimeInterval
     private let programmaticGeneratedMediaKeyCallbackWindow: TimeInterval
     private let physicalMediaKeyReboundWindow: TimeInterval
     private let chooserTargetedMediaKeyEchoWindow: TimeInterval
+    private let now: () -> Date
     private var inFlightProgrammaticCommandCenterEchoes: [TimedCommand] = []
     private var inFlightProgrammaticMediaKeyEchoes: [TimedCommand] = []
     private var inFlightChooserMediaKeyRebounds: [TimedCommand] = []
     private var inFlightChooserTargetedMediaKeyEchoes: [TimedCommand] = []
     private var mediaKeyShadow: TimedCommand?
     private var commandCenterInputShadow: TimedCommand?
+    private var activeMediaKeyDown: TimedCommand?
+    private var lastMediaKeyDown: TimedCommand?
 
     init(
+        mediaKeyDownResetInterval: TimeInterval = 0.45,
         mediaKeyShadowInterval: TimeInterval,
         commandCenterInputShadowInterval: TimeInterval,
         programmaticCommandCenterEchoWindow: TimeInterval,
         programmaticGeneratedMediaKeyCallbackWindow: TimeInterval,
         physicalMediaKeyReboundWindow: TimeInterval,
-        chooserTargetedMediaKeyEchoWindow: TimeInterval
+        chooserTargetedMediaKeyEchoWindow: TimeInterval,
+        now: @escaping () -> Date = Date.init
     ) {
+        self.mediaKeyDownResetInterval = mediaKeyDownResetInterval
         self.mediaKeyShadowInterval = mediaKeyShadowInterval
         self.commandCenterInputShadowInterval = commandCenterInputShadowInterval
         self.programmaticCommandCenterEchoWindow = programmaticCommandCenterEchoWindow
         self.programmaticGeneratedMediaKeyCallbackWindow = programmaticGeneratedMediaKeyCallbackWindow
         self.physicalMediaKeyReboundWindow = physicalMediaKeyReboundWindow
         self.chooserTargetedMediaKeyEchoWindow = chooserTargetedMediaKeyEchoWindow
+        self.now = now
     }
 
     func noteMediaKey(
         command: MediaRemoteTransportCommand,
         metadata: MediaTransportInputMetadata? = nil
     ) {
+        let now = now()
         mediaKeyShadow = TimedCommand(
             command: command,
             metadata: metadata,
             commandCenterMetadata: nil,
-            expiresAt: Date().addingTimeInterval(mediaKeyShadowInterval),
+            createdAt: now,
+            expiresAt: now.addingTimeInterval(mediaKeyShadowInterval),
             remainingMatches: 3
         )
     }
@@ -94,24 +104,75 @@ final class MediaTransportCommandCenterFilter {
         command: MediaRemoteTransportCommand,
         metadata: MediaCommandCenterInputMetadata? = nil
     ) {
+        let now = now()
         commandCenterInputShadow = TimedCommand(
             command: command,
             metadata: nil,
             commandCenterMetadata: metadata,
-            expiresAt: Date().addingTimeInterval(commandCenterInputShadowInterval),
+            createdAt: now,
+            expiresAt: now.addingTimeInterval(commandCenterInputShadowInterval),
             remainingMatches: 2
         )
     }
 
+    func ignoreReasonForMediaKeyDown(
+        command: MediaRemoteTransportCommand,
+        metadata: MediaTransportInputMetadata?
+    ) -> IgnoreReason? {
+        let now = now()
+        if let activeMediaKeyDown, now > activeMediaKeyDown.expiresAt {
+            self.activeMediaKeyDown = nil
+        }
+        if let lastMediaKeyDown,
+           timedCommandMatches(lastMediaKeyDown, command),
+           mediaKeyMetadataMatches(lastMediaKeyDown.metadata, metadata) {
+            return .duplicateMediaKey
+        }
+        if let activeMediaKeyDown,
+           timedCommandMatches(activeMediaKeyDown, command) {
+            return .duplicateMediaKey
+        }
+        if let reason = ignoreReasonForMediaKey(command: command, metadata: metadata) {
+            return reason
+        }
+
+        let keyDown = TimedCommand(
+            command: command,
+            metadata: metadata,
+            commandCenterMetadata: nil,
+            createdAt: now,
+            expiresAt: now.addingTimeInterval(mediaKeyDownResetInterval),
+            remainingMatches: nil
+        )
+        activeMediaKeyDown = keyDown
+        lastMediaKeyDown = keyDown
+        noteMediaKey(command: command, metadata: metadata)
+        return nil
+    }
+
+    func noteMediaKeyUp(command: MediaRemoteTransportCommand) {
+        guard let activeMediaKeyDown,
+              timedCommandMatches(activeMediaKeyDown, command)
+        else {
+            return
+        }
+        self.activeMediaKeyDown = nil
+    }
+
+    func resetMediaKeyState() {
+        activeMediaKeyDown = nil
+    }
+
     func beginProgrammaticDispatch(command: MediaRemoteTransportCommand) {
         pruneExpiredProgrammaticEchoes()
-        let now = Date()
+        let now = now()
         let commandCenterExpiresAt = now.addingTimeInterval(programmaticCommandCenterEchoWindow)
         let mediaKeyExpiresAt = now.addingTimeInterval(programmaticGeneratedMediaKeyCallbackWindow)
         inFlightProgrammaticCommandCenterEchoes.append(TimedCommand(
             command: command,
             metadata: nil,
             commandCenterMetadata: nil,
+            createdAt: now,
             expiresAt: commandCenterExpiresAt,
             remainingMatches: Self.programmaticCommandCenterEchoMatchBudget
         ))
@@ -119,6 +180,7 @@ final class MediaTransportCommandCenterFilter {
             command: command,
             metadata: nil,
             commandCenterMetadata: nil,
+            createdAt: now,
             expiresAt: mediaKeyExpiresAt,
             remainingMatches: Self.programmaticCommandCenterEchoMatchBudget
         ))
@@ -135,19 +197,20 @@ final class MediaTransportCommandCenterFilter {
         applicationUnixProcessID: Int64? = nil
     ) {
         beginProgrammaticDispatch(command: command)
-        let now = Date()
+        let now = now()
         let targetedMediaKeyEchoExpiresAt = now.addingTimeInterval(chooserTargetedMediaKeyEchoWindow)
         guard let metadata else {
             return
         }
 
         pruneExpiredChooserMediaKeyRebounds()
-        let mediaKeyReboundExpiresAt = Date().addingTimeInterval(physicalMediaKeyReboundWindow)
+        let mediaKeyReboundExpiresAt = now.addingTimeInterval(physicalMediaKeyReboundWindow)
         inFlightChooserMediaKeyRebounds = [
             TimedCommand(
                 command: command,
                 metadata: metadata,
                 commandCenterMetadata: nil,
+                createdAt: now,
                 expiresAt: mediaKeyReboundExpiresAt,
                 remainingMatches: Self.programmaticCommandCenterEchoMatchBudget
             )
@@ -157,6 +220,7 @@ final class MediaTransportCommandCenterFilter {
                 command: command,
                 metadata: metadata,
                 commandCenterMetadata: nil,
+                createdAt: now,
                 expiresAt: targetedMediaKeyEchoExpiresAt,
                 remainingMatches: 1,
                 expectedTargetUnixProcessID: targetUnixProcessID,
@@ -197,7 +261,7 @@ final class MediaTransportCommandCenterFilter {
             return reason
         }
 
-        let now = Date()
+        let now = now()
         guard let mediaKeyShadow else {
             return ignoreCommandCenterInputShadow(command: command, metadata: metadata, now: now)
                 ?? .unpairedCommandCenterInput
@@ -250,7 +314,7 @@ final class MediaTransportCommandCenterFilter {
             return nil
         }
 
-        let now = Date()
+        let now = now()
         guard let commandCenterInputShadow else {
             return nil
         }
@@ -282,14 +346,14 @@ final class MediaTransportCommandCenterFilter {
     }
 
     private func pruneExpiredProgrammaticEchoes() {
-        let now = Date()
+        let now = now()
         inFlightProgrammaticCommandCenterEchoes.removeAll { now > $0.expiresAt }
         inFlightProgrammaticMediaKeyEchoes.removeAll { now > $0.expiresAt }
         inFlightChooserTargetedMediaKeyEchoes.removeAll { now > $0.expiresAt }
     }
 
     private func pruneExpiredChooserMediaKeyRebounds() {
-        let now = Date()
+        let now = now()
         inFlightChooserMediaKeyRebounds.removeAll { now > $0.expiresAt }
         inFlightChooserTargetedMediaKeyEchoes.removeAll { now > $0.expiresAt }
     }
@@ -298,7 +362,7 @@ final class MediaTransportCommandCenterFilter {
         command: MediaRemoteTransportCommand,
         metadata: MediaTransportInputMetadata?
     ) -> Bool {
-        let now = Date()
+        let now = now()
         inFlightChooserMediaKeyRebounds.removeAll { now > $0.expiresAt }
         guard let index = inFlightChooserMediaKeyRebounds.firstIndex(where: { value in
             timedCommandMatches(value, command)
@@ -321,7 +385,7 @@ final class MediaTransportCommandCenterFilter {
             return false
         }
 
-        let now = Date()
+        let now = now()
         inFlightChooserTargetedMediaKeyEchoes.removeAll { now > $0.expiresAt }
         guard let index = inFlightChooserTargetedMediaKeyEchoes.firstIndex(where: { value in
             timedCommandMatches(value, command)
@@ -334,6 +398,7 @@ final class MediaTransportCommandCenterFilter {
             command: command,
             metadata: nil,
             commandCenterMetadata: nil,
+            createdAt: now,
             expiresAt: now.addingTimeInterval(commandCenterInputShadowInterval),
             remainingMatches: 2
         )
@@ -350,7 +415,7 @@ final class MediaTransportCommandCenterFilter {
             return false
         }
 
-        let now = Date()
+        let now = now()
         inFlightProgrammaticMediaKeyEchoes.removeAll { now > $0.expiresAt }
         guard let index = inFlightProgrammaticMediaKeyEchoes.firstIndex(where: { value in
             timedCommandMatches(value, command)
@@ -366,7 +431,7 @@ final class MediaTransportCommandCenterFilter {
         metadata: MediaCommandCenterInputMetadata?,
         from values: inout [TimedCommand]
     ) -> Bool {
-        let now = Date()
+        let now = now()
         values.removeAll { now > $0.expiresAt }
         guard let index = values.firstIndex(where: { value in
             timedCommandMatches(value, command)

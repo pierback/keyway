@@ -21,14 +21,16 @@ import Foundation
 @main
 struct FilterSemantics {
     @MainActor
-    static func main() async {
+    static func main() {
+        var currentDate = Date(timeIntervalSince1970: 1_000)
         let filter = MediaTransportCommandCenterFilter(
             mediaKeyShadowInterval: 0.15,
             commandCenterInputShadowInterval: 0.15,
             programmaticCommandCenterEchoWindow: 0.15,
             programmaticGeneratedMediaKeyCallbackWindow: 0.15,
             physicalMediaKeyReboundWindow: 0.15,
-            chooserTargetedMediaKeyEchoWindow: 0.45
+            chooserTargetedMediaKeyEchoWindow: 0.45,
+            now: { currentDate }
         )
 
         expectEqual(
@@ -71,7 +73,7 @@ struct FilterSemantics {
             .unpairedCommandCenterInput,
             "unrelated command-center input must still be rejected as unpaired"
         )
-        try? await Task.sleep(nanoseconds: 400_000_000)
+        currentDate.addTimeInterval(0.4)
         expectEqual(
             filter.ignoreReasonForCommandCenter(command: .playPause),
             .unpairedCommandCenterInput,
@@ -194,10 +196,11 @@ struct FilterSemantics {
             programmaticCommandCenterEchoWindow: 1.25,
             programmaticGeneratedMediaKeyCallbackWindow: 0.25,
             physicalMediaKeyReboundWindow: 0.15,
-            chooserTargetedMediaKeyEchoWindow: 0.75
+            chooserTargetedMediaKeyEchoWindow: 0.75,
+            now: { currentDate }
         )
         lateEchoFilter.beginProgrammaticDispatch(command: .pause)
-        try? await Task.sleep(nanoseconds: 800_000_000)
+        currentDate.addTimeInterval(0.8)
         expectEqual(
             lateEchoFilter.ignoreReasonForCommandCenter(command: .playPause),
             .programmaticEcho,
@@ -216,7 +219,7 @@ struct FilterSemantics {
             ),
             "programmatic Command Center echo suppression must not swallow a fresh physical media key"
         )
-        try? await Task.sleep(nanoseconds: 600_000_000)
+        currentDate.addTimeInterval(0.6)
         expectEqual(
             lateEchoFilter.ignoreReasonForCommandCenter(command: .playPause),
             .unpairedCommandCenterInput,
@@ -228,10 +231,11 @@ struct FilterSemantics {
             programmaticCommandCenterEchoWindow: 1.25,
             programmaticGeneratedMediaKeyCallbackWindow: 0.25,
             physicalMediaKeyReboundWindow: 0.15,
-            chooserTargetedMediaKeyEchoWindow: 1.25
+            chooserTargetedMediaKeyEchoWindow: 1.25,
+            now: { currentDate }
         )
         delayedOSEchoFilter.beginProgrammaticDispatch(command: .pause)
-        try? await Task.sleep(nanoseconds: 800_000_000)
+        currentDate.addTimeInterval(0.8)
         expectEqual(
             delayedOSEchoFilter.ignoreReasonForCommandCenter(command: .playPause),
             .programmaticEcho,
@@ -243,10 +247,11 @@ struct FilterSemantics {
             programmaticCommandCenterEchoWindow: 0.25,
             programmaticGeneratedMediaKeyCallbackWindow: 0.25,
             physicalMediaKeyReboundWindow: 0.15,
-            chooserTargetedMediaKeyEchoWindow: 1.25
+            chooserTargetedMediaKeyEchoWindow: 1.25,
+            now: { currentDate }
         )
         delayedChooserCommandCenterEchoFilter.beginChooserDispatch(command: .pause)
-        try? await Task.sleep(nanoseconds: 300_000_000)
+        currentDate.addTimeInterval(0.3)
         expectEqual(
             delayedChooserCommandCenterEchoFilter.ignoreReasonForCommandCenter(
                 command: .playPause,
@@ -256,7 +261,7 @@ struct FilterSemantics {
             "chooser dispatch must reject delayed standalone Command Center input after the cooldown boundary"
         )
         delayedOSEchoFilter.beginProgrammaticDispatch(command: .pause)
-        try? await Task.sleep(nanoseconds: 100_000_000)
+        currentDate.addTimeInterval(0.1)
         expectEqual(
             delayedOSEchoFilter.ignoreReasonForMediaKey(
                 command: .playPause,
@@ -291,10 +296,11 @@ struct FilterSemantics {
             programmaticCommandCenterEchoWindow: 0.25,
             programmaticGeneratedMediaKeyCallbackWindow: 0.25,
             physicalMediaKeyReboundWindow: 0.15,
-            chooserTargetedMediaKeyEchoWindow: 0.75
+            chooserTargetedMediaKeyEchoWindow: 0.75,
+            now: { currentDate }
         )
         delayedGeneratedChooserEchoFilter.beginChooserDispatch(command: .pause)
-        try? await Task.sleep(nanoseconds: 300_000_000)
+        currentDate.addTimeInterval(0.3)
         expectNil(
             delayedGeneratedChooserEchoFilter.ignoreReasonForMediaKey(
                 command: .playPause,
@@ -332,7 +338,8 @@ struct FilterSemantics {
             programmaticCommandCenterEchoWindow: 0.25,
             programmaticGeneratedMediaKeyCallbackWindow: 0.25,
             physicalMediaKeyReboundWindow: 0.15,
-            chooserTargetedMediaKeyEchoWindow: 0.45
+            chooserTargetedMediaKeyEchoWindow: 0.45,
+            now: { currentDate }
         )
         targetedEchoCommandCenterShadowFilter.beginChooserDispatch(
             command: .pause,
@@ -344,7 +351,7 @@ struct FilterSemantics {
             ),
             targetUnixProcessID: 456
         )
-        try? await Task.sleep(nanoseconds: 300_000_000)
+        currentDate.addTimeInterval(0.3)
         expectEqual(
             targetedEchoCommandCenterShadowFilter.ignoreReasonForMediaKey(
                 command: .playPause,
@@ -488,7 +495,8 @@ struct FilterSemantics {
             programmaticCommandCenterEchoWindow: 0.25,
             programmaticGeneratedMediaKeyCallbackWindow: 0.25,
             physicalMediaKeyReboundWindow: 0.15,
-            chooserTargetedMediaKeyEchoWindow: 1.25
+            chooserTargetedMediaKeyEchoWindow: 1.25,
+            now: { currentDate }
         )
         applicationTargetedEchoFilter.beginChooserDispatch(
             command: .pause,
@@ -500,7 +508,7 @@ struct FilterSemantics {
             applicationTargetedEchoFilter.ignoreReasonForMediaKey(command: .playPause, metadata: applicationTargetedHID),
             "chooser dispatch must not suppress an immediate fresh press just because macOS targets it at Keyway"
         )
-        try? await Task.sleep(nanoseconds: 400_000_000)
+        currentDate.addTimeInterval(0.4)
         expectEqual(
             applicationTargetedEchoFilter.ignoreReasonForMediaKey(command: .playPause, metadata: applicationTargetedSameEventHID),
             .chooserTargetedMediaKeyEcho,
@@ -517,6 +525,58 @@ struct FilterSemantics {
         expectNil(
             filter.ignoreReasonForMediaKey(command: .playPause, metadata: freshHID),
             "fresh HID input after the chooser rebound window must be routeable"
+        )
+
+        let mediaKeySequenceFilter = MediaTransportCommandCenterFilter(
+            mediaKeyDownResetInterval: 0.45,
+            mediaKeyShadowInterval: 0.15,
+            commandCenterInputShadowInterval: 0.15,
+            programmaticCommandCenterEchoWindow: 0.25,
+            programmaticGeneratedMediaKeyCallbackWindow: 0.25,
+            physicalMediaKeyReboundWindow: 0.15,
+            chooserTargetedMediaKeyEchoWindow: 0.45,
+            now: { currentDate }
+        )
+        let firstPress = MediaTransportInputMetadata(
+            sourceUnixProcessID: 0,
+            sourceStateID: 1,
+            sourceUserData: 0,
+            eventTimestamp: 10
+        )
+        expectNil(
+            mediaKeySequenceFilter.ignoreReasonForMediaKeyDown(command: .playPause, metadata: firstPress),
+            "the first physical key-down in a sequence must route"
+        )
+        expectEqual(
+            mediaKeySequenceFilter.ignoreReasonForMediaKeyDown(command: .pause, metadata: firstPress),
+            .duplicateMediaKey,
+            "the policy must suppress duplicate callbacks across the play/pause command family"
+        )
+        mediaKeySequenceFilter.noteMediaKeyUp(command: .playPause)
+        expectNil(
+            mediaKeySequenceFilter.ignoreReasonForMediaKeyDown(
+                command: .playPause,
+                metadata: MediaTransportInputMetadata(
+                    sourceUnixProcessID: 0,
+                    sourceStateID: 1,
+                    sourceUserData: 0,
+                    eventTimestamp: 2_000_010
+                )
+            ),
+            "a new event identity after key-up must route immediately"
+        )
+        currentDate.addTimeInterval(0.46)
+        expectNil(
+            mediaKeySequenceFilter.ignoreReasonForMediaKeyDown(
+                command: .playPause,
+                metadata: MediaTransportInputMetadata(
+                    sourceUnixProcessID: 0,
+                    sourceStateID: 1,
+                    sourceUserData: 0,
+                    eventTimestamp: 4_000_020
+                )
+            ),
+            "a missing key-up must not leave the policy stuck after its deterministic reset interval"
         )
 
         print("verify_playback_filter_semantics=ok")

@@ -29,6 +29,7 @@ for api_prefix, required_permission in chrome_api_to_permission.items():
         )
 
 transport = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionTransport.swift").read_text()
+source_store = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaSourceStore.swift").read_text()
 models = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaRemoteModels.swift").read_text()
 action_controller = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportActionController.swift").read_text()
 target_resolver = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportTargetResolver.swift").read_text()
@@ -85,9 +86,14 @@ expect(
     "Chromium transport must classify legacy browser rows so exact extension targets can hide weaker same-family rows",
 )
 expect(
-    transport,
+    source_store,
     "visibleMediaRemoteTargets",
-    "Chromium transport must filter visible MediaRemote browser rows when exact extension targets exist",
+    "canonical media source store must filter visible MediaRemote browser rows when exact extension targets exist",
+)
+expect(
+    source_store,
+    "ChromiumBrowserExtensionTransport.shadowsLegacyTarget(extensionTarget: $0, legacyTarget: target)",
+    "canonical media source store must apply extension-to-legacy duplicate detection",
 )
 expect(
     transport,
