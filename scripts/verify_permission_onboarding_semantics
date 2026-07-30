@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+app_delegate="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/AppDelegate.swift"
+sonos_app="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/SonosHandoffApp.swift"
+window_controller="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/PermissionOnboardingWindowController.swift"
+onboarding="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/Features/PermissionOnboardingFeature.swift"
+hotkeys="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/VolumeHotkeyController.swift"
+settings="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/Features/SettingsFeature.swift"
+status_hud="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/StatusHUD.swift"
+
+python3 - "$app_delegate" "$sonos_app" "$window_controller" "$onboarding" "$hotkeys" "$settings" "$status_hud" <<'PY'
+import pathlib
+import sys
+
+app_delegate = pathlib.Path(sys.argv[1]).read_text()
+sonos_app = pathlib.Path(sys.argv[2]).read_text()
+window_controller = pathlib.Path(sys.argv[3]).read_text()
+onboarding = pathlib.Path(sys.argv[4]).read_text()
+hotkeys = pathlib.Path(sys.argv[5]).read_text()
+settings = pathlib.Path(sys.argv[6]).read_text()
+status_hud = pathlib.Path(sys.argv[7]).read_text()
+
+
+def fail(message):
+    raise SystemExit(f"verify_permission_onboarding_semantics: {message}")
+
+
+def section(source, start_needle, end_needle):
+    start = source.find(start_needle)
+    if start < 0:
+        fail(f"missing {start_needle!r}")
+    end = source.find(end_needle, start)
+    if end < 0:
+        fail(f"missing {end_needle!r}")
+    return source[start:end]
+
+
+for required in (
+    "private var permissionOnboardingController: PermissionOnboardingWindowController?",
+    "permissionOnboardingController = PermissionOnboardingWindowController",
+    "permissionOnboardingController!.presentIfNeeded()",
+):
+    if required not in app_delegate:
+        fail(f"AppDelegate must own and present the first-run window: missing {required}")
+
+launch = section(
+    app_delegate,
+    "    func applicationDidFinishLaunching",
+    "\n    nonisolated func userNotificationCenter",
+)
+if launch.index("volumeHotkeys.start()") > launch.index("permissionOnboardingController!.presentIfNeeded()"):
+    fail("the permission wizard must open after runtime status is initialized")
+
+local_network_start = sonos_app.index("startLocalNetworkFeatures: {")
+for required in (
+    "SonosVolumeMonitor.shared.start(",
+    "await environment.outputDirectory.startBackgroundRefresh()",
+    "await Self.seedVolumeMonitor(environment: environment)",
+    "playbackBackgroundSync.start()",
+):
+    if sonos_app.index(required) < local_network_start:
+        fail(f"Local Network work must stay inside the gated startup closure: found early {required}")
+
+for required in (
+    "static let schemaVersion = 2",
+    'static let completionKey = "permissionOnboardingCompletedVersion"',
+    "UserDefaults.standard.integer(forKey: Self.completionKey) < Self.schemaVersion",
+    "UserDefaults.standard.set(Self.schemaVersion, forKey: Self.completionKey)",
+    "func presentIfNeeded() -> Bool",
+    "_ = NSApp.setActivationPolicy(.regular)",
+    "_ = NSApp.setActivationPolicy(.accessory)",
+):
+    if required not in window_controller:
+        fail(f"window lifecycle must persist a version and restore menu-bar activation: missing {required}")
+
+for required in (
+    "private var permissionCompanionPanel: NSPanel?",
+    "panel.level = .floating",
+    "panel.hidesOnDeactivate = false",
+    "panel.isFloatingPanel = true",
+    "let appURL = Bundle.main.bundleURL",
+    "NSDraggingItem(pasteboardWriter: appURL as NSURL)",
+    "if operation.contains(.copy)",
+):
+    if required not in window_controller:
+        fail(f"permission companion must float and drag the running app bundle: missing {required}")
+
+for required in (
+    "AccessibilityPermission.requestPrompt()",
+    "CGRequestListenEventAccess()",
+    "PlaybackSuggestionNotificationAuthorization.requestFromSettings(",
+    "startLocalNetworkFeatures()",
+    "localNetworkRequested = true",
+    "NSApplication.didBecomeActiveNotification",
+    '.disabled(!requiredSetupComplete)',
+    '"Set Up Later"',
+):
+    if required not in onboarding:
+        fail(f"wizard must guide and verify explicit user-driven requests: missing {required}")
+
+for required in (
+    "showPermissionCompanion(.accessibility)",
+    "showPermissionCompanion(.inputMonitoring)",
+    "showPermissionCompanion(.notifications)",
+):
+    if required not in onboarding:
+        fail(f"every wizard permission must expose the shared companion: missing {required}")
+
+for required in (
+    "startLocalNetworkFeatures: @escaping @MainActor () -> Void",
+    "if !permissionOnboardingController!.presentIfNeeded()",
+    "startLocalNetworkFeaturesIfNeeded()",
+):
+    if required not in app_delegate:
+        fail(f"AppDelegate must gate Local Network startup behind onboarding: missing {required}")
+
+refresh = section(
+    hotkeys,
+    "    func refreshMediaFallback() -> Bool {",
+    "\n    private func ensureCommandCenterRoute",
+)
+for forbidden in (
+    "AXIsProcessTrustedWithOptions",
+    "CGRequestListenEventAccess",
+    "promptIfMissing",
+):
+    if forbidden in hotkeys:
+        fail(f"media-key runtime must detect permissions without prompting: found {forbidden}")
+if "CGPreflightListenEventAccess()" not in refresh or "AXIsProcessTrusted()" not in refresh:
+    fail("media-key runtime must continue to preflight both required permissions")
+
+input_settings = section(
+    settings,
+    '                        Text("Input Monitoring")',
+    '                        Text("Speaker suggestions")',
+)
+if "CGRequestListenEventAccess()" not in input_settings:
+    fail("Settings Input Monitoring action must explicitly request access")
+if "NSApplication.didBecomeActiveNotification" not in settings:
+    fail("Settings must refresh permission badges after returning from System Settings")
+
+not_determined = section(
+    status_hud,
+    "            case .notDetermined:",
+    "            case .denied:",
+)
+if "requestAuthorization" in not_determined:
+    fail("status notifications must not compete with onboarding for authorization")
+if "authorization_not_requested" not in not_determined:
+    fail("status notifications must record why undetermined authorization was skipped")
+
+print("verify_permission_onboarding_semantics=ok")
+PY

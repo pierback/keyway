@@ -18,19 +18,21 @@ struct KeywayApp: App {
         self.environment = environment
         let playbackBackgroundSync = PlaybackBackgroundSync(environment: environment)
         self.playbackBackgroundSync = playbackBackgroundSync
-        appDelegate.configure(environment: environment)
-        SonosVolumeMonitor.shared.start(
-            volumeService: environment.volumeService
+        appDelegate.configure(
+            environment: environment,
+            startLocalNetworkFeatures: {
+                SonosVolumeMonitor.shared.start(
+                    volumeService: environment.volumeService
+                )
+                Task {
+                    await environment.outputDirectory.startBackgroundRefresh()
+                }
+                Task { @MainActor in
+                    await Self.seedVolumeMonitor(environment: environment)
+                }
+                playbackBackgroundSync.start()
+            }
         )
-        Task {
-            await environment.outputDirectory.startBackgroundRefresh()
-        }
-        Task { @MainActor in
-            await Self.seedVolumeMonitor(environment: environment)
-        }
-        Task { @MainActor in
-            playbackBackgroundSync.start()
-        }
         Task { @MainActor in
             environment.chromiumBrowserExtensionController.start()
         }

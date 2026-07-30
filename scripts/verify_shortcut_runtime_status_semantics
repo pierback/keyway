@@ -62,7 +62,7 @@ for label, source in (
 retry_start = hotkeys.index("    private func schedulePermissionRetry()")
 retry_end = hotkeys.index("\n    private func stopPermissionRetry()", retry_start)
 retry_body = hotkeys[retry_start:retry_end]
-refresh_start = hotkeys.index("    func refreshMediaFallback(promptIfMissing: Bool) -> Bool")
+refresh_start = hotkeys.index("    func refreshMediaFallback() -> Bool")
 refresh_guard = hotkeys.index("        guard accessibilityGranted, listenEventGranted else {", refresh_start)
 refresh_prefix = hotkeys[refresh_start:refresh_guard]
 if "lastReportedPermissionState = (accessibilityGranted, listenEventGranted)" not in refresh_prefix:

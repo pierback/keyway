@@ -65,6 +65,8 @@
 		F1028E35229AE492D9FFE5632C1F7BB1 /* PlaybackMemberVolumeController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7E46375E0E9AF15E5BB1DD266046C5B /* PlaybackMemberVolumeController.swift */; };
 		F8CDF74A91FF386E6726087984910941 /* PlaybackVolumeActionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79A60E1117C12B83F04938E76D318B09 /* PlaybackVolumeActionController.swift */; };
 		FF85A506685944A65ED19ECF51E36F03 /* MediaTargetOverlayKeyboardAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CC9D5BFC644CC8C944C2C2EC0F1DDF0 /* MediaTargetOverlayKeyboardAction.swift */; };
+		D9E19D5800C84BB0A49F1122E41AC08F /* PermissionOnboardingWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B77466829D348E78E79694383A7052E /* PermissionOnboardingWindowController.swift */; };
+		6510DD299C8644778C67FBD42D85133B /* PermissionOnboardingFeature.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51BCA5C5D4BB420AA1A2F28B05E05450 /* PermissionOnboardingFeature.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -127,6 +129,8 @@
 		F91972D28058CB2846DED807CFB056F5 /* PlaybackOperationGate.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlaybackOperationGate.swift; sourceTree = "<group>"; };
 		FC0D0AC2D0E5B29E450234DF99592A3D /* MediaTransportCommandRules.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaTransportCommandRules.swift; sourceTree = "<group>"; };
 		FD5A9D1EB3EA27373D779DB52CAB3F3A /* MediaTransportActionController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaTransportActionController.swift; sourceTree = "<group>"; };
+		4B77466829D348E78E79694383A7052E /* PermissionOnboardingWindowController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PermissionOnboardingWindowController.swift; sourceTree = "<group>"; };
+		51BCA5C5D4BB420AA1A2F28B05E05450 /* PermissionOnboardingFeature.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PermissionOnboardingFeature.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -183,6 +187,7 @@
 				52F3CD9908C8BC9062AED5AC44A60516 /* MenuBarMotion.swift */,
 				37333A85EC2B8EC904257CE1E074C13D /* MenuBarOutputSection.swift */,
 				B189724525A23DD17DE8BB4559C07251 /* MenuBarVolumeControl.swift */,
+				4B77466829D348E78E79694383A7052E /* PermissionOnboardingWindowController.swift */,
 				A9704E8B9E714280BB174E395F668F89 /* PlaybackBackgroundSync.swift */,
 				136F78933D6A63E9E7E068EC71FB1E58 /* PlaybackGroupEditController.swift */,
 				C469A5E09301D3FB474F24931F2A1DFD /* PlaybackGroupSuggestion.swift */,
@@ -226,6 +231,7 @@
 		A2B3322223D1E4D49CD019203942A262 /* Features */ = {
 			isa = PBXGroup;
 			children = (
+				51BCA5C5D4BB420AA1A2F28B05E05450 /* PermissionOnboardingFeature.swift */,
 				C2EAA0EFA9E8B8CE6747F4004AA02F7D /* SettingsFeature.swift */,
 			);
 			name = Features;
@@ -450,6 +456,7 @@
 				980F54CE62B3FF62DF709405053428A2 /* MenuBarMotion.swift in Sources */,
 				CB7084927DCC27D3ED9F3C0B5F7251FC /* MenuBarOutputSection.swift in Sources */,
 				99ABC89E5CBD883260FE3797752D61B5 /* MenuBarVolumeControl.swift in Sources */,
+				D9E19D5800C84BB0A49F1122E41AC08F /* PermissionOnboardingWindowController.swift in Sources */,
 				1717A1CDECB1BC8C97ECF2196B028D5E /* PlaybackBackgroundSync.swift in Sources */,
 				52CB132D9DC7BADAC213A74608B7DB98 /* PlaybackGroupEditController.swift in Sources */,
 				44B1A17986888F9D47C754A4C3B51FE6 /* PlaybackGroupSuggestion.swift in Sources */,
@@ -473,6 +480,7 @@
 				16B462EF672777EC6A25DB4292C9D42B /* SourceFocusActionController.swift in Sources */,
 				D273AC14001970DCB7D8C696F5BA2568 /* StatusHUD.swift in Sources */,
 				5A7B28E6194AEAD256A6CBEAF97FE471 /* VolumeHotkeyController.swift in Sources */,
+				6510DD299C8644778C67FBD42D85133B /* PermissionOnboardingFeature.swift in Sources */,
 				027AE1DB55B788D10940E3DBC37A2031 /* SettingsFeature.swift in Sources */,
 				4C6FC9676D8FF4FCAEC13D7C176E8D04 /* AppEnvironment.swift in Sources */,
 			);

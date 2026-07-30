@@ -84,23 +84,11 @@ final class VolumeHotkeyController {
             let registered = carbonRegistrar.registerPlainFunctionHotKeys(step: step)
             runtimeReporter.plainHotkeysRegistered(registered)
         }
-        refreshMediaFallback(promptIfMissing: true)
+        refreshMediaFallback()
     }
 
     @discardableResult
-    func refreshMediaFallback(promptIfMissing: Bool) -> Bool {
-        let initialAccessibilityGranted = AXIsProcessTrusted()
-        let initialListenEventGranted = CGPreflightListenEventAccess()
-        if promptIfMissing {
-            if !initialAccessibilityGranted {
-                let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
-                _ = AXIsProcessTrustedWithOptions(options)
-            }
-            if !initialListenEventGranted {
-                _ = CGRequestListenEventAccess()
-            }
-        }
-
+    func refreshMediaFallback() -> Bool {
         let accessibilityGranted = AXIsProcessTrusted()
         let listenEventGranted = CGPreflightListenEventAccess()
         lastReportedPermissionState = (accessibilityGranted, listenEventGranted)
@@ -226,7 +214,7 @@ final class VolumeHotkeyController {
                 return
             }
 
-            _ = self.refreshMediaFallback(promptIfMissing: false)
+            _ = self.refreshMediaFallback()
         }
         permissionRetryTimer = timer
         timer.resume()

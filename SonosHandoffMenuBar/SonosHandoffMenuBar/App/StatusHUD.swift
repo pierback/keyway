@@ -60,17 +60,7 @@ final class StatusHUD {
             case .authorized, .provisional, .ephemeral:
                 Self.addNotification(center: center, title: title, message: message, identifier: identifier, logger: logger)
             case .notDetermined:
-                center.requestAuthorization(options: [.alert, .sound]) { granted, error in
-                    if let error {
-                        logger.error("KeywayNotification authorization_failed title=\(title, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
-                        return
-                    }
-                    guard granted else {
-                        logger.info("KeywayNotification authorization_denied title=\(title, privacy: .public)")
-                        return
-                    }
-                    Self.addNotification(center: center, title: title, message: message, identifier: identifier, logger: logger)
-                }
+                logger.info("KeywayNotification skipped title=\(title, privacy: .public) reason=authorization_not_requested")
             case .denied:
                 logger.info("KeywayNotification skipped title=\(title, privacy: .public) reason=authorization_denied")
             @unknown default:

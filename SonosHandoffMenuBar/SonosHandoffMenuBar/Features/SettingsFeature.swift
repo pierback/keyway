@@ -94,6 +94,10 @@ struct SettingsFeature: View {
         .task {
             await reloadState()
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshShortcutState()
+            refreshNotificationState()
+        }
         .onAppear {
             _ = NSApp.setActivationPolicy(.regular)
         }
@@ -459,6 +463,7 @@ struct SettingsFeature: View {
                     }
                     Spacer()
                     Button("Open Settings") {
+                        _ = CGRequestListenEventAccess()
                         refreshShortcutState()
                         NSWorkspace.shared.open(inputMonitoringSettingsURL)
                     }

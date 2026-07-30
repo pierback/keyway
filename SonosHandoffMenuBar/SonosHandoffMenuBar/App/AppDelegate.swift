@@ -9,8 +9,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "Hotkeys")
     private var volumeHotkeys: VolumeHotkeyController?
     private var statusItemController: KeywayStatusItemController?
+    private var permissionOnboardingController: PermissionOnboardingWindowController?
+    private var startLocalNetworkFeatures: (@MainActor () -> Void)!
+    private var localNetworkFeaturesStarted = false
 
-    func configure(environment: AppEnvironment) {
+    func configure(
+        environment: AppEnvironment,
+        startLocalNetworkFeatures: @escaping @MainActor () -> Void
+    ) {
         let volumeHotkeys = VolumeHotkeyController(
             volumeService: environment.volumeService,
             outputSelection: environment.outputSelection,
@@ -22,7 +28,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             volumeHotkeys?.suspendCommandCenterRouteShield(reason: reason)
         }
         self.volumeHotkeys = volumeHotkeys
+        self.startLocalNetworkFeatures = startLocalNetworkFeatures
         statusItemController = KeywayStatusItemController(environment: environment)
+        permissionOnboardingController = PermissionOnboardingWindowController(
+            refreshMediaPermissions: { [weak volumeHotkeys] in
+                volumeHotkeys?.refreshMediaFallback()
+            },
+            startLocalNetworkFeatures: { [weak self] in
+                self?.startLocalNetworkFeaturesIfNeeded()
+            }
+        )
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -34,7 +49,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.volumeHotkeys?.refreshMediaFallback(promptIfMissing: true)
+                self?.volumeHotkeys?.refreshMediaFallback()
             }
         }
         guard let volumeHotkeys else {
@@ -43,6 +58,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
 
         volumeHotkeys.start()
+        if !permissionOnboardingController!.presentIfNeeded() {
+            startLocalNetworkFeaturesIfNeeded()
+        }
+    }
+
+    private func startLocalNetworkFeaturesIfNeeded() {
+        guard !localNetworkFeaturesStarted else {
+            return
+        }
+        localNetworkFeaturesStarted = true
+        startLocalNetworkFeatures()
     }
 
     nonisolated func userNotificationCenter(
