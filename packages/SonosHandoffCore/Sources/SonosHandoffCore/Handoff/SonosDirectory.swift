@@ -40,17 +40,11 @@ actor SonosDirectory {
         guard let topologySpeaker = speakers.first else {
             return .empty
         }
-        do {
-            let state = try await zoneGroupTopology
-                .groupState(host: topologySpeaker.host, visibleSpeakers: speakers)
-                .includingStandaloneSpeakers(speakers)
-            storeTargets(for: state.speakers)
-            return state
-        } catch {
-            let state = SonosGroupState.standalone(speakers: speakers)
-            storeTargets(for: state.speakers)
-            return state
-        }
+        let state = try await zoneGroupTopology
+            .groupState(host: topologySpeaker.host, visibleSpeakers: speakers)
+            .includingStandaloneSpeakers(speakers)
+        storeTargets(for: state.speakers)
+        return state
     }
 
     func resolveTarget(named roomName: String, needsSpotifyMetadata: Bool = true) async throws -> ConnectSonosTarget {

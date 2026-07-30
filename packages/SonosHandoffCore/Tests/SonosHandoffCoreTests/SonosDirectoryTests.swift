@@ -49,7 +49,7 @@ struct SonosDirectoryTests {
     }
 
     @Test
-    func fallsBackToStandaloneGroupsWhenTopologyLookupFails() async throws {
+    func surfacesTopologyLookupFailure() async {
         let runner = RecordingSonosDiscoveryCommandRunner(
             browseOutput: """
             10:00:00.000 Add 2 4 local. _sonos._tcp. RINCON_A@Kitchen
@@ -66,10 +66,9 @@ struct SonosDirectoryTests {
             topologyBody: "<s:Envelope><s:Body></s:Body></s:Envelope>"
         )
 
-        let state = try await directory.discoverGroupState()
-
-        #expect(state.groups.map(\.displayName) == ["Kitchen", "Port"])
-        #expect(state.groups.allSatisfy { $0.members.count == 1 })
+        await #expect(throws: Error.self) {
+            try await directory.discoverGroupState()
+        }
     }
 
     @Test
