@@ -1017,10 +1017,10 @@ PY
 ! grep -q 'acceptCommandCallback\|duplicateCallbackInterval\|lastAcceptedCommand' "$command_center" \
   || fail "command-center duplicate state must live in the central transport input policy"
 
-grep -q 'register(commandCenter.playCommand, command: .play)' "$command_center" \
+grep -q 'command: .play,' "$command_center" \
   || fail "command-center play events must preserve the exact play command"
 
-grep -q 'register(commandCenter.pauseCommand, command: .pause)' "$command_center" \
+grep -q 'command: .pause,' "$command_center" \
   || fail "command-center pause events must preserve the exact pause command"
 
 ! grep -q 'lastTransportKeyDown\|activeTransportKeyDown\|activeTransportKeyDownResetTimer' "$hotkeys" \
@@ -1122,6 +1122,47 @@ grep -Fq 'MPNowPlayingInfoPropertyPlaybackRate: playbackRate' "$command_center" 
 grep -Fq 'playbackState = isPlaying ? .playing : .paused' "$command_center" \
   || fail "Command Center route shield must keep macOS playback state aligned with visible media targets"
 
+python3 - "$command_center" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+publish_start = text.index("    private func publishNowPlayingRoute")
+publish_end = text.index("    private func registerCommandsIfNeeded", publish_start)
+publish = text[publish_start:publish_end]
+for required in (
+    "guard !routeShieldRequestInFlight else",
+    "self.activeHelperGeneration == helperGeneration",
+    "self.mediaRemoteController.helperGeneration == helperGeneration",
+    "self.routeShieldRequestSequence == requestSequence",
+    "guard succeeded else",
+    "self.registerCommandsIfNeeded(helperGeneration: helperGeneration)",
+    "self.setReady(true)",
+):
+    if required not in publish:
+        raise SystemExit(
+            f"verify_playback_routing_invariants: route-shield acknowledgement boundary is missing {required!r}"
+        )
+if publish.index("guard succeeded else") > publish.index(
+    "self.registerCommandsIfNeeded(helperGeneration: helperGeneration)"
+):
+    raise SystemExit(
+        "verify_playback_routing_invariants: command targets must register only after helper acknowledgement"
+    )
+register_start = text.index("    private func register(")
+register_end = text.index("    @discardableResult\n    func armRouteShield", register_start)
+register = text[register_start:register_end]
+for required in (
+    "self.isReady",
+    "self.activeHelperGeneration == helperGeneration",
+    "self.mediaRemoteController.helperGeneration == helperGeneration",
+):
+    if required not in register:
+        raise SystemExit(
+            f"verify_playback_routing_invariants: command dispatch must be generation-bound by {required!r}"
+        )
+PY
+
 grep -Fq 'mediaSourceStore: environment.mediaSourceStore' "$sonos_app" \
   || fail "AppRuntime must wire the shared media source store into hotkey routing"
 
@@ -1134,14 +1175,14 @@ grep -q 'commandCenterRoute=already_enabled' "$hotkeys" \
 grep -q 'ensureCommandCenterRoute(reason:' "$hotkeys" \
   || fail "command-center routing must start through the explicit route boundary"
 
-grep -q 'ensureCommandCenterRoute(reason: "event_tap_enabled_route_shield")' "$hotkeys" \
-  || fail "event-tap success must publish the Command Center route shield only after cghid ownership is established"
+grep -q 'ensureCommandCenterRoute(reason: "mediaremote_generation_ready")' "$hotkeys" \
+  || fail "MediaRemote generation readiness must be the only route-shield activation boundary"
 
 grep -q 'routeFromCommandCenter(command: command, metadata: metadata)' "$hotkeys" \
   || fail "command-center route-shield callbacks must enter the same transport filter"
 
-grep -q 'ensureCommandCenterRoute(reason: "event_tap_running_route_shield")' "$hotkeys" \
-  || fail "already-running event-tap ownership must keep the Command Center route shield active"
+! grep -q 'ensureCommandCenterRoute(reason: "event_tap_' "$hotkeys" \
+  || fail "event-tap state must not independently activate or supersede the MediaRemote route shield"
 
 grep -q 'event_tap_unhandled_system_defined' "$hotkeys" \
   || fail "event-tap parser misses must be traced instead of looking like silent key loss"
@@ -1178,9 +1219,10 @@ closure = text[
     text.index("    private let step =", text.index("private lazy var commandCenterInterceptor = MediaCommandCenterInterceptor"))
 ]
 route = "self.mediaTransportActions.routeFromCommandCenter(command: command, metadata: metadata)"
-guard = 'self.eventTap.isRunning'
 if route not in closure:
     raise SystemExit("verify_playback_routing_invariants: command-center callback must route through the transport filter when fallback routing is running")
+if "self.isTransportInputReady" not in text:
+    raise SystemExit("verify_playback_routing_invariants: command-center and event-tap transport input must share acknowledged readiness")
 if "generatedTransportShadow" in closure:
     raise SystemExit("verify_playback_routing_invariants: command-center generated-event shadows must be owned by the transport router")
 PY
@@ -1222,10 +1264,10 @@ if "stopCommandCenterRoute(reason: \"permission_denied\")" not in text:
     raise SystemExit("verify_playback_routing_invariants: denied event-tap permissions must not enable a non-intercepting command-center fallback")
 if "stopCommandCenterRoute(reason: \"event_tap_create_failed\")" not in text:
     raise SystemExit("verify_playback_routing_invariants: event-tap creation failure must not enable a non-intercepting command-center fallback")
-if "ensureCommandCenterRoute(reason: \"event_tap_enabled_route_shield\")" not in text:
-    raise SystemExit("verify_playback_routing_invariants: event-tap success must start the Command Center route shield only after cghid ownership is established")
-if "ensureCommandCenterRoute(reason: \"event_tap_running_route_shield\")" not in text:
-    raise SystemExit("verify_playback_routing_invariants: existing event-tap ownership must keep the Command Center route shield active")
+if "ensureCommandCenterRoute(reason: \"mediaremote_generation_ready\")" not in text:
+    raise SystemExit("verify_playback_routing_invariants: MediaRemote generation readiness must start the Command Center route shield")
+if "ensureCommandCenterRoute(reason: \"event_tap_" in text:
+    raise SystemExit("verify_playback_routing_invariants: event-tap state must not supersede route-shield acknowledgement")
 if "commandCenterInterceptor.stop()" not in text:
     raise SystemExit("verify_playback_routing_invariants: command-center route must still unregister on controller shutdown")
 if "private var commandCenterRouteShieldRearmTask: Task<Void, Error>?" not in text:

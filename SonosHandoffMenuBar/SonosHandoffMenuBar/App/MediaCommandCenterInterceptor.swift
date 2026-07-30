@@ -32,7 +32,11 @@ final class MediaCommandCenterInterceptor {
     private var routeShieldSourceNode: AVAudioSourceNode?
     private var isRunning = false
     private(set) var isReady = false
-    private var routeShieldRequestGeneration = 0
+    private var activeHelperGeneration: UInt?
+    private var routeShieldRequestSequence = 0
+    private var routeShieldRequestInFlight = false
+    private var desiredRouteShieldPlayback = false
+    private var acknowledgedRouteShieldPlayback: Bool?
 
     init(
         mediaSourceStore: MediaSourceStore,
@@ -51,25 +55,18 @@ final class MediaCommandCenterInterceptor {
     }
 
     @discardableResult
-    func start() -> Bool {
+    func start(helperGeneration: UInt) -> Bool {
         guard !isRunning else {
-            return true
+            return activeHelperGeneration == helperGeneration
         }
-
-        let commandCenter = MPRemoteCommandCenter.shared()
-        commandTargets = [
-            register(commandCenter.togglePlayPauseCommand, command: .playPause),
-            register(commandCenter.playCommand, command: .play),
-            register(commandCenter.pauseCommand, command: .pause),
-            register(commandCenter.nextTrackCommand, command: .next),
-            register(commandCenter.previousTrackCommand, command: .previous),
-        ]
-        guard commandTargets.count == 5 else {
-            commandTargets.removeAll()
-            logger.error("MediaCommandCenter state=failed reason=missing_command_target")
+        guard mediaRemoteController.isHelperPairReady,
+              mediaRemoteController.helperGeneration == helperGeneration
+        else {
             return false
         }
+
         isRunning = true
+        activeHelperGeneration = helperGeneration
         guard armRouteShield(reason: "start") else {
             stop()
             logger.error("MediaCommandCenter state=failed reason=route_shield_unavailable")
@@ -94,7 +91,10 @@ final class MediaCommandCenterInterceptor {
         }
         commandTargets.removeAll()
         isRunning = false
-        routeShieldRequestGeneration += 1
+        activeHelperGeneration = nil
+        routeShieldRequestSequence += 1
+        routeShieldRequestInFlight = false
+        acknowledgedRouteShieldPlayback = nil
         _ = mediaRemoteController.setRouteShield(info: nil) { _ in }
         disarmRouteShield(reason: "stop")
         setReady(false)
@@ -103,16 +103,21 @@ final class MediaCommandCenterInterceptor {
 
     private func register(
         _ remoteCommand: MPRemoteCommand,
-        command: MediaRemoteTransportCommand
+        command: MediaRemoteTransportCommand,
+        helperGeneration: UInt
     ) -> Any {
         remoteCommand.isEnabled = true
         return remoteCommand.addTarget { [weak self] event in
-            guard let self else {
-                return .commandFailed
-            }
             let metadata = MediaCommandCenterInputMetadata(eventTimestamp: event.timestamp)
 
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
+                guard let self,
+                      self.isReady,
+                      self.activeHelperGeneration == helperGeneration,
+                      self.mediaRemoteController.helperGeneration == helperGeneration
+                else {
+                    return
+                }
                 self.logger.info("MediaCommandCenter event command=\(command.rawValue, privacy: .public) timestamp=\(metadata.eventTimestamp, privacy: .public)")
                 self.route(command, metadata)
                 if self.routeShieldSourceNode != nil {
@@ -130,7 +135,11 @@ final class MediaCommandCenterInterceptor {
 
     @discardableResult
     func armRouteShield(reason: String) -> Bool {
-        guard isRunning else {
+        guard isRunning,
+              let activeHelperGeneration,
+              mediaRemoteController.isHelperPairReady,
+              mediaRemoteController.helperGeneration == activeHelperGeneration
+        else {
             return false
         }
         guard startRouteShieldAudio() else {
@@ -205,6 +214,7 @@ final class MediaCommandCenterInterceptor {
     }
 
     private func publishNowPlayingRoute(isPlaying: Bool) -> Bool {
+        desiredRouteShieldPlayback = isPlaying
         let playbackRate = isPlaying ? 1.0 : 0.0
         let info: [String: Any] = [
             MPMediaItemPropertyTitle: "Keyway",
@@ -215,22 +225,86 @@ final class MediaCommandCenterInterceptor {
         ]
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
         MPNowPlayingInfoCenter.default().playbackState = isPlaying ? .playing : .paused
-        routeShieldRequestGeneration += 1
-        let generation = routeShieldRequestGeneration
-        return mediaRemoteController.setRouteShield(info: info) { [weak self] succeeded in
+        guard acknowledgedRouteShieldPlayback != isPlaying else {
+            return true
+        }
+        guard !routeShieldRequestInFlight else {
+            return true
+        }
+        guard let helperGeneration = activeHelperGeneration,
+              mediaRemoteController.helperGeneration == helperGeneration
+        else {
+            return false
+        }
+
+        routeShieldRequestSequence += 1
+        let requestSequence = routeShieldRequestSequence
+        routeShieldRequestInFlight = true
+        let sent = mediaRemoteController.setRouteShield(info: info) { [weak self] succeeded in
             guard let self,
                   self.isRunning,
-                  self.routeShieldRequestGeneration == generation
+                  self.activeHelperGeneration == helperGeneration,
+                  self.mediaRemoteController.helperGeneration == helperGeneration,
+                  self.routeShieldRequestSequence == requestSequence
             else {
                 return
             }
+            self.routeShieldRequestInFlight = false
             guard succeeded else {
                 self.routeShieldFailed(reason: "helper_rejected")
                 return
             }
+            self.acknowledgedRouteShieldPlayback = isPlaying
+            guard self.registerCommandsIfNeeded(helperGeneration: helperGeneration) else {
+                self.routeShieldFailed(reason: "missing_command_target")
+                return
+            }
             self.setReady(true)
             self.logger.info("MediaCommandCenter state=enabled commands=play_pause_next_previous")
+            if self.desiredRouteShieldPlayback != isPlaying,
+               !self.publishNowPlayingRoute(isPlaying: self.desiredRouteShieldPlayback) {
+                self.routeShieldFailed(reason: "playback_update")
+            }
         }
+        if !sent {
+            routeShieldRequestInFlight = false
+        }
+        return sent
+    }
+
+    private func registerCommandsIfNeeded(helperGeneration: UInt) -> Bool {
+        guard commandTargets.isEmpty else {
+            return commandTargets.count == 5
+        }
+        let commandCenter = MPRemoteCommandCenter.shared()
+        commandTargets = [
+            register(
+                commandCenter.togglePlayPauseCommand,
+                command: .playPause,
+                helperGeneration: helperGeneration
+            ),
+            register(
+                commandCenter.playCommand,
+                command: .play,
+                helperGeneration: helperGeneration
+            ),
+            register(
+                commandCenter.pauseCommand,
+                command: .pause,
+                helperGeneration: helperGeneration
+            ),
+            register(
+                commandCenter.nextTrackCommand,
+                command: .next,
+                helperGeneration: helperGeneration
+            ),
+            register(
+                commandCenter.previousTrackCommand,
+                command: .previous,
+                helperGeneration: helperGeneration
+            ),
+        ]
+        return commandTargets.count == 5
     }
 
     private func routeShieldFailed(reason: String) {

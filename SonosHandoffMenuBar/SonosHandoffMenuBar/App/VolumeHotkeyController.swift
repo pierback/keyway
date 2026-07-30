@@ -23,6 +23,8 @@ final class VolumeHotkeyController {
     private var lastReportedPermissionState: (accessibilityGranted: Bool, listenEventGranted: Bool)?
     private var activeMediaRemoteGeneration: UInt?
     private var repeatingDirection: VolumeDirection?
+    private var isSonosVolumeInputEnabled = false
+    private var isTransportInputReady = false
     private var isStoppingCommandCenterRoute = false
     private var isStarted = false
     private let eventParser = ShortcutEventParser()
@@ -100,11 +102,24 @@ final class VolumeHotkeyController {
         .sink { [weak self] health, generation in
             self?.mediaRemoteHealthChanged(health, generation: generation)
         }
-        if carbonRegistrar.installHandlerIfNeeded() {
-            let registered = carbonRegistrar.registerPlainFunctionHotKeys(step: step)
-            runtimeReporter.plainHotkeysRegistered(registered)
-        }
         refreshMediaFallback()
+    }
+
+    func setSonosVolumeInputEnabled(_ enabled: Bool) {
+        guard isSonosVolumeInputEnabled != enabled else {
+            return
+        }
+        isSonosVolumeInputEnabled = enabled
+        guard enabled else {
+            stopVolumeRepeat()
+            carbonRegistrar.stop()
+            runtimeReporter.plainHotkeysRegistered(false)
+            refreshEventTap()
+            return
+        }
+        if isStarted {
+            refreshMediaFallback()
+        }
     }
 
     func stop() {
@@ -115,6 +130,7 @@ final class VolumeHotkeyController {
         mediaRemoteHealthCancellable?.cancel()
         mediaRemoteHealthCancellable = nil
         activeMediaRemoteGeneration = nil
+        isTransportInputReady = false
         stopVolumeRepeat()
         stopPermissionRetry()
         commandCenterRouteShieldRearmTask?.cancel()
@@ -136,6 +152,9 @@ final class VolumeHotkeyController {
             if eventTap.isRunning {
                 eventTap.stop()
             }
+            carbonRegistrar.stop()
+            runtimeReporter.plainHotkeysRegistered(false)
+            isTransportInputReady = false
             stopCommandCenterRoute(reason: "permission_denied")
             logger.error("SonosHandoffHotkeys mediaFallback=disabled reason=permission_denied accessibility=\(accessibilityGranted, privacy: .public) listenEvent=\(listenEventGranted, privacy: .public) appPath=\(Bundle.main.bundlePath, privacy: .public)")
             runtimeReporter.mediaFallbackPermissionDenied(
@@ -153,39 +172,43 @@ final class VolumeHotkeyController {
             schedulePermissionRetry()
             return false
         }
+
+        if isSonosVolumeInputEnabled {
+            let registered = carbonRegistrar.installHandlerIfNeeded()
+                && carbonRegistrar.registerPlainFunctionHotKeys(step: step)
+            runtimeReporter.plainHotkeysRegistered(registered)
+        } else {
+            carbonRegistrar.stop()
+            runtimeReporter.plainHotkeysRegistered(false)
+        }
+
         guard mediaRemoteController.isHelperPairReady else {
-            if eventTap.isRunning {
-                eventTap.stop()
-            }
+            activeMediaRemoteGeneration = nil
+            isTransportInputReady = false
             stopCommandCenterRoute(reason: "mediaremote_unavailable")
+            guard refreshEventTap() else {
+                reportEventTapFailure(
+                    accessibilityGranted: accessibilityGranted,
+                    listenEventGranted: listenEventGranted
+                )
+                return false
+            }
             runtimeReporter.commandCenterRouteFailed(
                 accessibilityGranted: accessibilityGranted,
-                listenEventGranted: listenEventGranted
+                listenEventGranted: listenEventGranted,
+                eventTapRunning: eventTap.isRunning,
+                activeEventTap: eventTap.activeTapKind?.rawValue,
+                fnHotkeysRegistered: carbonRegistrar.plainHotkeysRegistered
             )
             schedulePermissionRetry()
             return false
         }
 
-        if eventTap.isRunning {
-            stopPermissionRetry()
-            guard ensureCommandCenterRoute(reason: "event_tap_running_route_shield") else {
-                failCommandCenterRoute()
-                return false
-            }
-            logger.info("SonosHandoffHotkeys mediaFallback=enabled state=already_running")
-            if commandCenterInterceptor.isReady {
-                runtimeReporter.mediaFallbackAlreadyRunning(
-                    fnHotkeysRegistered: false,
-                    activeEventTap: eventTap.activeTapKind?.rawValue
-                )
-            } else {
-                runtimeReporter.mediaFallbackWaitingForCommandCenter(
-                    accessibilityGranted: accessibilityGranted,
-                    listenEventGranted: listenEventGranted,
-                    activeEventTap: eventTap.activeTapKind?.rawValue
-                )
-            }
-            return commandCenterInterceptor.isReady
+        let helperGeneration = mediaRemoteController.helperGeneration
+        if activeMediaRemoteGeneration != helperGeneration {
+            activeMediaRemoteGeneration = helperGeneration
+            isTransportInputReady = false
+            stopCommandCenterRoute(reason: "mediaremote_generation_changed")
         }
 
         runtimeReporter.mediaFallbackStarting(
@@ -193,46 +216,50 @@ final class VolumeHotkeyController {
             listenEventGranted: listenEventGranted
         )
         logger.info("SonosHandoffHotkeys mediaFallback=starting accessibility=\(accessibilityGranted, privacy: .public) listenEvent=\(listenEventGranted, privacy: .public)")
-        guard eventTap.start() else {
-            stopCommandCenterRoute(reason: "event_tap_create_failed")
-            logger.error("SonosHandoffHotkeys mediaFallback=disabled fnCarbon=disabled reason=event_tap_create_failed accessibility=\(accessibilityGranted, privacy: .public) listenEvent=\(listenEventGranted, privacy: .public) appPath=\(Bundle.main.bundlePath, privacy: .public)")
-            runtimeReporter.eventTapCreateFailed(
-                accessibilityGranted: accessibilityGranted,
-                listenEventGranted: listenEventGranted
-            )
-            StatusHUD.shared.finish(
-                title: "Media Keys Blocked",
-                message: "Enable Keyway in Accessibility and Input Monitoring.",
-                dismissAfter: 4
-            )
-            schedulePermissionRetry()
-            return false
-        }
-
-        stopPermissionRetry()
-        guard ensureCommandCenterRoute(reason: "event_tap_enabled_route_shield") else {
+        guard ensureCommandCenterRoute(reason: "mediaremote_generation_ready") else {
             failCommandCenterRoute()
             return false
         }
-        logger.info("SonosHandoffHotkeys mediaFallback=starting tap=\(self.activeTapName, privacy: .public) events=systemDefined fnCarbon=skipped accessibility=\(accessibilityGranted, privacy: .public) listenEvent=\(listenEventGranted, privacy: .public)")
+        guard refreshEventTap() else {
+            reportEventTapFailure(
+                accessibilityGranted: accessibilityGranted,
+                listenEventGranted: listenEventGranted
+            )
+            return false
+        }
+
+        if isTransportInputReady {
+            stopPermissionRetry()
+            logger.info("SonosHandoffHotkeys mediaFallback=enabled state=acknowledged")
+            runtimeReporter.mediaFallbackAlreadyRunning(
+                fnHotkeysRegistered: carbonRegistrar.plainHotkeysRegistered,
+                activeEventTap: eventTap.activeTapKind?.rawValue
+            )
+            return true
+        }
+
         runtimeReporter.mediaFallbackWaitingForCommandCenter(
             accessibilityGranted: accessibilityGranted,
             listenEventGranted: listenEventGranted,
-            activeEventTap: eventTap.activeTapKind?.rawValue
+            eventTapRunning: eventTap.isRunning,
+            activeEventTap: eventTap.activeTapKind?.rawValue,
+            fnHotkeysRegistered: carbonRegistrar.plainHotkeysRegistered
         )
-        return commandCenterInterceptor.isReady
+        schedulePermissionRetry()
+        return false
     }
 
     private func ensureCommandCenterRoute(reason: String) -> Bool {
         if commandCenterInterceptor.running {
-            guard commandCenterInterceptor.armRouteShield(reason: reason) else {
-                commandCenterInterceptor.stop()
-                return false
-            }
             logger.info("SonosHandoffHotkeys commandCenterRoute=already_enabled reason=\(reason, privacy: .public)")
             return true
         }
-        let starting = commandCenterInterceptor.start()
+        guard let activeMediaRemoteGeneration else {
+            return false
+        }
+        let starting = commandCenterInterceptor.start(
+            helperGeneration: activeMediaRemoteGeneration
+        )
         if starting {
             logger.info("SonosHandoffHotkeys commandCenterRoute=enabled reason=\(reason, privacy: .public)")
         } else {
@@ -252,20 +279,35 @@ final class VolumeHotkeyController {
         isStoppingCommandCenterRoute = true
         commandCenterInterceptor.stop()
         isStoppingCommandCenterRoute = false
+        isTransportInputReady = false
         runtimeReporter.commandCenterRouteRunning(false)
         logger.info("SonosHandoffHotkeys commandCenterRoute=disabled reason=\(reason, privacy: .public)")
     }
 
     private func commandCenterReadinessChanged(_ ready: Bool) {
         guard !isStoppingCommandCenterRoute else {
+            isTransportInputReady = false
             runtimeReporter.commandCenterRouteRunning(false)
+            refreshEventTap()
             return
         }
         guard ready else {
+            isTransportInputReady = false
             failCommandCenterRoute()
             return
         }
-        guard eventTap.isRunning else {
+        guard let activeMediaRemoteGeneration,
+              mediaRemoteController.helperGeneration == activeMediaRemoteGeneration
+        else {
+            failCommandCenterRoute()
+            return
+        }
+        isTransportInputReady = true
+        guard refreshEventTap() else {
+            reportEventTapFailure(
+                accessibilityGranted: AXIsProcessTrusted(),
+                listenEventGranted: CGPreflightListenEventAccess()
+            )
             stopCommandCenterRoute(reason: "event_tap_not_running")
             return
         }
@@ -274,7 +316,7 @@ final class VolumeHotkeyController {
         runtimeReporter.mediaFallbackEnabled(
             accessibilityGranted: AXIsProcessTrusted(),
             listenEventGranted: CGPreflightListenEventAccess(),
-            fnHotkeysRegistered: false,
+            fnHotkeysRegistered: carbonRegistrar.plainHotkeysRegistered,
             activeEventTap: eventTap.activeTapKind?.rawValue
         )
     }
@@ -291,11 +333,10 @@ final class VolumeHotkeyController {
                 return
             }
             activeMediaRemoteGeneration = nil
+            isTransportInputReady = false
             mediaTransportActions.resetMediaKeyState()
-            if eventTap.isRunning {
-                eventTap.stop()
-            }
             stopCommandCenterRoute(reason: "mediaremote_generation_ended")
+            refreshEventTap()
             schedulePermissionRetry()
             return
         }
@@ -307,13 +348,48 @@ final class VolumeHotkeyController {
     }
 
     private func failCommandCenterRoute() {
-        if eventTap.isRunning {
-            eventTap.stop()
-        }
+        isTransportInputReady = false
         stopCommandCenterRoute(reason: "route_unavailable")
+        refreshEventTap()
         runtimeReporter.commandCenterRouteFailed(
             accessibilityGranted: AXIsProcessTrusted(),
-            listenEventGranted: CGPreflightListenEventAccess()
+            listenEventGranted: CGPreflightListenEventAccess(),
+            eventTapRunning: eventTap.isRunning,
+            activeEventTap: eventTap.activeTapKind?.rawValue,
+            fnHotkeysRegistered: carbonRegistrar.plainHotkeysRegistered
+        )
+        schedulePermissionRetry()
+    }
+
+    @discardableResult
+    private func refreshEventTap() -> Bool {
+        let shouldRun = isStarted
+            && AXIsProcessTrusted()
+            && CGPreflightListenEventAccess()
+            && (isSonosVolumeInputEnabled || isTransportInputReady)
+        guard shouldRun else {
+            if eventTap.isRunning {
+                eventTap.stop()
+            }
+            return true
+        }
+        return eventTap.isRunning || eventTap.start()
+    }
+
+    private func reportEventTapFailure(
+        accessibilityGranted: Bool,
+        listenEventGranted: Bool
+    ) {
+        stopCommandCenterRoute(reason: "event_tap_create_failed")
+        logger.error("SonosHandoffHotkeys input=disabled reason=event_tap_create_failed accessibility=\(accessibilityGranted, privacy: .public) listenEvent=\(listenEventGranted, privacy: .public) appPath=\(Bundle.main.bundlePath, privacy: .public)")
+        runtimeReporter.eventTapCreateFailed(
+            accessibilityGranted: accessibilityGranted,
+            listenEventGranted: listenEventGranted
+        )
+        StatusHUD.shared.finish(
+            title: "Media Keys Blocked",
+            message: "Enable Keyway in Accessibility and Input Monitoring.",
+            dismissAfter: 4
         )
         schedulePermissionRetry()
     }
@@ -326,7 +402,7 @@ final class VolumeHotkeyController {
         let timer = DispatchSource.makeTimerSource(queue: .main)
         timer.schedule(deadline: .now() + 2, repeating: 2)
         timer.setEventHandler { [weak self] in
-            guard let self, !self.eventTap.isRunning else {
+            guard let self, !self.isTransportInputReady else {
                 self?.stopPermissionRetry()
                 return
             }
@@ -378,6 +454,11 @@ final class VolumeHotkeyController {
             logger.debug("SonosHandoffHotkeys decision=pass eventType=\(type.rawValue, privacy: .public)")
             return Unmanaged.passUnretained(event)
         case .transportKeyDown(let command, let source, let metadata):
+            guard isTransportInputReady,
+                  let helperGeneration = activeMediaRemoteGeneration
+            else {
+                return Unmanaged.passUnretained(event)
+            }
             guard acceptTransportInput(command: command, source: source, metadata: metadata, phase: "down") else {
                 return nil
             }
@@ -389,19 +470,25 @@ final class VolumeHotkeyController {
                 traceTransportKey(reason.rawValue, command: command, source: source, metadata: metadata)
                 return nil
             }
-            guard ensureCommandCenterRoute(reason: "media_key_down_route_shield") else {
-                mediaTransportActions.resetMediaKeyState()
-                failCommandCenterRoute()
-                return nil
-            }
             logger.info("SonosHandoffHotkeys decision=swallow phase=down action=transport_\(command.rawValue, privacy: .public) source=\(source, privacy: .public) tap=\(self.activeTapName, privacy: .public)")
             traceTransportKey("transport_key_down", command: command, source: source, metadata: metadata)
-            let mediaTransportActions = mediaTransportActions
-            Task { @MainActor in
-                mediaTransportActions.routeFromMediaKey(command: command, metadata: metadata)
+            Task { @MainActor [weak self] in
+                guard let self,
+                      self.isTransportInputReady,
+                      self.activeMediaRemoteGeneration == helperGeneration,
+                      self.mediaRemoteController.helperGeneration == helperGeneration
+                else {
+                    return
+                }
+                self.mediaTransportActions.routeFromMediaKey(command: command, metadata: metadata)
             }
             return nil
         case .transportKeyUp(let command, let source, let metadata):
+            guard isTransportInputReady,
+                  activeMediaRemoteGeneration == mediaRemoteController.helperGeneration
+            else {
+                return Unmanaged.passUnretained(event)
+            }
             guard acceptTransportInput(command: command, source: source, metadata: metadata, phase: "up") else {
                 return nil
             }
@@ -410,14 +497,23 @@ final class VolumeHotkeyController {
             mediaTransportActions.noteMediaKeyUp(command: command)
             return nil
         case .volumeHoldStart(let direction, let source):
+            guard isSonosVolumeInputEnabled else {
+                return Unmanaged.passUnretained(event)
+            }
             logger.info("SonosHandoffHotkeys decision=swallow phase=down action=volume_\(direction.logName, privacy: .public) source=\(source, privacy: .public)_hold_start tap=\(self.activeTapName, privacy: .public)")
             startVolumeRepeat(direction: direction, source: source)
             return nil
         case .volumeHoldStop(let source):
+            guard isSonosVolumeInputEnabled else {
+                return Unmanaged.passUnretained(event)
+            }
             logger.info("SonosHandoffHotkeys decision=swallow phase=up action=volume_hold_stop source=\(source, privacy: .public) tap=\(self.activeTapName, privacy: .public)")
             stopVolumeRepeat()
             return nil
         case .muteToggle(let source):
+            guard isSonosVolumeInputEnabled else {
+                return Unmanaged.passUnretained(event)
+            }
             logger.info("SonosHandoffHotkeys decision=swallow phase=down action=mute_toggle source=\(source, privacy: .public) tap=\(self.activeTapName, privacy: .public)")
             toggleMute()
             return nil
@@ -433,7 +529,9 @@ final class VolumeHotkeyController {
                 return
             }
             self.commandCenterRouteShieldRearmTask = nil
-            guard self.eventTap.isRunning else {
+            guard self.activeMediaRemoteGeneration == self.mediaRemoteController.helperGeneration,
+                  self.mediaRemoteController.isHelperPairReady
+            else {
                 return
             }
             guard self.ensureCommandCenterRoute(reason: "route_shield_rearmed") else {
@@ -443,7 +541,9 @@ final class VolumeHotkeyController {
             self.runtimeReporter.mediaFallbackWaitingForCommandCenter(
                 accessibilityGranted: AXIsProcessTrusted(),
                 listenEventGranted: CGPreflightListenEventAccess(),
-                activeEventTap: self.eventTap.activeTapKind?.rawValue
+                eventTapRunning: self.eventTap.isRunning,
+                activeEventTap: self.eventTap.activeTapKind?.rawValue,
+                fnHotkeysRegistered: self.carbonRegistrar.plainHotkeysRegistered
             )
         }
     }
@@ -569,6 +669,9 @@ final class VolumeHotkeyController {
     }
 
     func handleCarbonHotKey(id: UInt32) {
+        guard isStarted, isSonosVolumeInputEnabled else {
+            return
+        }
         let direction: VolumeDirection
         let source: String
         switch id {

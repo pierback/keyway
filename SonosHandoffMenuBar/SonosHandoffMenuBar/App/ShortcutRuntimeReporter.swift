@@ -76,32 +76,38 @@ final class ShortcutRuntimeReporter {
     func mediaFallbackWaitingForCommandCenter(
         accessibilityGranted: Bool,
         listenEventGranted: Bool,
-        activeEventTap: String?
+        eventTapRunning: Bool,
+        activeEventTap: String?,
+        fnHotkeysRegistered: Bool
     ) {
         status.update(
             accessibilityGranted: accessibilityGranted,
             listenEventGranted: listenEventGranted,
             mediaFallback: .starting,
-            eventTapRunning: true,
+            eventTapRunning: eventTapRunning,
             activeEventTap: activeEventTap,
             commandCenterRouteRunning: false,
-            fnHotkeysRegistered: false,
+            fnHotkeysRegistered: fnHotkeysRegistered,
             clearFailureReason: true
         )
     }
 
     func commandCenterRouteFailed(
         accessibilityGranted: Bool,
-        listenEventGranted: Bool
+        listenEventGranted: Bool,
+        eventTapRunning: Bool,
+        activeEventTap: String?,
+        fnHotkeysRegistered: Bool
     ) {
         status.update(
             accessibilityGranted: accessibilityGranted,
             listenEventGranted: listenEventGranted,
             mediaFallback: .commandCenterRouteFailed,
-            eventTapRunning: false,
-            clearActiveEventTap: true,
+            eventTapRunning: eventTapRunning,
+            activeEventTap: activeEventTap,
+            clearActiveEventTap: !eventTapRunning,
             commandCenterRouteRunning: false,
-            fnHotkeysRegistered: false,
+            fnHotkeysRegistered: fnHotkeysRegistered,
             lastFailureReason: "command_center_route_failed"
         )
     }

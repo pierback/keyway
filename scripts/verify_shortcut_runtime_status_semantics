@@ -7,10 +7,11 @@ command_center_file="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/Medi
 hotkey_file="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/VolumeHotkeyController.swift"
 event_tap_file="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutEventTap.swift"
 remote_controller_file="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaRemoteController.swift"
+runtime_file="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/SonosHandoffApp.swift"
 remote_shim_file="$repo_root/MediaRemoteHelper/KeywayMediaRemoteShim.m"
 remote_host_file="$repo_root/MediaRemoteHelper/keyway-mediaremote-helper.pl"
 
-python3 - "$status_file" "$command_center_file" "$hotkey_file" "$event_tap_file" "$remote_controller_file" "$remote_shim_file" "$remote_host_file" <<'PY'
+python3 - "$status_file" "$command_center_file" "$hotkey_file" "$event_tap_file" "$remote_controller_file" "$runtime_file" "$remote_shim_file" "$remote_host_file" <<'PY'
 import pathlib
 import sys
 
@@ -19,8 +20,9 @@ command_center = pathlib.Path(sys.argv[2]).read_text()
 hotkeys = pathlib.Path(sys.argv[3]).read_text()
 event_tap = pathlib.Path(sys.argv[4]).read_text()
 remote_controller = pathlib.Path(sys.argv[5]).read_text()
-remote_shim = pathlib.Path(sys.argv[6]).read_text()
-remote_host = pathlib.Path(sys.argv[7]).read_text()
+runtime = pathlib.Path(sys.argv[6]).read_text()
+remote_shim = pathlib.Path(sys.argv[7]).read_text()
+remote_host = pathlib.Path(sys.argv[8]).read_text()
 start = text.index("    private func persistSnapshot()")
 end = text.index("\n}\n\nextension Notification.Name", start)
 body = text[start:end]
@@ -135,10 +137,66 @@ for needle in (
     "guard ensureCommandCenterRoute(reason:",
     "failCommandCenterRoute()",
     "runtimeReporter.mediaFallbackWaitingForCommandCenter(",
-    "return commandCenterInterceptor.isReady",
+    "if isTransportInputReady {",
+    "return false",
 ):
     if needle not in refresh_body:
         raise SystemExit(f"verify_shortcut_runtime_status_semantics: media fallback must not report ready before command-center acknowledgement: {needle}")
+
+for needle in (
+    "private var isSonosVolumeInputEnabled = false",
+    "private var isTransportInputReady = false",
+    "&& (isSonosVolumeInputEnabled || isTransportInputReady)",
+    "guard isTransportInputReady,",
+    "guard isSonosVolumeInputEnabled else",
+    "self.activeMediaRemoteGeneration == helperGeneration",
+    "self.mediaRemoteController.helperGeneration == helperGeneration",
+):
+    if needle not in hotkeys:
+        raise SystemExit(
+            f"verify_shortcut_runtime_status_semantics: input capabilities must remain independently gated through dispatch: {needle}"
+        )
+
+handle_start = hotkeys.index("    func handle(type:")
+handle_end = hotkeys.index("\n    func suspendCommandCenterRouteShield(", handle_start)
+if "ensureCommandCenterRoute(" in hotkeys[handle_start:handle_end]:
+    raise SystemExit(
+        "verify_shortcut_runtime_status_semantics: accepted media keys must not supersede the acknowledged route-shield request"
+    )
+
+for needle in (
+    "private var activeHelperGeneration: UInt?",
+    "private var routeShieldRequestInFlight = false",
+    "private var desiredRouteShieldPlayback = false",
+    "func start(helperGeneration: UInt) -> Bool",
+    "guard !routeShieldRequestInFlight else",
+    "self.activeHelperGeneration == helperGeneration",
+    "self.mediaRemoteController.helperGeneration == helperGeneration",
+    "self.acknowledgedRouteShieldPlayback = isPlaying",
+    "self.registerCommandsIfNeeded(helperGeneration: helperGeneration)",
+):
+    if needle not in command_center:
+        raise SystemExit(
+            f"verify_shortcut_runtime_status_semantics: route-shield acknowledgement must be single-flight and helper-generation bound: {needle}"
+        )
+
+register_index = command_center.index(
+    "self.registerCommandsIfNeeded(helperGeneration: helperGeneration)"
+)
+success_index = command_center.rfind("guard succeeded else", 0, register_index)
+if success_index < 0:
+    raise SystemExit(
+        "verify_shortcut_runtime_status_semantics: command targets must not register before route-shield acknowledgement"
+    )
+
+for needle in (
+    "volumeHotkeys.setSonosVolumeInputEnabled(true)",
+    "volumeHotkeys.setSonosVolumeInputEnabled(false)",
+):
+    if needle not in runtime:
+        raise SystemExit(
+            f"verify_shortcut_runtime_status_semantics: AppRuntime must own Sonos volume-input activation: {needle}"
+        )
 
 retry_start = hotkeys.index("    private func schedulePermissionRetry()")
 retry_end = hotkeys.index("\n    private func stopPermissionRetry()", retry_start)

@@ -121,6 +121,7 @@ final class AppRuntime {
         }
         isSonosEnabled = true
 
+        volumeHotkeys.setSonosVolumeInputEnabled(true)
         SonosVolumeMonitor.shared.start(volumeService: volumeService)
         outputDirectoryTask = Task {
             await outputDirectory.startBackgroundRefresh()
@@ -177,6 +178,7 @@ final class AppRuntime {
         }
         isSonosEnabled = false
 
+        volumeHotkeys.setSonosVolumeInputEnabled(false)
         volumeMonitorSeedTask?.cancel()
         volumeMonitorSeedTask = nil
         outputDirectoryTask?.cancel()
