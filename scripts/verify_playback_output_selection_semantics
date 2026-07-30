@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+selection="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/PlaybackOutputSelection.swift"
+policy="$repo_root/packages/SonosHandoffCore/Sources/SonosHandoffCore/Handoff/PlaybackOutputSelectionPolicy.swift"
+controller="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/PlaybackSyncController.swift"
+background_sync="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/PlaybackBackgroundSync.swift"
+app_dir="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar"
+
+python3 - "$selection" "$policy" "$controller" "$background_sync" "$app_dir" <<'PY'
+import pathlib
+import sys
+
+selection_path = pathlib.Path(sys.argv[1])
+policy_path = pathlib.Path(sys.argv[2])
+controller_path = pathlib.Path(sys.argv[3])
+background_path = pathlib.Path(sys.argv[4])
+app_dir = pathlib.Path(sys.argv[5])
+selection = selection_path.read_text()
+policy = policy_path.read_text()
+controller = controller_path.read_text()
+background = background_path.read_text()
+app_sources = "\n".join(path.read_text() for path in app_dir.rglob("*.swift"))
+
+for source in (
+    "activePlaybackObservation",
+    "directoryRefresh",
+    "userSelection",
+    "playbackTransaction",
+    "reset",
+):
+    if f"case {source}" not in policy:
+        raise SystemExit(f"verify_playback_output_selection_semantics: missing selection source {source}")
+
+observation_guard = (
+    "guard !hasUserSelection || "
+    "SonosRoomName.matches(self.roomName, roomName) else"
+)
+if observation_guard not in policy:
+    raise SystemExit(
+        "verify_playback_output_selection_semantics: background observations must not replace a user selection"
+    )
+
+if app_sources.count("SonosVolumeMonitor.shared.setTarget(") != 1:
+    raise SystemExit(
+        "verify_playback_output_selection_semantics: PlaybackOutputSelection must be the only volume-monitor target writer"
+    )
+if "SonosVolumeMonitor.shared.setTarget(" not in selection:
+    raise SystemExit(
+        "verify_playback_output_selection_semantics: selection and volume-monitor target must update atomically"
+    )
+if ".setSelection(" in app_sources:
+    raise SystemExit(
+        "verify_playback_output_selection_semantics: raw selection writers must use the shared authority policy"
+    )
+
+if "selectRoomName(roomName, source: .userSelection)" not in controller:
+    raise SystemExit(
+        "verify_playback_output_selection_semantics: menu speaker selection must establish user authority"
+    )
+if "selectRoomName(outcome.roomName, source: .playbackTransaction)" not in controller:
+    raise SystemExit(
+        "verify_playback_output_selection_semantics: confirmed menu transfer must release user authority"
+    )
+if "source: .activePlaybackObservation" not in background:
+    raise SystemExit(
+        "verify_playback_output_selection_semantics: background polling must be classified as an observation"
+    )
+if "source: .playbackTransaction" not in background:
+    raise SystemExit(
+        "verify_playback_output_selection_semantics: background transfer completion must be classified as a transaction"
+    )
+
+sync_start = controller.index("    private func syncActiveSpotifyOutput(generation: Int) async {")
+sync_end = controller.index("\n    private func applyOutputRefresh(", sync_start)
+sync_body = controller[sync_start:sync_end]
+await_index = sync_body.index(
+    "let status = try await activePlaybackObserver.activePlaybackDeviceStatus()"
+)
+generation_guard_index = sync_body.index("guard isCurrentAppearance(generation) else")
+mutation_index = sync_body.index("activeSpotifyRoomName =")
+if not await_index < generation_guard_index < mutation_index:
+    raise SystemExit(
+        "verify_playback_output_selection_semantics: popover Spotify sync must reject late results before mutation"
+    )
+
+refresh_start = controller.index(
+    "    private func applyOutputRefresh(_ refresh: PlaybackOutputRefresh, selectedRoomName resolvedSelectedRoomName: String?)"
+)
+refresh_end = controller.index("\n    private func preferredCurrentRoomName()", refresh_start)
+refresh_body = controller[refresh_start:refresh_end]
+current_selection_index = refresh_body.index("outputSelectionResolver.selectedRoomName(")
+suggested_selection_index = refresh_body.index("?? resolvedSelectedRoomName")
+if current_selection_index > suggested_selection_index:
+    raise SystemExit(
+        "verify_playback_output_selection_semantics: directory refresh must preserve an available current selection"
+    )
+PY
+
+echo "verify_playback_output_selection_semantics=ok"

@@ -136,7 +136,7 @@ final class PlaybackSyncController: ObservableObject {
         let generation = appearGeneration
         appearTask?.cancel()
         if selectedRoomName == nil {
-            selectRoomName(outputSelection.roomName)
+            applyExternalOutputSelection(outputSelection.roomName)
         }
         applyMonitoredVolume(volumeMonitor.snapshot)
         appearTask = Task { @MainActor [weak self] in
@@ -157,7 +157,7 @@ final class PlaybackSyncController: ObservableObject {
             guard isCurrentAppearance(generation) else {
                 return
             }
-            await syncActiveSpotifyOutput()
+            await syncActiveSpotifyOutput(generation: generation)
             guard isCurrentAppearance(generation) else {
                 return
             }
@@ -274,7 +274,7 @@ final class PlaybackSyncController: ObservableObject {
                 }
                 setOutputRows([])
                 currentGroupState = .empty
-                selectRoomName(nil)
+                selectRoomName(nil, source: .reset)
                 clearGroupSuggestions()
                 operationGate.cancelVolume()
                 volumeState.clearStatus()
@@ -307,9 +307,13 @@ final class PlaybackSyncController: ObservableObject {
         return true
     }
 
-    private func syncActiveSpotifyOutput() async {
+    private func syncActiveSpotifyOutput(generation: Int) async {
         do {
-            guard let status = try await activePlaybackObserver.activePlaybackDeviceStatus(),
+            let status = try await activePlaybackObserver.activePlaybackDeviceStatus()
+            guard isCurrentAppearance(generation) else {
+                return
+            }
+            guard let status,
                   let roomName = SonosRoomName.normalized(status.deviceName)
             else {
                 activeSpotifyRoomName = nil
@@ -325,11 +329,16 @@ final class PlaybackSyncController: ObservableObject {
 
             activeSpotifyRoomName = roomName
             clearSpotifyAuthRequired()
-            if let selectedRoomName = selectedRoomName(forActiveSpotifyRoomName: roomName) {
-                selectRoomName(selectedRoomName)
-                refreshVolumeStatus(roomName: selectedRoomName)
+            if let observedRoomName = selectedRoomName(forActiveSpotifyRoomName: roomName) {
+                selectRoomName(observedRoomName, source: .activePlaybackObservation)
+                if let effectiveRoomName = selectedRoomName {
+                    refreshVolumeStatus(roomName: effectiveRoomName)
+                }
             }
         } catch {
+            guard isCurrentAppearance(generation) else {
+                return
+            }
             if SpotifyAuthRecovery.isAuthRequired(error) {
                 requireSpotifyAuth(error)
                 return
@@ -345,23 +354,24 @@ final class PlaybackSyncController: ObservableObject {
     }
 
     private func applyOutputRefresh(_ refresh: PlaybackOutputRefresh, selectedRoomName resolvedSelectedRoomName: String?) {
-        let resolvedSelectedRoomName = resolvedSelectedRoomName
-            ?? outputSelectionResolver.selectedRoomName(
+        let resolvedSelectedRoomName = outputSelectionResolver.selectedRoomName(
                 currentRoomName: selectedRoomName ?? outputSelection.roomName,
                 groups: refresh.state.groups
             )
+            ?? resolvedSelectedRoomName
             ?? refresh.rows.first?.coordinator.roomName
         setOutputRows(refresh.rows)
         currentGroupState = refresh.state
-        selectRoomName(resolvedSelectedRoomName)
+        selectRoomName(resolvedSelectedRoomName, source: .directoryRefresh)
+        let effectiveSelectedRoomName = selectedRoomName
         groupEditController.setGroupEditRows(refresh.groupEditRows)
         refreshPinnedMixerRows()
         groupEditController.refreshPendingGroupSuggestions(
             from: refresh,
-            selectedRoomName: resolvedSelectedRoomName
+            selectedRoomName: effectiveSelectedRoomName
         )
 
-        if let selectedRoomName = resolvedSelectedRoomName {
+        if let selectedRoomName = effectiveSelectedRoomName {
             refreshVolumeStatus(roomName: selectedRoomName)
         } else {
             operationGate.cancelVolume()
@@ -468,7 +478,7 @@ final class PlaybackSyncController: ObservableObject {
 
     func selectSpeaker(row: PlaybackOutputRow) {
         let roomName = row.coordinator.roomName
-        selectRoomName(roomName)
+        selectRoomName(roomName, source: .userSelection)
         refreshVolumeStatus(roomName: roomName)
     }
 
@@ -541,7 +551,7 @@ final class PlaybackSyncController: ObservableObject {
             switch outcome.result {
             case .success:
                 activeSpotifyRoomName = outcome.roomName
-                selectRoomName(outcome.roomName)
+                selectRoomName(outcome.roomName, source: .playbackTransaction)
                 clearSpotifyAuthRequired()
                 refreshVolumeStatus(roomName: outcome.roomName)
             case .failure(let code, _):
@@ -593,7 +603,7 @@ final class PlaybackSyncController: ObservableObject {
             switch transferOutcome.result {
             case .success:
                 activeSpotifyRoomName = replacement.roomName
-                selectRoomName(replacement.roomName)
+                selectRoomName(replacement.roomName, source: .playbackTransaction)
                 clearSpotifyAuthRequired()
             case .failure(let code, _):
                 do {
@@ -837,15 +847,12 @@ final class PlaybackSyncController: ObservableObject {
         StatusHUD.shared.showVolume(roomName: roomName, volume: volume, dismissAfter: 1.6)
     }
 
-    private func selectRoomName(_ roomName: String?) {
-        if !SonosRoomName.matches(selectedRoomName, roomName) {
-            sliderCommitter.cancel()
-        }
-        selectedRoomName = roomName
-        outputSelection.setSelection(roomName: roomName, group: roomName.flatMap(groupContaining))
-        volumeMonitor.setTarget(roomName: roomName, scope: roomName.map(volumeScope(for:)) ?? .member)
-        refreshGroupEditRowsFromCurrentOutputs()
-        clearPinnedMixerIfSelectionChanged()
+    private func selectRoomName(_ roomName: String?, source: PlaybackOutputSelection.UpdateSource) {
+        outputSelection.update(
+            roomName: roomName,
+            group: roomName.flatMap(groupContaining),
+            source: source
+        )
     }
 
     private func applyExternalOutputSelection(_ roomName: String?) {
@@ -855,7 +862,6 @@ final class PlaybackSyncController: ObservableObject {
 
         sliderCommitter.cancel()
         selectedRoomName = SonosRoomName.normalized(roomName)
-        volumeMonitor.setTarget(roomName: selectedRoomName, scope: selectedRoomName.map(volumeScope(for:)) ?? .member)
         refreshGroupEditRowsFromCurrentOutputs()
         clearPinnedMixerIfSelectionChanged()
         if let selectedRoomName {

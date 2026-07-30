@@ -105,17 +105,20 @@ final class AppRuntime {
                 let currentRoomName = await preferredStartupRoomName()
                 let refresh = try await outputDirectory.refresh(currentRoomName: currentRoomName)
                 if let selectedRoomName = refresh.selectedRoomName {
-                    environment.outputSelection.setSelection(roomName: selectedRoomName, group: refresh.selectedGroup)
-                    SonosVolumeMonitor.shared.setTarget(
+                    environment.outputSelection.update(
                         roomName: selectedRoomName,
-                        scope: volumeScope(for: refresh.selectedGroup)
+                        group: refresh.selectedGroup,
+                        source: .activePlaybackObservation
                     )
                     logger.info("SonosHandoffVolumeMonitor seed=selected room=\(selectedRoomName, privacy: .public)")
                     return
                 }
 
-                environment.outputSelection.setSelection(roomName: nil, group: nil)
-                SonosVolumeMonitor.shared.setTarget(roomName: nil, scope: .member)
+                environment.outputSelection.update(
+                    roomName: nil,
+                    group: nil,
+                    source: .activePlaybackObservation
+                )
                 logger.info("SonosHandoffVolumeMonitor seed=no_output retry=true")
             } catch {
                 logger.error("SonosHandoffVolumeMonitor seed=failure error=\(error.localizedDescription, privacy: .public)")
@@ -148,13 +151,5 @@ final class AppRuntime {
         }
 
         return nil
-    }
-
-    private func volumeScope(for group: SonosSpeakerGroup?) -> PlaybackVolumeScope {
-        guard let group, group.members.count > 1 else {
-            return .member
-        }
-
-        return .group
     }
 }
