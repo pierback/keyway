@@ -6,8 +6,6 @@ import SonosHandoffCore
 
 @MainActor
 final class VolumeHotkeyController {
-    private static let commandCenterRouteShieldRearmDelayNanoseconds: UInt64 = 600_000_000
-
     private let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "Hotkeys")
     private let volumeActions: ShortcutVolumeActionController
     private let mediaSourceStore: MediaSourceStore
@@ -19,13 +17,13 @@ final class VolumeHotkeyController {
     private var repeatTimer: DispatchSourceTimer?
     private var permissionRetryTimer: DispatchSourceTimer?
     private var mediaRemoteHealthCancellable: AnyCancellable?
-    private var commandCenterRouteShieldRearmTask: Task<Void, Error>?
     private var lastReportedPermissionState: (accessibilityGranted: Bool, listenEventGranted: Bool)?
     private var activeMediaRemoteGeneration: UInt?
     private var repeatingDirection: VolumeDirection?
     private var isSonosVolumeInputEnabled = false
     private var isTransportInputReady = false
     private var isStoppingCommandCenterRoute = false
+    private var isCommandCenterRouteSuspended = false
     private var isStarted = false
     private let eventParser = ShortcutEventParser()
     private lazy var commandCenterInterceptor = MediaCommandCenterInterceptor(
@@ -82,7 +80,6 @@ final class VolumeHotkeyController {
         MainActor.assumeIsolated {
             repeatTimer?.cancel()
             permissionRetryTimer?.cancel()
-            commandCenterRouteShieldRearmTask?.cancel()
             isStoppingCommandCenterRoute = true
             commandCenterInterceptor.stop()
             eventTap.stop()
@@ -133,8 +130,6 @@ final class VolumeHotkeyController {
         isTransportInputReady = false
         stopVolumeRepeat()
         stopPermissionRetry()
-        commandCenterRouteShieldRearmTask?.cancel()
-        commandCenterRouteShieldRearmTask = nil
         mediaTransportActions.resetMediaKeyState()
         stopCommandCenterRoute(reason: "runtime_stopped")
         eventTap.stop()
@@ -269,8 +264,7 @@ final class VolumeHotkeyController {
     }
 
     private func stopCommandCenterRoute(reason: String) {
-        commandCenterRouteShieldRearmTask?.cancel()
-        commandCenterRouteShieldRearmTask = nil
+        isCommandCenterRouteSuspended = false
         guard commandCenterInterceptor.running else {
             logger.info("SonosHandoffHotkeys commandCenterRoute=already_disabled reason=\(reason, privacy: .public)")
             runtimeReporter.commandCenterRouteRunning(false)
@@ -286,6 +280,12 @@ final class VolumeHotkeyController {
 
     private func commandCenterReadinessChanged(_ ready: Bool) {
         guard !isStoppingCommandCenterRoute else {
+            isTransportInputReady = false
+            runtimeReporter.commandCenterRouteRunning(false)
+            refreshEventTap()
+            return
+        }
+        guard !isCommandCenterRouteSuspended else {
             isTransportInputReady = false
             runtimeReporter.commandCenterRouteRunning(false)
             refreshEventTap()
@@ -518,32 +518,63 @@ final class VolumeHotkeyController {
         }
     }
 
-    func suspendCommandCenterRouteShield(reason: String) {
-        stopCommandCenterRoute(reason: reason)
-        commandCenterRouteShieldRearmTask = Task { @MainActor [weak self] in
-            try await Task.sleep(nanoseconds: Self.commandCenterRouteShieldRearmDelayNanoseconds)
-            try Task.checkCancellation()
+    func suspendCommandCenterRouteShield(
+        reason: String,
+        helperGeneration: UInt,
+        onResult: @escaping @MainActor (Bool) -> Void
+    ) -> Bool {
+        guard activeMediaRemoteGeneration == helperGeneration,
+              mediaRemoteController.helperGeneration == helperGeneration
+        else {
+            return false
+        }
+        isCommandCenterRouteSuspended = true
+        let started = commandCenterInterceptor.suspendRouteShield(
+            reason: reason,
+            helperGeneration: helperGeneration
+        ) { [weak self] succeeded in
             guard let self else {
                 return
             }
-            self.commandCenterRouteShieldRearmTask = nil
-            guard self.activeMediaRemoteGeneration == self.mediaRemoteController.helperGeneration,
-                  self.mediaRemoteController.isHelperPairReady
-            else {
-                return
-            }
-            guard self.ensureCommandCenterRoute(reason: "route_shield_rearmed") else {
+            if !succeeded {
+                self.isCommandCenterRouteSuspended = false
                 self.failCommandCenterRoute()
-                return
             }
-            self.runtimeReporter.mediaFallbackWaitingForCommandCenter(
-                accessibilityGranted: AXIsProcessTrusted(),
-                listenEventGranted: CGPreflightListenEventAccess(),
-                eventTapRunning: self.eventTap.isRunning,
-                activeEventTap: self.eventTap.activeTapKind?.rawValue,
-                fnHotkeysRegistered: self.carbonRegistrar.plainHotkeysRegistered
-            )
+            onResult(succeeded)
         }
+        if !started {
+            isCommandCenterRouteSuspended = false
+            failCommandCenterRoute()
+        }
+        return started
+    }
+
+    func rearmCommandCenterRouteShield(
+        reason: String,
+        helperGeneration: UInt
+    ) -> Bool {
+        guard isCommandCenterRouteSuspended,
+              activeMediaRemoteGeneration == helperGeneration,
+              mediaRemoteController.helperGeneration == helperGeneration
+        else {
+            return false
+        }
+        isCommandCenterRouteSuspended = false
+        guard commandCenterInterceptor.resumeRouteShield(
+            reason: reason,
+            helperGeneration: helperGeneration
+        ) else {
+            failCommandCenterRoute()
+            return false
+        }
+        runtimeReporter.mediaFallbackWaitingForCommandCenter(
+            accessibilityGranted: AXIsProcessTrusted(),
+            listenEventGranted: CGPreflightListenEventAccess(),
+            eventTapRunning: eventTap.isRunning,
+            activeEventTap: eventTap.activeTapKind?.rawValue,
+            fnHotkeysRegistered: carbonRegistrar.plainHotkeysRegistered
+        )
+        return true
     }
 
     private func acceptTransportInput(

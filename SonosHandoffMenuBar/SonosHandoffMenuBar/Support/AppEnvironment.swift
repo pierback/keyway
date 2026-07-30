@@ -133,8 +133,18 @@ struct AppEnvironment {
             mediaRemoteController: mediaRemoteController,
             mediaTransportActions: mediaTransportActionController
         )
-        mediaTransportActionController.relaxRouteShield = { [weak volumeHotkeys] reason in
-            volumeHotkeys?.suspendCommandCenterRouteShield(reason: reason)
+        mediaTransportActionController.releaseRouteShield = { [weak volumeHotkeys] reason, helperGeneration, onResult in
+            volumeHotkeys?.suspendCommandCenterRouteShield(
+                reason: reason,
+                helperGeneration: helperGeneration,
+                onResult: onResult
+            ) ?? false
+        }
+        mediaTransportActionController.rearmRouteShield = { [weak volumeHotkeys] reason, helperGeneration in
+            volumeHotkeys?.rearmCommandCenterRouteShield(
+                reason: reason,
+                helperGeneration: helperGeneration
+            ) ?? false
         }
 
         return AppEnvironment(

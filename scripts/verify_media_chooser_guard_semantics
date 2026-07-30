@@ -135,12 +135,10 @@ for needle in [
     "emptyDiagnostics:",
     "chooserReentryBlocked(",
     "self.dispatchFromChooser(",
-    "self.relaxRouteShield?(\"chooser_focus\")",
-    "self.relaxRouteShield?(\"chooser_dismissed\")",
 ]:
     if needle not in show_body:
         fail(f"chooser overlay path must preserve re-entry/deferred semantics and contain {needle!r}")
-if "selected_row_dispatch\")" in show_body or "RouteShieldReleaseDelayNanoseconds" in show_body or "Task.sleep" in show_body:
+if "releaseRouteShield" in show_body or "RouteShieldReleaseDelayNanoseconds" in show_body or "Task.sleep" in show_body:
     fail("chooser row selection must dispatch immediately; MediaRemote fallback owns route-shield release")
 
 if "private func emptyDiscoveryDiagnostics()" not in text:

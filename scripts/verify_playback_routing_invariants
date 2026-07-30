@@ -75,6 +75,7 @@ grep -q 'MediaRemoteController.helperRecoveryGraceInterval' "$repo_root/SonosHan
 
 python3 - "$menu_bar_media_sources" <<'PY'
 import pathlib
+import re
 import sys
 
 text = pathlib.Path(sys.argv[1]).read_text()
@@ -580,31 +581,37 @@ if choose_body.index(finish_marker) > choose_body.index("dispatchFromChooser("):
     raise SystemExit("verify_playback_routing_invariants: chooser visible guard must clear before selected-row dispatch")
 if choose_body.index('"chooser_closed_for_dispatch"') > choose_body.index("dispatchFromChooser("):
     raise SystemExit("verify_playback_routing_invariants: chooser close trace must happen before selected-row dispatch")
-route_shield_delay = re.search(r'mediaRemoteRouteShieldReleaseDelayNanoseconds: UInt64 = ([0-9_]+)', text)
-if not route_shield_delay:
-    raise SystemExit("verify_playback_routing_invariants: MediaRemote route-shield release delay must be explicit")
-route_shield_delay_value = int(route_shield_delay.group(1).replace("_", ""))
-if route_shield_delay_value != 180_000_000:
-    raise SystemExit("verify_playback_routing_invariants: MediaRemote route-shield release delay must remain the proven 180ms propagation interval")
 fallback_start = text.index("    private func fallbackMediaRemote(")
 fallback_end = text.index("\n    private func sendMediaRemote(", fallback_start)
 fallback_body = text[fallback_start:fallback_end]
 for needle in (
     "let routedCommand = MediaTransportCommandRules.rowScopedCommand(command, for: target)",
-    'relaxRouteShield?("mediaremote_dispatch")',
-    "Task.sleep(nanoseconds: Self.mediaRemoteRouteShieldReleaseDelayNanoseconds)",
-    "self.sendMediaRemote(command: routedCommand, to: target, dispatchID: dispatchID, context: context)",
+    "let helperGeneration = mediaRemoteController.helperGeneration",
+    "routeShieldDispatchID = dispatchID",
+    "let releaseStarted = releaseRouteShield(",
+    "guard succeeded,",
+    "self.routeShieldDispatchTask = Task",
+    "self.sendMediaRemote(",
 ):
     if needle not in fallback_body:
         raise SystemExit(f"verify_playback_routing_invariants: MediaRemote fallback must contain {needle!r}")
 if not (
     fallback_body.index("let routedCommand = MediaTransportCommandRules.rowScopedCommand(command, for: target)")
-    < fallback_body.index('relaxRouteShield?("mediaremote_dispatch")')
-    < fallback_body.index("Task.sleep(nanoseconds: Self.mediaRemoteRouteShieldReleaseDelayNanoseconds)")
-    < fallback_body.index("self.sendMediaRemote(command: routedCommand, to: target, dispatchID: dispatchID, context: context)")
+    < fallback_body.index("let helperGeneration = mediaRemoteController.helperGeneration")
+    < fallback_body.index("let releaseStarted = releaseRouteShield(")
+    < fallback_body.index("guard succeeded,")
+    < fallback_body.index("self.routeShieldDispatchTask = Task")
+    < fallback_body.index("self.sendMediaRemote(")
 ):
-    raise SystemExit("verify_playback_routing_invariants: MediaRemote fallback must scope Play/Pause, release the route shield, wait for propagation, then submit")
-if text.count('relaxRouteShield?("mediaremote_dispatch")') != 1:
+    raise SystemExit("verify_playback_routing_invariants: MediaRemote fallback must await acknowledged release in the same helper generation before submitting")
+for forbidden in (
+    "mediaRemoteRouteShieldReleaseDelayNanoseconds",
+    "relaxRouteShield",
+    "Task.sleep",
+):
+    if forbidden in fallback_body:
+        raise SystemExit(f"verify_playback_routing_invariants: MediaRemote route-shield correctness must not retain {forbidden!r}")
+if text.count('"mediaremote_dispatch"') != 1:
     raise SystemExit("verify_playback_routing_invariants: MediaRemote route-shield release must have one transport-boundary owner")
 if text.count("MediaTransportCommandRules.rowScopedCommand(command, for: target)") != 1:
     raise SystemExit("verify_playback_routing_invariants: MediaRemote fallback must be the single target-state command-scoping owner")
@@ -622,7 +629,7 @@ for name, body in (
     ("chooser dispatch", dispatch_from_chooser),
 ):
     if "Task {" in body or "await " in body or "Task.sleep" in body:
-        raise SystemExit(f"verify_playback_routing_invariants: {name} must stay synchronous; MediaRemote fallback owns the release delay")
+        raise SystemExit(f"verify_playback_routing_invariants: {name} must stay synchronous; MediaRemote fallback owns acknowledged shield release")
 if "releaseChooserAfterDispatchEchoWindow" in dispatch_from_chooser:
     raise SystemExit("verify_playback_routing_invariants: chooser dispatch must not wait on a post-send release window")
 if "commandCenterFilter.finishProgrammaticDispatch(command: command)" in dispatch_from_chooser:
@@ -1150,7 +1157,7 @@ if publish.index("guard succeeded else") > publish.index(
         "verify_playback_routing_invariants: command targets must register only after helper acknowledgement"
     )
 register_start = text.index("    private func register(")
-register_end = text.index("    @discardableResult\n    func armRouteShield", register_start)
+register_end = text.index("    func suspendRouteShield", register_start)
 register = text[register_start:register_end]
 for required in (
     "self.isReady",
@@ -1270,30 +1277,23 @@ if "ensureCommandCenterRoute(reason: \"event_tap_" in text:
     raise SystemExit("verify_playback_routing_invariants: event-tap state must not supersede route-shield acknowledgement")
 if "commandCenterInterceptor.stop()" not in text:
     raise SystemExit("verify_playback_routing_invariants: command-center route must still unregister on controller shutdown")
-if "private var commandCenterRouteShieldRearmTask: Task<Void, Error>?" not in text:
-    raise SystemExit("verify_playback_routing_invariants: command-center route-shield rearming must have one owned task")
-stop_start = text.index("    private func stopCommandCenterRoute(")
-stop_end = text.index("    private func schedulePermissionRetry", stop_start)
-stop_body = text[stop_start:stop_end]
-for required in (
-    "commandCenterRouteShieldRearmTask?.cancel()",
-    "commandCenterRouteShieldRearmTask = nil",
-):
-    if required not in stop_body:
-        raise SystemExit(f"verify_playback_routing_invariants: stopping command-center routing must contain {required!r}")
 suspend_start = text.index("    func suspendCommandCenterRouteShield(")
-suspend_end = text.index("    private func acceptTransportInput", suspend_start)
+suspend_end = text.index("    func rearmCommandCenterRouteShield(", suspend_start)
 suspend_body = text[suspend_start:suspend_end]
-if "commandCenterRouteShieldRearmTask = Task" not in suspend_body:
-    raise SystemExit("verify_playback_routing_invariants: each route-shield suspension must replace the owned rearm task")
-if suspend_body.index("stopCommandCenterRoute(reason: reason)") > suspend_body.index("commandCenterRouteShieldRearmTask = Task"):
-    raise SystemExit("verify_playback_routing_invariants: a new route-shield suspension must cancel the prior rearm before replacing it")
-if "try? await Task.sleep" in suspend_body:
-    raise SystemExit("verify_playback_routing_invariants: route-shield rearming must not hide cancellation")
-deinit_start = text.index("    deinit {")
-deinit_end = text.index("    func start()", deinit_start)
-if "commandCenterRouteShieldRearmTask?.cancel()" not in text[deinit_start:deinit_end]:
-    raise SystemExit("verify_playback_routing_invariants: controller shutdown must cancel route-shield rearming")
+for required in (
+    "helperGeneration: UInt",
+    "onResult: @escaping @MainActor (Bool) -> Void",
+    "commandCenterInterceptor.suspendRouteShield(",
+):
+    if required not in suspend_body:
+        raise SystemExit(f"verify_playback_routing_invariants: shield suspension must be acknowledged and generation-bound: {required!r}")
+if "Task.sleep" in suspend_body or "commandCenterRouteShieldRearmTask" in text:
+    raise SystemExit("verify_playback_routing_invariants: route-shield release and rearm must not use correctness timers")
+rearm_start = text.index("    func rearmCommandCenterRouteShield(")
+rearm_end = text.index("    private func acceptTransportInput", rearm_start)
+rearm_body = text[rearm_start:rearm_end]
+if "commandCenterInterceptor.resumeRouteShield(" not in rearm_body:
+    raise SystemExit("verify_playback_routing_invariants: completed dispatch must rearm through the acknowledged state machine")
 PY
 
 grep -q 'command_center_media_key_shadow_ignored' "$command_filter" \

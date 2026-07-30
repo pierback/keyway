@@ -13,7 +13,6 @@ final class MediaTransportActionController {
     private static let physicalMediaKeyReboundWindow: TimeInterval = 0.25
     private static let chooserTargetedMediaKeyEchoWindow: TimeInterval = 1.25
     private static let programmaticDispatchFallbackDelayNanoseconds: UInt64 = 250_000_000
-    private static let mediaRemoteRouteShieldReleaseDelayNanoseconds: UInt64 = 180_000_000
 
     private let logger = Logger(subsystem: AppIdentity.loggerSubsystem, category: "MediaTransport")
     private let mediaRemoteController: MediaRemoteController
@@ -27,7 +26,16 @@ final class MediaTransportActionController {
     private let traceRecorder = MediaTransportTraceRecorder()
     private let chooserSession = MediaChooserSessionGuard()
     private let targetResolver = MediaTransportTargetResolver()
-    var relaxRouteShield: ((String) -> Void)?
+    var releaseRouteShield: ((
+        _ reason: String,
+        _ helperGeneration: UInt,
+        _ onResult: @escaping @MainActor (Bool) -> Void
+    ) -> Bool)?
+    var rearmRouteShield: ((_ reason: String, _ helperGeneration: UInt) -> Bool)?
+    private var mediaRemoteHealthCancellable: AnyCancellable?
+    private var routeShieldDispatchID: UUID?
+    private var routeShieldDispatchGeneration: UInt?
+    private var routeShieldDispatchTask: Task<Void, Never>?
     private var programmaticDispatches: [UUID: MediaTransportPendingDispatchEcho] = [:]
     private var programmaticDispatchFallbackTasks: [UUID: Task<Void, Error>] = [:]
 
@@ -54,11 +62,22 @@ final class MediaTransportActionController {
             physicalMediaKeyReboundWindow: Self.physicalMediaKeyReboundWindow,
             chooserTargetedMediaKeyEchoWindow: Self.chooserTargetedMediaKeyEchoWindow
         )
+        self.mediaRemoteHealthCancellable = Publishers.CombineLatest(
+            mediaRemoteController.$health,
+            mediaRemoteController.$helperGeneration
+        )
+        .sink { [weak self] health, generation in
+            self?.mediaRemoteAvailabilityChanged(health, generation: generation)
+        }
     }
 
     deinit {
-        for task in programmaticDispatchFallbackTasks.values {
-            task.cancel()
+        MainActor.assumeIsolated {
+            mediaRemoteHealthCancellable?.cancel()
+            routeShieldDispatchTask?.cancel()
+            for task in programmaticDispatchFallbackTasks.values {
+                task.cancel()
+            }
         }
     }
 
@@ -438,7 +457,6 @@ final class MediaTransportActionController {
                     target: target,
                     targetCount: self.mediaSourceStore.rows.count
                 )
-                self.relaxRouteShield?("chooser_focus")
                 self.rememberTarget(target)
                 self.sourceFocusActionController.focus(target: target)
             },
@@ -448,7 +466,6 @@ final class MediaTransportActionController {
                 self.logger.info("MediaTransport chooser_dismissed command=\(activeCommand, privacy: .public)")
                 self.trace("chooser_dismissed", command: self.chooserSession.activeCommand(for: chooserID))
                 self.chooserSession.finish(id: chooserID)
-                self.relaxRouteShield?("chooser_dismissed")
             }
         )
     }
@@ -570,26 +587,152 @@ final class MediaTransportActionController {
         context: MediaTransportDispatchContext
     ) {
         let routedCommand = MediaTransportCommandRules.rowScopedCommand(command, for: target)
-        relaxRouteShield?("mediaremote_dispatch")
-        Task { @MainActor [weak self] in
-            try await Task.sleep(nanoseconds: Self.mediaRemoteRouteShieldReleaseDelayNanoseconds)
-            try Task.checkCancellation()
-            guard let self else {
+        guard routeShieldDispatchID == nil,
+              let releaseRouteShield
+        else {
+            mediaRemoteDispatchFailed(
+                command: command,
+                target: target,
+                dispatchID: dispatchID,
+                context: context
+            )
+            return
+        }
+
+        let helperGeneration = mediaRemoteController.helperGeneration
+        routeShieldDispatchID = dispatchID
+        routeShieldDispatchGeneration = helperGeneration
+        let releaseStarted = releaseRouteShield(
+            "mediaremote_dispatch",
+            helperGeneration
+        ) { [weak self] succeeded in
+            guard let self,
+                  self.routeShieldDispatchID == dispatchID,
+                  self.routeShieldDispatchGeneration == helperGeneration
+            else {
                 return
             }
-            guard self.sendMediaRemote(command: routedCommand, to: target, dispatchID: dispatchID, context: context) else {
-                self.mediaRemoteController.probeHelperLiveness()
-                self.mediaSourceStore.markCommandFailed(targetID: target.id)
-                self.finishDispatch(id: dispatchID, fallback: true)
-                self.logDispatchFailure(command: command, target: target, context: context)
-                StatusHUD.shared.finish(
-                    title: "Media Command Failed",
-                    message: "Keyway could not reach \(target.appName).",
-                    dismissAfter: 2.2
+            guard succeeded,
+                  self.mediaRemoteController.isHelperPairReady,
+                  self.mediaRemoteController.helperGeneration == helperGeneration
+            else {
+                self.finishRouteShieldDispatch(
+                    id: dispatchID,
+                    helperGeneration: helperGeneration,
+                    rearm: false
+                )
+                self.mediaRemoteDispatchFailed(
+                    command: command,
+                    target: target,
+                    dispatchID: dispatchID,
+                    context: context
                 )
                 return
             }
+
+            self.routeShieldDispatchTask = Task { @MainActor [weak self] in
+                await Task.yield()
+                guard !Task.isCancelled,
+                      let self,
+                      self.routeShieldDispatchID == dispatchID,
+                      self.routeShieldDispatchGeneration == helperGeneration,
+                      self.mediaRemoteController.isHelperPairReady,
+                      self.mediaRemoteController.helperGeneration == helperGeneration
+                else {
+                    return
+                }
+                self.routeShieldDispatchTask = nil
+                guard self.sendMediaRemote(
+                    command: routedCommand,
+                    to: target,
+                    dispatchID: dispatchID,
+                    context: context
+                ) else {
+                    self.finishRouteShieldDispatch(
+                        id: dispatchID,
+                        helperGeneration: helperGeneration,
+                        rearm: true
+                    )
+                    self.mediaRemoteController.probeHelperLiveness()
+                    self.mediaRemoteDispatchFailed(
+                        command: command,
+                        target: target,
+                        dispatchID: dispatchID,
+                        context: context
+                    )
+                    return
+                }
+            }
         }
+        guard releaseStarted else {
+            finishRouteShieldDispatch(
+                id: dispatchID,
+                helperGeneration: helperGeneration,
+                rearm: false
+            )
+            mediaRemoteDispatchFailed(
+                command: command,
+                target: target,
+                dispatchID: dispatchID,
+                context: context
+            )
+            return
+        }
+    }
+
+    private func mediaRemoteDispatchFailed(
+        command: MediaRemoteTransportCommand,
+        target: MediaRemoteTarget,
+        dispatchID: UUID,
+        context: MediaTransportDispatchContext
+    ) {
+        mediaSourceStore.markCommandFailed(targetID: target.id)
+        finishDispatch(id: dispatchID, fallback: true)
+        logDispatchFailure(command: command, target: target, context: context)
+        StatusHUD.shared.finish(
+            title: "Media Command Failed",
+            message: "Keyway could not reach \(target.appName).",
+            dismissAfter: 2.2
+        )
+    }
+
+    private func finishRouteShieldDispatch(
+        id: UUID,
+        helperGeneration: UInt,
+        rearm: Bool
+    ) {
+        guard routeShieldDispatchID == id,
+              routeShieldDispatchGeneration == helperGeneration
+        else {
+            return
+        }
+        routeShieldDispatchTask?.cancel()
+        routeShieldDispatchTask = nil
+        routeShieldDispatchID = nil
+        routeShieldDispatchGeneration = nil
+        if rearm,
+           mediaRemoteController.isHelperPairReady,
+           mediaRemoteController.helperGeneration == helperGeneration {
+            _ = rearmRouteShield?("mediaremote_dispatch_finished", helperGeneration)
+        }
+    }
+
+    private func mediaRemoteAvailabilityChanged(
+        _ health: MediaRemoteHelperHealth,
+        generation: UInt
+    ) {
+        guard let dispatchID = routeShieldDispatchID,
+              let dispatchGeneration = routeShieldDispatchGeneration,
+              health.state != .running || generation != dispatchGeneration
+        else {
+            return
+        }
+        finishRouteShieldDispatch(
+            id: dispatchID,
+            helperGeneration: dispatchGeneration,
+            rearm: false
+        )
+        finishDispatch(id: dispatchID, fallback: true)
     }
 
     private func sendMediaRemote(
@@ -598,14 +741,25 @@ final class MediaTransportActionController {
         dispatchID: UUID,
         context: MediaTransportDispatchContext
     ) -> Bool {
+        let helperGeneration = routeShieldDispatchGeneration
         let sent = mediaRemoteController.submit(command: command, targetID: target.id) { [weak self] result in
-            if !result.ok {
-                self?.mediaRemoteController.probeHelperLiveness()
+            guard let self else {
+                return
             }
-            self?.mediaSourceStore.recordCommandResult(result)
-            self?.trace(result: result, transportBackend: Self.mediaRemotePlayerPathBackend)
-            self?.finishDispatch(id: dispatchID, fallback: false)
-            self?.showCommandResult(
+            if let helperGeneration {
+                self.finishRouteShieldDispatch(
+                    id: dispatchID,
+                    helperGeneration: helperGeneration,
+                    rearm: true
+                )
+            }
+            if !result.ok {
+                self.mediaRemoteController.probeHelperLiveness()
+            }
+            self.mediaSourceStore.recordCommandResult(result)
+            self.trace(result: result, transportBackend: Self.mediaRemotePlayerPathBackend)
+            self.finishDispatch(id: dispatchID, fallback: false)
+            self.showCommandResult(
                 result: result,
                 command: command,
                 target: target,

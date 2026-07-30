@@ -229,18 +229,29 @@ assert_order(
     mediaremote_fallback,
     [
         "let routedCommand = MediaTransportCommandRules.rowScopedCommand(command, for: target)",
-        'relaxRouteShield?("mediaremote_dispatch")',
-        "Task.sleep(nanoseconds: Self.mediaRemoteRouteShieldReleaseDelayNanoseconds)",
-        "guard self.sendMediaRemote(command: routedCommand, to: target, dispatchID: dispatchID, context: context)",
+        "let helperGeneration = mediaRemoteController.helperGeneration",
+        "routeShieldDispatchID = dispatchID",
+        "let releaseStarted = releaseRouteShield(",
+        "guard succeeded,",
+        "self.routeShieldDispatchTask = Task",
+        "guard self.sendMediaRemote(",
     ],
-    "MediaRemote fallback must scope Play/Pause, release the route shield, then use the shared player-path sender"
+    "MediaRemote fallback must scope Play/Pause and await an owned, acknowledged route-shield release before using the player path"
 )
+for forbidden in (
+    "mediaRemoteRouteShieldReleaseDelayNanoseconds",
+    "Task.sleep",
+    "relaxRouteShield",
+):
+    if forbidden in mediaremote_fallback:
+        fail(f"MediaRemote route-shield correctness must not rely on timers or fire-and-forget release: {forbidden}")
 
 mediaremote = function_body("sendMediaRemote")
 assert_order(
     mediaremote,
     [
         "mediaRemoteController.submit(command: command, targetID: target.id)",
+        "finishRouteShieldDispatch(",
         "Self.mediaRemotePlayerPathBackend",
         "finishDispatch(id: dispatchID, fallback: false)",
         "showCommandResult(",

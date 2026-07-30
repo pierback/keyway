@@ -35,8 +35,11 @@ final class MediaCommandCenterInterceptor {
     private var activeHelperGeneration: UInt?
     private var routeShieldRequestSequence = 0
     private var routeShieldRequestInFlight = false
+    private var desiredRouteShieldEnabled = false
+    private var acknowledgedRouteShieldEnabled: Bool?
     private var desiredRouteShieldPlayback = false
     private var acknowledgedRouteShieldPlayback: Bool?
+    private var routeShieldSuspensionResult: (@MainActor (Bool) -> Void)?
 
     init(
         mediaSourceStore: MediaSourceStore,
@@ -67,6 +70,7 @@ final class MediaCommandCenterInterceptor {
 
         isRunning = true
         activeHelperGeneration = helperGeneration
+        desiredRouteShieldEnabled = true
         guard armRouteShield(reason: "start") else {
             stop()
             logger.error("MediaCommandCenter state=failed reason=route_shield_unavailable")
@@ -81,6 +85,8 @@ final class MediaCommandCenterInterceptor {
             return
         }
 
+        let suspensionResult = routeShieldSuspensionResult
+        routeShieldSuspensionResult = nil
         let commandCenter = MPRemoteCommandCenter.shared()
         for target in commandTargets {
             commandCenter.togglePlayPauseCommand.removeTarget(target)
@@ -94,10 +100,13 @@ final class MediaCommandCenterInterceptor {
         activeHelperGeneration = nil
         routeShieldRequestSequence += 1
         routeShieldRequestInFlight = false
+        desiredRouteShieldEnabled = false
+        acknowledgedRouteShieldEnabled = nil
         acknowledgedRouteShieldPlayback = nil
         _ = mediaRemoteController.setRouteShield(info: nil) { _ in }
         disarmRouteShield(reason: "stop")
         setReady(false)
+        suspensionResult?(false)
         logger.info("MediaCommandCenter state=disabled")
     }
 
@@ -133,8 +142,52 @@ final class MediaCommandCenterInterceptor {
         }
     }
 
+    func suspendRouteShield(
+        reason: String,
+        helperGeneration: UInt,
+        onResult: @escaping @MainActor (Bool) -> Void
+    ) -> Bool {
+        guard isRunning,
+              isReady,
+              routeShieldSuspensionResult == nil,
+              activeHelperGeneration == helperGeneration,
+              mediaRemoteController.helperGeneration == helperGeneration
+        else {
+            return false
+        }
+
+        desiredRouteShieldEnabled = false
+        routeShieldSuspensionResult = onResult
+        setReady(false)
+        disarmRouteShield(reason: reason)
+        guard driveRouteShieldState() else {
+            routeShieldSuspensionResult = nil
+            return false
+        }
+        logger.info("MediaCommandCenter routeShield=release_requested reason=\(reason, privacy: .public)")
+        return true
+    }
+
     @discardableResult
-    func armRouteShield(reason: String) -> Bool {
+    func resumeRouteShield(reason: String, helperGeneration: UInt) -> Bool {
+        guard isRunning,
+              !desiredRouteShieldEnabled,
+              routeShieldSuspensionResult == nil,
+              activeHelperGeneration == helperGeneration,
+              mediaRemoteController.helperGeneration == helperGeneration
+        else {
+            return false
+        }
+        desiredRouteShieldEnabled = true
+        guard armRouteShield(reason: reason) else {
+            routeShieldFailed(reason: "resume_failed")
+            return false
+        }
+        return true
+    }
+
+    @discardableResult
+    private func armRouteShield(reason: String) -> Bool {
         guard isRunning,
               let activeHelperGeneration,
               mediaRemoteController.isHelperPairReady,
@@ -145,6 +198,7 @@ final class MediaCommandCenterInterceptor {
         guard startRouteShieldAudio() else {
             return false
         }
+        desiredRouteShieldEnabled = true
         guard publishNowPlayingRoute(
             isPlaying: mediaSourceStore.rows.contains { $0.target.isCurrentlyPlaying }
         ) else {
@@ -155,7 +209,7 @@ final class MediaCommandCenterInterceptor {
         return true
     }
 
-    func disarmRouteShield(reason: String) {
+    private func disarmRouteShield(reason: String) {
         routeShieldPlaybackSubscription?.cancel()
         routeShieldPlaybackSubscription = nil
         stopRouteShieldAudio()
@@ -215,6 +269,9 @@ final class MediaCommandCenterInterceptor {
 
     private func publishNowPlayingRoute(isPlaying: Bool) -> Bool {
         desiredRouteShieldPlayback = isPlaying
+        guard desiredRouteShieldEnabled else {
+            return true
+        }
         let playbackRate = isPlaying ? 1.0 : 0.0
         let info: [String: Any] = [
             MPMediaItemPropertyTitle: "Keyway",
@@ -225,20 +282,47 @@ final class MediaCommandCenterInterceptor {
         ]
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
         MPNowPlayingInfoCenter.default().playbackState = isPlaying ? .playing : .paused
-        guard acknowledgedRouteShieldPlayback != isPlaying else {
-            return true
-        }
+        return driveRouteShieldState()
+    }
+
+    private func driveRouteShieldState() -> Bool {
         guard !routeShieldRequestInFlight else {
             return true
         }
         guard let helperGeneration = activeHelperGeneration,
+              mediaRemoteController.isHelperPairReady,
               mediaRemoteController.helperGeneration == helperGeneration
         else {
             return false
         }
+        if desiredRouteShieldEnabled,
+           acknowledgedRouteShieldEnabled == true,
+           acknowledgedRouteShieldPlayback == desiredRouteShieldPlayback {
+            guard registerCommandsIfNeeded(helperGeneration: helperGeneration) else {
+                return false
+            }
+            setReady(true)
+            return true
+        }
+        if !desiredRouteShieldEnabled,
+           acknowledgedRouteShieldEnabled == false {
+            let suspensionResult = routeShieldSuspensionResult
+            routeShieldSuspensionResult = nil
+            suspensionResult?(true)
+            return true
+        }
 
         routeShieldRequestSequence += 1
         let requestSequence = routeShieldRequestSequence
+        let requestedEnabled = desiredRouteShieldEnabled
+        let requestedPlayback = desiredRouteShieldPlayback
+        let info: [String: Any]? = requestedEnabled ? [
+            MPMediaItemPropertyTitle: "Keyway",
+            MPMediaItemPropertyArtist: "Media key routing",
+            MPNowPlayingInfoPropertyIsLiveStream: true,
+            MPNowPlayingInfoPropertyPlaybackRate: requestedPlayback ? 1.0 : 0.0,
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: ProcessInfo.processInfo.systemUptime,
+        ] : nil
         routeShieldRequestInFlight = true
         let sent = mediaRemoteController.setRouteShield(info: info) { [weak self] succeeded in
             guard let self,
@@ -251,19 +335,37 @@ final class MediaCommandCenterInterceptor {
             }
             self.routeShieldRequestInFlight = false
             guard succeeded else {
+                let suspensionResult = self.routeShieldSuspensionResult
+                self.routeShieldSuspensionResult = nil
+                suspensionResult?(false)
                 self.routeShieldFailed(reason: "helper_rejected")
                 return
             }
-            self.acknowledgedRouteShieldPlayback = isPlaying
-            guard self.registerCommandsIfNeeded(helperGeneration: helperGeneration) else {
-                self.routeShieldFailed(reason: "missing_command_target")
-                return
+            self.acknowledgedRouteShieldEnabled = requestedEnabled
+            self.acknowledgedRouteShieldPlayback = requestedEnabled ? requestedPlayback : nil
+            if requestedEnabled,
+               self.desiredRouteShieldEnabled,
+               self.desiredRouteShieldPlayback == requestedPlayback {
+                guard self.registerCommandsIfNeeded(helperGeneration: helperGeneration) else {
+                    self.routeShieldFailed(reason: "missing_command_target")
+                    return
+                }
+                self.setReady(true)
+                self.logger.info("MediaCommandCenter state=enabled commands=play_pause_next_previous")
             }
-            self.setReady(true)
-            self.logger.info("MediaCommandCenter state=enabled commands=play_pause_next_previous")
-            if self.desiredRouteShieldPlayback != isPlaying,
-               !self.publishNowPlayingRoute(isPlaying: self.desiredRouteShieldPlayback) {
-                self.routeShieldFailed(reason: "playback_update")
+            if !requestedEnabled {
+                let suspensionResult = self.routeShieldSuspensionResult
+                self.routeShieldSuspensionResult = nil
+                suspensionResult?(true)
+                self.logger.info("MediaCommandCenter routeShield=released")
+            }
+            if self.desiredRouteShieldEnabled != requestedEnabled
+                || (self.desiredRouteShieldEnabled
+                    && self.desiredRouteShieldPlayback != requestedPlayback) {
+                guard self.driveRouteShieldState() else {
+                    self.routeShieldFailed(reason: "desired_state_update")
+                    return
+                }
             }
         }
         if !sent {
