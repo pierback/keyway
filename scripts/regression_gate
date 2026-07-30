@@ -12,11 +12,23 @@ run() {
 }
 
 run swift test --disable-sandbox --package-path "$PACKAGE_DIR"
+APP_DERIVED_DATA="$(mktemp -d /tmp/keyway-regression.XXXXXX)"
+trap 'rm -rf "$APP_DERIVED_DATA"' EXIT
+run xcodebuild \
+  -quiet \
+  -workspace "$ROOT_DIR/Keyway.xcworkspace" \
+  -scheme Keyway \
+  -destination platform=macOS \
+  -derivedDataPath "$APP_DERIVED_DATA" \
+  CODE_SIGNING_ALLOWED=NO \
+  EXPANDED_CODE_SIGN_IDENTITY=- \
+  build
 for verifier in "$ROOT_DIR"/scripts/verify_*; do
   run "$verifier"
 done
 scripts=()
 for script in "$ROOT_DIR"/scripts/*; do
+  [[ -f "$script" ]] || continue
   [[ "$script" == "$ROOT_DIR"/scripts/verify_* ]] && continue
   IFS= read -r shebang < "$script"
   [[ "$shebang" == "#!/usr/bin/env bash" ]] && scripts+=("$script")

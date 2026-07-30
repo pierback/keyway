@@ -48,11 +48,15 @@ final class MediaRemoteController: ObservableObject {
     private var snapshotRefreshTimeout: Task<Void, Never>?
     private var restartAttempts = 0
     private var expectedTermination = false
+    private var helperPairState = MediaRemoteHelperPairState()
     private var pendingPingRolesByRequestID: [String: (role: MediaRemoteHelperRole, sentAt: Date)] = [:]
     private var lastPongAtByRole: [MediaRemoteHelperRole: Date] = [:]
 
     var canRouteCommands: Bool {
-        (health.state == .running && snapshotHelper.isRunning && commandHelper.isRunning)
+        (helperPairState.isReady
+            && health.state == .running
+            && snapshotHelper.isRunning
+            && commandHelper.isRunning)
             || chromiumBrowserExtensionController.hasRoutableTargets
     }
 
@@ -83,6 +87,7 @@ final class MediaRemoteController: ObservableObject {
         do {
             let resources = try helperResources()
             expectedTermination = false
+            helperPairState.reset()
             cancelRecoveryTask()
             try commandHelper.start(
                 script: resources.script,
@@ -110,13 +115,14 @@ final class MediaRemoteController: ObservableObject {
                     self?.handleTermination(process, status: status, role: .snapshot)
                 }
             )
-            startRefreshTimer()
-            startPingTimer()
+            let readinessStartedAt = Date()
+            helperDegradedSince = readinessStartedAt
+            scheduleHelperRecoveryGrace(
+                since: readinessStartedAt,
+                message: "MediaRemote snapshot and command helpers did not both become ready."
+            )
         } catch {
-            snapshotHelper.stop()
-            commandHelper.stop()
-            beginHelperRecovery(message: "Could not start MediaRemote helper: \(error.localizedDescription)")
-            scheduleRelaunch()
+            recoverHelperPair(message: "Could not start MediaRemote helper: \(error.localizedDescription)")
         }
     }
 
@@ -129,6 +135,7 @@ final class MediaRemoteController: ObservableObject {
         cancelHelperRecoveryGrace()
         snapshotHelper.stop()
         commandHelper.stop()
+        helperPairState.reset()
         clearAllTargets()
         clearCommandState()
         clearPingState()
@@ -148,6 +155,12 @@ final class MediaRemoteController: ObservableObject {
 
     @discardableResult
     func refreshSnapshot() -> Bool {
+        guard helperPairState.isReady,
+              snapshotHelper.isRunning,
+              commandHelper.isRunning
+        else {
+            return false
+        }
         guard let requestID = refreshGate.begin() else {
             pendingRefreshRequested = true
             logger.info("MediaRemoteHelper refresh_coalesced reason=in_flight")
@@ -162,8 +175,7 @@ final class MediaRemoteController: ObservableObject {
             refreshGate.finish(requestID: requestID)
             isRefreshingSnapshot = false
             pendingRefreshRequested = false
-            beginHelperRecovery(message: "Could not write refresh request to MediaRemote snapshot helper.")
-            scheduleRelaunch()
+            recoverHelperPair(message: "Could not write refresh request to MediaRemote snapshot helper.")
             return false
         }
         armSnapshotRefreshTimeout(requestID: requestID)
@@ -199,8 +211,7 @@ final class MediaRemoteController: ObservableObject {
             "command": command.rawValue,
         ])
         guard sent else {
-            beginHelperRecovery(message: "Could not write command request to MediaRemote command helper.")
-            scheduleRelaunch()
+            recoverHelperPair(message: "Could not write command request to MediaRemote command helper.")
             return false
         }
 
@@ -246,13 +257,17 @@ final class MediaRemoteController: ObservableObject {
             switch envelope.type {
             case "ready":
                 let ready = try decoder.decode(MediaRemoteReadyEvent.self, from: line)
-                guard role == .snapshot else {
-                    logger.info("MediaRemoteHelper command_ready pid=\(ready.pid ?? -1, privacy: .public)")
-                    warmCommandClientCache(reason: "command_ready")
+                logger.info("MediaRemoteHelper role=\(role.rawValue, privacy: .public) ready pid=\(ready.pid ?? -1, privacy: .public)")
+                guard helperPairState.markReady(role) else {
+                    return
+                }
+                guard snapshotHelper.isRunning, commandHelper.isRunning else {
+                    recoverHelperPair(message: "MediaRemote helper exited before its pair became ready.")
                     return
                 }
                 restartAttempts = 0
                 cancelRecoveryTask()
+                clearHelperDegraded()
                 health = MediaRemoteHelperHealth(
                     state: .running,
                     message: "Connected through \(ready.host ?? "/usr/bin/perl")",
@@ -260,12 +275,19 @@ final class MediaRemoteController: ObservableObject {
                     lastSnapshotAt: health.lastSnapshotAt,
                     targetCount: targets.count
                 )
+                startRefreshTimer()
+                startPingTimer()
+                warmCommandClientCache(reason: "helper_pair_ready")
                 refreshSnapshot()
             case "pong":
                 let pong = try decoder.decode(MediaRemotePongEvent.self, from: line)
                 handlePong(pong, role: role)
             case "snapshot":
                 let snapshot = try decoder.decode(MediaRemoteSnapshotEvent.self, from: line)
+                guard helperPairState.isReady else {
+                    logger.info("MediaRemoteHelper snapshot_ignored reason=helper_pair_not_ready")
+                    return
+                }
                 guard refreshGate.finish(requestID: snapshot.requestID) else {
                     logger.info("MediaRemoteHelper stale_snapshot_ignored requestID=\(snapshot.requestID ?? "", privacy: .public)")
                     return
@@ -275,7 +297,6 @@ final class MediaRemoteController: ObservableObject {
                 mediaRemoteTargets = snapshot.targets.filter { !Self.isIgnoredTarget($0) }
                 let visibleTargets = chromiumBrowserExtensionController.targetsIncludingBrowserExtensionTargets(mediaRemoteTargets)
                 targets = visibleTargets
-                clearHelperDegraded()
                 let rawActiveTargetID = snapshot.activeTargetID.flatMap { $0.isEmpty ? nil : $0 }
                 activeTargetID = visibleTargets.contains { $0.id == rawActiveTargetID }
                     ? rawActiveTargetID
@@ -322,16 +343,6 @@ final class MediaRemoteController: ObservableObject {
                 debouncedRefresh()
             case "fatal", "error":
                 let error = try decoder.decode(MediaRemoteErrorEvent.self, from: line)
-                if error.requestID == nil {
-                    refreshGate.reset()
-                    snapshotRefreshTimeout?.cancel()
-                    snapshotRefreshTimeout = nil
-                    isRefreshingSnapshot = false
-                } else if refreshGate.finish(requestID: error.requestID) {
-                    snapshotRefreshTimeout?.cancel()
-                    snapshotRefreshTimeout = nil
-                    isRefreshingSnapshot = false
-                }
                 if let requestID = error.requestID {
                     commandRequestTimeouts.removeValue(forKey: requestID)?.cancel()
                     commandRequestStartedAt[requestID] = nil
@@ -339,13 +350,13 @@ final class MediaRemoteController: ObservableObject {
                     commandCacheRefreshRequestIDs.remove(requestID)
                     commandCacheRefreshTargetSignatures[requestID] = nil
                 }
-                markFailed(error.message)
+                recoverHelperPair(message: error.message)
             default:
                 logger.info("MediaRemoteHelper ignored event=\(envelope.type, privacy: .public)")
             }
         } catch {
             logger.error("MediaRemoteHelper role=\(role.rawValue, privacy: .public) parse_error=\(error.localizedDescription, privacy: .public)")
-            markFailed("MediaRemote \(role.rawValue) helper emitted invalid JSON.")
+            recoverHelperPair(message: "MediaRemote \(role.rawValue) helper emitted invalid JSON.")
         }
     }
 
@@ -415,40 +426,26 @@ final class MediaRemoteController: ObservableObject {
             return
         }
 
-        snapshotHelper.stop()
-        commandHelper.stop()
-        refreshTimer?.invalidate()
-        refreshTimer = nil
-        stopPingTimer()
-        clearCommandState()
-        clearPingState()
-        refreshGate.reset()
-        snapshotRefreshTimeout?.cancel()
-        snapshotRefreshTimeout = nil
-        pendingRefreshRequested = false
-
         guard !expectedTermination else {
             expectedTermination = false
             return
         }
 
-        beginHelperRecovery(message: "MediaRemote \(role.rawValue) helper exited with status \(status).")
-        scheduleRelaunch()
+        recoverHelperPair(message: "MediaRemote \(role.rawValue) helper exited with status \(status).")
     }
 
     private func handleHelperFailure(_ message: String, role: MediaRemoteHelperRole) {
         logger.error("MediaRemoteHelper role=\(role.rawValue, privacy: .public) failure=\(message, privacy: .public)")
+        recoverHelperPair(message: message)
+    }
+
+    private func recoverHelperPair(message: String) {
         snapshotHelper.stop()
         commandHelper.stop()
+        helperPairState.reset()
         refreshTimer?.invalidate()
         refreshTimer = nil
         stopPingTimer()
-        clearCommandState()
-        clearPingState()
-        refreshGate.reset()
-        snapshotRefreshTimeout?.cancel()
-        snapshotRefreshTimeout = nil
-        pendingRefreshRequested = false
         beginHelperRecovery(message: message)
         scheduleRelaunch()
     }
@@ -569,7 +566,9 @@ final class MediaRemoteController: ObservableObject {
         pendingPingRolesByRequestID = pendingPingRolesByRequestID.filter {
             now.timeIntervalSince($0.value.sentAt) <= Self.pingInterval * 3
         }
-        ping(role: .snapshot)
+        guard ping(role: .snapshot) else {
+            return
+        }
         ping(role: .command)
         updatePingLiveness()
     }
@@ -586,10 +585,12 @@ final class MediaRemoteController: ObservableObject {
             "type": "ping",
             "requestID": requestID,
         ])
-        if sent {
-            pendingPingRolesByRequestID[requestID] = (role: role, sentAt: Date())
+        guard sent else {
+            recoverHelperPair(message: "Could not write ping request to MediaRemote \(role.rawValue) helper.")
+            return false
         }
-        return sent
+        pendingPingRolesByRequestID[requestID] = (role: role, sentAt: Date())
+        return true
     }
 
     private func handlePong(_ pong: MediaRemotePongEvent, role: MediaRemoteHelperRole) {
@@ -654,6 +655,7 @@ final class MediaRemoteController: ObservableObject {
             self.helperRecoveryGraceTask = nil
             self.snapshotHelper.stop()
             self.commandHelper.stop()
+            self.helperPairState.reset()
             self.stopPingTimer()
             self.clearPingState()
             self.markFailed(message)
@@ -699,6 +701,7 @@ final class MediaRemoteController: ObservableObject {
             "requestID": requestID,
         ])
         guard sent else {
+            recoverHelperPair(message: "Could not write cache request to MediaRemote command helper.")
             return false
         }
 

@@ -32,10 +32,10 @@ if "MediaRemoteController.helperRecoveryGraceInterval" not in store:
 snapshot_start = controller.index('            case "snapshot":')
 snapshot_end = controller.index('            case "commandResult":', snapshot_start)
 snapshot_body = controller[snapshot_start:snapshot_end]
-targets_index = snapshot_body.index("targets = visibleTargets")
-clear_index = snapshot_body.index("clearHelperDegraded()")
-if clear_index < targets_index:
-    raise SystemExit("verify_media_remote_refresh_gate_semantics: fresh snapshot must publish targets before clearing degraded retention")
+if "guard helperPairState.isReady else {" not in snapshot_body:
+    raise SystemExit("verify_media_remote_refresh_gate_semantics: snapshots must be ignored until both helpers are ready")
+if "clearHelperDegraded()" in snapshot_body:
+    raise SystemExit("verify_media_remote_refresh_gate_semantics: a snapshot alone must not clear atomic-pair degradation")
 
 print("verify_media_remote_refresh_gate_policy=ok")
 PY

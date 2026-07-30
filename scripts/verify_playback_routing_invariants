@@ -409,8 +409,8 @@ grep -q 'ShortcutRuntimeStatus.shared.updateMediaTargets' "$remote_controller" \
 grep -q 'mediaTargets' "$runtime_status" \
   || fail "runtime status must expose the app-visible MediaRemote target cache"
 
-grep -q 'warmCommandClientCache(reason: "command_ready")' "$remote_controller" \
-  || fail "command helper must warm its client cache as soon as it is ready"
+grep -q 'warmCommandClientCache(reason: "helper_pair_ready")' "$remote_controller" \
+  || fail "command helper must warm its client cache only after both helpers are ready"
 
 grep -q 'commandCacheRefreshRequestIDs' "$remote_controller" \
   || fail "command helper client-cache refreshes must be bounded and tracked"

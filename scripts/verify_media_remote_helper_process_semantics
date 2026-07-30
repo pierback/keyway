@@ -160,9 +160,28 @@ for required in (
 ready_start = text.index('            case "ready":')
 ready_end = text.index('            case "pong":', ready_start)
 ready_body = text[ready_start:ready_end]
-for required in ("restartAttempts = 0", "cancelRecoveryTask()"):
+for required in (
+    "helperPairState.markReady(role)",
+    "guard snapshotHelper.isRunning, commandHelper.isRunning else {",
+    "restartAttempts = 0",
+    "cancelRecoveryTask()",
+    "clearHelperDegraded()",
+):
     if required not in ready_body:
-        raise SystemExit(f"verify_media_remote_helper_process_semantics: successful start must reset relaunch schedule: {required}")
+        raise SystemExit(f"verify_media_remote_helper_process_semantics: both helpers must be ready before startup succeeds: {required}")
+
+recovery_start = text.index("    private func recoverHelperPair(message: String) {")
+recovery_end = text.index("\n    private func markFailed", recovery_start)
+recovery_body = text[recovery_start:recovery_end]
+for required in (
+    "snapshotHelper.stop()",
+    "commandHelper.stop()",
+    "helperPairState.reset()",
+    "beginHelperRecovery(message: message)",
+    "scheduleRelaunch()",
+):
+    if required not in recovery_body:
+        raise SystemExit(f"verify_media_remote_helper_process_semantics: helper failures must restart the atomic pair: {required}")
 
 if "ignored_unowned_termination" in text:
     raise SystemExit("verify_media_remote_helper_process_semantics: an owned unexpected termination must always schedule recovery")
@@ -176,8 +195,8 @@ end = text.index("\n    private func drainPendingRefreshIfNeeded()", start)
 body = text[start:end]
 if 'logger.error("MediaRemoteHelper role=\\(role.rawValue, privacy: .public) parse_error=' not in body:
     raise SystemExit("verify_media_remote_helper_process_semantics: parse errors must log the helper role before restart")
-if 'markFailed("MediaRemote \\(role.rawValue) helper emitted invalid JSON.")' not in body:
-    raise SystemExit("verify_media_remote_helper_process_semantics: malformed helper frames must fail the active helper session")
+if 'recoverHelperPair(message: "MediaRemote \\(role.rawValue) helper emitted invalid JSON.")' not in body:
+    raise SystemExit("verify_media_remote_helper_process_semantics: malformed helper frames must restart both helper sessions")
 PY
 
 printf 'verify_media_remote_helper_process_semantics=ok\n'

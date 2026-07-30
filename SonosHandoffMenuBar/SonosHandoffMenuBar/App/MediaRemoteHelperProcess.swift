@@ -6,6 +6,23 @@ enum MediaRemoteHelperRole: String, Hashable {
     case command
 }
 
+struct MediaRemoteHelperPairState {
+    private var readyRoles: Set<MediaRemoteHelperRole> = []
+
+    var isReady: Bool {
+        readyRoles == [.snapshot, .command]
+    }
+
+    mutating func markReady(_ role: MediaRemoteHelperRole) -> Bool {
+        let inserted = readyRoles.insert(role).inserted
+        return inserted && isReady
+    }
+
+    mutating func reset() {
+        readyRoles.removeAll()
+    }
+}
+
 @MainActor
 final class MediaRemoteHelperProcess {
     private static let maxOutputBufferBytes = 1_048_576

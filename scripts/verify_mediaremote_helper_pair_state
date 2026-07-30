@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BUILD_DIR="$(mktemp -d /tmp/keyway-mediaremote-pair.XXXXXX)"
+trap 'rm -rf "$BUILD_DIR"' EXIT
+
+xcrun swiftc \
+  -module-cache-path "$BUILD_DIR/module-cache" \
+  "$ROOT_DIR/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaRemoteHelperProcess.swift" \
+  "$ROOT_DIR/scripts/tests/MediaRemoteHelperPairStateTests.swift" \
+  -o "$BUILD_DIR/mediaremote-helper-pair-state-tests"
+"$BUILD_DIR/mediaremote-helper-pair-state-tests"
