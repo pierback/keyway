@@ -9,8 +9,10 @@ onboarding="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/Features/Permissi
 hotkeys="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/VolumeHotkeyController.swift"
 settings="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/Features/SettingsFeature.swift"
 status_hud="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/StatusHUD.swift"
+status_item="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/KeywayStatusItemController.swift"
+background_sync="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/PlaybackBackgroundSync.swift"
 
-python3 - "$app_delegate" "$sonos_app" "$window_controller" "$onboarding" "$hotkeys" "$settings" "$status_hud" <<'PY'
+python3 - "$app_delegate" "$sonos_app" "$window_controller" "$onboarding" "$hotkeys" "$settings" "$status_hud" "$status_item" "$background_sync" <<'PY'
 import pathlib
 import sys
 
@@ -21,6 +23,8 @@ onboarding = pathlib.Path(sys.argv[4]).read_text()
 hotkeys = pathlib.Path(sys.argv[5]).read_text()
 settings = pathlib.Path(sys.argv[6]).read_text()
 status_hud = pathlib.Path(sys.argv[7]).read_text()
+status_item = pathlib.Path(sys.argv[8]).read_text()
+background_sync = pathlib.Path(sys.argv[9]).read_text()
 
 
 def fail(message):
@@ -50,18 +54,31 @@ launch = section(
     "    func applicationDidFinishLaunching",
     "\n    nonisolated func userNotificationCenter",
 )
-if launch.index("volumeHotkeys.start()") > launch.index("permissionOnboardingController!.presentIfNeeded()"):
-    fail("the permission wizard must open after runtime status is initialized")
+if "volumeHotkeys.start()" in launch:
+    fail("AppDelegate must not start operational hotkeys before Local Network consent")
+if launch.index("statusItemController?.start()") > launch.index("permissionOnboardingController!.presentIfNeeded()"):
+    fail("the inert menu-bar shell must exist while permission onboarding is visible")
+if "if !permissionOnboardingController!.presentIfNeeded() {\n            runtime.start()\n        }" not in launch:
+    fail("completed onboarding must activate the centralized runtime")
 
-local_network_start = sonos_app.index("startLocalNetworkFeatures: {")
+runtime_start = section(
+    sonos_app,
+    "    func start() {",
+    "\n    func refreshMediaPermissions",
+)
 for required in (
+    "environment.chromiumBrowserExtensionController.start()",
+    "environment.mediaRemoteController.start()",
+    "environment.mediaRoutingProbeController.start()",
     "SonosVolumeMonitor.shared.start(",
     "await environment.outputDirectory.startBackgroundRefresh()",
-    "await Self.seedVolumeMonitor(environment: environment)",
     "playbackBackgroundSync.start()",
+    "volumeHotkeys.start()",
 ):
-    if sonos_app.index(required) < local_network_start:
-        fail(f"Local Network work must stay inside the gated startup closure: found early {required}")
+    if required not in runtime_start:
+        fail(f"operational startup must be owned by AppRuntime.start(): missing {required}")
+if "guard !isStarted else" not in runtime_start or "isStarted = true" not in runtime_start:
+    fail("AppRuntime.start() must be idempotent and publish activation before starting services")
 
 for required in (
     "static let schemaVersion = 2",
@@ -109,12 +126,49 @@ for required in (
         fail(f"every wizard permission must expose the shared companion: missing {required}")
 
 for required in (
-    "startLocalNetworkFeatures: @escaping @MainActor () -> Void",
+    "private var runtime: AppRuntime?",
+    "runtime: AppRuntime",
     "if !permissionOnboardingController!.presentIfNeeded()",
-    "startLocalNetworkFeaturesIfNeeded()",
+    "self?.runtime?.start()",
 ):
     if required not in app_delegate:
-        fail(f"AppDelegate must gate Local Network startup behind onboarding: missing {required}")
+        fail(f"AppDelegate must gate centralized runtime startup behind onboarding: missing {required}")
+
+status_click = section(
+    status_item,
+    "    @objc private func handleStatusItemClick",
+    "\n    private func togglePopover",
+)
+if "guard isRuntimeStarted() else" not in status_click:
+    fail("the menu-bar shell must not expose operational controls before runtime activation")
+if status_click.index("guard isRuntimeStarted() else") > status_click.index("togglePopover(relativeTo: sender)"):
+    fail("blocked menu-bar interaction must reopen onboarding before the operational popover")
+utility_menu = section(
+    status_item,
+    "    private func showUtilityMenu",
+    "\n    private func menuItem",
+)
+if "if isRuntimeStarted()" not in utility_menu:
+    fail("pre-activation utility menus must not expose MediaRemote restart")
+
+background_init = section(
+    background_sync,
+    "    init(environment: AppEnvironment)",
+    "\n    private func bindRuntimeEvents",
+)
+for forbidden in (
+    "bindSuggestionAction(",
+    "macAudioOutputMonitor.$output",
+):
+    if forbidden in background_init:
+        fail(f"background sync init must be side-effect free before runtime activation: found {forbidden}")
+background_start = section(
+    background_sync,
+    "    func start() {",
+    "\n    private func syncOnce",
+)
+if "bindRuntimeEvents()" not in background_start:
+    fail("background event subscriptions must be installed only at runtime activation")
 
 refresh = section(
     hotkeys,

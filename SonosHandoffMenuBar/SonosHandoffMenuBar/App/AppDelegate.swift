@@ -7,35 +7,30 @@ import SonosHandoffCore
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "Hotkeys")
-    private var volumeHotkeys: VolumeHotkeyController?
+    private var runtime: AppRuntime?
     private var statusItemController: KeywayStatusItemController?
     private var permissionOnboardingController: PermissionOnboardingWindowController?
-    private var startLocalNetworkFeatures: (@MainActor () -> Void)!
-    private var localNetworkFeaturesStarted = false
 
     func configure(
         environment: AppEnvironment,
-        startLocalNetworkFeatures: @escaping @MainActor () -> Void
+        runtime: AppRuntime
     ) {
-        let volumeHotkeys = VolumeHotkeyController(
-            volumeService: environment.volumeService,
-            outputSelection: environment.outputSelection,
-            activePlaybackObserver: environment.activePlaybackObserver,
-            mediaSourceStore: environment.mediaSourceStore,
-            mediaTransportActions: environment.mediaTransportActionController
+        self.runtime = runtime
+        statusItemController = KeywayStatusItemController(
+            environment: environment,
+            isRuntimeStarted: { [weak runtime] in
+                runtime?.isStarted == true
+            },
+            presentPermissionOnboarding: { [weak self] in
+                _ = self?.permissionOnboardingController?.presentIfNeeded()
+            }
         )
-        environment.mediaTransportActionController.relaxRouteShield = { [weak volumeHotkeys] reason in
-            volumeHotkeys?.suspendCommandCenterRouteShield(reason: reason)
-        }
-        self.volumeHotkeys = volumeHotkeys
-        self.startLocalNetworkFeatures = startLocalNetworkFeatures
-        statusItemController = KeywayStatusItemController(environment: environment)
         permissionOnboardingController = PermissionOnboardingWindowController(
-            refreshMediaPermissions: { [weak volumeHotkeys] in
-                volumeHotkeys?.refreshMediaFallback()
+            refreshMediaPermissions: { [weak runtime] in
+                runtime?.refreshMediaPermissions()
             },
             startLocalNetworkFeatures: { [weak self] in
-                self?.startLocalNetworkFeaturesIfNeeded()
+                self?.runtime?.start()
             }
         )
     }
@@ -49,26 +44,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.volumeHotkeys?.refreshMediaFallback()
+                self?.runtime?.refreshMediaPermissions()
             }
         }
-        guard let volumeHotkeys else {
-            logger.error("SonosHandoffHotkeys state=not_started reason=missing_app_environment")
+        guard let runtime else {
+            logger.error("KeywayRuntime state=not_started reason=missing_app_environment")
             return
         }
 
-        volumeHotkeys.start()
         if !permissionOnboardingController!.presentIfNeeded() {
-            startLocalNetworkFeaturesIfNeeded()
+            runtime.start()
         }
-    }
-
-    private func startLocalNetworkFeaturesIfNeeded() {
-        guard !localNetworkFeaturesStarted else {
-            return
-        }
-        localNetworkFeaturesStarted = true
-        startLocalNetworkFeatures()
     }
 
     nonisolated func userNotificationCenter(

@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SHORTCUT_CONTROLLER="$ROOT_DIR/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutVolumeActionController.swift"
 HOTKEY_CONTROLLER="$ROOT_DIR/SonosHandoffMenuBar/SonosHandoffMenuBar/App/VolumeHotkeyController.swift"
-APP_DELEGATE="$ROOT_DIR/SonosHandoffMenuBar/SonosHandoffMenuBar/App/AppDelegate.swift"
+SONOS_APP="$ROOT_DIR/SonosHandoffMenuBar/SonosHandoffMenuBar/App/SonosHandoffApp.swift"
 
 require() {
   local pattern="$1"
@@ -39,7 +39,7 @@ require "StatusHUD.shared.showVolume(roomName: deviceName, volume: requestedVolu
 require "activePlaybackObserver: any SpotifyActivePlaybackObserving" "$HOTKEY_CONTROLLER" "hotkey_controller_missing_spotify_observer_dependency"
 require "activePlaybackObserver: activePlaybackObserver" "$HOTKEY_CONTROLLER" "hotkey_controller_must_pass_spotify_observer_to_shortcut_controller"
 require "timer.schedule(deadline: .now() + 0.22, repeating: 0.09)" "$HOTKEY_CONTROLLER" "hotkey_volume_repeat_must_be_continuous"
-require "activePlaybackObserver: environment.activePlaybackObserver" "$APP_DELEGATE" "app_delegate_must_wire_environment_spotify_observer"
+require "activePlaybackObserver: environment.activePlaybackObserver" "$SONOS_APP" "app_runtime_must_wire_environment_spotify_observer"
 
 reject "outputPreferenceResolver" "$SHORTCUT_CONTROLLER" "shortcut_volume_must_not_invent_preferred_sonos_target"
 reject "Start Spotify playback on a Sonos speaker first." "$SHORTCUT_CONTROLLER" "shortcut_volume_must_not_block_spotify_only_playback"

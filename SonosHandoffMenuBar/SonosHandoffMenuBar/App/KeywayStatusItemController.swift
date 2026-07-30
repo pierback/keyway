@@ -6,6 +6,8 @@ import SwiftUI
 final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
     private let environment: AppEnvironment
     private let playback: PlaybackSyncController
+    private let isRuntimeStarted: @MainActor () -> Bool
+    private let presentPermissionOnboarding: @MainActor () -> Void
     private lazy var statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private lazy var popover: NSPopover = makePopover()
     private var popoverLocalDismissMonitor: Any?
@@ -13,9 +15,15 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
     private var appDeactivationObserver: NSObjectProtocol?
     private var postPopoverCloseAction: (@MainActor () -> Void)?
 
-    init(environment: AppEnvironment) {
+    init(
+        environment: AppEnvironment,
+        isRuntimeStarted: @escaping @MainActor () -> Bool,
+        presentPermissionOnboarding: @escaping @MainActor () -> Void
+    ) {
         self.environment = environment
         self.playback = PlaybackSyncController(environment: environment)
+        self.isRuntimeStarted = isRuntimeStarted
+        self.presentPermissionOnboarding = presentPermissionOnboarding
         super.init()
     }
 
@@ -47,6 +55,11 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
         if event?.type == .rightMouseUp || modifiers.contains(.control) {
             closePopover()
             showUtilityMenu(from: sender, event: event)
+            return
+        }
+
+        guard isRuntimeStarted() else {
+            presentPermissionOnboarding()
             return
         }
 
@@ -125,7 +138,9 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
     private func showUtilityMenu(from button: NSStatusBarButton, event: NSEvent?) {
         let menu = NSMenu()
         menu.addItem(menuItem("Settings...", action: #selector(openSettingsFromMenu(_:)), keyEquivalent: ","))
-        menu.addItem(menuItem("Restart MediaRemote Helper", action: #selector(restartMediaRemoteHelper(_:))))
+        if isRuntimeStarted() {
+            menu.addItem(menuItem("Restart MediaRemote Helper", action: #selector(restartMediaRemoteHelper(_:))))
+        }
         menu.addItem(.separator())
         menu.addItem(menuItem("Quit Keyway", action: #selector(quit(_:)), keyEquivalent: "q"))
 

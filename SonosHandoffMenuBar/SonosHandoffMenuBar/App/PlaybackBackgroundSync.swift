@@ -36,7 +36,10 @@ final class PlaybackBackgroundSync {
         self.groupSuggestionPresenter = environment.groupSuggestionPresenter
         self.transferSuggestionPresenter = environment.transferSuggestionPresenter
         self.headphoneTransferSuggestionPresenter = environment.headphoneTransferSuggestionPresenter
-        self.suggestionActionCancellables = [
+    }
+
+    private func bindRuntimeEvents() {
+        suggestionActionCancellables = [
             bindSuggestionAction(.sonosHandoffAcceptGroupSuggestion) { sync, suggestionID in
                 await sync.acceptGroupSuggestion(id: suggestionID)
             },
@@ -56,7 +59,7 @@ final class PlaybackBackgroundSync {
                 sync.ignoreHeadphoneTransferSuggestion(id: suggestionID)
             },
         ]
-        self.macAudioOutputCancellable = environment.macAudioOutputMonitor.$output
+        macAudioOutputCancellable = environment.macAudioOutputMonitor.$output
             .dropFirst()
             .sink { [weak self] output in
                 Task { @MainActor [weak self] in
@@ -89,6 +92,7 @@ final class PlaybackBackgroundSync {
             return
         }
 
+        bindRuntimeEvents()
         environment.macAudioOutputMonitor.start()
         establishMacAudioOutputBaselineIfNeeded(environment.macAudioOutputMonitor.output)
         task = Task { @MainActor [weak self] in

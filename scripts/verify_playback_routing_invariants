@@ -22,7 +22,7 @@ remote_helper_process="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/Me
 status_item="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/KeywayStatusItemController.swift"
 menu_bar_media_sources="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MenuBarMediaSourceSection.swift"
 app_environment="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/Support/AppEnvironment.swift"
-app_delegate="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/AppDelegate.swift"
+sonos_app="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/SonosHandoffApp.swift"
 info_plist="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/Resources/Info.plist"
 runtime_status="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutRuntimeStatus.swift"
 runtime_reporter="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutRuntimeReporter.swift"
@@ -1126,8 +1126,8 @@ grep -Fq 'MPNowPlayingInfoPropertyPlaybackRate: playbackRate' "$command_center" 
 grep -Fq 'playbackState = isPlaying ? .playing : .paused' "$command_center" \
   || fail "Command Center route shield must keep macOS playback state aligned with visible media targets"
 
-grep -Fq 'mediaSourceStore: environment.mediaSourceStore' "$app_delegate" \
-  || fail "AppDelegate must wire the shared media source store into hotkey routing"
+grep -Fq 'mediaSourceStore: environment.mediaSourceStore' "$sonos_app" \
+  || fail "AppRuntime must wire the shared media source store into hotkey routing"
 
 grep -q 'commandCenterRoute=enabled' "$hotkeys" \
   || fail "command-center routing must be logged when it is published"
