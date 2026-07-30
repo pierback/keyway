@@ -66,6 +66,7 @@ struct HostBrowserIdentity {
     let family: String
     let displayName: String
     let bundleIdentifier: String
+    let processIdentifier: Int
 
     static func current() -> HostBrowserIdentity {
         let parentPID = getppid()
@@ -81,7 +82,8 @@ struct HostBrowserIdentity {
         return HostBrowserIdentity(
             family: family,
             displayName: appName.isEmpty ? displayName(family: family) : appName,
-            bundleIdentifier: bundleIdentifier
+            bundleIdentifier: bundleIdentifier,
+            processIdentifier: Int(app.processIdentifier)
         )
     }
 
@@ -200,6 +202,7 @@ func payloadByAddingHostBrowserIdentity(
         targets[index]["browserFamily"] = hostBrowserIdentity.family
         targets[index]["browserDisplayName"] = hostBrowserIdentity.displayName
         targets[index]["browserBundleIdentifier"] = hostBrowserIdentity.bundleIdentifier
+        targets[index]["browserProcessIdentifier"] = hostBrowserIdentity.processIdentifier
         targets[index]["profileGuid"] = profileGuid
         targets[index]["browser"] = hostBrowserIdentity.displayName
     }
@@ -207,6 +210,7 @@ func payloadByAddingHostBrowserIdentity(
     root["browserFamily"] = hostBrowserIdentity.family
     root["browserDisplayName"] = hostBrowserIdentity.displayName
     root["browserBundleIdentifier"] = hostBrowserIdentity.bundleIdentifier
+    root["browserProcessIdentifier"] = hostBrowserIdentity.processIdentifier
     // Private routing token only; target identity is chromium-tab:<profileGuid>:<tabId>.
     root["connectionID"] = connectionID
     root["connectionGeneration"] = connectionGeneration

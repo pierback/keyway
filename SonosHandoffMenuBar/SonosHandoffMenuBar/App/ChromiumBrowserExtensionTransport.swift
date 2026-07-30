@@ -276,7 +276,7 @@ final class ChromiumBrowserExtensionController: ObservableObject {
     private struct SnapshotSource {
         let lastSnapshotAt: Date
         let targets: [MediaRemoteTarget]
-        let browserBundleIdentifier: String?
+        let browserProcessIdentifier: Int
         let visible: Bool
     }
 
@@ -287,7 +287,7 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         let connectionGeneration: UInt64
         let epoch: Int?
         let resumed: Bool?
-        let browserBundleIdentifier: String?
+        let browserProcessIdentifier: Int
     }
 
     private struct ChromiumBrowserExtensionCommandResultEnvelope: Decodable {
@@ -401,16 +401,15 @@ final class ChromiumBrowserExtensionController: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] notification in
-            guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-                  let bundleIdentifier = app.bundleIdentifier
-            else {
+            guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else {
                 return
             }
-            Task { @MainActor [weak self, bundleIdentifier] in
+            let processIdentifier = Int(app.processIdentifier)
+            Task { @MainActor [weak self] in
                 guard let self, runGeneration == generation else {
                     return
                 }
-                handleBrowserTermination(bundleIdentifier: bundleIdentifier)
+                handleBrowserTermination(processIdentifier: processIdentifier)
             }
         }
 
@@ -459,7 +458,7 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         epoch: Int = 0,
         resumed: Bool? = false,
         connectionGeneration: UInt64 = 0,
-        browserBundleIdentifier: String? = nil,
+        browserProcessIdentifier: Int,
         now: Date = Date()
     ) {
         guard acceptSnapshot(
@@ -476,14 +475,16 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         snapshotSourcesByProfileGuid[profileGuid] = SnapshotSource(
             lastSnapshotAt: now,
             targets: chromiumTargets,
-            browserBundleIdentifier: browserBundleIdentifier
-                ?? chromiumTargets.compactMap(\.browserBundleIdentifier).first,
+            browserProcessIdentifier: browserProcessIdentifier,
             visible: true
         )
         clearSilentSuspects(profileGuid: profileGuid)
         connectionIDByProfileGuid[profileGuid] = connectionID
         if let previousConnectionID, previousConnectionID != connectionID {
-            failPendingRequests(connectionID: previousConnectionID)
+            failPendingRequests(
+                connectionID: previousConnectionID,
+                message: "Chromium extension connection was replaced."
+            )
         }
         rebuildConnectionState()
     }
@@ -745,7 +746,7 @@ final class ChromiumBrowserExtensionController: ObservableObject {
             epoch: snapshotEnvelope.epoch ?? 0,
             resumed: snapshotEnvelope.resumed,
             connectionGeneration: snapshotEnvelope.connectionGeneration,
-            browserBundleIdentifier: snapshotEnvelope.browserBundleIdentifier
+            browserProcessIdentifier: snapshotEnvelope.browserProcessIdentifier
         )
     }
 
@@ -953,7 +954,7 @@ final class ChromiumBrowserExtensionController: ObservableObject {
                 snapshotSourcesByProfileGuid[profileGuid] = SnapshotSource(
                     lastSnapshotAt: source.lastSnapshotAt,
                     targets: source.targets,
-                    browserBundleIdentifier: source.browserBundleIdentifier,
+                    browserProcessIdentifier: source.browserProcessIdentifier,
                     visible: false
                 )
                 changed = true
@@ -969,14 +970,20 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         }
     }
 
-    private func handleBrowserTermination(bundleIdentifier: String) {
+    private func handleBrowserTermination(processIdentifier: Int) {
         let terminatedProfileGuids = snapshotSourcesByProfileGuid.filter {
-            $0.value.browserBundleIdentifier == bundleIdentifier
+            $0.value.browserProcessIdentifier == processIdentifier
         }.keys
         guard !terminatedProfileGuids.isEmpty else {
             return
         }
         for profileGuid in terminatedProfileGuids {
+            if let connectionID = connectionIDByProfileGuid[profileGuid] {
+                failPendingRequests(
+                    connectionID: connectionID,
+                    message: "Chromium browser process terminated."
+                )
+            }
             snapshotSourcesByProfileGuid.removeValue(forKey: profileGuid)
             connectionIDByProfileGuid.removeValue(forKey: profileGuid)
             highestAcceptedEpochByProfileGuid.removeValue(forKey: profileGuid)
@@ -992,7 +999,7 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         rebuildConnectionState()
     }
 
-    private func failPendingRequests(connectionID: String) {
+    private func failPendingRequests(connectionID: String, message: String) {
         let commandRequestIDs = pendingCommands.compactMap {
             $0.value.connectionID == connectionID ? $0.key : nil
         }
@@ -1007,7 +1014,7 @@ final class ChromiumBrowserExtensionController: ObservableObject {
                 targetID: pending.targetID,
                 command: pending.commandName,
                 ok: false,
-                message: "Chromium extension connection was replaced.",
+                message: message,
                 backend: ChromiumBrowserExtensionTransport.backendName
             ))
         }
@@ -1024,7 +1031,7 @@ final class ChromiumBrowserExtensionController: ObservableObject {
                 requestID: requestID,
                 targetID: pending.targetID,
                 ok: false,
-                message: "Chromium extension connection was replaced.",
+                message: message,
                 backend: ChromiumBrowserExtensionTransport.backendName,
                 failureReason: .browserTargetUnavailable
             ))
@@ -1135,6 +1142,7 @@ private struct ChromiumBrowserExtensionTargetPayload: Decodable {
     let browserFamily: String?
     let browserDisplayName: String?
     let browserBundleIdentifier: String?
+    let browserProcessIdentifier: Int
     let url: String
     let pageTitle: String
     let title: String
@@ -1155,7 +1163,7 @@ private struct ChromiumBrowserExtensionTargetPayload: Decodable {
                 browser: browserDisplayName ?? browser,
                 pageTitle: pageTitle
             ),
-            pid: 0,
+            pid: browserProcessIdentifier,
             title: title.isEmpty ? pageTitle : title,
             artist: artist.isEmpty ? url : artist,
             album: album ?? pageTitle,

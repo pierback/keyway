@@ -163,6 +163,10 @@ struct Semantics {
             id: "chromium-tab:chromium-profile-a:23",
             title: "Video B"
         )
+        let secondChromiumTarget = chromiumTarget(
+            id: "chromium-tab:chromium-profile-b:33",
+            title: "Video B"
+        )
         let braveTarget = chromiumTarget(
             id: "chromium-tab:brave-profile-b:44",
             title: "Brave Video",
@@ -232,19 +236,22 @@ struct Semantics {
         controller.markConnected(
             profileGuid: "chromium-profile-a",
             connectionID: "connection-a",
-            targets: [target]
+            targets: [target],
+            browserProcessIdentifier: 1001
         )
 
         let multiProfileController = ChromiumBrowserExtensionController()
         multiProfileController.markConnected(
             profileGuid: "chromium-profile-a",
             connectionID: "connection-a",
-            targets: [target]
+            targets: [target],
+            browserProcessIdentifier: 1001
         )
         multiProfileController.markConnected(
             profileGuid: "brave-profile-b",
             connectionID: "connection-b",
-            targets: [braveTarget]
+            targets: [braveTarget],
+            browserProcessIdentifier: 2001
         )
         expectEqual(
             multiProfileController.targets.map(\.id),
@@ -257,7 +264,8 @@ struct Semantics {
             targets: [replacement],
             epoch: 1,
             resumed: true,
-            connectionGeneration: 1
+            connectionGeneration: 1,
+            browserProcessIdentifier: 1001
         )
         expectEqual(
             multiProfileController.targets.map(\.id),
@@ -270,7 +278,8 @@ struct Semantics {
             targets: [],
             epoch: 2,
             resumed: true,
-            connectionGeneration: 2
+            connectionGeneration: 2,
+            browserProcessIdentifier: 1001
         )
         expectEqual(
             multiProfileController.targets.map(\.id),
@@ -319,12 +328,13 @@ struct Semantics {
 
         let snapshotController = ChromiumBrowserExtensionController()
         snapshotController.handleSnapshotPayload("""
-        {"protocolVersion":4,"profileGuid":"chromium-profile-a","connectionID":"connection-a","connectionGeneration":10,"epoch":10,"resumed":false,"browserBundleIdentifier":"com.google.Chrome","targets":[{"id":"chromium-tab:chromium-profile-a:22","browser":"Chrome","browserFamily":"chrome","browserDisplayName":"Chrome","browserBundleIdentifier":"com.google.Chrome","url":"https://example.test","pageTitle":"Example","title":"Song","artist":"Artist","album":"Album","playing":true,"muted":true,"duration":100,"elapsedTime":10,"supportedCommands":["play","pause","playPause"]}]}
+        {"protocolVersion":4,"profileGuid":"chromium-profile-a","connectionID":"connection-a","connectionGeneration":10,"epoch":10,"resumed":false,"browserBundleIdentifier":"com.google.Chrome","browserProcessIdentifier":1001,"targets":[{"id":"chromium-tab:chromium-profile-a:22","browser":"Chrome","browserFamily":"chrome","browserDisplayName":"Chrome","browserBundleIdentifier":"com.google.Chrome","browserProcessIdentifier":1001,"url":"https://example.test","pageTitle":"Example","title":"Song","artist":"Artist","album":"Album","playing":true,"muted":true,"duration":100,"elapsedTime":10,"supportedCommands":["play","pause","playPause"]}]}
         """)
         expectEqual(snapshotController.targets.map(\.id), ["chromium-tab:chromium-profile-a:22"], "Valid Chromium snapshots must decode stable tab IDs")
         expectEqual(snapshotController.targets.first?.muted, true, "Valid Chromium snapshots must decode tab-level muted state")
+        expectEqual(snapshotController.targets.first?.pid, 1001, "Valid Chromium snapshots must bind targets to the browser process")
         snapshotController.handleSnapshotPayload("""
-        {"protocolVersion":4,"profileGuid":"chromium-profile-a","connectionID":"connection-a","connectionGeneration":10,"epoch":11,"browserBundleIdentifier":"com.google.Chrome","targets":[{"id":"chromium-tab:chromium-profile-a:23","browser":"Chrome","browserFamily":"chrome","browserDisplayName":"Chrome","browserBundleIdentifier":"com.google.Chrome","url":"https://example.test/2","pageTitle":"Second","title":"Second","artist":"Artist","album":"Album","playing":true,"duration":100,"elapsedTime":10,"supportedCommands":["play","pause","playPause"]}]}
+        {"protocolVersion":4,"profileGuid":"chromium-profile-a","connectionID":"connection-a","connectionGeneration":10,"epoch":11,"browserBundleIdentifier":"com.google.Chrome","browserProcessIdentifier":1001,"targets":[{"id":"chromium-tab:chromium-profile-a:23","browser":"Chrome","browserFamily":"chrome","browserDisplayName":"Chrome","browserBundleIdentifier":"com.google.Chrome","browserProcessIdentifier":1001,"url":"https://example.test/2","pageTitle":"Second","title":"Second","artist":"Artist","album":"Album","playing":true,"duration":100,"elapsedTime":10,"supportedCommands":["play","pause","playPause"]}]}
         """)
         expectEqual(snapshotController.targets.map(\.id), ["chromium-tab:chromium-profile-a:23"], "Decoded snapshots must atomically replace by profile GUID")
         snapshotController.handleSnapshotPayload("""
@@ -343,26 +353,26 @@ struct Semantics {
         )
 
         let epochController = ChromiumBrowserExtensionController()
-        epochController.markConnected(profileGuid: "chromium-profile-a", connectionID: "connection-a", targets: [target], epoch: 10, resumed: false, connectionGeneration: 100)
-        epochController.markConnected(profileGuid: "chromium-profile-a", connectionID: "connection-a", targets: [replacement], epoch: 9, resumed: nil, connectionGeneration: 100)
+        epochController.markConnected(profileGuid: "chromium-profile-a", connectionID: "connection-a", targets: [target], epoch: 10, resumed: false, connectionGeneration: 100, browserProcessIdentifier: 1001)
+        epochController.markConnected(profileGuid: "chromium-profile-a", connectionID: "connection-a", targets: [replacement], epoch: 9, resumed: nil, connectionGeneration: 100, browserProcessIdentifier: 1001)
         expectEqual(
             epochController.targets.map(\.id),
             [target.id],
             "A lower-epoch snapshot in the same profile session must be ignored"
         )
-        epochController.markConnected(profileGuid: "chromium-profile-a", connectionID: "connection-a", targets: [replacement], epoch: 11, resumed: nil, connectionGeneration: 100)
+        epochController.markConnected(profileGuid: "chromium-profile-a", connectionID: "connection-a", targets: [replacement], epoch: 11, resumed: nil, connectionGeneration: 100, browserProcessIdentifier: 1001)
         expectEqual(
             epochController.targets.map(\.id),
             [replacement.id],
             "A higher-epoch snapshot in the same profile session must be accepted"
         )
-        epochController.markConnected(profileGuid: "chromium-profile-a", connectionID: "connection-b", targets: [target], epoch: 1, resumed: false, connectionGeneration: 101)
+        epochController.markConnected(profileGuid: "chromium-profile-a", connectionID: "connection-b", targets: [target], epoch: 1, resumed: false, connectionGeneration: 101, browserProcessIdentifier: 1002)
         expectEqual(
             epochController.targets.map(\.id),
             [target.id],
             "A strictly newer connection generation must win even when its snapshot epoch is lower"
         )
-        epochController.markConnected(profileGuid: "chromium-profile-a", connectionID: "connection-a", targets: [replacement], epoch: 99, resumed: false, connectionGeneration: 100)
+        epochController.markConnected(profileGuid: "chromium-profile-a", connectionID: "connection-a", targets: [replacement], epoch: 99, resumed: false, connectionGeneration: 100, browserProcessIdentifier: 1001)
         expectEqual(
             epochController.targets.map(\.id),
             [target.id],
@@ -370,8 +380,8 @@ struct Semantics {
         )
 
         let delayedHelloController = ChromiumBrowserExtensionController()
-        delayedHelloController.markConnected(profileGuid: "chromium-profile-a", connectionID: "connection-b", targets: [replacement], epoch: 6, resumed: true, connectionGeneration: 200)
-        delayedHelloController.markConnected(profileGuid: "chromium-profile-a", connectionID: "connection-a", targets: [target], epoch: 10, resumed: false, connectionGeneration: 199)
+        delayedHelloController.markConnected(profileGuid: "chromium-profile-a", connectionID: "connection-b", targets: [replacement], epoch: 6, resumed: true, connectionGeneration: 200, browserProcessIdentifier: 1002)
+        delayedHelloController.markConnected(profileGuid: "chromium-profile-a", connectionID: "connection-a", targets: [target], epoch: 10, resumed: false, connectionGeneration: 199, browserProcessIdentifier: 1001)
         expectEqual(
             delayedHelloController.targets.map(\.id),
             [replacement.id],
@@ -382,7 +392,7 @@ struct Semantics {
             "connection-b",
             "Rejecting a delayed hello must preserve the current connection ID"
         )
-        delayedHelloController.markConnected(profileGuid: "chromium-profile-a", connectionID: "connection-b", targets: [target], epoch: 7, resumed: nil, connectionGeneration: 200)
+        delayedHelloController.markConnected(profileGuid: "chromium-profile-a", connectionID: "connection-b", targets: [target], epoch: 7, resumed: nil, connectionGeneration: 200, browserProcessIdentifier: 1002)
         expectEqual(
             delayedHelloController.targets.map(\.id),
             [target.id],
@@ -396,6 +406,7 @@ struct Semantics {
             targets: [target],
             epoch: 1,
             resumed: false,
+            browserProcessIdentifier: 1001,
             now: Date(timeIntervalSince1970: 100)
         )
         retentionController.hideSilentProfiles(now: Date(timeIntervalSince1970: 104))
@@ -416,6 +427,7 @@ struct Semantics {
             targets: [target],
             epoch: 2,
             resumed: false,
+            browserProcessIdentifier: 1001,
             now: Date(timeIntervalSince1970: 105)
         )
         expectTrue(
@@ -460,21 +472,57 @@ struct Semantics {
             targets: [target],
             epoch: 1,
             resumed: false,
-            browserBundleIdentifier: "org.chromium.Chromium"
+            browserProcessIdentifier: 1001
+        )
+        quitController.markConnected(
+            profileGuid: "chromium-profile-b",
+            connectionID: "connection-b",
+            targets: [secondChromiumTarget],
+            epoch: 1,
+            resumed: false,
+            browserProcessIdentifier: 1002
         )
         quitController.markConnected(
             profileGuid: "brave-profile-b",
-            connectionID: "connection-b",
+            connectionID: "connection-c",
             targets: [braveTarget],
             epoch: 1,
             resumed: false,
-            browserBundleIdentifier: "com.brave.Browser"
+            browserProcessIdentifier: 2001
         )
-        quitController.handleBrowserTermination(bundleIdentifier: "org.chromium.Chromium")
+        var terminatedProcessCommandResult: MediaRemoteCommandResultEvent?
+        quitController.pendingCommands["terminated-process-command"] = ChromiumBrowserExtensionPendingCommand(
+            startedAt: ProcessInfo.processInfo.systemUptime,
+            commandName: "play",
+            targetID: target.id,
+            connectionID: "connection-a",
+            connectionGeneration: 0
+        ) { result in
+            terminatedProcessCommandResult = result
+        }
+        quitController.pendingCommands["surviving-process-command"] = ChromiumBrowserExtensionPendingCommand(
+            startedAt: ProcessInfo.processInfo.systemUptime,
+            commandName: "play",
+            targetID: secondChromiumTarget.id,
+            connectionID: "connection-b",
+            connectionGeneration: 0
+        ) { _ in
+            fail("Termination of another browser process must not fail this command")
+        }
+        quitController.handleBrowserTermination(processIdentifier: 1001)
         expectEqual(
             quitController.targets.map(\.id),
-            [braveTarget.id],
-            "Browser termination must clear only profiles owned by the terminated bundle"
+            [braveTarget.id, secondChromiumTarget.id],
+            "Browser termination must clear only profiles owned by the terminated process"
+        )
+        expectEqual(
+            terminatedProcessCommandResult?.message,
+            "Chromium browser process terminated.",
+            "Browser termination must immediately fail requests owned by the terminated process"
+        )
+        expectTrue(
+            quitController.pendingCommands.keys.contains("surviving-process-command"),
+            "Browser termination must preserve requests owned by another same-bundle process"
         )
         expectFalse(
             quitController.snapshotSourcesByProfileGuid.keys.contains("chromium-profile-a"),
@@ -502,20 +550,20 @@ struct Semantics {
             epoch: 2,
             resumed: false,
             connectionGeneration: 0,
-            browserBundleIdentifier: "org.chromium.Chromium"
+            browserProcessIdentifier: 1001
         )
         expectEqual(
             quitController.targets.map(\.id),
-            [braveTarget.id],
+            [braveTarget.id, secondChromiumTarget.id],
             "A queued hello from the terminated native process must not recreate its profile"
         )
         expectTrue(
-            quitController.snapshotSourcesByProfileGuid.keys.contains("brave-profile-b"),
-            "Browser termination must leave other browser profiles retained"
+            quitController.snapshotSourcesByProfileGuid.keys.contains("chromium-profile-b"),
+            "Browser termination must leave another same-bundle browser process retained"
         )
 
         let commandResultController = ChromiumBrowserExtensionController()
-        commandResultController.markConnected(profileGuid: "chromium-profile-a", connectionID: "connection-a", targets: [target])
+        commandResultController.markConnected(profileGuid: "chromium-profile-a", connectionID: "connection-a", targets: [target], browserProcessIdentifier: 1001)
         var commandResult: MediaRemoteCommandResultEvent?
         let commandRequestID = "command-result-a"
         commandResultController.pendingCommands[commandRequestID] = ChromiumBrowserExtensionPendingCommand(
@@ -535,7 +583,7 @@ struct Semantics {
         expectTrue(commandResultController.pendingCommands.isEmpty, "Valid Chromium command results must clear the pending command slot")
 
         let focusResultController = ChromiumBrowserExtensionController()
-        focusResultController.markConnected(profileGuid: "chromium-profile-a", connectionID: "connection-a", targets: [target])
+        focusResultController.markConnected(profileGuid: "chromium-profile-a", connectionID: "connection-a", targets: [target], browserProcessIdentifier: 1001)
         var focusResult: SourceFocusResult?
         let focusRequestID = "focus-result-a"
         focusResultController.pendingFocusRequests[focusRequestID] = ChromiumBrowserExtensionPendingFocus(
@@ -702,8 +750,10 @@ expect(transport, "let connectionGeneration = highestAcceptedConnectionGeneratio
 
 expect(transport, "private static let profileRetainVisibleDuration: TimeInterval = 10", "Swift transport must retain visible profile targets for a 10s reconnect grace")
 expect(transport, "let lastSnapshotAt: Date", "Swift transport snapshots must record when they were last refreshed")
+expect(transport, "let browserProcessIdentifier: Int", "Swift transport snapshots must retain their owning browser process")
 expect(transport, "private func hideSilentProfiles(now: Date) {", "Swift transport must hide silent profile targets without dropping retained route state")
-expect(transport, "private func handleBrowserTermination(bundleIdentifier: String) {", "Swift transport must clear profiles immediately on confirmed browser quit")
+expect(transport, "private func handleBrowserTermination(processIdentifier: Int) {", "Swift transport must clear only profiles owned by the confirmed browser process")
+expect(transport, "$0.value.browserProcessIdentifier == processIdentifier", "Swift transport termination must match exact process ownership")
 expect(transport, "NSWorkspace.didTerminateApplicationNotification", "Swift transport must observe browser termination notifications")
 expect(transport, "guard connectionGeneration >= acceptedGeneration else", "Swift transport must reject delayed snapshots from older native-process generations")
 expect(transport, "if connectionGeneration > acceptedGeneration", "Swift transport must adopt only strictly newer process generations")
@@ -721,6 +771,8 @@ expect(native_host, "let snapshot: [NativeHelloSnapshotTarget]?", "native host h
 expect(native_host, "hostConnectionState.record(profileGuid: hello.profileGuid)", "native host must record the profile GUID from hello")
 expect(native_host, 'targets[index]["id"] = "\\(chromiumTargetIDPrefix)\\(profileGuid):\\(tabID)"', "native host must assemble stable Chromium tab target IDs")
 expect(native_host, 'root["profileGuid"] = profileGuid', "native host snapshots must expose profile GUID at the root")
+expect(native_host, 'root["browserProcessIdentifier"] = hostBrowserIdentity.processIdentifier', "native host snapshots must expose their owning browser process")
+expect(native_host, 'targets[index]["browserProcessIdentifier"] = hostBrowserIdentity.processIdentifier', "native host targets must expose their owning browser process")
 expect(native_host, 'root["connectionID"] = connectionID', "native host snapshots must expose the private route connection ID at the root")
 expect(native_host, 'root["connectionGeneration"] = connectionGeneration', "native host messages must expose their process generation")
 expect(native_host, "func payloadByMatchingConnectionID(_ payload: String) -> Data?", "native host must route commands by connection ID")
