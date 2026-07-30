@@ -142,7 +142,7 @@ final class MediaRemoteHelperProcess {
     }
 
     @discardableResult
-    func send(_ request: [String: String]) -> Bool {
+    func send(_ request: [String: Any]) -> Bool {
         guard let inputPipe, process?.isRunning == true else {
             if process != nil || self.inputPipe != nil || outputPipe != nil || errorPipe != nil {
                 stop()

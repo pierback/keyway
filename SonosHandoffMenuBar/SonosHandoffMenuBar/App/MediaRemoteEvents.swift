@@ -102,6 +102,14 @@ struct MediaRemoteClientCacheEvent: Decodable {
     let message: String
 }
 
+struct MediaRemoteRouteShieldResultEvent: Decodable {
+    let type: String
+    let requestID: String?
+    let enabled: Bool
+    let ok: Bool
+    let message: String
+}
+
 struct MediaRemoteErrorEvent: Decodable {
     let type: String
     let requestID: String?

@@ -28,8 +28,9 @@ my $snapshot_symbol = DynaLoader::dl_find_symbol($handle, "keyway_mediaremote_sn
 my $command_symbol = DynaLoader::dl_find_symbol($handle, "keyway_mediaremote_send_command");
 my $client_cache_symbol = DynaLoader::dl_find_symbol($handle, "keyway_mediaremote_refresh_client_cache");
 my $register_symbol = DynaLoader::dl_find_symbol($handle, "keyway_mediaremote_register_notifications");
+my $route_shield_symbol = DynaLoader::dl_find_symbol($handle, "keyway_mediaremote_set_route_shield");
 my $role = $ENV{KEYWAY_MEDIAREMOTE_ROLE} // "snapshot";
-if (!$snapshot_symbol || !$command_symbol || !$client_cache_symbol) {
+if (!$snapshot_symbol || !$command_symbol || !$client_cache_symbol || !$route_shield_symbol) {
     print encode_json({
         type => "fatal",
         message => "missing helper symbols"
@@ -40,6 +41,7 @@ if (!$snapshot_symbol || !$command_symbol || !$client_cache_symbol) {
 DynaLoader::dl_install_xsub("Keyway::MediaRemote::snapshot", $snapshot_symbol);
 DynaLoader::dl_install_xsub("Keyway::MediaRemote::send_command", $command_symbol);
 DynaLoader::dl_install_xsub("Keyway::MediaRemote::refresh_client_cache", $client_cache_symbol);
+DynaLoader::dl_install_xsub("Keyway::MediaRemote::set_route_shield", $route_shield_symbol);
 
 if ($register_symbol && !$ENV{KEYWAY_MEDIAREMOTE_DISABLE_NOTIFICATIONS}) {
     DynaLoader::dl_install_xsub("Keyway::MediaRemote::register_notifications", $register_symbol);
@@ -83,6 +85,11 @@ while (defined(my $line = <STDIN>)) {
         local $ENV{KEYWAY_MEDIAREMOTE_TARGET_ID} = $message->{targetID} // "";
         local $ENV{KEYWAY_MEDIAREMOTE_COMMAND} = $message->{command} // "";
         Keyway::MediaRemote::send_command();
+    } elsif ($type eq "setRouteShield") {
+        local $ENV{KEYWAY_MEDIAREMOTE_ROUTE_ENABLED} = $message->{enabled} ? "1" : "0";
+        local $ENV{KEYWAY_MEDIAREMOTE_ROUTE_BUNDLE_IDENTIFIER} = $message->{bundleIdentifier} // "";
+        local $ENV{KEYWAY_MEDIAREMOTE_ROUTE_INFO_JSON} = encode_json($message->{info} // {});
+        Keyway::MediaRemote::set_route_shield();
     } else {
         print encode_json({
             type => "error",

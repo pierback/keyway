@@ -9,6 +9,10 @@ typedef void (*MRMediaRemoteGetNowPlayingInfoFn)(dispatch_queue_t queue, void (^
 typedef void (*MRMediaRemoteGetNowPlayingClientFn)(dispatch_queue_t queue, void (^completion)(id client));
 typedef void (*MRMediaRemoteGetNowPlayingInfoForClientFn)(id client, id origin, dispatch_queue_t queue, void (^completion)(NSDictionary *info));
 typedef void (*MRMediaRemoteRegisterForNowPlayingNotificationsFn)(dispatch_queue_t queue);
+typedef void (*MRMediaRemoteSetCanBeNowPlayingApplicationFn)(BOOL enabled);
+typedef void (*MRMediaRemoteSetNowPlayingInfoFn)(CFDictionaryRef info);
+typedef void (*MRMediaRemoteSetNowPlayingApplicationOverrideEnabledFn)(BOOL enabled);
+typedef void (*MRMediaRemoteSetOverriddenNowPlayingApplicationFn)(CFStringRef bundleIdentifier);
 typedef NSString *(*MRNowPlayingClientGetBundleIdentifierFn)(id client);
 typedef NSString *(*MRNowPlayingClientGetParentAppBundleIdentifierFn)(id client);
 typedef NSString *(*MRNowPlayingClientGetDisplayNameFn)(id client);
@@ -37,6 +41,10 @@ typedef struct {
     MRMediaRemoteGetLocalOriginFn getLocalOrigin;
     MRMediaRemoteGetNowPlayingInfoFn getActiveInfo;
     MRMediaRemoteGetNowPlayingClientFn getActiveClient;
+    MRMediaRemoteSetCanBeNowPlayingApplicationFn setCanBeNowPlayingApplication;
+    MRMediaRemoteSetNowPlayingInfoFn setNowPlayingInfo;
+    MRMediaRemoteSetNowPlayingApplicationOverrideEnabledFn setNowPlayingApplicationOverrideEnabled;
+    MRMediaRemoteSetOverriddenNowPlayingApplicationFn setOverriddenNowPlayingApplication;
     MRNowPlayingClientGetBundleIdentifierFn getBundleID;
     MRNowPlayingClientGetParentAppBundleIdentifierFn getParentBundleID;
     MRNowPlayingClientGetDisplayNameFn getDisplayName;
@@ -160,12 +168,16 @@ static BOOL KeywayLoadSymbols(KeywayMediaRemoteSymbols *symbols) {
     symbols->getLocalOrigin = (MRMediaRemoteGetLocalOriginFn)KeywayLoadFunction(symbols->bundle, CFSTR("MRMediaRemoteGetLocalOrigin"));
     symbols->getActiveInfo = (MRMediaRemoteGetNowPlayingInfoFn)KeywayLoadFunction(symbols->bundle, CFSTR("MRMediaRemoteGetNowPlayingInfo"));
     symbols->getActiveClient = (MRMediaRemoteGetNowPlayingClientFn)KeywayLoadFunction(symbols->bundle, CFSTR("MRMediaRemoteGetNowPlayingClient"));
+    symbols->setCanBeNowPlayingApplication = (MRMediaRemoteSetCanBeNowPlayingApplicationFn)KeywayLoadFunction(symbols->bundle, CFSTR("MRMediaRemoteSetCanBeNowPlayingApplication"));
+    symbols->setNowPlayingInfo = (MRMediaRemoteSetNowPlayingInfoFn)KeywayLoadFunction(symbols->bundle, CFSTR("MRMediaRemoteSetNowPlayingInfo"));
+    symbols->setNowPlayingApplicationOverrideEnabled = (MRMediaRemoteSetNowPlayingApplicationOverrideEnabledFn)KeywayLoadFunction(symbols->bundle, CFSTR("MRMediaRemoteSetNowPlayingApplicationOverrideEnabled"));
+    symbols->setOverriddenNowPlayingApplication = (MRMediaRemoteSetOverriddenNowPlayingApplicationFn)KeywayLoadFunction(symbols->bundle, CFSTR("MRMediaRemoteSetOverriddenNowPlayingApplication"));
     symbols->getBundleID = (MRNowPlayingClientGetBundleIdentifierFn)KeywayLoadFunction(symbols->bundle, CFSTR("MRNowPlayingClientGetBundleIdentifier"));
     symbols->getParentBundleID = (MRNowPlayingClientGetParentAppBundleIdentifierFn)KeywayLoadFunction(symbols->bundle, CFSTR("MRNowPlayingClientGetParentAppBundleIdentifier"));
     symbols->getDisplayName = (MRNowPlayingClientGetDisplayNameFn)KeywayLoadFunction(symbols->bundle, CFSTR("MRNowPlayingClientGetDisplayName"));
     symbols->getPID = (MRNowPlayingClientGetProcessIdentifierFn)KeywayLoadFunction(symbols->bundle, CFSTR("MRNowPlayingClientGetProcessIdentifier"));
 
-    if (!symbols->getClients || !symbols->getLocalOrigin || !symbols->getActiveInfo || !symbols->getActiveClient || !symbols->getBundleID || !symbols->getParentBundleID || !symbols->getDisplayName || !symbols->getPID) {
+    if (!symbols->getClients || !symbols->getLocalOrigin || !symbols->getActiveInfo || !symbols->getActiveClient || !symbols->setCanBeNowPlayingApplication || !symbols->setNowPlayingInfo || !symbols->setNowPlayingApplicationOverrideEnabled || !symbols->setOverriddenNowPlayingApplication || !symbols->getBundleID || !symbols->getParentBundleID || !symbols->getDisplayName || !symbols->getPID) {
         KeywayPrintError(@"missing MediaRemote symbol");
         CFRelease(symbols->bundle);
         memset(symbols, 0, sizeof(KeywayMediaRemoteSymbols));
@@ -624,6 +636,51 @@ void keyway_mediaremote_send_command(void) {
         } else {
             printCommandResult(NO, message);
         }
+        KeywayReleaseSymbols(&symbols);
+    }
+}
+
+void keyway_mediaremote_set_route_shield(void) {
+    @autoreleasepool {
+        NSDictionary *environment = [NSProcessInfo processInfo].environment;
+        BOOL enabled = [environment[@"KEYWAY_MEDIAREMOTE_ROUTE_ENABLED"] boolValue];
+        NSString *bundleIdentifier = environment[@"KEYWAY_MEDIAREMOTE_ROUTE_BUNDLE_IDENTIFIER"] ?: @"";
+        NSString *infoJSON = environment[@"KEYWAY_MEDIAREMOTE_ROUTE_INFO_JSON"] ?: @"{}";
+        NSData *infoData = [infoJSON dataUsingEncoding:NSUTF8StringEncoding];
+        NSError *error = nil;
+        NSDictionary *info = [NSJSONSerialization JSONObjectWithData:infoData options:0 error:&error];
+        if (error != nil || ![info isKindOfClass:[NSDictionary class]] || (enabled && bundleIdentifier.length == 0)) {
+            KeywayPrintJSON(@{
+                @"type": @"routeShieldResult",
+                @"requestID": KeywayRequestID(),
+                @"enabled": enabled ? (__bridge id)kCFBooleanTrue : (__bridge id)kCFBooleanFalse,
+                @"ok": (__bridge id)kCFBooleanFalse,
+                @"message": error.localizedDescription ?: @"route shield requires a bundle identifier and valid now-playing info"
+            });
+            return;
+        }
+
+        KeywayMediaRemoteSymbols symbols;
+        if (!KeywayLoadSymbols(&symbols)) {
+            return;
+        }
+
+        if (enabled) {
+            symbols.setCanBeNowPlayingApplication(YES);
+            symbols.setOverriddenNowPlayingApplication((__bridge CFStringRef)bundleIdentifier);
+            symbols.setNowPlayingApplicationOverrideEnabled(YES);
+            symbols.setNowPlayingInfo((__bridge CFDictionaryRef)info);
+        } else {
+            symbols.setNowPlayingApplicationOverrideEnabled(NO);
+            symbols.setCanBeNowPlayingApplication(NO);
+        }
+        KeywayPrintJSON(@{
+            @"type": @"routeShieldResult",
+            @"requestID": KeywayRequestID(),
+            @"enabled": enabled ? (__bridge id)kCFBooleanTrue : (__bridge id)kCFBooleanFalse,
+            @"ok": (__bridge id)kCFBooleanTrue,
+            @"message": enabled ? @"MediaRemote route shield enabled" : @"MediaRemote route shield disabled"
+        });
         KeywayReleaseSymbols(&symbols);
     }
 }

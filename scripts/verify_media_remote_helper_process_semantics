@@ -73,7 +73,7 @@ for required in (
     if required not in body:
         raise SystemExit(f"verify_media_remote_helper_process_semantics: retire() must detach old helper pipes before a restart: {required}")
 
-start = text.index("    func send(_ request: [String: String]) -> Bool {")
+start = text.index("    func send(_ request: [String: Any]) -> Bool {")
 end = text.index("\n    func owns(_ candidate: Process) -> Bool {", start)
 body = text[start:end]
 for required in (

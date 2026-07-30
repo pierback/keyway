@@ -58,6 +58,7 @@ final class AppRuntime {
             outputSelection: environment.outputSelection,
             activePlaybackObserver: environment.activePlaybackObserver,
             mediaSourceStore: environment.mediaSourceStore,
+            mediaRemoteController: environment.mediaRemoteController,
             mediaTransportActions: environment.mediaTransportActionController
         )
         self.volumeHotkeys = volumeHotkeys

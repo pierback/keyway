@@ -1111,10 +1111,10 @@ grep -Fq '.removeDuplicates()' "$command_center" \
 grep -Fq '.sink { [weak self] isPlaying in' "$command_center" \
   || fail "Command Center route shield must consume the newly emitted playback state"
 
-grep -Fq 'self?.publishNowPlayingRoute(isPlaying: isPlaying)' "$command_center" \
+grep -Fq 'self.publishNowPlayingRoute(isPlaying: isPlaying)' "$command_center" \
   || fail "Command Center route shield must publish the emitted state instead of rereading @Published rows during willSet"
 
-grep -Fq 'private func publishNowPlayingRoute(isPlaying: Bool)' "$command_center" \
+grep -Fq 'private func publishNowPlayingRoute(isPlaying: Bool) -> Bool' "$command_center" \
   || fail "Command Center route shield publishing must require an explicit playback state"
 
 grep -Fq 'mediaSourceStore.rows.contains { $0.target.isCurrentlyPlaying }' "$command_center" \
@@ -1201,8 +1201,8 @@ grep -q 'activeEventTap' "$runtime_status" \
 grep -q 'commandCenterRouteRunning(_ running: Bool)' "$runtime_reporter" \
   || fail "runtime reporter must expose command-center route state updates"
 
-grep -q 'runtimeReporter.commandCenterRouteRunning(true)' "$hotkeys" \
-  || fail "command-center route startup must update runtime status"
+grep -q 'commandCenterRouteRunning: true' "$runtime_reporter" \
+  || fail "only acknowledged command-center route startup may update runtime status"
 
 grep -q 'private lazy var commandCenterInterceptor = MediaCommandCenterInterceptor' "$hotkeys" \
   || fail "command-center route must not be represented as optional runtime state"
@@ -1652,14 +1652,14 @@ if fallback_nanoseconds <= 0 or fallback_nanoseconds > 250_000_000:
     raise SystemExit("verify_playback_routing_invariants: programmatic dispatch fallback must stay below visible cooldown territory")
 PY
 
-grep -q 'MRMediaRemoteSetOverriddenNowPlayingApplication' "$command_center" \
-  || fail "route shield must force Keyway as the overridden now-playing application"
+grep -q 'MRMediaRemoteSetOverriddenNowPlayingApplication' "$helper" \
+  || fail "the MediaRemote helper must force Keyway as the overridden now-playing application"
 
-grep -q 'MRMediaRemoteSetNowPlayingApplicationOverrideEnabled' "$command_center" \
-  || fail "route shield must enable the MediaRemote now-playing override"
+grep -q 'MRMediaRemoteSetNowPlayingApplicationOverrideEnabled' "$helper" \
+  || fail "the MediaRemote helper must enable the now-playing override outside the app process"
 
-grep -q 'mediaRemoteRouteShield.disable()' "$command_center" \
-  || fail "route shield must disable its MediaRemote override when relaxed for MediaRemote dispatch"
+grep -q 'mediaRemoteController.setRouteShield(info: nil)' "$command_center" \
+  || fail "route shield must ask the MediaRemote helper to disable its override when relaxed for dispatch"
 
 grep -q '0.0000001' "$command_center" \
   || fail "route shield audio must use tiny non-zero samples so macOS keeps Keyway eligible as active media route"

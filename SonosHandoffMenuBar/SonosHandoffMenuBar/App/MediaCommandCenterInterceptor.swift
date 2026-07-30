@@ -1,6 +1,5 @@
 import AVFoundation
 import Combine
-import Darwin
 import Foundation
 import MediaPlayer
 import os
@@ -25,22 +24,29 @@ final class MediaCommandCenterInterceptor {
 
     nonisolated private let logger = Logger(subsystem: AppIdentity.loggerSubsystem, category: "MediaCommandCenter")
     private let mediaSourceStore: MediaSourceStore
+    private let mediaRemoteController: MediaRemoteController
     private let route: @MainActor (MediaRemoteTransportCommand, MediaCommandCenterInputMetadata) -> Void
-    private let mediaRemoteRouteShield = MediaRemotePrivateRouteShield()
+    private let readinessChanged: @MainActor (Bool) -> Void
     private var commandTargets: [Any] = []
     private var routeShieldPlaybackSubscription: AnyCancellable?
     private let routeShieldEngine = AVAudioEngine()
     private var routeShieldSourceNode: AVAudioSourceNode?
     private var isRunning = false
+    private(set) var isReady = false
+    private var routeShieldRequestGeneration = 0
     nonisolated private let lock = NSLock()
     nonisolated(unsafe) private var lastAcceptedCommand: MediaRemoteTransportCommand?
     nonisolated(unsafe) private var lastAcceptedAt: TimeInterval = 0
 
     init(
         mediaSourceStore: MediaSourceStore,
+        mediaRemoteController: MediaRemoteController,
+        readinessChanged: @escaping @MainActor (Bool) -> Void,
         route: @escaping @MainActor (MediaRemoteTransportCommand, MediaCommandCenterInputMetadata) -> Void
     ) {
         self.mediaSourceStore = mediaSourceStore
+        self.mediaRemoteController = mediaRemoteController
+        self.readinessChanged = readinessChanged
         self.route = route
     }
 
@@ -68,8 +74,12 @@ final class MediaCommandCenterInterceptor {
             return false
         }
         isRunning = true
-        armRouteShield(reason: "start")
-        logger.info("MediaCommandCenter state=enabled commands=play_pause_next_previous")
+        guard armRouteShield(reason: "start") else {
+            stop()
+            logger.error("MediaCommandCenter state=failed reason=route_shield_unavailable")
+            return false
+        }
+        logger.info("MediaCommandCenter state=starting commands=play_pause_next_previous")
         return true
     }
 
@@ -87,8 +97,11 @@ final class MediaCommandCenterInterceptor {
             commandCenter.previousTrackCommand.removeTarget(target)
         }
         commandTargets.removeAll()
-        disarmRouteShield(reason: "stop")
         isRunning = false
+        routeShieldRequestGeneration += 1
+        _ = mediaRemoteController.setRouteShield(info: nil) { _ in }
+        disarmRouteShield(reason: "stop")
+        setReady(false)
         logger.info("MediaCommandCenter state=disabled")
     }
 
@@ -112,34 +125,40 @@ final class MediaCommandCenterInterceptor {
                 self.logger.info("MediaCommandCenter event command=\(command.rawValue, privacy: .public) timestamp=\(metadata.eventTimestamp, privacy: .public)")
                 self.route(command, metadata)
                 if self.routeShieldSourceNode != nil {
-                    self.publishNowPlayingRoute(
+                    guard self.publishNowPlayingRoute(
                         isPlaying: self.mediaSourceStore.rows.contains { $0.target.isCurrentlyPlaying }
-                    )
+                    ) else {
+                        self.routeShieldFailed(reason: "command_update")
+                        return
+                    }
                 }
             }
             return .success
         }
     }
 
-    func armRouteShield(reason: String) {
+    @discardableResult
+    func armRouteShield(reason: String) -> Bool {
         guard isRunning else {
-            return
+            return false
         }
         guard startRouteShieldAudio() else {
-            return
+            return false
         }
-        publishNowPlayingRoute(
+        guard publishNowPlayingRoute(
             isPlaying: mediaSourceStore.rows.contains { $0.target.isCurrentlyPlaying }
-        )
+        ) else {
+            return false
+        }
         observeRouteShieldPlaybackIfNeeded()
         logger.info("MediaCommandCenter routeShield=armed reason=\(reason, privacy: .public)")
+        return true
     }
 
     func disarmRouteShield(reason: String) {
         routeShieldPlaybackSubscription?.cancel()
         routeShieldPlaybackSubscription = nil
         stopRouteShieldAudio()
-        mediaRemoteRouteShield.disable()
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         MPNowPlayingInfoCenter.default().playbackState = .stopped
         logger.info("MediaCommandCenter routeShield=disarmed reason=\(reason, privacy: .public)")
@@ -185,11 +204,16 @@ final class MediaCommandCenterInterceptor {
             .removeDuplicates()
             .dropFirst()
             .sink { [weak self] isPlaying in
-                self?.publishNowPlayingRoute(isPlaying: isPlaying)
+                guard let self,
+                      self.publishNowPlayingRoute(isPlaying: isPlaying)
+                else {
+                    self?.routeShieldFailed(reason: "playback_update")
+                    return
+                }
             }
     }
 
-    private func publishNowPlayingRoute(isPlaying: Bool) {
+    private func publishNowPlayingRoute(isPlaying: Bool) -> Bool {
         let playbackRate = isPlaying ? 1.0 : 0.0
         let info: [String: Any] = [
             MPMediaItemPropertyTitle: "Keyway",
@@ -200,7 +224,38 @@ final class MediaCommandCenterInterceptor {
         ]
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
         MPNowPlayingInfoCenter.default().playbackState = isPlaying ? .playing : .paused
-        mediaRemoteRouteShield.publish(info: info)
+        routeShieldRequestGeneration += 1
+        let generation = routeShieldRequestGeneration
+        return mediaRemoteController.setRouteShield(info: info) { [weak self] succeeded in
+            guard let self,
+                  self.isRunning,
+                  self.routeShieldRequestGeneration == generation
+            else {
+                return
+            }
+            guard succeeded else {
+                self.routeShieldFailed(reason: "helper_rejected")
+                return
+            }
+            self.setReady(true)
+            self.logger.info("MediaCommandCenter state=enabled commands=play_pause_next_previous")
+        }
+    }
+
+    private func routeShieldFailed(reason: String) {
+        guard isRunning else {
+            return
+        }
+        logger.error("MediaCommandCenter routeShield=failed reason=\(reason, privacy: .public)")
+        stop()
+    }
+
+    private func setReady(_ ready: Bool) {
+        guard isReady != ready else {
+            return
+        }
+        isReady = ready
+        readinessChanged(ready)
     }
 
     private nonisolated func acceptCommandCallback(_ command: MediaRemoteTransportCommand) -> Bool {
@@ -232,50 +287,5 @@ final class MediaCommandCenterInterceptor {
 
     private nonisolated func isPlayPauseFamily(_ command: MediaRemoteTransportCommand) -> Bool {
         command == .playPause || command == .pause || command == .play
-    }
-}
-
-private final class MediaRemotePrivateRouteShield {
-    private typealias SetCanBeNowPlayingApplication = @convention(c) (Bool) -> Void
-    private typealias SetNowPlayingInfo = @convention(c) (CFDictionary) -> Void
-    private typealias SetNowPlayingApplicationOverrideEnabled = @convention(c) (Bool) -> Void
-    private typealias SetOverriddenNowPlayingApplication = @convention(c) (CFString) -> Void
-
-    private let bundleIdentifier = Bundle.main.bundleIdentifier! as CFString
-    private let setCanBeNowPlayingApplication: SetCanBeNowPlayingApplication
-    private let setNowPlayingInfo: SetNowPlayingInfo
-    private let setNowPlayingApplicationOverrideEnabled: SetNowPlayingApplicationOverrideEnabled
-    private let setOverriddenNowPlayingApplication: SetOverriddenNowPlayingApplication
-
-    init() {
-        let handle = dlopen("/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote", RTLD_LAZY)!
-        setCanBeNowPlayingApplication = unsafeBitCast(
-            dlsym(handle, "MRMediaRemoteSetCanBeNowPlayingApplication")!,
-            to: SetCanBeNowPlayingApplication.self
-        )
-        setNowPlayingInfo = unsafeBitCast(
-            dlsym(handle, "MRMediaRemoteSetNowPlayingInfo")!,
-            to: SetNowPlayingInfo.self
-        )
-        setNowPlayingApplicationOverrideEnabled = unsafeBitCast(
-            dlsym(handle, "MRMediaRemoteSetNowPlayingApplicationOverrideEnabled")!,
-            to: SetNowPlayingApplicationOverrideEnabled.self
-        )
-        setOverriddenNowPlayingApplication = unsafeBitCast(
-            dlsym(handle, "MRMediaRemoteSetOverriddenNowPlayingApplication")!,
-            to: SetOverriddenNowPlayingApplication.self
-        )
-    }
-
-    func publish(info: [String: Any]) {
-        setCanBeNowPlayingApplication(true)
-        setOverriddenNowPlayingApplication(bundleIdentifier)
-        setNowPlayingApplicationOverrideEnabled(true)
-        setNowPlayingInfo(info as CFDictionary)
-    }
-
-    func disable() {
-        setNowPlayingApplicationOverrideEnabled(false)
-        setCanBeNowPlayingApplication(false)
     }
 }

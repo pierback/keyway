@@ -9,6 +9,8 @@ enum ShortcutMediaFallbackState: String {
     case enabled
     case permissionDenied = "permission_denied"
     case eventTapCreateFailed = "event_tap_create_failed"
+    case eventTapUnavailable = "event_tap_unavailable"
+    case commandCenterRouteFailed = "command_center_route_failed"
 }
 
 struct ShortcutRuntimeSnapshot {
@@ -24,8 +26,14 @@ struct ShortcutRuntimeSnapshot {
     let appPath: String
     let step: Int
 
+    var isReady: Bool {
+        mediaFallback == .enabled
+            && eventTapRunning
+            && commandCenterRouteRunning
+    }
+
     var title: String {
-        if mediaFallback == .enabled {
+        if isReady {
             return "Shortcuts Ready"
         }
 
@@ -37,12 +45,24 @@ struct ShortcutRuntimeSnapshot {
     }
 
     var message: String {
-        if mediaFallback == .enabled {
+        if isReady {
             return "Shift+fn+F10/F11/F12 enabled; step \(step)%"
         }
 
-        if commandCenterRouteRunning {
-            return "Command Center route is not a hardware interception path"
+        if mediaFallback == .starting, eventTapRunning {
+            return "Finishing the media-key route"
+        }
+
+        if mediaFallback == .enabled {
+            return "Media-key route paused; Keyway will resume it"
+        }
+
+        if mediaFallback == .commandCenterRouteFailed {
+            return "Media-key routing is unavailable; Keyway will retry"
+        }
+
+        if mediaFallback == .eventTapUnavailable {
+            return "The media-key listener stopped; Keyway will retry"
         }
 
         if mediaFallback == .permissionDenied {

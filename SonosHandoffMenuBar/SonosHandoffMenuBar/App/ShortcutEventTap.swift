@@ -19,7 +19,7 @@ final class ShortcutEventTap {
     private(set) var activeTapKind: TapKind?
 
     var isRunning: Bool {
-        eventTap != nil
+        eventTap.map { CGEvent.tapIsEnabled(tap: $0) } ?? false
     }
 
     init(
@@ -54,6 +54,11 @@ final class ShortcutEventTap {
         self.runLoopSource = runLoopSource
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: eventTap, enable: true)
+        guard CGEvent.tapIsEnabled(tap: eventTap) else {
+            stop()
+            logger.error("ShortcutEventTap start_failed tap=\(kind.rawValue, privacy: .public) reason=not_enabled")
+            return false
+        }
         logger.info("ShortcutEventTap started tap=\(kind.rawValue, privacy: .public) place=headInsert options=default events=media_and_function_keys")
         return true
     }
@@ -72,11 +77,15 @@ final class ShortcutEventTap {
 
     func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            onInterrupted(type)
             if let eventTap {
                 CGEvent.tapEnable(tap: eventTap, enable: true)
             }
-            logger.error("ShortcutEventTap reenabled reason=\(Int(type.rawValue), privacy: .public)")
+            onInterrupted(type)
+            if isRunning {
+                logger.error("ShortcutEventTap reenabled reason=\(Int(type.rawValue), privacy: .public)")
+            } else {
+                logger.error("ShortcutEventTap reenable_failed reason=\(Int(type.rawValue), privacy: .public)")
+            }
             return Unmanaged.passUnretained(event)
         }
 
