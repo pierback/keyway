@@ -559,6 +559,14 @@ final class PlaybackSyncController: ObservableObject {
                 guard !Task.isCancelled else {
                     return
                 }
+                if let playbackTransactionRoomName = outcome.playbackTransactionRoomName {
+                    activeSpotifyRoomName = playbackTransactionRoomName
+                    selectRoomName(playbackTransactionRoomName, source: .playbackTransaction)
+                    clearSpotifyAuthRequired()
+                }
+                if let authRequiredMessage = outcome.authRequiredMessage {
+                    requireSpotifyAuth(message: authRequiredMessage)
+                }
                 groupLoadingRoomName = nil
                 if let message = outcome.menuMessage {
                     menuMessage = message
@@ -670,9 +678,7 @@ final class PlaybackSyncController: ObservableObject {
             let transferElapsed = startedAt.duration(to: .now)
             switch transferOutcome.result {
             case .success:
-                activeSpotifyRoomName = replacement.roomName
-                selectRoomName(replacement.roomName, source: .playbackTransaction)
-                clearSpotifyAuthRequired()
+                break
             case .failure(let code, _):
                 do {
                     try await groupingEditor.join(
@@ -686,8 +692,7 @@ final class PlaybackSyncController: ObservableObject {
                 }
 
                 if code == .authRequired {
-                    requireSpotifyAuth(message: transferOutcome.failureMessage)
-                    return .changed()
+                    return .changed(authRequiredMessage: transferOutcome.failureMessage)
                 }
 
                 throw PlaybackGroupEditError(
@@ -710,10 +715,11 @@ final class PlaybackSyncController: ObservableObject {
             shortcutLogger.info("SonosHandoffGroupEdit result=removed_coordinator_and_transferred oldCoordinator=\(coordinatorRoomName, privacy: .public) newCoordinator=\(replacement.roomName, privacy: .public) transferElapsed=\(String(describing: transferElapsed), privacy: .public)")
             if transferElapsed > Self.coordinatorMigrationTarget {
                 return .changed(
-                    message: "Moved coordinator to \(replacement.roomName), but migration took longer than 2 seconds."
+                    message: "Moved coordinator to \(replacement.roomName), but migration took longer than 2 seconds.",
+                    playbackTransactionRoomName: replacement.roomName
                 )
             }
-            return .changed()
+            return .changed(playbackTransactionRoomName: replacement.roomName)
         }
     }
 
@@ -1017,7 +1023,11 @@ final class PlaybackSyncController: ObservableObject {
 
 private enum PlaybackGroupEditOutcome {
     case unchanged
-    case changed(message: String? = nil)
+    case changed(
+        message: String? = nil,
+        playbackTransactionRoomName: String? = nil,
+        authRequiredMessage: String? = nil
+    )
 
     var shouldRefreshOutputs: Bool {
         switch self {
@@ -1032,8 +1042,26 @@ private enum PlaybackGroupEditOutcome {
         switch self {
         case .unchanged:
             return nil
-        case .changed(let message):
+        case .changed(let message, _, _):
             return message
+        }
+    }
+
+    var playbackTransactionRoomName: String? {
+        switch self {
+        case .unchanged:
+            return nil
+        case .changed(_, let playbackTransactionRoomName, _):
+            return playbackTransactionRoomName
+        }
+    }
+
+    var authRequiredMessage: String? {
+        switch self {
+        case .unchanged:
+            return nil
+        case .changed(_, _, let authRequiredMessage):
+            return authRequiredMessage
         }
     }
 }

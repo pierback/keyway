@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+runtime="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/SonosHandoffApp.swift"
+background="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/PlaybackBackgroundSync.swift"
+controller="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/PlaybackSyncController.swift"
+
+python3 - "$runtime" "$background" "$controller" <<'PY'
+import pathlib
+import sys
+
+runtime = pathlib.Path(sys.argv[1]).read_text()
+background = pathlib.Path(sys.argv[2]).read_text()
+controller = pathlib.Path(sys.argv[3]).read_text()
+
+app_runtime = runtime[runtime.index("final class AppRuntime"):runtime.index("private func prepareNotifications")]
+for forbidden in (
+    "volumeMonitorSeed",
+    "seedVolumeMonitor",
+    "preferredStartupRoomName",
+    "activePlaybackObserver",
+    "outputSelection",
+    "outputDirectory",
+):
+    if forbidden in app_runtime:
+        raise SystemExit(
+            f"verify_sonos_observation_authority_semantics: AppRuntime must not own Sonos observation policy: {forbidden}"
+        )
+enable = app_runtime[app_runtime.index("    func enableSonos()"):app_runtime.index("    func stop()")]
+for required in (
+    "volumeHotkeys.setSonosVolumeInputEnabled(true)",
+    "SonosVolumeMonitor.shared.start(volumeService: volumeService)",
+    "playbackBackgroundSync.start()",
+):
+    if required not in enable:
+        raise SystemExit(
+            f"verify_sonos_observation_authority_semantics: AppRuntime must compose the Sonos owner through {required}"
+        )
+
+for required in (
+    "private var pollTask: Task<Void, Never>?",
+    "private var observationTask: Task<Void, Never>?",
+    "private var observationGeneration = 0",
+    "private var observationSuspensionCount = 0",
+    "let observation = self?.requestSync()",
+    "observationTask?.cancel()",
+    "private func syncOnce(generation: Int) async",
+    "guard isCurrentObservation(generation) else",
+    "&& observationGeneration == generation",
+):
+    if required not in background:
+        raise SystemExit(
+            f"verify_sonos_observation_authority_semantics: background observation must be single-flight and generation-bound: {required}"
+        )
+for forbidden in (
+    "await sync.syncOnce()",
+    "await self?.syncOnce()",
+):
+    if forbidden in background:
+        raise SystemExit(
+            f"verify_sonos_observation_authority_semantics: no caller may launch an independent observation: {forbidden}"
+        )
+
+for function_name in (
+    "acceptGroupSuggestion",
+    "acceptTransferSuggestion",
+    "acceptHeadphoneTransferSuggestion",
+):
+    start = background.index(f"    private func {function_name}")
+    next_function = background.find("\n    private func ", start + 1)
+    body = background[start:next_function if next_function >= 0 else len(background)]
+    if "beginTransaction()" not in body or "endTransaction()" not in body:
+        raise SystemExit(
+            f"verify_sonos_observation_authority_semantics: {function_name} must suspend observation for its transaction"
+        )
+
+toggle_start = controller.index("    func toggleGroupMembership(")
+toggle_end = controller.index("\n    private func clearGroupSuggestions", toggle_start)
+toggle = controller[toggle_start:toggle_end]
+outcome = "let outcome = try await applyGroupMembershipChange(change)"
+cancel_guard = "guard !Task.isCancelled else"
+transaction_apply = "if let playbackTransactionRoomName = outcome.playbackTransactionRoomName"
+if toggle.index(outcome) > toggle.index(cancel_guard, toggle.index(outcome)):
+    raise SystemExit(
+        "verify_sonos_observation_authority_semantics: group mutation must check cancellation after its mechanism result"
+    )
+if toggle.index(cancel_guard, toggle.index(outcome)) > toggle.index(transaction_apply):
+    raise SystemExit(
+        "verify_sonos_observation_authority_semantics: group mutation must not apply playback selection before cancellation is checked"
+    )
+
+apply_start = controller.index("    private func applyGroupMembershipChange(")
+apply_end = controller.index("\n    private func refreshAfterGroupMutation", apply_start)
+apply = controller[apply_start:apply_end]
+for forbidden in (
+    "activeSpotifyRoomName =",
+    "selectRoomName(",
+    "clearSpotifyAuthRequired()",
+    "requireSpotifyAuth(",
+):
+    if forbidden in apply:
+        raise SystemExit(
+            f"verify_sonos_observation_authority_semantics: nested group mechanism must return immutable state instead of mutating UI: {forbidden}"
+        )
+for required in (
+    "playbackTransactionRoomName: replacement.roomName",
+    "authRequiredMessage: transferOutcome.failureMessage",
+):
+    if required not in apply:
+        raise SystemExit(
+            f"verify_sonos_observation_authority_semantics: group mechanism outcome is missing {required}"
+        )
+PY
+
+printf 'verify_sonos_observation_authority_semantics=ok\n'

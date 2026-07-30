@@ -19,9 +19,6 @@ struct KeywayApp: App {
             mediaRemoteController: environment.mediaRemoteController,
             mediaRoutingProbeController: environment.mediaRoutingProbeController,
             volumeService: environment.volumeService,
-            activePlaybackObserver: environment.activePlaybackObserver,
-            outputSelection: environment.outputSelection,
-            outputDirectory: environment.outputDirectory,
             playbackBackgroundSync: environment.playbackBackgroundSync,
             volumeHotkeys: environment.volumeHotkeys
         )
@@ -56,22 +53,14 @@ struct KeywayApp: App {
 
 @MainActor
 final class AppRuntime {
-    private static let volumeMonitorSeedRetryNanoseconds: UInt64 = 5_000_000_000
-    private static let volumeMonitorSeedAttemptsMax = 3
-
     private let chromiumNativeMessagingHostInstaller: ChromiumNativeMessagingHostInstaller
     private let chromiumBrowserExtensionController: ChromiumBrowserExtensionController
     private let mediaRemoteController: MediaRemoteController
     private let mediaRoutingProbeController: MediaRoutingProbeController
     private let volumeService: any SpeakerVolumeAdjusting
-    private let activePlaybackObserver: any SpotifyActivePlaybackObserving
-    private let outputSelection: PlaybackOutputSelection
-    private let outputDirectory: PlaybackOutputDirectory
     private let playbackBackgroundSync: PlaybackBackgroundSync
     private let volumeHotkeys: VolumeHotkeyController
     private let logger = Logger(subsystem: AppIdentity.loggerSubsystem, category: "Playback")
-    private var outputDirectoryTask: Task<Void, Never>?
-    private var volumeMonitorSeedTask: Task<Void, Never>?
     private(set) var isStarted = false
     private(set) var isMediaInputEnabled = false
     private(set) var isSonosEnabled = false
@@ -82,9 +71,6 @@ final class AppRuntime {
         mediaRemoteController: MediaRemoteController,
         mediaRoutingProbeController: MediaRoutingProbeController,
         volumeService: any SpeakerVolumeAdjusting,
-        activePlaybackObserver: any SpotifyActivePlaybackObserving,
-        outputSelection: PlaybackOutputSelection,
-        outputDirectory: PlaybackOutputDirectory,
         playbackBackgroundSync: PlaybackBackgroundSync,
         volumeHotkeys: VolumeHotkeyController
     ) {
@@ -93,9 +79,6 @@ final class AppRuntime {
         self.mediaRemoteController = mediaRemoteController
         self.mediaRoutingProbeController = mediaRoutingProbeController
         self.volumeService = volumeService
-        self.activePlaybackObserver = activePlaybackObserver
-        self.outputSelection = outputSelection
-        self.outputDirectory = outputDirectory
         self.playbackBackgroundSync = playbackBackgroundSync
         self.volumeHotkeys = volumeHotkeys
     }
@@ -123,12 +106,6 @@ final class AppRuntime {
 
         volumeHotkeys.setSonosVolumeInputEnabled(true)
         SonosVolumeMonitor.shared.start(volumeService: volumeService)
-        outputDirectoryTask = Task {
-            await outputDirectory.startBackgroundRefresh()
-        }
-        volumeMonitorSeedTask = Task { @MainActor [weak self] in
-            await self?.seedVolumeMonitor()
-        }
         playbackBackgroundSync.start()
         logger.info("KeywayRuntime capability=sonos state=enabled")
     }
@@ -179,71 +156,9 @@ final class AppRuntime {
         isSonosEnabled = false
 
         volumeHotkeys.setSonosVolumeInputEnabled(false)
-        volumeMonitorSeedTask?.cancel()
-        volumeMonitorSeedTask = nil
-        outputDirectoryTask?.cancel()
-        outputDirectoryTask = nil
         playbackBackgroundSync.stop()
         SonosVolumeMonitor.shared.stop()
         logger.info("KeywayRuntime capability=sonos state=disabled")
-    }
-
-    private func seedVolumeMonitor() async {
-        for attempt in 1 ... Self.volumeMonitorSeedAttemptsMax {
-            guard !Task.isCancelled else {
-                return
-            }
-
-            do {
-                let currentRoomName = await preferredStartupRoomName()
-                let refresh = try await outputDirectory.refresh(currentRoomName: currentRoomName)
-                if let selectedRoomName = refresh.selectedRoomName {
-                    outputSelection.update(
-                        roomName: selectedRoomName,
-                        group: refresh.selectedGroup,
-                        source: .activePlaybackObservation
-                    )
-                    logger.info("SonosHandoffVolumeMonitor seed=selected room=\(selectedRoomName, privacy: .public)")
-                    return
-                }
-
-                outputSelection.update(
-                    roomName: nil,
-                    group: nil,
-                    source: .activePlaybackObservation
-                )
-                logger.info("SonosHandoffVolumeMonitor seed=no_output retry=true")
-            } catch {
-                logger.error("SonosHandoffVolumeMonitor seed=failure error=\(error.localizedDescription, privacy: .public)")
-            }
-
-            guard attempt < Self.volumeMonitorSeedAttemptsMax else {
-                break
-            }
-
-            do {
-                try await Task.sleep(nanoseconds: Self.volumeMonitorSeedRetryNanoseconds)
-            } catch {
-                return
-            }
-        }
-
-        logger.info("SonosHandoffVolumeMonitor seed=stopped reason=no_visible_output")
-    }
-
-    private func preferredStartupRoomName() async -> String? {
-        do {
-            if let status = try await activePlaybackObserver.activePlaybackDeviceStatus(),
-               status.isPlaying,
-               let roomName = SonosRoomName.normalized(status.deviceName)
-            {
-                return roomName
-            }
-        } catch {
-            logger.info("SonosHandoffVolumeMonitor active_playback=unavailable error=\(error.localizedDescription, privacy: .public)")
-        }
-
-        return nil
     }
 
     private func prepareNotifications() {

@@ -25,8 +25,11 @@ final class PlaybackBackgroundSync {
     private let transferSuggestionTracker = SonosTransferSuggestionTracker()
     private let groupSuggestionAcceptanceResolver = SonosGroupSuggestionAcceptanceResolver()
     private let groupSuggestionAcceptRefreshResolver = SonosGroupSuggestionAcceptRefreshResolver()
-    private var task: Task<Void, Never>?
+    private var pollTask: Task<Void, Never>?
+    private var observationTask: Task<Void, Never>?
     private var eventTasks: [UUID: Task<Void, Never>] = [:]
+    private var observationGeneration = 0
+    private var observationSuspensionCount = 0
     private var lastDiscoveryRefresh = Date.distantPast
     private var lastSeenGroupSuggestionSpeakerIDs: Set<String>?
     private var lastSeenTransferSuggestionSpeakerIDs: Set<String>?
@@ -94,7 +97,7 @@ final class PlaybackBackgroundSync {
             .sink { [weak self] output in
                 self?.runEventTask { sync in
                     sync.recordMacAudioOutputChange(output)
-                    await sync.syncOnce()
+                    sync.requestSync()
                 }
             }
     }
@@ -128,24 +131,28 @@ final class PlaybackBackgroundSync {
     }
 
     func start() {
-        guard task == nil else {
+        guard pollTask == nil else {
             return
         }
 
         bindRuntimeEvents()
         macAudioOutputMonitor.start()
         establishMacAudioOutputBaselineIfNeeded(macAudioOutputMonitor.output)
-        task = Task { @MainActor [weak self] in
+        pollTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
-                await self?.syncOnce()
+                let observation = self?.requestSync()
+                await observation?.value
                 try? await Task.sleep(nanoseconds: Self.pollIntervalNanoseconds)
             }
         }
     }
 
     func stop() {
-        task?.cancel()
-        task = nil
+        pollTask?.cancel()
+        pollTask = nil
+        observationGeneration += 1
+        observationTask?.cancel()
+        observationTask = nil
         for eventTask in eventTasks.values {
             eventTask.cancel()
         }
@@ -166,16 +173,39 @@ final class PlaybackBackgroundSync {
         pendingHeadphoneConnectionOutputID = nil
     }
 
-    private func syncOnce() async {
-        guard !Task.isCancelled else {
+    @discardableResult
+    private func requestSync() -> Task<Void, Never>? {
+        guard observationSuspensionCount == 0 else {
+            return nil
+        }
+
+        observationGeneration += 1
+        let generation = observationGeneration
+        observationTask?.cancel()
+        let task = Task { @MainActor [weak self] in
+            guard let self, isCurrentObservation(generation) else {
+                return
+            }
+            await syncOnce(generation: generation)
+            guard isCurrentObservation(generation) else {
+                return
+            }
+            observationTask = nil
+        }
+        observationTask = task
+        return task
+    }
+
+    private func syncOnce(generation: Int) async {
+        guard isCurrentObservation(generation) else {
             return
         }
         let cachedTransferBaselineSpeakerIDs = await cachedTransferSuggestionBaselineSpeakerIDs()
-        guard !Task.isCancelled else {
+        guard isCurrentObservation(generation) else {
             return
         }
         let discoveryRefreshStarted = await refreshDiscoveryCacheIfNeeded()
-        guard !Task.isCancelled else {
+        guard isCurrentObservation(generation) else {
             return
         }
 
@@ -183,7 +213,7 @@ final class PlaybackBackgroundSync {
             guard let status = try await activePlaybackObserver.activePlaybackDeviceStatus(),
                   let activeRoomName = SonosRoomName.normalized(status.deviceName)
             else {
-                guard !Task.isCancelled else {
+                guard isCurrentObservation(generation) else {
                     return
                 }
                 hasShownAuthPrompt = false
@@ -192,7 +222,7 @@ final class PlaybackBackgroundSync {
                 return
             }
 
-            guard !Task.isCancelled else {
+            guard isCurrentObservation(generation) else {
                 return
             }
             guard status.isPlaying else {
@@ -206,7 +236,7 @@ final class PlaybackBackgroundSync {
                 currentRoomName: activeRoomName,
                 forceRefresh: discoveryRefreshStarted
             )
-            guard !Task.isCancelled else {
+            guard isCurrentObservation(generation) else {
                 return
             }
             guard let selectedRoomName = refresh.selectedRoomName else {
@@ -241,7 +271,7 @@ final class PlaybackBackgroundSync {
             )
             updateGroupSuggestion(refresh: refresh, selectedRoomName: selectedRoomName, spotifyPlaying: status.isPlaying)
             try await updateHeadphoneTransferSuggestion(activeRoomName: selectedRoomName)
-            guard !Task.isCancelled else {
+            guard isCurrentObservation(generation) else {
                 return
             }
             notifyOpenMenuAfterDiscoveryRefresh(
@@ -251,7 +281,7 @@ final class PlaybackBackgroundSync {
             hasShownAuthPrompt = false
             logger.info("SonosHandoffPlaybackSync state=selected room=\(selectedRoomName, privacy: .public) spotifyVolume=\(status.volumePercent ?? -1, privacy: .public)")
         } catch {
-            guard !Task.isCancelled else {
+            guard isCurrentObservation(generation) else {
                 return
             }
             if SpotifyAuthRecovery.isAuthRequired(error) {
@@ -262,6 +292,27 @@ final class PlaybackBackgroundSync {
 
             clearSuggestions(currentHeadphoneOutputID: nil)
             logger.info("SonosHandoffPlaybackSync state=unavailable error=\(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func isCurrentObservation(_ generation: Int) -> Bool {
+        !Task.isCancelled
+            && observationSuspensionCount == 0
+            && observationGeneration == generation
+    }
+
+    private func beginTransaction() {
+        observationSuspensionCount += 1
+        observationGeneration += 1
+        observationTask?.cancel()
+        observationTask = nil
+    }
+
+    private func endTransaction() {
+        precondition(observationSuspensionCount > 0)
+        observationSuspensionCount -= 1
+        if observationSuspensionCount == 0, pollTask != nil {
+            requestSync()
         }
     }
 
@@ -547,8 +598,10 @@ final class PlaybackBackgroundSync {
             logger.info("SonosHandoffGroupSuggestion result=ignored_duplicate_accept id=\(id, privacy: .public)")
             return
         }
+        beginTransaction()
         defer {
             acceptingGroupSuggestionIDs.remove(suggestion.id)
+            endTransaction()
         }
 
         do {
@@ -684,8 +737,10 @@ final class PlaybackBackgroundSync {
             logger.info("SonosHandoffTransferSuggestion result=ignored_duplicate_accept id=\(id, privacy: .public)")
             return
         }
+        beginTransaction()
         defer {
             acceptingTransferSuggestionIDs.remove(suggestion.id)
+            endTransaction()
         }
 
         transferSuggestionPresenter.clear(id: suggestion.id)
@@ -774,8 +829,10 @@ final class PlaybackBackgroundSync {
             logger.info("SonosHandoffHeadphoneTransferSuggestion result=ignored_duplicate_accept id=\(id, privacy: .public)")
             return
         }
+        beginTransaction()
         defer {
             acceptingHeadphoneTransferSuggestionIDs.remove(suggestion.id)
+            endTransaction()
         }
 
         headphoneTransferSuggestionPresenter.suppress(id: suggestion.id)

@@ -97,8 +97,8 @@ sonos_enable = section(
 )
 for required in (
     "guard isStarted, !isSonosEnabled else",
+    "volumeHotkeys.setSonosVolumeInputEnabled(true)",
     "SonosVolumeMonitor.shared.start(",
-    "await outputDirectory.startBackgroundRefresh()",
     "playbackBackgroundSync.start()",
 ):
     if required not in sonos_enable:
@@ -122,9 +122,10 @@ for required in (
 sonos_disable = section(
     sonos_app,
     "    private func disableSonos() {",
-    "\n    private func seedVolumeMonitor()",
+    "\n    private func prepareNotifications()",
 )
 for required in (
+    "volumeHotkeys.setSonosVolumeInputEnabled(false)",
     "playbackBackgroundSync.stop()",
     "SonosVolumeMonitor.shared.stop()",
 ):

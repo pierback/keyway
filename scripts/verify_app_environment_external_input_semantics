@@ -92,9 +92,8 @@ sonos_enable = section(
 for required in (
     "guard isStarted, !isSonosEnabled else",
     "isSonosEnabled = true",
+    "volumeHotkeys.setSonosVolumeInputEnabled(true)",
     "SonosVolumeMonitor.shared.start(volumeService: volumeService)",
-    "await outputDirectory.startBackgroundRefresh()",
-    "await self?.seedVolumeMonitor()",
     "playbackBackgroundSync.start()",
 ):
     if required not in sonos_enable:
