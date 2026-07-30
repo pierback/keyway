@@ -148,6 +148,7 @@ for required in (
 for required in (
     "static let schemaVersion = 2",
     'static let completionKey = "permissionOnboardingCompletedVersion"',
+    'static let localNetworkRequestedKey = "permissionOnboardingLocalNetworkRequested"',
     "UserDefaults.standard.integer(forKey: Self.completionKey) < Self.schemaVersion",
     "UserDefaults.standard.set(Self.schemaVersion, forKey: Self.completionKey)",
     "func presentIfNeeded() -> Bool",

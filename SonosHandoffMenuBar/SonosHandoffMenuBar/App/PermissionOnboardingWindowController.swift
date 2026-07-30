@@ -31,6 +31,7 @@ enum PermissionOnboardingCompanionPermission {
 final class PermissionOnboardingWindowController: NSObject, NSWindowDelegate {
     static let schemaVersion = 2
     static let completionKey = "permissionOnboardingCompletedVersion"
+    static let localNetworkRequestedKey = "permissionOnboardingLocalNetworkRequested"
 
     private let refreshMediaPermissions: @MainActor () -> Void
     private let startLocalNetworkFeatures: @MainActor () -> Void
