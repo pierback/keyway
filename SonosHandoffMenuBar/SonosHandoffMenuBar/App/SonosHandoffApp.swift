@@ -30,6 +30,7 @@ struct KeywayApp: App {
             runtime: runtime,
             playback: environment.playbackSyncController,
             mediaRemoteController: environment.mediaRemoteController,
+            chromiumBrowserExtensionController: environment.chromiumBrowserExtensionController,
             mediaSourceStore: environment.mediaSourceStore,
             mediaAudioControlController: environment.mediaAudioControlController,
             mediaTransportActionController: environment.mediaTransportActionController

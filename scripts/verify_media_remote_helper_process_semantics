@@ -21,6 +21,7 @@ for required in (
     "private var outputPipe: Pipe?",
     "private var errorPipe: Pipe?",
     "process?.isRunning == true && inputPipe != nil",
+    "process != nil || !stoppedProcesses.isEmpty",
     "self.activeRunID = runID",
     "self.activeRunID == runID || self.ownsStopped(terminatedProcess)",
     "guard let self, self.activeRunID == runID else {",
@@ -73,6 +74,14 @@ for required in (
     if required not in body:
         raise SystemExit(f"verify_media_remote_helper_process_semantics: retire() must detach old helper pipes before a restart: {required}")
 
+for required in (
+    "func forceTerminateStoppedProcesses()",
+    "let result = Darwin.kill(process.processIdentifier, SIGKILL)",
+    "result == 0 || errno == ESRCH",
+):
+    if required not in text:
+        raise SystemExit(f"verify_media_remote_helper_process_semantics: stopped helper generations need a bounded shutdown: {required}")
+
 start = text.index("    func send(_ request: [String: Any]) -> Bool {")
 end = text.index("\n    func owns(_ candidate: Process) -> Bool {", start)
 body = text[start:end]
@@ -104,6 +113,8 @@ for required in (
     "case \"pong\":",
     "handlePong(pong, role: role)",
     "func probeHelperLiveness() -> Bool",
+    "private var supervisorState = MediaRemoteHelperSupervisorState()",
+    "private static let terminationDeadlineNanoseconds: UInt64 = 2_000_000_000",
 ):
     if required not in text:
         raise SystemExit(f"verify_media_remote_helper_process_semantics: missing ping liveness policy: {required}")
@@ -145,6 +156,9 @@ delays = [int(value.replace("_", "")) for value in re.findall(r'[0-9][0-9_]+', s
 if delays != [250_000_000, 500_000_000, 1_000_000_000, 2_000_000_000, 5_000_000_000]:
     raise SystemExit(f"verify_media_remote_helper_process_semantics: unexpected relaunch schedule {delays}")
 
+if text.count("snapshotHelper.stop()") != 1 or text.count("commandHelper.stop()") != 1:
+    raise SystemExit("verify_media_remote_helper_process_semantics: every pair shutdown must use the generation barrier")
+
 schedule_start = text.index("    private func scheduleRelaunch() {")
 schedule_end = text.index("\n    private func cancelRecoveryTask()", schedule_start)
 schedule_body = text[schedule_start:schedule_end]
@@ -152,7 +166,8 @@ for required in (
     "min(restartAttempts, Self.relaunchDelayNanoseconds.count - 1)",
     "restartAttempts += 1",
     "Task { @MainActor [weak self] in",
-    "self.start()",
+    "self.supervisorState.requestRelaunch()",
+    "self.launchPendingHelperPair()",
 ):
     if required not in schedule_body:
         raise SystemExit(f"verify_media_remote_helper_process_semantics: relaunch scheduler missing {required}")
@@ -166,16 +181,18 @@ for required in (
     "restartAttempts = 0",
     "cancelRecoveryTask()",
     "clearHelperDegraded()",
+    "helperGeneration += 1",
 ):
     if required not in ready_body:
         raise SystemExit(f"verify_media_remote_helper_process_semantics: both helpers must be ready before startup succeeds: {required}")
+if ready_body.index("helperGeneration += 1") > ready_body.index("health = MediaRemoteHelperHealth("):
+    raise SystemExit("verify_media_remote_helper_process_semantics: a new generation must be published before running health")
 
 recovery_start = text.index("    private func recoverHelperPair(message: String) {")
 recovery_end = text.index("\n    private func markFailed", recovery_start)
 recovery_body = text[recovery_start:recovery_end]
 for required in (
-    "snapshotHelper.stop()",
-    "commandHelper.stop()",
+    "stopHelperPair()",
     "helperPairState.reset()",
     "beginHelperRecovery(message: message)",
     "scheduleRelaunch()",
@@ -186,9 +203,68 @@ for required in (
 if "ignored_unowned_termination" in text:
     raise SystemExit("verify_media_remote_helper_process_semantics: an owned unexpected termination must always schedule recovery")
 
+launch_start = text.index("    private func launchPendingHelperPair() {")
+launch_end = text.index("\n    func stop()", launch_start)
+launch_body = text[launch_start:launch_end]
+for required in (
+    "snapshotHelper.hasOwnedProcesses || commandHelper.hasOwnedProcesses",
+    "supervisorState.canLaunch(hasOwnedProcesses: hasOwnedProcesses)",
+    "supervisorState.didLaunch()",
+):
+    if required not in launch_body:
+        raise SystemExit(f"verify_media_remote_helper_process_semantics: a new pair must wait for full prior-generation retirement: {required}")
+
+timeout_start = text.index("    private func armSnapshotRefreshTimeout(requestID: String) {")
+timeout_end = text.index("\n    private func handleTermination", timeout_start)
+timeout_body = text[timeout_start:timeout_end]
+if 'recoverHelperPair(message: "MediaRemote snapshot helper timed out.")' not in timeout_body:
+    raise SystemExit("verify_media_remote_helper_process_semantics: snapshot timeout must invalidate and recover the helper pair")
+
+if "chromiumBrowserExtensionController" in text:
+    raise SystemExit("verify_media_remote_helper_process_semantics: MediaRemote command readiness must not borrow Chromium readiness")
+
 failure_probe = pathlib.Path(sys.argv[1]).with_name("MediaTransportActionController.swift").read_text()
 if "self?.mediaRemoteController.probeHelperLiveness()" not in failure_probe:
     raise SystemExit("verify_media_remote_helper_process_semantics: MediaRemote command failures must trigger an out-of-cycle liveness probe")
+for required in (
+    "private var canRouteAnyCommands: Bool",
+    "mediaRemoteController.isHelperPairReady",
+    "chromiumBrowserExtensionController.hasRoutableTargets",
+):
+    if required not in failure_probe:
+        raise SystemExit(f"verify_media_remote_helper_process_semantics: aggregate routing readiness belongs to the routing layer: {required}")
+
+volume_hotkeys = pathlib.Path(sys.argv[1]).with_name("VolumeHotkeyController.swift").read_text()
+for required in (
+    "Publishers.CombineLatest(",
+    "mediaRemoteController.$health",
+    "mediaRemoteController.$helperGeneration",
+    "private func mediaRemoteHealthChanged(_ health: MediaRemoteHelperHealth, generation: UInt)",
+    "guard health.state == .running else {",
+    "activeMediaRemoteGeneration = nil",
+    "guard activeMediaRemoteGeneration != generation else {",
+    "activeMediaRemoteGeneration = generation",
+    'stopCommandCenterRoute(reason: "mediaremote_generation_ended")',
+    "guard mediaRemoteController.isHelperPairReady else {",
+):
+    if required not in volume_hotkeys:
+        raise SystemExit(f"verify_media_remote_helper_process_semantics: media-key readiness must follow each helper generation: {required}")
+
+interceptor = pathlib.Path(sys.argv[1]).with_name("MediaCommandCenterInterceptor.swift").read_text()
+failure_start = interceptor.index("    private func routeShieldFailed(reason: String) {")
+failure_end = interceptor.index("\n    private func setReady", failure_start)
+failure_body = interceptor[failure_start:failure_end]
+for required in (
+    "let stopWillNotify = isReady",
+    "if !stopWillNotify {",
+    "readinessChanged(false)",
+):
+    if required not in failure_body:
+        raise SystemExit(f"verify_media_remote_helper_process_semantics: asynchronous route-shield failure must always reach the input owner: {required}")
+
+status_item = pathlib.Path(sys.argv[1]).with_name("KeywayStatusItemController.swift").read_text()
+if "chromiumBrowserExtensionController.hasRoutableTargets" not in status_item:
+    raise SystemExit("verify_media_remote_helper_process_semantics: browser-only UI health must read the Chromium adapter directly")
 
 start = text.index("    private func handleLine(_ line: Data, role: MediaRemoteHelperRole) {")
 end = text.index("\n    private func drainPendingRefreshIfNeeded()", start)

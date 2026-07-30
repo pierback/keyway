@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         runtime: AppRuntime,
         playback: PlaybackSyncController,
         mediaRemoteController: MediaRemoteController,
+        chromiumBrowserExtensionController: ChromiumBrowserExtensionController,
         mediaSourceStore: MediaSourceStore,
         mediaAudioControlController: MediaAudioControlController,
         mediaTransportActionController: MediaTransportActionController
@@ -24,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         statusItemController = KeywayStatusItemController(
             playback: playback,
             mediaRemoteController: mediaRemoteController,
+            chromiumBrowserExtensionController: chromiumBrowserExtensionController,
             mediaSourceStore: mediaSourceStore,
             mediaAudioControlController: mediaAudioControlController,
             mediaTransportActionController: mediaTransportActionController,

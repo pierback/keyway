@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import os
 
@@ -23,6 +24,37 @@ struct MediaRemoteHelperPairState {
     }
 }
 
+struct MediaRemoteHelperSupervisorState {
+    private(set) var shouldRun = false
+    private(set) var relaunchPending = false
+
+    mutating func start() {
+        shouldRun = true
+        relaunchPending = true
+    }
+
+    mutating func stop() {
+        shouldRun = false
+        relaunchPending = false
+    }
+
+    mutating func requestRelaunch() {
+        guard shouldRun else {
+            return
+        }
+        relaunchPending = true
+    }
+
+    func canLaunch(hasOwnedProcesses: Bool) -> Bool {
+        shouldRun && relaunchPending && !hasOwnedProcesses
+    }
+
+    mutating func didLaunch() {
+        precondition(shouldRun && relaunchPending)
+        relaunchPending = false
+    }
+}
+
 @MainActor
 final class MediaRemoteHelperProcess {
     private static let maxOutputBufferBytes = 1_048_576
@@ -44,6 +76,10 @@ final class MediaRemoteHelperProcess {
 
     var isRunning: Bool {
         process?.isRunning == true && inputPipe != nil
+    }
+
+    var hasOwnedProcesses: Bool {
+        process != nil || !stoppedProcesses.isEmpty
     }
 
     func start(
@@ -181,6 +217,16 @@ final class MediaRemoteHelperProcess {
             outputBuffer.removeAll()
         }
         stoppedProcesses.removeAll { $0 === candidate }
+    }
+
+    func forceTerminateStoppedProcesses() {
+        for process in stoppedProcesses where process.isRunning {
+            let result = Darwin.kill(process.processIdentifier, SIGKILL)
+            precondition(
+                result == 0 || errno == ESRCH,
+                "Could not force-terminate MediaRemote \(role.rawValue) helper"
+            )
+        }
     }
 
     private func environment() -> [String: String] {

@@ -20,21 +20,23 @@ final class MediaRemoteController: ObservableObject {
     private static let snapshotRefreshTimeoutNanoseconds: UInt64 = 6_000_000_000
     private static let commandResultTimeoutNanoseconds: UInt64 = 350_000_000
     private static let routeShieldResultTimeoutNanoseconds: UInt64 = 1_000_000_000
+    private static let terminationDeadlineNanoseconds: UInt64 = 2_000_000_000
 
     @Published private(set) var health: MediaRemoteHelperHealth = .stopped
+    @Published private(set) var helperGeneration: UInt = 0
     @Published private(set) var targets: [MediaRemoteTarget] = []
     @Published private(set) var activeTargetID: String?
     @Published private(set) var isRefreshingSnapshot = false
     @Published private(set) var helperDegradedSince: Date?
 
     private let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "MediaRemote")
-    private let chromiumBrowserExtensionController: ChromiumBrowserExtensionController
     private let decoder = JSONDecoder()
     private lazy var snapshotHelper = MediaRemoteHelperProcess(role: .snapshot, logger: logger)
     private lazy var commandHelper = MediaRemoteHelperProcess(role: .command, logger: logger)
     private var refreshTimer: Timer?
     private var pingTimer: Timer?
     private var recoveryTask: Task<Void, Never>?
+    private var terminationDeadlineTask: Task<Void, Never>?
     private var helperRecoveryGraceTask: Task<Void, Never>?
     private var notificationDebounce: Task<Void, Never>?
     private var commandRequestStartedAt: [String: TimeInterval] = [:]
@@ -48,28 +50,33 @@ final class MediaRemoteController: ObservableObject {
     private var pendingRefreshRequested = false
     private var snapshotRefreshTimeout: Task<Void, Never>?
     private var restartAttempts = 0
-    private var expectedTermination = false
     private var helperPairState = MediaRemoteHelperPairState()
+    private var supervisorState = MediaRemoteHelperSupervisorState()
     private var pendingPingRolesByRequestID: [String: (role: MediaRemoteHelperRole, sentAt: Date)] = [:]
     private var lastPongAtByRole: [MediaRemoteHelperRole: Date] = [:]
 
-    var canRouteCommands: Bool {
-        (helperPairState.isReady
+    var isHelperPairReady: Bool {
+        helperPairState.isReady
             && health.state == .running
             && snapshotHelper.isRunning
-            && commandHelper.isRunning)
-            || chromiumBrowserExtensionController.hasRoutableTargets
-    }
-
-    init(chromiumBrowserExtensionController: ChromiumBrowserExtensionController) {
-        self.chromiumBrowserExtensionController = chromiumBrowserExtensionController
+            && commandHelper.isRunning
     }
 
     func start() {
-        guard !snapshotHelper.isRunning, !commandHelper.isRunning else {
+        guard !supervisorState.shouldRun else {
             return
         }
+        supervisorState.start()
+        launchPendingHelperPair()
+    }
 
+    private func launchPendingHelperPair() {
+        let hasOwnedProcesses = snapshotHelper.hasOwnedProcesses || commandHelper.hasOwnedProcesses
+        guard supervisorState.canLaunch(hasOwnedProcesses: hasOwnedProcesses) else {
+            return
+        }
+        supervisorState.didLaunch()
+        cancelTerminationDeadline()
         health = MediaRemoteHelperHealth(
             state: .starting,
             message: "Starting /usr/bin/perl MediaRemote helper",
@@ -80,9 +87,7 @@ final class MediaRemoteController: ObservableObject {
 
         do {
             let resources = try helperResources()
-            expectedTermination = false
             helperPairState.reset()
-            cancelRecoveryTask()
             try commandHelper.start(
                 script: resources.script,
                 dylib: resources.dylib,
@@ -121,14 +126,14 @@ final class MediaRemoteController: ObservableObject {
     }
 
     func stop() {
-        expectedTermination = true
+        supervisorState.stop()
         cancelRecoveryTask()
+        cancelTerminationDeadline()
         refreshTimer?.invalidate()
         refreshTimer = nil
         stopPingTimer()
         cancelHelperRecoveryGrace()
-        snapshotHelper.stop()
-        commandHelper.stop()
+        stopHelperPair()
         helperPairState.reset()
         clearAllTargets()
         clearCommandState()
@@ -144,7 +149,8 @@ final class MediaRemoteController: ObservableObject {
     func restart() {
         stop()
         restartAttempts = 0
-        start()
+        supervisorState.start()
+        launchPendingHelperPair()
     }
 
     @discardableResult
@@ -190,7 +196,10 @@ final class MediaRemoteController: ObservableObject {
         targetID: String,
         onResult: ((MediaRemoteCommandResultEvent) -> Void)? = nil
     ) -> Bool {
-        guard canRouteCommands else {
+        guard helperPairState.isReady,
+              health.state == .running,
+              commandHelper.isRunning
+        else {
             probeHelperLiveness()
             return false
         }
@@ -295,6 +304,7 @@ final class MediaRemoteController: ObservableObject {
                 restartAttempts = 0
                 cancelRecoveryTask()
                 clearHelperDegraded()
+                helperGeneration += 1
                 health = MediaRemoteHelperHealth(
                     state: .running,
                     message: "Connected through \(ready.host ?? "/usr/bin/perl")",
@@ -421,7 +431,7 @@ final class MediaRemoteController: ObservableObject {
             self.snapshotRefreshTimeout = nil
             self.isRefreshingSnapshot = false
             self.logger.error("MediaRemoteHelper refresh_timeout requestID=\(requestID, privacy: .public)")
-            self.drainPendingRefreshIfNeeded()
+            self.recoverHelperPair(message: "MediaRemote snapshot helper timed out.")
         }
     }
 
@@ -434,17 +444,17 @@ final class MediaRemoteController: ObservableObject {
             return
         }
         helper.retire(terminatedProcess)
+        if !snapshotHelper.hasOwnedProcesses, !commandHelper.hasOwnedProcesses {
+            cancelTerminationDeadline()
+        }
 
         if stopped {
-            if expectedTermination {
-                expectedTermination = false
-            }
             logger.info("MediaRemoteHelper stopped_termination role=\(role.rawValue, privacy: .public) status=\(status, privacy: .public)")
+            launchPendingHelperPair()
             return
         }
 
-        guard !expectedTermination else {
-            expectedTermination = false
+        guard supervisorState.shouldRun else {
             return
         }
 
@@ -457,8 +467,10 @@ final class MediaRemoteController: ObservableObject {
     }
 
     private func recoverHelperPair(message: String) {
-        snapshotHelper.stop()
-        commandHelper.stop()
+        guard supervisorState.shouldRun else {
+            return
+        }
+        stopHelperPair()
         helperPairState.reset()
         refreshTimer?.invalidate()
         refreshTimer = nil
@@ -508,7 +520,7 @@ final class MediaRemoteController: ObservableObject {
     }
 
     private func scheduleRelaunch() {
-        guard recoveryTask == nil else {
+        guard supervisorState.shouldRun, recoveryTask == nil else {
             return
         }
 
@@ -522,16 +534,44 @@ final class MediaRemoteController: ObservableObject {
                 return
             }
             self.recoveryTask = nil
-            guard !self.snapshotHelper.isRunning, !self.commandHelper.isRunning else {
-                return
-            }
-            self.start()
+            self.supervisorState.requestRelaunch()
+            self.launchPendingHelperPair()
         }
     }
 
     private func cancelRecoveryTask() {
         recoveryTask?.cancel()
         recoveryTask = nil
+    }
+
+    private func stopHelperPair() {
+        snapshotHelper.stop()
+        commandHelper.stop()
+        guard snapshotHelper.hasOwnedProcesses || commandHelper.hasOwnedProcesses else {
+            return
+        }
+        armTerminationDeadline()
+    }
+
+    private func armTerminationDeadline() {
+        terminationDeadlineTask?.cancel()
+        terminationDeadlineTask = Task { @MainActor [weak self] in
+            guard (try? await Task.sleep(nanoseconds: Self.terminationDeadlineNanoseconds)) != nil,
+                  let self,
+                  self.snapshotHelper.hasOwnedProcesses || self.commandHelper.hasOwnedProcesses
+            else {
+                return
+            }
+            self.terminationDeadlineTask = nil
+            self.logger.error("MediaRemoteHelper termination_deadline_exceeded=true")
+            self.snapshotHelper.forceTerminateStoppedProcesses()
+            self.commandHelper.forceTerminateStoppedProcesses()
+        }
+    }
+
+    private func cancelTerminationDeadline() {
+        terminationDeadlineTask?.cancel()
+        terminationDeadlineTask = nil
     }
 
     private func clearMediaRemoteTargets() {
@@ -671,8 +711,7 @@ final class MediaRemoteController: ObservableObject {
                 return
             }
             self.helperRecoveryGraceTask = nil
-            self.snapshotHelper.stop()
-            self.commandHelper.stop()
+            self.stopHelperPair()
             self.helperPairState.reset()
             self.stopPingTimer()
             self.clearPingState()

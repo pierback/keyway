@@ -238,7 +238,11 @@ final class MediaCommandCenterInterceptor {
             return
         }
         logger.error("MediaCommandCenter routeShield=failed reason=\(reason, privacy: .public)")
+        let stopWillNotify = isReady
         stop()
+        if !stopWillNotify {
+            readinessChanged(false)
+        }
     }
 
     private func setReady(_ ready: Bool) {

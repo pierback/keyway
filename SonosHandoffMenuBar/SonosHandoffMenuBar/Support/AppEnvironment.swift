@@ -58,9 +58,7 @@ struct AppEnvironment {
         let chromiumNativeMessagingHostInstaller = ChromiumNativeMessagingHostInstaller()
         let chromiumBrowserExtensionController = ChromiumBrowserExtensionController()
         let targetSelectionMemory = MediaTargetSelectionMemory()
-        let mediaRemoteController = MediaRemoteController(
-            chromiumBrowserExtensionController: chromiumBrowserExtensionController
-        )
+        let mediaRemoteController = MediaRemoteController()
         let mediaSourceStore = MediaSourceStore(
             mediaRemoteController: mediaRemoteController,
             chromiumBrowserExtensionController: chromiumBrowserExtensionController,

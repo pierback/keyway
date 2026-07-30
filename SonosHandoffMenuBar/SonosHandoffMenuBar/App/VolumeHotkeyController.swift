@@ -1,5 +1,6 @@
 @preconcurrency import AppKit
 import ApplicationServices
+import Combine
 import os
 import SonosHandoffCore
 
@@ -17,10 +18,13 @@ final class VolumeHotkeyController {
     private var lastCarbonAction: (direction: VolumeDirection, timestamp: CFAbsoluteTime)?
     private var repeatTimer: DispatchSourceTimer?
     private var permissionRetryTimer: DispatchSourceTimer?
+    private var mediaRemoteHealthCancellable: AnyCancellable?
     private var commandCenterRouteShieldRearmTask: Task<Void, Error>?
     private var lastReportedPermissionState: (accessibilityGranted: Bool, listenEventGranted: Bool)?
+    private var activeMediaRemoteGeneration: UInt?
     private var repeatingDirection: VolumeDirection?
     private var isStoppingCommandCenterRoute = false
+    private var isStarted = false
     private let eventParser = ShortcutEventParser()
     private lazy var commandCenterInterceptor = MediaCommandCenterInterceptor(
         mediaSourceStore: mediaSourceStore,
@@ -85,6 +89,17 @@ final class VolumeHotkeyController {
     }
 
     func start() {
+        guard !isStarted else {
+            return
+        }
+        isStarted = true
+        mediaRemoteHealthCancellable = Publishers.CombineLatest(
+            mediaRemoteController.$health,
+            mediaRemoteController.$helperGeneration
+        )
+        .sink { [weak self] health, generation in
+            self?.mediaRemoteHealthChanged(health, generation: generation)
+        }
         if carbonRegistrar.installHandlerIfNeeded() {
             let registered = carbonRegistrar.registerPlainFunctionHotKeys(step: step)
             runtimeReporter.plainHotkeysRegistered(registered)
@@ -93,6 +108,13 @@ final class VolumeHotkeyController {
     }
 
     func stop() {
+        guard isStarted else {
+            return
+        }
+        isStarted = false
+        mediaRemoteHealthCancellable?.cancel()
+        mediaRemoteHealthCancellable = nil
+        activeMediaRemoteGeneration = nil
         stopVolumeRepeat()
         stopPermissionRetry()
         commandCenterRouteShieldRearmTask?.cancel()
@@ -127,6 +149,18 @@ final class VolumeHotkeyController {
                     listenEventGranted: listenEventGranted
                 ),
                 dismissAfter: 4
+            )
+            schedulePermissionRetry()
+            return false
+        }
+        guard mediaRemoteController.isHelperPairReady else {
+            if eventTap.isRunning {
+                eventTap.stop()
+            }
+            stopCommandCenterRoute(reason: "mediaremote_unavailable")
+            runtimeReporter.commandCenterRouteFailed(
+                accessibilityGranted: accessibilityGranted,
+                listenEventGranted: listenEventGranted
             )
             schedulePermissionRetry()
             return false
@@ -243,6 +277,33 @@ final class VolumeHotkeyController {
             fnHotkeysRegistered: false,
             activeEventTap: eventTap.activeTapKind?.rawValue
         )
+    }
+
+    private func mediaRemoteHealthChanged(_ health: MediaRemoteHelperHealth, generation: UInt) {
+        guard isStarted else {
+            return
+        }
+        guard health.state == .running else {
+            guard activeMediaRemoteGeneration != nil
+                    || eventTap.isRunning
+                    || commandCenterInterceptor.running
+            else {
+                return
+            }
+            activeMediaRemoteGeneration = nil
+            mediaTransportActions.resetMediaKeyState()
+            if eventTap.isRunning {
+                eventTap.stop()
+            }
+            stopCommandCenterRoute(reason: "mediaremote_generation_ended")
+            schedulePermissionRetry()
+            return
+        }
+        guard activeMediaRemoteGeneration != generation else {
+            return
+        }
+        activeMediaRemoteGeneration = generation
+        _ = refreshMediaFallback()
     }
 
     private func failCommandCenterRoute() {

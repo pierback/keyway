@@ -6,6 +6,7 @@ import SwiftUI
 final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
     private let playback: PlaybackSyncController
     private let mediaRemoteController: MediaRemoteController
+    private let chromiumBrowserExtensionController: ChromiumBrowserExtensionController
     private let mediaSourceStore: MediaSourceStore
     private let mediaAudioControlController: MediaAudioControlController
     private let mediaTransportActionController: MediaTransportActionController
@@ -22,6 +23,7 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
     init(
         playback: PlaybackSyncController,
         mediaRemoteController: MediaRemoteController,
+        chromiumBrowserExtensionController: ChromiumBrowserExtensionController,
         mediaSourceStore: MediaSourceStore,
         mediaAudioControlController: MediaAudioControlController,
         mediaTransportActionController: MediaTransportActionController,
@@ -30,6 +32,7 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
     ) {
         self.playback = playback
         self.mediaRemoteController = mediaRemoteController
+        self.chromiumBrowserExtensionController = chromiumBrowserExtensionController
         self.mediaSourceStore = mediaSourceStore
         self.mediaAudioControlController = mediaAudioControlController
         self.mediaTransportActionController = mediaTransportActionController
@@ -199,6 +202,7 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
             rootView: KeywayControlCenterPopoverView(
                 playback: playback,
                 mediaRemoteController: mediaRemoteController,
+                chromiumBrowserExtensionController: chromiumBrowserExtensionController,
                 mediaSourceStore: mediaSourceStore,
                 mediaAudioControlController: mediaAudioControlController,
                 mediaTransportActions: mediaTransportActionController,
@@ -328,6 +332,7 @@ private struct KeywayControlCenterPopoverView: View {
 
     @ObservedObject private var playback: PlaybackSyncController
     @ObservedObject private var mediaRemoteController: MediaRemoteController
+    @ObservedObject private var chromiumBrowserExtensionController: ChromiumBrowserExtensionController
     @ObservedObject private var mediaSourceStore: MediaSourceStore
     @ObservedObject private var mediaAudioControlController: MediaAudioControlController
 
@@ -346,6 +351,7 @@ private struct KeywayControlCenterPopoverView: View {
     init(
         playback: PlaybackSyncController,
         mediaRemoteController: MediaRemoteController,
+        chromiumBrowserExtensionController: ChromiumBrowserExtensionController,
         mediaSourceStore: MediaSourceStore,
         mediaAudioControlController: MediaAudioControlController,
         mediaTransportActions: MediaTransportActionController,
@@ -356,6 +362,7 @@ private struct KeywayControlCenterPopoverView: View {
     ) {
         self.playback = playback
         self.mediaRemoteController = mediaRemoteController
+        self.chromiumBrowserExtensionController = chromiumBrowserExtensionController
         self.mediaSourceStore = mediaSourceStore
         self.mediaAudioControlController = mediaAudioControlController
         self.mediaTransportActions = mediaTransportActions
@@ -639,8 +646,7 @@ private struct KeywayControlCenterPopoverView: View {
     }
 
     private var isBrowserOnlyRoutingAvailable: Bool {
-        mediaRemoteController.canRouteCommands
-            && mediaSourceStore.rows.contains { ChromiumBrowserExtensionTransport.isTarget($0.target) }
+        chromiumBrowserExtensionController.hasRoutableTargets
     }
 
     private func card<Content: View>(

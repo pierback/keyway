@@ -159,7 +159,7 @@ final class MediaTransportActionController {
         metadata: MediaTransportInputMetadata?,
         commandCenterMetadata: MediaCommandCenterInputMetadata?
     ) {
-        logger.info("MediaTransport input command=\(command.rawValue, privacy: .public) source=\(source.rawValue, privacy: .public) overlayVisible=\(self.overlayController.isVisible, privacy: .public) chooserActive=\(self.chooserSession.isActive, privacy: .public) canRoute=\(self.mediaRemoteController.canRouteCommands, privacy: .public) targetCount=\(self.mediaSourceStore.rows.count, privacy: .public)")
+        logger.info("MediaTransport input command=\(command.rawValue, privacy: .public) source=\(source.rawValue, privacy: .public) overlayVisible=\(self.overlayController.isVisible, privacy: .public) chooserActive=\(self.chooserSession.isActive, privacy: .public) canRoute=\(self.canRouteAnyCommands, privacy: .public) targetCount=\(self.mediaSourceStore.rows.count, privacy: .public)")
         trace(
             "input",
             command: command,
@@ -765,7 +765,7 @@ final class MediaTransportActionController {
             commandCenterMetadata: commandCenterMetadata,
             overlayVisible: overlayController.isVisible,
             chooserActive: chooserSession.isActive,
-            canRoute: mediaRemoteController.canRouteCommands
+            canRoute: canRouteAnyCommands
         )
     }
 
@@ -775,8 +775,13 @@ final class MediaTransportActionController {
             backend: transportBackend,
             overlayVisible: overlayController.isVisible,
             chooserActive: chooserSession.isActive,
-            canRoute: mediaRemoteController.canRouteCommands
+            canRoute: canRouteAnyCommands
         )
+    }
+
+    private var canRouteAnyCommands: Bool {
+        mediaRemoteController.isHelperPairReady
+            || chromiumBrowserExtensionController.hasRoutableTargets
     }
 
     private func showCommandResult(
