@@ -31,8 +31,11 @@ final class ShortcutEventTap {
     }
 
     func start() -> Bool {
-        guard eventTap == nil else {
+        if isRunning {
             return true
+        }
+        if eventTap != nil {
+            stop()
         }
 
         let kind = TapKind.hid
@@ -80,8 +83,12 @@ final class ShortcutEventTap {
             if let eventTap {
                 CGEvent.tapEnable(tap: eventTap, enable: true)
             }
+            let reenabled = isRunning
+            if !reenabled {
+                stop()
+            }
             onInterrupted(type)
-            if isRunning {
+            if reenabled {
                 logger.error("ShortcutEventTap reenabled reason=\(Int(type.rawValue), privacy: .public)")
             } else {
                 logger.error("ShortcutEventTap reenable_failed reason=\(Int(type.rawValue), privacy: .public)")

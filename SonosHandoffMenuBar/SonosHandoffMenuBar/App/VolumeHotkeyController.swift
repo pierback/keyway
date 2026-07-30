@@ -368,9 +368,7 @@ final class VolumeHotkeyController {
             && CGPreflightListenEventAccess()
             && (isSonosVolumeInputEnabled || isTransportInputReady)
         guard shouldRun else {
-            if eventTap.isRunning {
-                eventTap.stop()
-            }
+            eventTap.stop()
             return true
         }
         return eventTap.isRunning || eventTap.start()

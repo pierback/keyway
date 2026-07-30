@@ -123,7 +123,11 @@ for needle in (
 
 for needle in (
     "eventTap.map { CGEvent.tapIsEnabled(tap: $0) } ?? false",
+    "if isRunning {",
+    "if eventTap != nil {\n            stop()",
     "guard CGEvent.tapIsEnabled(tap: eventTap) else {",
+    "let reenabled = isRunning",
+    "if !reenabled {\n                stop()",
     "onInterrupted(type)",
     'logger.error("ShortcutEventTap reenable_failed',
 ):
@@ -206,6 +210,13 @@ refresh_guard = hotkeys.index("        guard accessibilityGranted, listenEventGr
 refresh_prefix = hotkeys[refresh_start:refresh_guard]
 if "lastReportedPermissionState = (accessibilityGranted, listenEventGranted)" not in refresh_prefix:
     raise SystemExit("verify_shortcut_runtime_status_semantics: every full permission refresh must synchronize retry deduplication state")
+refresh_event_tap_start = hotkeys.index("    private func refreshEventTap() -> Bool")
+refresh_event_tap_end = hotkeys.index("\n    private func reportEventTapFailure", refresh_event_tap_start)
+refresh_event_tap_body = hotkeys[refresh_event_tap_start:refresh_event_tap_end]
+if "guard shouldRun else {\n            eventTap.stop()" not in refresh_event_tap_body:
+    raise SystemExit(
+        "verify_shortcut_runtime_status_semantics: capability shutdown must retire disabled event-tap objects"
+    )
 denied_start = retry_body.index("            guard accessibilityGranted, listenEventGranted else {")
 denied_end = retry_body.index("\n                return", denied_start)
 denied_body = retry_body[denied_start:denied_end]
