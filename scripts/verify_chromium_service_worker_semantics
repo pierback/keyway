@@ -37,6 +37,7 @@ let nativeMessageListener = null;
 let runtimeMessageListener = null;
 let tabRemovedListener = null;
 let tabUpdatedListener = null;
+let navigationCommittedListener = null;
 let mediaStateResponse = null;
 let reloadCount = 0;
 
@@ -207,6 +208,13 @@ const context = {
         callback([]);
       },
     },
+    webNavigation: {
+      onCommitted: {
+        addListener(listener) {
+          navigationCommittedListener = listener;
+        },
+      },
+    },
     windows: {
       update(windowId, updateInfo, callback) {
         focusEvents.push(`window-update:${windowId}:${updateInfo.focused}`);
@@ -290,6 +298,7 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
         title: "Example Video",
       },
       frameId: 0,
+      documentId: "browser-doc-main",
     },
     response => {
       mediaStateResponse = response;
@@ -354,6 +363,7 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
         audible: true,
       },
       frameId: 7,
+      documentId: "browser-doc-iframe",
     },
     () => {}
   );
@@ -388,6 +398,7 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
         audible: false,
       },
       frameId: 0,
+      documentId: "browser-doc-second",
     },
     () => {}
   );
@@ -419,6 +430,7 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
         audible: false,
       },
       frameId: 0,
+      documentId: "browser-doc-second",
     },
     () => {}
   );
@@ -450,6 +462,7 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
         audible: false,
       },
       frameId: 0,
+      documentId: "browser-doc-second",
     },
     () => {}
   );
@@ -480,6 +493,7 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
         audible: true,
       },
       frameId: 0,
+      documentId: "browser-doc-second",
     },
     () => {}
   );
@@ -508,6 +522,7 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
         title: "Second Example Video",
       },
       frameId: 0,
+      documentId: "browser-doc-second",
     },
     () => {}
   );
@@ -541,6 +556,7 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
         title: "Second Example Video",
       },
       frameId: 0,
+      documentId: "browser-doc-second",
     },
     () => {}
   );
@@ -708,10 +724,133 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   assertEqual(externalUnmuteSnapshot.targets.find(target => target.id === twoTargetSnapshot.targets[1].id)?.muted, false, "external unmute snapshot must carry tab-level muted=false");
   assertEqual(externalUnmuteSnapshot.epoch, muteCommandSnapshot.epoch + 1, "external mutedInfo snapshots must advance the normal snapshot epoch");
 
-  tabUpdatedListener(22, { status: "loading" });
+  assert(typeof navigationCommittedListener === "function", "service worker must register committed-document authority");
+  let delayedOldStateResponse = null;
+  runtimeMessageListener(
+    {
+      type: "keywayMediaState",
+      documentID: "doc-main",
+      mediaId: "media-1",
+      title: "Retired Song",
+      artist: "Retired Artist",
+      playing: true,
+      muted: false,
+      volume: 0.5,
+      duration: 120,
+      elapsedTime: 20,
+    },
+    {
+      tab: {
+        id: 22,
+        windowId: 11,
+        url: "https://example.test/video",
+        title: "Example Video",
+      },
+      frameId: 0,
+      documentId: "browser-doc-main",
+    },
+    response => {
+      delayedOldStateResponse = response;
+    }
+  );
+  navigationCommittedListener({ tabId: 22, frameId: 0, documentId: "browser-doc-main-next" });
   const afterNavigationSnapshot = postedMessages.filter(message => message.type === "snapshot").at(-1);
   assertEqual(afterNavigationSnapshot.targets.length, 1, "tab navigation must clear only the stale tab target");
   assertEqual(afterNavigationSnapshot.targets[0].id, "chromium-tab:profile-guid-a:23", "tab navigation must keep other tab targets");
+  await Promise.resolve();
+  assertEqual(delayedOldStateResponse?.ok, false, "a state continuation captured by a retired document must be rejected");
+  assertEqual(
+    postedMessages.filter(message => message.type === "snapshot").at(-1).targets.length,
+    1,
+    "a retired document continuation must not reanimate its tab target"
+  );
+
+  runtimeMessageListener(
+    {
+      type: "keywayMediaState",
+      documentID: "doc-main-next",
+      mediaId: "media-next",
+      title: "Current Song",
+      artist: "Current Artist",
+      playing: true,
+      muted: false,
+      volume: 0.5,
+      duration: 120,
+      elapsedTime: 1,
+      hasMediaSessionMetadata: true,
+    },
+    {
+      tab: {
+        id: 22,
+        windowId: 11,
+        url: "https://example.test/next",
+        title: "Next Document",
+      },
+      frameId: 0,
+      documentId: "browser-doc-main-next",
+    },
+    () => {}
+  );
+  await Promise.resolve();
+  const currentDocumentSnapshot = postedMessages.filter(message => message.type === "snapshot").at(-1);
+  assertEqual(currentDocumentSnapshot.targets.length, 2, "the committed replacement document must publish normally");
+  assertEqual(
+    currentDocumentSnapshot.targets.find(target => target.tabId === 22)?.title,
+    "Current Song",
+    "the replacement document must own the tab route"
+  );
+
+  const snapshotCountBeforeLateDocumentMessages = postedMessages.filter(message => message.type === "snapshot").length;
+  let lateStateResponse = null;
+  runtimeMessageListener(
+    {
+      type: "keywayMediaState",
+      documentID: "doc-main",
+      mediaId: "media-1",
+      title: "Retired Song",
+      artist: "Retired Artist",
+      playing: true,
+      muted: false,
+      volume: 0.5,
+    },
+    {
+      tab: { id: 22, windowId: 11 },
+      frameId: 0,
+      documentId: "browser-doc-main",
+    },
+    response => {
+      lateStateResponse = response;
+    }
+  );
+  assertEqual(lateStateResponse?.ok, false, "late state from a retired browser document must be rejected");
+  let lateGoneResponse = null;
+  runtimeMessageListener(
+    {
+      type: "keywayMediaGone",
+      documentID: "doc-main",
+      mediaId: "media-1",
+    },
+    {
+      tab: { id: 22, windowId: 11 },
+      frameId: 0,
+      documentId: "browser-doc-main",
+    },
+    response => {
+      lateGoneResponse = response;
+    }
+  );
+  assertEqual(lateGoneResponse?.ok, false, "late removal from a retired browser document must be rejected");
+  assertEqual(
+    postedMessages.filter(message => message.type === "snapshot").length,
+    snapshotCountBeforeLateDocumentMessages,
+    "retired document messages must not publish replacement state"
+  );
+  assertEqual(
+    postedMessages.filter(message => message.type === "snapshot").at(-1).targets.find(target => target.tabId === 22)?.title,
+    "Current Song",
+    "retired document messages must not mutate the replacement route"
+  );
+  tabRemovedListener(22);
 
   runtimeMessageListener(
     {
@@ -734,6 +873,7 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
         title: "Second Example Video",
       },
       frameId: 0,
+      documentId: "browser-doc-second",
     },
     () => {}
   );
@@ -747,6 +887,7 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   assert(typeof disconnectListener === "function", "service worker must register native disconnect listener");
   const staleNativeMessageListener = nativeMessageListener;
   const staleDisconnectListener = disconnectListener;
+  const staleHeartbeatCallback = intervals.at(-1).callback;
   staleDisconnectListener();
   assert(
     clearedIntervals.includes(`interval-${intervals.length}`),
@@ -755,6 +896,13 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   assertEqual(timeouts[0].delay, 1000, "service worker reconnect delay");
   timeouts[0].callback();
   assert(nativeMessageListener !== staleNativeMessageListener, "reconnect must install a generation-bound native message listener");
+  const messageCountBeforeStaleHeartbeat = postedMessages.length;
+  const storageCountBeforeStaleHeartbeat = sessionStorageSets.length;
+  const epochBeforeStaleHeartbeat = sessionStorage.snapshotEpoch;
+  staleHeartbeatCallback();
+  assertEqual(postedMessages.length, messageCountBeforeStaleHeartbeat, "a retired heartbeat must not post through the replacement port");
+  assertEqual(sessionStorageSets.length, storageCountBeforeStaleHeartbeat, "a retired heartbeat must not persist replacement-port state");
+  assertEqual(sessionStorage.snapshotEpoch, epochBeforeStaleHeartbeat, "a retired heartbeat must not advance the replacement epoch");
   const reloadCountBeforeStaleMessage = reloadCount;
   staleNativeMessageListener({ type: "reloadExtension", protocolVersion: 4 });
   assertEqual(reloadCount, reloadCountBeforeStaleMessage, "a superseded native port must not dispatch delayed messages");
@@ -873,6 +1021,11 @@ const context = {
     },
     scripting: {
       executeScript() {},
+    },
+    webNavigation: {
+      onCommitted: {
+        addListener() {},
+      },
     },
     windows: {
       update() {},
@@ -1016,6 +1169,11 @@ const context = {
       executeScript(request, callback) {
         scriptExecutions.push(request);
         callback([]);
+      },
+    },
+    webNavigation: {
+      onCommitted: {
+        addListener() {},
       },
     },
     windows: {

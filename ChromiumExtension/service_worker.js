@@ -16,11 +16,14 @@ let cachedBrowserInfo = null;
 let profileGuid = null;
 let profileGuidLoading = false;
 let snapshotEpoch = 0;
-let resumeStateLoaded = false;
+let resumeStateGeneration = 0;
 let pendingResumeTargets = null;
 let pendingResumeExpiresAt = 0;
+let documentAuthorityGeneration = 0;
 const profileGuidCallbacks = [];
 const sources = new Map();
+const documentAuthorityByFrame = new Map();
+const retiredBrowserDocumentIDs = new Set();
 const targetStaleAfterMs = 15000;
 
 function connectNativeHost() {
@@ -30,6 +33,7 @@ function connectNativeHost() {
   nativePortGeneration += 1;
   const generation = nativePortGeneration;
   nativePort = port;
+  resumeStateGeneration = 0;
   port.onMessage.addListener(message => {
     if (!isCurrentNativePort(port, generation)) return;
     handleNativeMessage(message, port, generation);
@@ -37,13 +41,14 @@ function connectNativeHost() {
   port.onDisconnect.addListener(() => {
     if (!isCurrentNativePort(port, generation)) return;
     nativePort = null;
+    resumeStateGeneration = 0;
     stopHeartbeat();
     scheduleReconnect();
   });
   loadResumeState(resume => {
     if (!isCurrentNativePort(port, generation)) return;
     snapshotEpoch = resume.epoch;
-    resumeStateLoaded = true;
+    resumeStateGeneration = generation;
     setPendingResumeTargets(resume.resumed ? resume.snapshot : null);
     sendNative({
       type: "hello",
@@ -52,9 +57,9 @@ function connectNativeHost() {
       epoch: snapshotEpoch,
       resumed: resume.resumed,
       ...(resume.resumed ? { snapshot: resume.snapshot } : {}),
-    });
+    }, port, generation);
     probeTabsForMedia();
-    publishSnapshot();
+    publishSnapshot(port, generation);
   });
 }
 
@@ -106,12 +111,19 @@ function sendNative(message, port = nativePort, generation = nativePortGeneratio
   port.postMessage(message);
 }
 
-function startHeartbeat(mode) {
+function startHeartbeat(mode, port, generation) {
+  if (!isCurrentNativePort(port, generation)) return;
   if (heartbeatTimer && heartbeatMode === mode) return;
   stopHeartbeat();
   heartbeatMode = mode;
   heartbeatTimer = setInterval(
-    mode === "active" ? publishSnapshot : publishKeepalive,
+    () => {
+      if (mode === "active") {
+        publishSnapshot(port, generation);
+      } else {
+        publishKeepalive(port, generation);
+      }
+    },
     mode === "active" ? activeHeartbeatIntervalMs : idleKeepaliveIntervalMs
   );
 }
@@ -150,17 +162,89 @@ function prunePendingResumeTargets(predicate) {
   return true;
 }
 
-function publishKeepalive() {
+function publishKeepalive(port = nativePort, generation = nativePortGeneration) {
+  if (!isCurrentNativePort(port, generation)) return;
   sendNative({
     type: "keepalive",
     protocolVersion,
     profileGuid,
     createdAt: Date.now(),
-  });
+  }, port, generation);
 }
 
 function candidateID(documentID, frameId, mediaId) {
   return `${documentID}:${frameId}:${mediaId}`;
+}
+
+function documentFrameKey(tabId, frameId) {
+  return `${tabId}:${frameId}`;
+}
+
+function establishDocumentAuthority(tabId, frameId, browserDocumentID) {
+  documentAuthorityGeneration += 1;
+  const authority = {
+    tabId,
+    frameId,
+    browserDocumentID,
+    contentDocumentID: null,
+    generation: documentAuthorityGeneration,
+  };
+  documentAuthorityByFrame.set(documentFrameKey(tabId, frameId), authority);
+  return authority;
+}
+
+function retireDocumentAuthority(authority) {
+  retiredBrowserDocumentIDs.add(authority.browserDocumentID);
+  documentAuthorityByFrame.delete(documentFrameKey(authority.tabId, authority.frameId));
+}
+
+function captureDocumentAuthority(sender, contentDocumentID) {
+  const tabId = sender.tab?.id;
+  const frameId = sender.frameId;
+  const browserDocumentID = sender.documentId;
+  if (!Number.isInteger(tabId)
+      || !Number.isInteger(frameId)
+      || typeof browserDocumentID !== "string"
+      || !browserDocumentID
+      || typeof contentDocumentID !== "string"
+      || !contentDocumentID
+      || retiredBrowserDocumentIDs.has(browserDocumentID)) {
+    return null;
+  }
+
+  const key = documentFrameKey(tabId, frameId);
+  const authority = documentAuthorityByFrame.get(key)
+    || establishDocumentAuthority(tabId, frameId, browserDocumentID);
+  if (authority.browserDocumentID !== browserDocumentID) return null;
+  if (authority.contentDocumentID && authority.contentDocumentID !== contentDocumentID) return null;
+  authority.contentDocumentID = contentDocumentID;
+  return { ...authority };
+}
+
+function currentDocumentAuthority(sender, contentDocumentID) {
+  const tabId = sender.tab?.id;
+  const frameId = sender.frameId;
+  const browserDocumentID = sender.documentId;
+  if (!Number.isInteger(tabId) || !Number.isInteger(frameId)) return null;
+  const authority = documentAuthorityByFrame.get(documentFrameKey(tabId, frameId));
+  if (!authority
+      || authority.browserDocumentID !== browserDocumentID
+      || authority.contentDocumentID !== contentDocumentID) {
+    return null;
+  }
+  return { ...authority };
+}
+
+function isCurrentDocumentAuthority(authority) {
+  const current = documentAuthorityByFrame.get(
+    documentFrameKey(authority.tabId, authority.frameId)
+  );
+  return Boolean(
+    current
+    && current.generation === authority.generation
+    && current.browserDocumentID === authority.browserDocumentID
+    && current.contentDocumentID === authority.contentDocumentID
+  );
 }
 
 function browserInfo() {
@@ -201,14 +285,15 @@ function browserInfoFromUserAgent(userAgent) {
   return { key: "chromium", name: "Chromium" };
 }
 
-function publishSnapshot() {
+function publishSnapshot(port = nativePort, generation = nativePortGeneration) {
+  if (!isCurrentNativePort(port, generation)) return;
   // Guard against a message-triggered wake (e.g. keywayMediaState) calling this
   // before connectNativeHost()'s loadResumeState() callback has set the real
   // epoch -- publishing early would write epoch 1 into chrome.storage.session,
   // regressing the persisted epoch and widening the resume-wedge window a crash
   // could land in. Nothing is lost: `sources` stays in memory, and the
   // connect-time publish (which runs after resume state loads) covers it.
-  if (!resumeStateLoaded) return;
+  if (resumeStateGeneration !== generation) return;
   removeStaleSources();
   const materializedTargets = Array.from(sources.values()).map(materializeSource).filter(Boolean);
   let targets = materializedTargets.filter(isVisibleTarget);
@@ -227,7 +312,7 @@ function publishSnapshot() {
     epoch: snapshotEpoch,
     createdAt: Date.now(),
     targets,
-  });
+  }, port, generation);
   chrome.storage.session.set({
     [snapshotStorageKey]: targets,
     [snapshotEpochStorageKey]: snapshotEpoch,
@@ -235,7 +320,7 @@ function publishSnapshot() {
   const hasTargets = sources.size > 0
     || targets.length > 0
     || (pendingResumeTargets && pendingResumeTargets.length > 0);
-  startHeartbeat(hasTargets ? "active" : "idle");
+  startHeartbeat(hasTargets ? "active" : "idle", port, generation);
 }
 
 function loadResumeState(callback) {
@@ -291,6 +376,11 @@ function removeStaleSources() {
 
 function clearSourcesForTab(tabId) {
   let changed = false;
+  for (const authority of Array.from(documentAuthorityByFrame.values())) {
+    if (authority.tabId === tabId) {
+      retireDocumentAuthority(authority);
+    }
+  }
   if (prunePendingResumeTargets(target => target.tabId !== tabId)) {
     changed = true;
   }
@@ -303,7 +393,50 @@ function clearSourcesForTab(tabId) {
   if (changed) publishSnapshot();
 }
 
-function upsertCandidate(browser, tab, frameId, message) {
+function clearSourcesForFrame(tabId, frameId) {
+  let changed = false;
+  for (const [id, source] of sources) {
+    if (source.tabId !== tabId) continue;
+    let sourceChanged = false;
+    for (const [candidateKey, candidate] of source.candidates) {
+      if (candidate.frameId === frameId) {
+        source.candidates.delete(candidateKey);
+        changed = true;
+        sourceChanged = true;
+      }
+    }
+    if (source.candidates.size === 0) {
+      sources.delete(id);
+    } else if (sourceChanged) {
+      refreshSource(source);
+    }
+  }
+  if (changed) publishSnapshot();
+}
+
+function commitDocumentAuthority(details) {
+  if (!Number.isInteger(details.tabId)
+      || !Number.isInteger(details.frameId)
+      || typeof details.documentId !== "string"
+      || !details.documentId) {
+    return;
+  }
+
+  const key = documentFrameKey(details.tabId, details.frameId);
+  const existing = documentAuthorityByFrame.get(key);
+  if (existing?.browserDocumentID === details.documentId) return;
+
+  if (details.frameId === 0) {
+    clearSourcesForTab(details.tabId);
+  } else {
+    if (existing) retireDocumentAuthority(existing);
+    clearSourcesForFrame(details.tabId, details.frameId);
+  }
+  establishDocumentAuthority(details.tabId, details.frameId, details.documentId);
+}
+
+function upsertCandidate(browser, tab, frameId, message, authority) {
+  if (!isCurrentDocumentAuthority(authority)) return null;
   const now = Date.now();
   const id = ["chromium-tab", profileGuid, tab.id].join(":");
   const candidateKey = candidateID(message.documentID, frameId, message.mediaId);
@@ -330,6 +463,8 @@ function upsertCandidate(browser, tab, frameId, message) {
   const candidate = {
     candidateKey,
     documentID: message.documentID,
+    documentAuthorityGeneration: authority.generation,
+    browserDocumentID: authority.browserDocumentID,
     frameId,
     mediaId: message.mediaId,
     url: message.url || tab.url || "",
@@ -391,6 +526,8 @@ function refreshSource(source) {
   source.route = {
     candidateKey: selected.candidateKey,
     documentID: selected.documentID,
+    documentAuthorityGeneration: selected.documentAuthorityGeneration,
+    browserDocumentID: selected.browserDocumentID,
     frameId: selected.frameId,
     mediaId: selected.mediaId,
   };
@@ -576,7 +713,28 @@ function handleCommandMessage(message, port, generation) {
   }
 
   const selected = source.candidates.get(route.candidateKey);
-  if (!selected || !selected.supportedCommands.includes(message.command)) {
+  const routeAuthority = {
+    tabId: source.tabId,
+    frameId: route.frameId,
+    browserDocumentID: route.browserDocumentID,
+    contentDocumentID: route.documentID,
+    generation: route.documentAuthorityGeneration,
+  };
+  if (!selected || !isCurrentDocumentAuthority(routeAuthority)) {
+    sendNative({
+      type: "commandResult",
+      protocolVersion,
+      requestID: message.requestID,
+      targetID: message.targetID,
+      command: message.command,
+      ok: false,
+      unsupported: false,
+      message: "Chromium extension target is no longer available.",
+      backend: "chromium_extension",
+    }, port, generation);
+    return;
+  }
+  if (!selected.supportedCommands.includes(message.command)) {
     sendNative({
       type: "commandResult",
       protocolVersion,
@@ -795,14 +953,19 @@ function handleFocusMessage(message, port, generation) {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "keywayMediaState") {
     const tab = sender.tab;
-    if (!tab || sender.frameId === undefined || !message.documentID) {
+    const authority = captureDocumentAuthority(sender, message.documentID);
+    if (!tab || !authority) {
       sendResponse({ ok: false });
       return false;
     }
 
     loadProfileGuid(() => {
       browserInfo().then(browser => {
-        upsertCandidate(browser, tab, sender.frameId, message);
+        if (!isCurrentDocumentAuthority(authority)) {
+          sendResponse({ ok: false });
+          return;
+        }
+        upsertCandidate(browser, tab, sender.frameId, message, authority);
         publishSnapshot();
         sendResponse({ ok: true });
       });
@@ -811,6 +974,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "keywayMediaGone") {
+    const authority = currentDocumentAuthority(sender, message.documentID);
+    if (!authority) {
+      sendResponse({ ok: false });
+      return false;
+    }
     let changed = false;
     if (sender.tab?.id !== undefined && prunePendingResumeTargets(target => target.tabId !== sender.tab.id)) {
       changed = true;
@@ -841,10 +1009,6 @@ chrome.tabs.onRemoved.addListener(tabId => {
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-  if (changeInfo.url || changeInfo.status === "loading") {
-    clearSourcesForTab(tabId);
-    return;
-  }
   if (changeInfo.mutedInfo || typeof changeInfo.audible === "boolean") {
     chrome.tabs.get(tabId, tab => {
       const error = chrome.runtime.lastError;
@@ -853,6 +1017,8 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
     });
   }
 });
+
+chrome.webNavigation.onCommitted.addListener(commitDocumentAuthority);
 
 chrome.alarms.create(nativePortAlarmName, { periodInMinutes: 0.5 });
 chrome.alarms.onAlarm.addListener(alarm => {

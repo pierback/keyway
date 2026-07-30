@@ -12,6 +12,7 @@ native_host = (
     / "packages/SonosHandoffCore/Sources/KeywayChromiumNativeHost/main.swift"
 ).read_text()
 worker = (root / "ChromiumExtension/service_worker.js").read_text()
+manifest = (root / "ChromiumExtension/manifest.json").read_text()
 
 
 def fail(message: str) -> None:
@@ -85,6 +86,46 @@ for text, needle, message in (
         worker,
         "sendNative(message, port = nativePort, generation = nativePortGeneration)",
         "worker_results_not_bound_to_port_generation",
+    ),
+    (
+        worker,
+        "function publishSnapshot(port = nativePort, generation = nativePortGeneration)",
+        "worker_snapshots_not_bound_to_port_generation",
+    ),
+    (
+        worker,
+        "if (resumeStateGeneration !== generation) return;",
+        "worker_resume_state_not_bound_to_port_generation",
+    ),
+    (
+        worker,
+        "publishSnapshot(port, generation);",
+        "worker_heartbeat_does_not_capture_port_generation",
+    ),
+    (
+        worker,
+        "function captureDocumentAuthority(sender, contentDocumentID)",
+        "worker_missing_document_authority",
+    ),
+    (
+        worker,
+        "const browserDocumentID = sender.documentId;",
+        "worker_does_not_use_browser_document_identity",
+    ),
+    (
+        worker,
+        "chrome.webNavigation.onCommitted.addListener(commitDocumentAuthority);",
+        "worker_missing_committed_navigation_authority",
+    ),
+    (
+        worker,
+        "documentAuthorityGeneration: selected.documentAuthorityGeneration",
+        "worker_routes_not_bound_to_document_authority",
+    ),
+    (
+        manifest,
+        '"webNavigation"',
+        "extension_missing_committed_navigation_permission",
     ),
 ):
     require(text, needle, message)
