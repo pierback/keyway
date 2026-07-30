@@ -36,14 +36,13 @@ final class PlaybackSyncController: ObservableObject {
     private var cachedOutputRefreshCancellable: AnyCancellable?
     private var appearTask: Task<Void, Never>?
     private var notificationTasks: [UUID: Task<Void, Never>] = [:]
-    private var groupMutationTask: Task<Void, Never>?
     private var appearGeneration = 0
     private var isAppeared = false
     private var outputRefreshInProgress = false
     private var hasPendingOutputRefresh = false
     private var pendingOutputRefreshRoomName: String?
     private let sliderCommitter = PlaybackSliderCommitter()
-    private let operationGate = PlaybackOperationGate()
+    private let operationGate: PlaybackOperationGate
     private var activeSpotifyRoomName: String?
     private var currentGroupState = SonosGroupState.empty
 
@@ -56,6 +55,7 @@ final class PlaybackSyncController: ObservableObject {
         groupingEditor: any SonosGroupingEditing,
         groupSuggestionStore: PlaybackGroupSuggestionStore,
         groupSuggestionPresenter: PlaybackGroupSuggestionPresenter,
+        operationGate: PlaybackOperationGate,
         volumeMonitor: SonosVolumeMonitor = .shared,
         volumeActions: PlaybackVolumeActionController? = nil,
         transferActions: PlaybackTransferActionController? = nil
@@ -75,6 +75,7 @@ final class PlaybackSyncController: ObservableObject {
         self.volumeActions = resolvedVolumeActions
         self.transferActions = resolvedTransferActions
         self.groupingEditor = groupingEditor
+        self.operationGate = operationGate
         self.memberVolumeController = PlaybackMemberVolumeController(
             volumeActions: resolvedVolumeActions
         )
@@ -155,10 +156,15 @@ final class PlaybackSyncController: ObservableObject {
             guard let self else {
                 return
             }
+            guard let ticket = operationGate.beginObservation() else {
+                return
+            }
             let cachedRefresh = await outputDirectory.cachedRefresh(
                 currentRoomName: preferredCurrentRoomName(),
             )
-            guard isCurrentAppearance(generation) else {
+            guard isCurrentAppearance(generation),
+                  operationGate.isCurrentObservation(ticket)
+            else {
                 return
             }
             let hasCachedOutputs = cachedRefresh != nil
@@ -193,11 +199,9 @@ final class PlaybackSyncController: ObservableObject {
 
     func stop() {
         disappear()
-        groupMutationTask?.cancel()
-        groupMutationTask = nil
         sliderCommitter.cancel()
         operationGate.cancelVolume()
-        operationGate.cancelTransfer()
+        operationGate.cancelTransaction()
         monitorCancellable?.cancel()
         monitorCancellable = nil
         outputSelectionCancellable?.cancel()
@@ -300,7 +304,7 @@ final class PlaybackSyncController: ObservableObject {
 
         var refreshRoomName = requestedRoomName
         while true {
-            guard !Task.isCancelled else {
+            guard let ticket = operationGate.beginObservation() else {
                 return
             }
             if !preserveMenuMessage {
@@ -315,12 +319,12 @@ final class PlaybackSyncController: ObservableObject {
                 } else {
                     refresh = try await outputDirectory.refresh(currentRoomName: currentRoomName)
                 }
-                guard !Task.isCancelled else {
+                guard operationGate.isCurrentObservation(ticket) else {
                     return
                 }
                 applyOutputRefresh(refresh)
             } catch {
-                guard !Task.isCancelled else {
+                guard operationGate.isCurrentObservation(ticket) else {
                     return
                 }
                 setOutputRows([])
@@ -347,13 +351,16 @@ final class PlaybackSyncController: ObservableObject {
     }
 
     private func applyCachedOutputs(currentRoomName: String?, fallbackToPreferredRoom: Bool) async -> Bool {
+        guard let ticket = operationGate.beginObservation() else {
+            return false
+        }
         let roomName = currentRoomName ?? (fallbackToPreferredRoom ? preferredCurrentRoomName() : nil)
         guard let refresh = await outputDirectory.cachedRefresh(
             currentRoomName: roomName
         ) else {
             return false
         }
-        guard !Task.isCancelled else {
+        guard operationGate.isCurrentObservation(ticket) else {
             return false
         }
 
@@ -362,9 +369,14 @@ final class PlaybackSyncController: ObservableObject {
     }
 
     private func syncActiveSpotifyOutput(generation: Int) async {
+        guard let ticket = operationGate.beginObservation() else {
+            return
+        }
         do {
             let status = try await activePlaybackObserver.activePlaybackDeviceStatus()
-            guard isCurrentAppearance(generation) else {
+            guard isCurrentAppearance(generation),
+                  operationGate.isCurrentObservation(ticket)
+            else {
                 return
             }
             guard let status,
@@ -390,7 +402,9 @@ final class PlaybackSyncController: ObservableObject {
                 }
             }
         } catch {
-            guard isCurrentAppearance(generation) else {
+            guard isCurrentAppearance(generation),
+                  operationGate.isCurrentObservation(ticket)
+            else {
                 return
             }
             if SpotifyAuthRecovery.isAuthRequired(error) {
@@ -536,7 +550,7 @@ final class PlaybackSyncController: ObservableObject {
     }
 
     func toggleGroupMembership(_ row: PlaybackGroupEditRow) {
-        guard row.canToggle, groupMutationTask == nil else {
+        guard row.canToggle else {
             return
         }
         guard let group = selectedOutputGroup else {
@@ -544,19 +558,13 @@ final class PlaybackSyncController: ObservableObject {
         }
         let change = groupMembershipChangePlanner.change(for: row, in: group)
 
-        groupLoadingRoomName = row.displayName
-        menuMessage = nil
-
-        groupMutationTask = Task { @MainActor [weak self] in
+        guard operationGate.runTransaction(roomName: row.displayName, operation: { [weak self] ticket in
             guard let self else {
                 return
             }
-            defer {
-                groupMutationTask = nil
-            }
             do {
                 let outcome = try await applyGroupMembershipChange(change)
-                guard !Task.isCancelled else {
+                guard operationGate.isCurrentTransaction(ticket, roomName: groupLoadingRoomName) else {
                     return
                 }
                 if let playbackTransactionRoomName = outcome.playbackTransactionRoomName {
@@ -574,32 +582,34 @@ final class PlaybackSyncController: ObservableObject {
                 if outcome.shouldRefreshOutputs {
                     groupEditController.clearSuggestionsCoveredByGroupEdit(row)
                     let optimisticRoomName = optimisticSelectedRoomName(after: change, previousGroup: group)
-                    if let observedRefresh = await refreshAfterGroupMutation(change, row: row) {
-                        guard !Task.isCancelled else {
+                    if let observedRefresh = await refreshAfterGroupMutation(
+                        change,
+                        row: row,
+                        ticket: ticket
+                    ) {
+                        guard operationGate.isCurrentTransaction(ticket, roomName: groupLoadingRoomName) else {
                             return
                         }
                         applyOutputRefresh(
                             observedRefresh,
                             selectedRoomName: observedRefresh.selectedRoomName ?? optimisticRoomName
                         )
-                    } else {
-                        await refreshOutputs(
-                            showLoading: false,
-                            currentRoomName: optimisticRoomName,
-                            preserveMenuMessage: outcome.menuMessage != nil
-                        )
                     }
                 }
             } catch {
-                guard !Task.isCancelled else {
+                guard operationGate.isCurrentTransaction(ticket, roomName: groupLoadingRoomName) else {
                     return
                 }
                 groupLoadingRoomName = nil
                 menuMessage = groupEditMessage(for: row.displayName, error: error)
                 shortcutLogger.error("SonosHandoffGroupEdit result=failure target=\(row.displayName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
-                await refreshOutputs(showLoading: false, preserveMenuMessage: true)
             }
+        }) else {
+            return
         }
+
+        groupLoadingRoomName = row.displayName
+        menuMessage = nil
     }
 
     private func clearGroupSuggestions() {
@@ -609,17 +619,13 @@ final class PlaybackSyncController: ObservableObject {
 
     private func transfer(to speaker: SonosSpeaker, verification: RoomHandoffVerificationMode = .full) {
         let roomName = speaker.roomName
-        loadingRoomName = roomName
-        menuMessage = nil
-        operationGate.cancelVolume()
-
-        operationGate.runTransfer(roomName: roomName) { [weak self] ticket in
+        guard operationGate.runTransaction(roomName: roomName, operation: { [weak self] ticket in
             guard let self else {
                 return
             }
 
             let outcome = await transferActions.transfer(to: speaker, verification: verification)
-            guard operationGate.isCurrentTransfer(ticket, loadingRoomName: loadingRoomName) else {
+            guard operationGate.isCurrentTransaction(ticket, roomName: loadingRoomName) else {
                 return
             }
 
@@ -643,7 +649,13 @@ final class PlaybackSyncController: ObservableObject {
                     volumeState.clearStatus()
                 }
             }
+        }) else {
+            return
         }
+
+        loadingRoomName = roomName
+        menuMessage = nil
+        operationGate.cancelVolume()
     }
 
     private func applyGroupMembershipChange(
@@ -725,7 +737,8 @@ final class PlaybackSyncController: ObservableObject {
 
     private func refreshAfterGroupMutation(
         _ change: SonosGroupMembershipChange,
-        row: PlaybackGroupEditRow
+        row: PlaybackGroupEditRow,
+        ticket: PlaybackTransactionTicket
     ) async -> PlaybackOutputRefresh? {
         let currentRoomName = preferredCurrentRoomName() ?? selectedRoomName
         let visibleSpeakers = currentGroupState.speakers
@@ -741,6 +754,9 @@ final class PlaybackSyncController: ObservableObject {
                         visibleSpeakers: visibleSpeakers
                     )
                 }
+                guard operationGate.isCurrentTransaction(ticket, roomName: groupLoadingRoomName) else {
+                    return nil
+                }
                 if groupMutationObserved(change, in: refresh.state) {
                     if attempt > 1 {
                         shortcutLogger.info("SonosHandoffGroupEdit observation=ready target=\(row.displayName, privacy: .public) attempts=\(attempt, privacy: .public)")
@@ -748,9 +764,15 @@ final class PlaybackSyncController: ObservableObject {
                     return refresh
                 }
             } catch {
+                guard operationGate.isCurrentTransaction(ticket, roomName: groupLoadingRoomName) else {
+                    return nil
+                }
                 shortcutLogger.info("SonosHandoffGroupEdit observation=refresh_failed target=\(row.displayName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
             }
 
+            guard operationGate.isCurrentTransaction(ticket, roomName: groupLoadingRoomName) else {
+                return nil
+            }
             guard attempt < Self.groupMutationObservationAttemptsMax else {
                 break
             }

@@ -6,16 +6,43 @@ struct PlaybackOperationTicket: Equatable, Sendable {
     let roomName: String
 }
 
+struct PlaybackTransactionTicket: Equatable, Sendable {
+    let authorityTicket: PlaybackAuthorityTicket
+    let roomName: String
+}
+
 @MainActor
 final class PlaybackOperationGate {
+    private var authority = PlaybackOperationAuthority()
     private var volumeGeneration = 0
-    private var transferGeneration = 0
     private var volumeTask: Task<Void, Never>?
-    private var transferTask: Task<Void, Never>?
+    private var transactionTask: Task<Void, Never>?
+    private var refreshObservations: (() -> Void)?
 
     deinit {
         volumeTask?.cancel()
-        transferTask?.cancel()
+        transactionTask?.cancel()
+    }
+
+    func startRuntime(refreshObservations: @escaping () -> Void) {
+        authority.start()
+        self.refreshObservations = refreshObservations
+    }
+
+    func stopRuntime() {
+        transactionTask?.cancel()
+        transactionTask = nil
+        cancelVolume()
+        authority.stop()
+        refreshObservations = nil
+    }
+
+    func beginObservation() -> PlaybackAuthorityTicket? {
+        authority.beginObservation()
+    }
+
+    func isCurrentObservation(_ ticket: PlaybackAuthorityTicket) -> Bool {
+        !Task.isCancelled && authority.canCommitObservation(ticket)
     }
 
     func runVolume(
@@ -36,29 +63,54 @@ final class PlaybackOperationGate {
         volumeGeneration += 1
     }
 
-    func runTransfer(
+    @discardableResult
+    func runTransaction(
         roomName: String,
-        operation: @escaping @MainActor @Sendable (PlaybackOperationTicket) async -> Void
-    ) {
-        transferTask?.cancel()
-        transferGeneration += 1
-        let ticket = PlaybackOperationTicket(generation: transferGeneration, roomName: roomName)
-        transferTask = Task { @MainActor in
-            await operation(ticket)
+        operation: @escaping @MainActor @Sendable (PlaybackTransactionTicket) async -> Void
+    ) -> Bool {
+        guard let ticket = beginTransaction(roomName: roomName) else {
+            return false
         }
+
+        transactionTask = Task { @MainActor [weak self] in
+            await operation(ticket)
+            self?.endTransaction(ticket)
+        }
+        return true
     }
 
-    func cancelTransfer() {
-        transferTask?.cancel()
-        transferTask = nil
-        transferGeneration += 1
+    func beginTransaction(roomName: String) -> PlaybackTransactionTicket? {
+        guard let ticket = authority.beginTransaction() else {
+            return nil
+        }
+
+        return PlaybackTransactionTicket(authorityTicket: ticket, roomName: roomName)
+    }
+
+    func endTransaction(_ ticket: PlaybackTransactionTicket) {
+        guard authority.endTransaction(ticket.authorityTicket) else {
+            return
+        }
+
+        transactionTask = nil
+        refreshObservations?()
+    }
+
+    func cancelTransaction() {
+        transactionTask?.cancel()
+        transactionTask = nil
+        authority.cancelTransaction()
     }
 
     func isCurrentVolume(_ ticket: PlaybackOperationTicket, selectedRoomName: String?) -> Bool {
-        ticket.generation == volumeGeneration && SonosRoomName.matches(ticket.roomName, selectedRoomName)
+        !Task.isCancelled
+            && ticket.generation == volumeGeneration
+            && SonosRoomName.matches(ticket.roomName, selectedRoomName)
     }
 
-    func isCurrentTransfer(_ ticket: PlaybackOperationTicket, loadingRoomName: String?) -> Bool {
-        ticket.generation == transferGeneration && SonosRoomName.matches(ticket.roomName, loadingRoomName)
+    func isCurrentTransaction(_ ticket: PlaybackTransactionTicket, roomName: String? = nil) -> Bool {
+        !Task.isCancelled
+            && authority.canCommitTransaction(ticket.authorityTicket)
+            && (roomName == nil || SonosRoomName.matches(ticket.roomName, roomName))
     }
 }

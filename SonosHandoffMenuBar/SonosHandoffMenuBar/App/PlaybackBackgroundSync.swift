@@ -20,6 +20,7 @@ final class PlaybackBackgroundSync {
     private let headphoneTransferSuggestionStore: HeadphoneTransferSuggestionStore
     private let headphoneTransferSuggestionPresenter: HeadphoneTransferSuggestionPresenter
     private let macAudioOutputMonitor: MacAudioOutputMonitor
+    private let operationGate: PlaybackOperationGate
     private let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "Playback")
     private let groupSuggestionTracker = SonosGroupSuggestionTracker()
     private let transferSuggestionTracker = SonosTransferSuggestionTracker()
@@ -28,8 +29,6 @@ final class PlaybackBackgroundSync {
     private var pollTask: Task<Void, Never>?
     private var observationTask: Task<Void, Never>?
     private var eventTasks: [UUID: Task<Void, Never>] = [:]
-    private var observationGeneration = 0
-    private var observationSuspensionCount = 0
     private var lastDiscoveryRefresh = Date.distantPast
     private var lastSeenGroupSuggestionSpeakerIDs: Set<String>?
     private var lastSeenTransferSuggestionSpeakerIDs: Set<String>?
@@ -55,7 +54,8 @@ final class PlaybackBackgroundSync {
         transferSuggestionPresenter: PlaybackTransferSuggestionPresenter,
         headphoneTransferSuggestionStore: HeadphoneTransferSuggestionStore,
         headphoneTransferSuggestionPresenter: HeadphoneTransferSuggestionPresenter,
-        macAudioOutputMonitor: MacAudioOutputMonitor
+        macAudioOutputMonitor: MacAudioOutputMonitor,
+        operationGate: PlaybackOperationGate
     ) {
         self.activePlaybackObserver = activePlaybackObserver
         self.roomHandoffService = roomHandoffService
@@ -69,6 +69,7 @@ final class PlaybackBackgroundSync {
         self.headphoneTransferSuggestionStore = headphoneTransferSuggestionStore
         self.headphoneTransferSuggestionPresenter = headphoneTransferSuggestionPresenter
         self.macAudioOutputMonitor = macAudioOutputMonitor
+        self.operationGate = operationGate
     }
 
     private func bindRuntimeEvents() {
@@ -135,6 +136,9 @@ final class PlaybackBackgroundSync {
             return
         }
 
+        operationGate.startRuntime { [weak self] in
+            self?.requestSync()
+        }
         bindRuntimeEvents()
         macAudioOutputMonitor.start()
         establishMacAudioOutputBaselineIfNeeded(macAudioOutputMonitor.output)
@@ -150,7 +154,7 @@ final class PlaybackBackgroundSync {
     func stop() {
         pollTask?.cancel()
         pollTask = nil
-        observationGeneration += 1
+        operationGate.stopRuntime()
         observationTask?.cancel()
         observationTask = nil
         for eventTask in eventTasks.values {
@@ -175,19 +179,17 @@ final class PlaybackBackgroundSync {
 
     @discardableResult
     private func requestSync() -> Task<Void, Never>? {
-        guard observationSuspensionCount == 0 else {
+        guard let ticket = operationGate.beginObservation() else {
             return nil
         }
 
-        observationGeneration += 1
-        let generation = observationGeneration
         observationTask?.cancel()
         let task = Task { @MainActor [weak self] in
-            guard let self, isCurrentObservation(generation) else {
+            guard let self, isCurrentObservation(ticket) else {
                 return
             }
-            await syncOnce(generation: generation)
-            guard isCurrentObservation(generation) else {
+            await syncOnce(ticket: ticket)
+            guard isCurrentObservation(ticket) else {
                 return
             }
             observationTask = nil
@@ -196,16 +198,16 @@ final class PlaybackBackgroundSync {
         return task
     }
 
-    private func syncOnce(generation: Int) async {
-        guard isCurrentObservation(generation) else {
+    private func syncOnce(ticket: PlaybackAuthorityTicket) async {
+        guard isCurrentObservation(ticket) else {
             return
         }
         let cachedTransferBaselineSpeakerIDs = await cachedTransferSuggestionBaselineSpeakerIDs()
-        guard isCurrentObservation(generation) else {
+        guard isCurrentObservation(ticket) else {
             return
         }
         let discoveryRefreshStarted = await refreshDiscoveryCacheIfNeeded()
-        guard isCurrentObservation(generation) else {
+        guard isCurrentObservation(ticket) else {
             return
         }
 
@@ -213,22 +215,28 @@ final class PlaybackBackgroundSync {
             guard let status = try await activePlaybackObserver.activePlaybackDeviceStatus(),
                   let activeRoomName = SonosRoomName.normalized(status.deviceName)
             else {
-                guard isCurrentObservation(generation) else {
+                guard isCurrentObservation(ticket) else {
                     return
                 }
                 hasShownAuthPrompt = false
                 clearSuggestions(currentHeadphoneOutputID: nil)
-                await refreshOutputCacheWithoutPlayback(discoveryRefreshStarted: discoveryRefreshStarted)
+                await refreshOutputCacheWithoutPlayback(
+                    discoveryRefreshStarted: discoveryRefreshStarted,
+                    ticket: ticket
+                )
                 return
             }
 
-            guard isCurrentObservation(generation) else {
+            guard isCurrentObservation(ticket) else {
                 return
             }
             guard status.isPlaying else {
                 hasShownAuthPrompt = false
                 clearSuggestions(currentHeadphoneOutputID: nil)
-                await refreshOutputCacheWithoutPlayback(discoveryRefreshStarted: discoveryRefreshStarted)
+                await refreshOutputCacheWithoutPlayback(
+                    discoveryRefreshStarted: discoveryRefreshStarted,
+                    ticket: ticket
+                )
                 return
             }
 
@@ -236,7 +244,7 @@ final class PlaybackBackgroundSync {
                 currentRoomName: activeRoomName,
                 forceRefresh: discoveryRefreshStarted
             )
-            guard isCurrentObservation(generation) else {
+            guard isCurrentObservation(ticket) else {
                 return
             }
             guard let selectedRoomName = refresh.selectedRoomName else {
@@ -270,8 +278,11 @@ final class PlaybackBackgroundSync {
                 cachedBaselineSpeakerIDs: cachedTransferBaselineSpeakerIDs
             )
             updateGroupSuggestion(refresh: refresh, selectedRoomName: selectedRoomName, spotifyPlaying: status.isPlaying)
-            try await updateHeadphoneTransferSuggestion(activeRoomName: selectedRoomName)
-            guard isCurrentObservation(generation) else {
+            try await updateHeadphoneTransferSuggestion(
+                activeRoomName: selectedRoomName,
+                ticket: ticket
+            )
+            guard isCurrentObservation(ticket) else {
                 return
             }
             notifyOpenMenuAfterDiscoveryRefresh(
@@ -281,7 +292,7 @@ final class PlaybackBackgroundSync {
             hasShownAuthPrompt = false
             logger.info("SonosHandoffPlaybackSync state=selected room=\(selectedRoomName, privacy: .public) spotifyVolume=\(status.volumePercent ?? -1, privacy: .public)")
         } catch {
-            guard isCurrentObservation(generation) else {
+            guard isCurrentObservation(ticket) else {
                 return
             }
             if SpotifyAuthRecovery.isAuthRequired(error) {
@@ -295,25 +306,8 @@ final class PlaybackBackgroundSync {
         }
     }
 
-    private func isCurrentObservation(_ generation: Int) -> Bool {
-        !Task.isCancelled
-            && observationSuspensionCount == 0
-            && observationGeneration == generation
-    }
-
-    private func beginTransaction() {
-        observationSuspensionCount += 1
-        observationGeneration += 1
-        observationTask?.cancel()
-        observationTask = nil
-    }
-
-    private func endTransaction() {
-        precondition(observationSuspensionCount > 0)
-        observationSuspensionCount -= 1
-        if observationSuspensionCount == 0, pollTask != nil {
-            requestSync()
-        }
+    private func isCurrentObservation(_ ticket: PlaybackAuthorityTicket) -> Bool {
+        operationGate.isCurrentObservation(ticket)
     }
 
     private func establishMacAudioOutputBaselineIfNeeded(_ output: MacAudioOutputDevice?) {
@@ -435,7 +429,10 @@ final class PlaybackBackgroundSync {
         }
     }
 
-    private func updateHeadphoneTransferSuggestion(activeRoomName: String) async throws {
+    private func updateHeadphoneTransferSuggestion(
+        activeRoomName: String,
+        ticket: PlaybackAuthorityTicket
+    ) async throws {
         guard let output = macAudioOutputMonitor.output else {
             clearHeadphoneTransferSuggestion(currentHeadphoneOutputID: nil)
             return
@@ -453,14 +450,14 @@ final class PlaybackBackgroundSync {
         pendingHeadphoneConnectionOutputID = nil
 
         guard let spotifyDeviceName = try await localSpotifyComputerPlaybackDeviceName() else {
-            guard !Task.isCancelled else {
+            guard isCurrentObservation(ticket) else {
                 return
             }
             headphoneTransferSuggestionPresenter.clearAll()
             logger.info("SonosHandoffHeadphoneTransferSuggestion state=unavailable reason=no_spotify_computer_device output=\(output.name, privacy: .public)")
             return
         }
-        guard !Task.isCancelled else {
+        guard isCurrentObservation(ticket) else {
             return
         }
 
@@ -559,14 +556,17 @@ final class PlaybackBackgroundSync {
         )
     }
 
-    private func refreshOutputCacheWithoutPlayback(discoveryRefreshStarted: Bool) async {
+    private func refreshOutputCacheWithoutPlayback(
+        discoveryRefreshStarted: Bool,
+        ticket: PlaybackAuthorityTicket
+    ) async {
         guard discoveryRefreshStarted else {
             return
         }
 
         do {
             let refresh = try await outputDirectory.refreshAfterBackgroundRefresh(currentRoomName: nil)
-            guard !Task.isCancelled else {
+            guard isCurrentObservation(ticket) else {
                 return
             }
             updateGroupSuggestion(refresh: refresh, selectedRoomName: nil, spotifyPlaying: false)
@@ -578,7 +578,7 @@ final class PlaybackBackgroundSync {
             )
             notifyOpenMenuAfterDiscoveryRefresh(discoveryRefreshStarted: true, currentRoomName: nil)
         } catch {
-            guard !Task.isCancelled else {
+            guard isCurrentObservation(ticket) else {
                 return
             }
             logger.info("SonosHandoffPlaybackSync output_cache_refresh=failed reason=no_active_playback error=\(error.localizedDescription, privacy: .public)")
@@ -598,15 +598,19 @@ final class PlaybackBackgroundSync {
             logger.info("SonosHandoffGroupSuggestion result=ignored_duplicate_accept id=\(id, privacy: .public)")
             return
         }
-        beginTransaction()
+        guard let ticket = operationGate.beginTransaction(roomName: suggestion.speaker.roomName) else {
+            acceptingGroupSuggestionIDs.remove(suggestion.id)
+            logger.info("SonosHandoffGroupSuggestion result=ignored_transaction_in_progress id=\(id, privacy: .public)")
+            return
+        }
         defer {
             acceptingGroupSuggestionIDs.remove(suggestion.id)
-            endTransaction()
+            operationGate.endTransaction(ticket)
         }
 
         do {
-            let activeRoomName = await activePlaybackRoomNameForSuggestionRefresh()
-            guard !Task.isCancelled else {
+            let activeRoomName = await activePlaybackRoomNameForSuggestionRefresh(ticket: ticket)
+            guard operationGate.isCurrentTransaction(ticket) else {
                 return
             }
             guard let activeRoomName else {
@@ -623,7 +627,7 @@ final class PlaybackBackgroundSync {
             let refresh = try await outputDirectory.refresh(
                 currentRoomName: preRefreshPlan.discoveryRoomName
             )
-            guard !Task.isCancelled else {
+            guard operationGate.isCurrentTransaction(ticket) else {
                 return
             }
             let decision = groupSuggestionAcceptanceResolver.decision(
@@ -647,11 +651,11 @@ final class PlaybackBackgroundSync {
                     roomName: suggestion.speaker.roomName,
                     toCoordinatorRoomName: coordinatorRoomName
                 )
-                guard !Task.isCancelled else {
+                guard operationGate.isCurrentTransaction(ticket) else {
                     return
                 }
             } catch {
-                guard !Task.isCancelled else {
+                guard operationGate.isCurrentTransaction(ticket) else {
                     return
                 }
                 logger.error("SonosHandoffGroupSuggestion result=notification_join_failure room=\(suggestion.speaker.roomName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
@@ -670,18 +674,18 @@ final class PlaybackBackgroundSync {
                 postRefresh = try await outputDirectory.refresh(
                     currentRoomName: postRefreshPlan.discoveryRoomName
                 )
-                guard !Task.isCancelled else {
+                guard operationGate.isCurrentTransaction(ticket) else {
                     return
                 }
             } catch {
-                guard !Task.isCancelled else {
+                guard operationGate.isCurrentTransaction(ticket) else {
                     return
                 }
                 lastDiscoveryRefresh = Date.distantPast
                 selectRoomName(
                     coordinatorRoomName,
                     selectedGroup: nil,
-                    source: .activePlaybackObservation
+                    source: .playbackTransaction
                 )
                 NotificationCenter.default.post(name: .sonosHandoffRefreshOutputs, object: coordinatorRoomName)
                 logger.error("SonosHandoffGroupSuggestion result=notification_accepted_refresh_failure room=\(suggestion.speaker.roomName, privacy: .public) coordinator=\(coordinatorRoomName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
@@ -698,7 +702,7 @@ final class PlaybackBackgroundSync {
                 selectRoomName(
                     selectedRoomName,
                     selectedGroup: postRefresh.selectedGroup,
-                    source: .activePlaybackObservation
+                    source: .playbackTransaction
                 )
             } else if let clearReason = plan.clearReason {
                 clearSelection(reason: clearReason.rawValue)
@@ -711,7 +715,7 @@ final class PlaybackBackgroundSync {
             NotificationCenter.default.post(name: .sonosHandoffRefreshOutputs, object: plan.menuRefreshRoomName)
             logger.info("SonosHandoffGroupSuggestion result=notification_accepted room=\(suggestion.speaker.roomName, privacy: .public) coordinator=\(coordinatorRoomName, privacy: .public)")
         } catch {
-            guard !Task.isCancelled else {
+            guard operationGate.isCurrentTransaction(ticket) else {
                 return
             }
             logger.error("SonosHandoffGroupSuggestion result=notification_failure room=\(suggestion.speaker.roomName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
@@ -737,10 +741,14 @@ final class PlaybackBackgroundSync {
             logger.info("SonosHandoffTransferSuggestion result=ignored_duplicate_accept id=\(id, privacy: .public)")
             return
         }
-        beginTransaction()
+        guard let ticket = operationGate.beginTransaction(roomName: suggestion.speaker.roomName) else {
+            acceptingTransferSuggestionIDs.remove(suggestion.id)
+            logger.info("SonosHandoffTransferSuggestion result=ignored_transaction_in_progress id=\(id, privacy: .public)")
+            return
+        }
         defer {
             acceptingTransferSuggestionIDs.remove(suggestion.id)
-            endTransaction()
+            operationGate.endTransaction(ticket)
         }
 
         transferSuggestionPresenter.clear(id: suggestion.id)
@@ -748,12 +756,12 @@ final class PlaybackBackgroundSync {
             toRoomName: suggestion.speaker.roomName,
             verification: .full
         )
-        guard !Task.isCancelled else {
+        guard operationGate.isCurrentTransaction(ticket) else {
             return
         }
         switch result {
         case .success:
-            await applyAcceptedTransferSuggestion(suggestion)
+            await applyAcceptedTransferSuggestion(suggestion, ticket: ticket)
         case .failure(let code, let message):
             let failureMessage = transferFailureMessage(
                 roomName: suggestion.speaker.roomName,
@@ -767,12 +775,15 @@ final class PlaybackBackgroundSync {
         }
     }
 
-    private func applyAcceptedTransferSuggestion(_ suggestion: PlaybackTransferSuggestion) async {
+    private func applyAcceptedTransferSuggestion(
+        _ suggestion: PlaybackTransferSuggestion,
+        ticket: PlaybackTransactionTicket
+    ) async {
         let roomName = suggestion.speaker.roomName
 
         do {
             let refresh = try await outputDirectory.refresh(currentRoomName: roomName)
-            guard !Task.isCancelled else {
+            guard operationGate.isCurrentTransaction(ticket) else {
                 return
             }
             lastDiscoveryRefresh = Date()
@@ -796,7 +807,7 @@ final class PlaybackBackgroundSync {
             NotificationCenter.default.post(name: .sonosHandoffRefreshOutputs, object: selectedRoomName)
             logger.info("SonosHandoffTransferSuggestion result=notification_accepted room=\(roomName, privacy: .public)")
         } catch {
-            guard !Task.isCancelled else {
+            guard operationGate.isCurrentTransaction(ticket) else {
                 return
             }
             lastDiscoveryRefresh = Date.distantPast
@@ -829,16 +840,20 @@ final class PlaybackBackgroundSync {
             logger.info("SonosHandoffHeadphoneTransferSuggestion result=ignored_duplicate_accept id=\(id, privacy: .public)")
             return
         }
-        beginTransaction()
+        guard let ticket = operationGate.beginTransaction(roomName: suggestion.outputName) else {
+            acceptingHeadphoneTransferSuggestionIDs.remove(suggestion.id)
+            logger.info("SonosHandoffHeadphoneTransferSuggestion result=ignored_transaction_in_progress id=\(id, privacy: .public)")
+            return
+        }
         defer {
             acceptingHeadphoneTransferSuggestionIDs.remove(suggestion.id)
-            endTransaction()
+            operationGate.endTransaction(ticket)
         }
 
         headphoneTransferSuggestionPresenter.suppress(id: suggestion.id)
         do {
             guard let deviceName = try await localSpotifyComputerPlaybackDeviceName() else {
-                guard !Task.isCancelled else {
+                guard operationGate.isCurrentTransaction(ticket) else {
                     return
                 }
                 let message = headphoneTransferFailureMessage(suggestion: suggestion)
@@ -851,14 +866,14 @@ final class PlaybackBackgroundSync {
                 deviceType: "Computer",
                 play: true
             )
-            guard !Task.isCancelled else {
+            guard operationGate.isCurrentTransaction(ticket) else {
                 return
             }
             clearSelection(reason: "spotify_transferred_to_mac")
             NotificationCenter.default.post(name: .sonosHandoffRefreshOutputs, object: nil)
             logger.info("SonosHandoffHeadphoneTransferSuggestion result=notification_accepted output=\(suggestion.outputName, privacy: .public) spotifyDeviceName=\(deviceName, privacy: .public)")
         } catch {
-            guard !Task.isCancelled else {
+            guard operationGate.isCurrentTransaction(ticket) else {
                 return
             }
             let message = headphoneTransferFailureMessage(suggestion: suggestion)
@@ -885,23 +900,25 @@ final class PlaybackBackgroundSync {
         "Could not move Spotify playback to this Mac."
     }
 
-    private func activePlaybackRoomNameForSuggestionRefresh() async -> String? {
+    private func activePlaybackRoomNameForSuggestionRefresh(
+        ticket: PlaybackTransactionTicket
+    ) async -> String? {
         do {
             guard let status = try await activePlaybackObserver.activePlaybackDeviceStatus(),
                   status.isPlaying
             else {
-                guard !Task.isCancelled else {
+                guard operationGate.isCurrentTransaction(ticket) else {
                     return nil
                 }
                 return nil
             }
-            guard !Task.isCancelled else {
+            guard operationGate.isCurrentTransaction(ticket) else {
                 return nil
             }
 
             return SonosRoomName.normalized(status.deviceName)
         } catch {
-            guard !Task.isCancelled else {
+            guard operationGate.isCurrentTransaction(ticket) else {
                 return nil
             }
             if SpotifyAuthRecovery.isAuthRequired(error) {

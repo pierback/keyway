@@ -5,14 +5,20 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 runtime="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/SonosHandoffApp.swift"
 background="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/PlaybackBackgroundSync.swift"
 controller="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/PlaybackSyncController.swift"
+gate="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/PlaybackOperationGate.swift"
+environment="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/Support/AppEnvironment.swift"
+authority="$repo_root/packages/SonosHandoffCore/Sources/SonosHandoffCore/Handoff/PlaybackOperationAuthority.swift"
 
-python3 - "$runtime" "$background" "$controller" <<'PY'
+python3 - "$runtime" "$background" "$controller" "$gate" "$environment" "$authority" <<'PY'
 import pathlib
 import sys
 
 runtime = pathlib.Path(sys.argv[1]).read_text()
 background = pathlib.Path(sys.argv[2]).read_text()
 controller = pathlib.Path(sys.argv[3]).read_text()
+gate = pathlib.Path(sys.argv[4]).read_text()
+environment = pathlib.Path(sys.argv[5]).read_text()
+authority = pathlib.Path(sys.argv[6]).read_text()
 
 app_runtime = runtime[runtime.index("final class AppRuntime"):runtime.index("private func prepareNotifications")]
 for forbidden in (
@@ -39,21 +45,25 @@ for required in (
         )
 
 for required in (
+    "private let operationGate: PlaybackOperationGate",
     "private var pollTask: Task<Void, Never>?",
     "private var observationTask: Task<Void, Never>?",
-    "private var observationGeneration = 0",
-    "private var observationSuspensionCount = 0",
+    "operationGate.startRuntime",
+    "operationGate.stopRuntime()",
     "let observation = self?.requestSync()",
+    "guard let ticket = operationGate.beginObservation()",
     "observationTask?.cancel()",
-    "private func syncOnce(generation: Int) async",
-    "guard isCurrentObservation(generation) else",
-    "&& observationGeneration == generation",
+    "private func syncOnce(ticket: PlaybackAuthorityTicket) async",
+    "guard isCurrentObservation(ticket) else",
+    "operationGate.isCurrentObservation(ticket)",
 ):
     if required not in background:
         raise SystemExit(
-            f"verify_sonos_observation_authority_semantics: background observation must be single-flight and generation-bound: {required}"
+            f"verify_sonos_observation_authority_semantics: background observation must use the shared runtime authority: {required}"
         )
 for forbidden in (
+    "private var observationGeneration",
+    "private var observationSuspensionCount",
     "await sync.syncOnce()",
     "await self?.syncOnce()",
 ):
@@ -70,25 +80,83 @@ for function_name in (
     start = background.index(f"    private func {function_name}")
     next_function = background.find("\n    private func ", start + 1)
     body = background[start:next_function if next_function >= 0 else len(background)]
-    if "beginTransaction()" not in body or "endTransaction()" not in body:
+    if "operationGate.beginTransaction(" not in body or "operationGate.endTransaction(ticket)" not in body:
         raise SystemExit(
-            f"verify_sonos_observation_authority_semantics: {function_name} must suspend observation for its transaction"
+            f"verify_sonos_observation_authority_semantics: {function_name} must commit through the shared transaction authority"
         )
+
+for required in (
+    "let playbackOperationGate = PlaybackOperationGate()",
+    "operationGate: playbackOperationGate",
+):
+    if required not in environment:
+        raise SystemExit(
+            f"verify_sonos_observation_authority_semantics: composition must inject one shared operation gate: {required}"
+        )
+if environment.count("operationGate: playbackOperationGate") != 2:
+    raise SystemExit(
+        "verify_sonos_observation_authority_semantics: background and foreground must receive the same operation gate"
+    )
+
+for required in (
+    "private let operationGate: PlaybackOperationGate",
+    "operationGate: PlaybackOperationGate",
+    "guard let ticket = operationGate.beginObservation()",
+    "operationGate.runTransaction(",
+    "operationGate.isCurrentTransaction(ticket",
+):
+    if required not in controller:
+        raise SystemExit(
+            f"verify_sonos_observation_authority_semantics: foreground controller must use the shared authority: {required}"
+        )
+if "private let operationGate = PlaybackOperationGate()" in controller:
+    raise SystemExit(
+        "verify_sonos_observation_authority_semantics: foreground controller must not create a private authority"
+    )
 
 toggle_start = controller.index("    func toggleGroupMembership(")
 toggle_end = controller.index("\n    private func clearGroupSuggestions", toggle_start)
 toggle = controller[toggle_start:toggle_end]
 outcome = "let outcome = try await applyGroupMembershipChange(change)"
-cancel_guard = "guard !Task.isCancelled else"
+commit_guard = "guard operationGate.isCurrentTransaction(ticket"
 transaction_apply = "if let playbackTransactionRoomName = outcome.playbackTransactionRoomName"
-if toggle.index(outcome) > toggle.index(cancel_guard, toggle.index(outcome)):
+if toggle.index(outcome) > toggle.index(commit_guard, toggle.index(outcome)):
     raise SystemExit(
-        "verify_sonos_observation_authority_semantics: group mutation must check cancellation after its mechanism result"
+        "verify_sonos_observation_authority_semantics: group mutation must check transaction authority after its mechanism result"
     )
-if toggle.index(cancel_guard, toggle.index(outcome)) > toggle.index(transaction_apply):
+if toggle.index(commit_guard, toggle.index(outcome)) > toggle.index(transaction_apply):
     raise SystemExit(
-        "verify_sonos_observation_authority_semantics: group mutation must not apply playback selection before cancellation is checked"
+        "verify_sonos_observation_authority_semantics: group mutation must not apply playback selection before authority is checked"
     )
+
+for required in (
+    "private var authority = PlaybackOperationAuthority()",
+    "func startRuntime(",
+    "func stopRuntime()",
+    "func beginObservation() -> PlaybackAuthorityTicket?",
+    "func runTransaction(",
+    "func beginTransaction(roomName: String)",
+    "func endTransaction(_ ticket: PlaybackTransactionTicket)",
+):
+    if required not in gate:
+        raise SystemExit(
+            f"verify_sonos_observation_authority_semantics: application gate is missing shared authority behavior: {required}"
+        )
+
+for required in (
+    "public mutating func start()",
+    "public mutating func stop()",
+    "public mutating func beginObservation()",
+    "public func canCommitObservation(",
+    "public mutating func beginTransaction()",
+    "public func canCommitTransaction(",
+    "public mutating func endTransaction(",
+    "guard isRunning, !transactionInProgress",
+):
+    if required not in authority:
+        raise SystemExit(
+            f"verify_sonos_observation_authority_semantics: core authority is missing a runtime invariant: {required}"
+        )
 
 apply_start = controller.index("    private func applyGroupMembershipChange(")
 apply_end = controller.index("\n    private func refreshAfterGroupMutation", apply_start)

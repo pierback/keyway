@@ -101,6 +101,7 @@ struct AppEnvironment {
         let outputDirectory = PlaybackOutputDirectory(
             groupingStateReader: spotifyConnectService
         )
+        let playbackOperationGate = PlaybackOperationGate()
         let playbackBackgroundSync = PlaybackBackgroundSync(
             activePlaybackObserver: spotifyConnectService,
             roomHandoffService: spotifyConnectService,
@@ -113,7 +114,8 @@ struct AppEnvironment {
             transferSuggestionPresenter: transferSuggestionPresenter,
             headphoneTransferSuggestionStore: headphoneTransferSuggestionStore,
             headphoneTransferSuggestionPresenter: headphoneTransferSuggestionPresenter,
-            macAudioOutputMonitor: macAudioOutputMonitor
+            macAudioOutputMonitor: macAudioOutputMonitor,
+            operationGate: playbackOperationGate
         )
         let playbackSyncController = PlaybackSyncController(
             outputDirectory: outputDirectory,
@@ -123,7 +125,8 @@ struct AppEnvironment {
             roomHandoffService: spotifyConnectService,
             groupingEditor: spotifyConnectService,
             groupSuggestionStore: groupSuggestionStore,
-            groupSuggestionPresenter: groupSuggestionPresenter
+            groupSuggestionPresenter: groupSuggestionPresenter,
+            operationGate: playbackOperationGate
         )
         let volumeHotkeys = VolumeHotkeyController(
             volumeService: spotifyConnectService,
