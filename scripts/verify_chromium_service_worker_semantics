@@ -22,6 +22,7 @@ const windowUpdates = [];
 const focusEvents = [];
 const tabGetRequests = [];
 const queryRequests = [];
+const frameTreeRequests = [];
 const tabWindowIDs = new Map([[22, 11], [23, 11]]);
 const tabMutedByID = new Map([[22, false], [23, false]]);
 const tabAudibleByID = new Map([[22, true], [23, true]]);
@@ -209,6 +210,9 @@ const context = {
       },
     },
     webNavigation: {
+      getAllFrames(details, callback) {
+        frameTreeRequests.push({ details, callback });
+      },
       onCommitted: {
         addListener(listener) {
           navigationCommittedListener = listener;
@@ -725,6 +729,7 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   assertEqual(externalUnmuteSnapshot.epoch, muteCommandSnapshot.epoch + 1, "external mutedInfo snapshots must advance the normal snapshot epoch");
 
   assert(typeof navigationCommittedListener === "function", "service worker must register committed-document authority");
+  navigationCommittedListener({ tabId: 22, frameId: 8, documentId: "browser-doc-restored-child" });
   let delayedOldStateResponse = null;
   runtimeMessageListener(
     {
@@ -754,6 +759,9 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
     }
   );
   navigationCommittedListener({ tabId: 22, frameId: 0, documentId: "browser-doc-main-next" });
+  assertEqual(frameTreeRequests.length, 1, "a main-document commit must request its active frame tree");
+  assertEqual(frameTreeRequests[0].details.tabId, 22, "frame-tree recovery must stay scoped to the committed tab");
+  navigationCommittedListener({ tabId: 22, frameId: 9, documentId: "browser-doc-next-child" });
   const afterNavigationSnapshot = postedMessages.filter(message => message.type === "snapshot").at(-1);
   assertEqual(afterNavigationSnapshot.targets.length, 1, "tab navigation must clear only the stale tab target");
   assertEqual(afterNavigationSnapshot.targets[0].id, "chromium-tab:profile-guid-a:23", "tab navigation must keep other tab targets");
@@ -873,6 +881,83 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
     }
   );
   navigationCommittedListener({ tabId: 22, frameId: 0, documentId: "browser-doc-main" });
+  assertEqual(frameTreeRequests.length, 2, "a restored main document must request its restored frame tree");
+  navigationCommittedListener({ tabId: 22, frameId: 7, documentId: "browser-doc-current-child" });
+  frameTreeRequests[0].callback([
+    {
+      frameId: 0,
+      documentId: "browser-doc-main-next",
+      documentLifecycle: "active",
+    },
+    {
+      frameId: 9,
+      documentId: "browser-doc-next-child",
+      documentLifecycle: "active",
+    },
+  ]);
+  assertEqual(
+    context.captureDocumentAuthority(
+      { tab: { id: 22 }, frameId: 9, documentId: "browser-doc-next-child" },
+      "doc-next-child"
+    ),
+    null,
+    "a stale frame-tree callback must not reactivate its retired child document"
+  );
+  const tabMessageCountBeforeFrameTreeRecovery = tabMessages.length;
+  frameTreeRequests[1].callback([
+    {
+      frameId: 0,
+      documentId: "browser-doc-main",
+      documentLifecycle: "active",
+    },
+    {
+      frameId: 7,
+      documentId: "browser-doc-iframe",
+      documentLifecycle: "active",
+    },
+    {
+      frameId: 8,
+      documentId: "browser-doc-restored-child",
+      documentLifecycle: "active",
+    },
+    {
+      frameId: 9,
+      documentId: "browser-doc-next-child",
+      documentLifecycle: "cached",
+    },
+  ]);
+  assertEqual(
+    context.captureDocumentAuthority(
+      { tab: { id: 22 }, frameId: 7, documentId: "browser-doc-iframe" },
+      "doc-iframe"
+    ),
+    null,
+    "frame-tree recovery must not replace a newer child-frame commit"
+  );
+  assert(
+    context.captureDocumentAuthority(
+      { tab: { id: 22 }, frameId: 7, documentId: "browser-doc-current-child" },
+      "doc-current-child"
+    ),
+    "the newer child-frame commit must remain authoritative"
+  );
+  assert(
+    context.captureDocumentAuthority(
+      { tab: { id: 22 }, frameId: 8, documentId: "browser-doc-restored-child" },
+      "doc-restored-child"
+    ),
+    "the active restored child frame must regain authority"
+  );
+  assertEqual(
+    tabMessages.length,
+    tabMessageCountBeforeFrameTreeRecovery + 1,
+    "frame-tree recovery must probe only the reactivated child document"
+  );
+  assertEqual(
+    tabMessages.at(-1).options.documentId,
+    "browser-doc-restored-child",
+    "the recovery probe must target the exact reactivated browser document"
+  );
   await Promise.resolve();
   assertEqual(
     delayedReplacementStateResponse?.ok,

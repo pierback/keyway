@@ -414,6 +414,42 @@ function clearSourcesForFrame(tabId, frameId) {
   if (changed) publishSnapshot();
 }
 
+function reactivateCommittedFrameTree(tabId, mainAuthority) {
+  chrome.webNavigation.getAllFrames({ tabId }, frames => {
+    const error = chrome.runtime.lastError;
+    const currentMain = documentAuthorityByFrame.get(documentFrameKey(tabId, 0));
+    if (error
+        || !Array.isArray(frames)
+        || !currentMain
+        || currentMain.generation !== mainAuthority.generation
+        || currentMain.browserDocumentID !== mainAuthority.browserDocumentID) {
+      return;
+    }
+
+    for (const frame of frames) {
+      if (!Number.isInteger(frame.frameId)
+          || frame.frameId === 0
+          || typeof frame.documentId !== "string"
+          || !frame.documentId
+          || frame.documentLifecycle !== "active") {
+        continue;
+      }
+
+      const existing = documentAuthorityByFrame.get(documentFrameKey(tabId, frame.frameId));
+      if (existing || !retiredBrowserDocumentIDs.delete(frame.documentId)) continue;
+      establishDocumentAuthority(tabId, frame.frameId, frame.documentId);
+      chrome.tabs.sendMessage(
+        tabId,
+        { type: "keywayProbeMedia", protocolVersion },
+        { documentId: frame.documentId },
+        () => {
+          void chrome.runtime.lastError;
+        }
+      );
+    }
+  });
+}
+
 function commitDocumentAuthority(details) {
   if (!Number.isInteger(details.tabId)
       || !Number.isInteger(details.frameId)
@@ -428,6 +464,10 @@ function commitDocumentAuthority(details) {
 
   if (details.frameId === 0) {
     clearSourcesForTab(details.tabId);
+    retiredBrowserDocumentIDs.delete(details.documentId);
+    const authority = establishDocumentAuthority(details.tabId, details.frameId, details.documentId);
+    reactivateCommittedFrameTree(details.tabId, authority);
+    return;
   } else {
     if (existing) retireDocumentAuthority(existing);
     clearSourcesForFrame(details.tabId, details.frameId);
