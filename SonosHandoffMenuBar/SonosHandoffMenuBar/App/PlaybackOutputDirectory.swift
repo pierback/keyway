@@ -18,10 +18,6 @@ final class PlaybackOutputDirectory {
     private let discoveryCache: SonosGroupStateCache
     private let inspectionResolver = SonosGroupingInspectionResolver()
 
-    init(environment: AppEnvironment) {
-        self.discoveryCache = SonosGroupStateCache(groupingStateReader: environment.groupingStateReader)
-    }
-
     init(groupingStateReader: any SonosGroupingStateReading) {
         self.discoveryCache = SonosGroupStateCache(groupingStateReader: groupingStateReader)
     }

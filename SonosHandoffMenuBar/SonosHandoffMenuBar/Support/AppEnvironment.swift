@@ -2,27 +2,19 @@ import AppKit
 import os
 import SonosHandoffCore
 
-struct AppEnvironment: @unchecked Sendable {
+@MainActor
+struct AppEnvironment {
     let configImportService: ConfigImportService
-    let chromiumNativeMessagingHostInstallMessage: String?
     let configStore: any ConfigStoring
     let tokenStore: any TokenStoring
     let connectTokenStatusStore: any ConnectTokenStatusChecking
     let authCoordinator: any SpotifyAuthCoordinating
-    let roomHandoffService: any RoomHandoffPerforming
-    let groupingStateReader: any SonosGroupingStateReading
-    let groupingEditor: any SonosGroupingEditing
     let volumeService: any SpeakerVolumeAdjusting
     let activePlaybackObserver: any SpotifyActivePlaybackObserving
     let outputSelection: PlaybackOutputSelection
     let outputDirectory: PlaybackOutputDirectory
-    let groupSuggestionStore: PlaybackGroupSuggestionStore
-    let groupSuggestionPresenter: PlaybackGroupSuggestionPresenter
-    let transferSuggestionStore: PlaybackTransferSuggestionStore
-    let transferSuggestionPresenter: PlaybackTransferSuggestionPresenter
-    let headphoneTransferSuggestionStore: HeadphoneTransferSuggestionStore
-    let headphoneTransferSuggestionPresenter: HeadphoneTransferSuggestionPresenter
-    let macAudioOutputMonitor: MacAudioOutputMonitor
+    let playbackBackgroundSync: PlaybackBackgroundSync
+    let playbackSyncController: PlaybackSyncController
     let chromiumNativeMessagingHostInstaller: ChromiumNativeMessagingHostInstaller
     let chromiumBrowserExtensionController: ChromiumBrowserExtensionController
     let mediaRemoteController: MediaRemoteController
@@ -30,10 +22,9 @@ struct AppEnvironment: @unchecked Sendable {
     let mediaAudioControlController: MediaAudioControlController
     let mediaTransportActionController: MediaTransportActionController
     let mediaRoutingProbeController: MediaRoutingProbeController
+    let volumeHotkeys: VolumeHotkeyController
 
-    @MainActor
     static func live() -> AppEnvironment {
-        let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "AppEnvironment")
         let configImportService = ConfigImportService()
         let configStore = ConfigStore()
         let tokenStore = KeychainTokenStore()
@@ -51,7 +42,6 @@ struct AppEnvironment: @unchecked Sendable {
             store: groupSuggestionStore,
             notifier: groupSuggestionNotifier
         )
-        groupSuggestionNotifier.prepare()
         let transferSuggestionStore = PlaybackTransferSuggestionStore()
         let transferSuggestionNotifier = PlaybackTransferSuggestionNotifier()
         let transferSuggestionPresenter = PlaybackTransferSuggestionPresenter(
@@ -66,14 +56,6 @@ struct AppEnvironment: @unchecked Sendable {
         )
         let macAudioOutputMonitor = MacAudioOutputMonitor()
         let chromiumNativeMessagingHostInstaller = ChromiumNativeMessagingHostInstaller()
-        let chromiumNativeMessagingHostInstallMessage: String?
-        do {
-            let state = try chromiumNativeMessagingHostInstaller.install()
-            chromiumNativeMessagingHostInstallMessage = "Installed native host manifests in \(state.manifestPaths.count) supported Chromium-family locations."
-        } catch {
-            chromiumNativeMessagingHostInstallMessage = "Chromium bridge install failed: \(error.localizedDescription)"
-            logger.error("Chromium native bridge install failed error=\(error.localizedDescription, privacy: .public)")
-        }
         let chromiumBrowserExtensionController = ChromiumBrowserExtensionController()
         let targetSelectionMemory = MediaTargetSelectionMemory()
         let mediaRemoteController = MediaRemoteController(
@@ -121,35 +103,62 @@ struct AppEnvironment: @unchecked Sendable {
         let outputDirectory = PlaybackOutputDirectory(
             groupingStateReader: spotifyConnectService
         )
-
-        return AppEnvironment(
-            configImportService: configImportService,
-            chromiumNativeMessagingHostInstallMessage: chromiumNativeMessagingHostInstallMessage,
-            configStore: configStore,
-            tokenStore: tokenStore,
-            connectTokenStatusStore: connectTokenStatusStore,
-            authCoordinator: authCoordinator,
-            roomHandoffService: spotifyConnectService,
-            groupingStateReader: spotifyConnectService,
-            groupingEditor: spotifyConnectService,
-            volumeService: spotifyConnectService,
+        let playbackBackgroundSync = PlaybackBackgroundSync(
             activePlaybackObserver: spotifyConnectService,
-            outputSelection: outputSelection,
+            roomHandoffService: spotifyConnectService,
+            groupingEditor: spotifyConnectService,
             outputDirectory: outputDirectory,
+            outputSelection: outputSelection,
             groupSuggestionStore: groupSuggestionStore,
             groupSuggestionPresenter: groupSuggestionPresenter,
             transferSuggestionStore: transferSuggestionStore,
             transferSuggestionPresenter: transferSuggestionPresenter,
             headphoneTransferSuggestionStore: headphoneTransferSuggestionStore,
             headphoneTransferSuggestionPresenter: headphoneTransferSuggestionPresenter,
-            macAudioOutputMonitor: macAudioOutputMonitor,
+            macAudioOutputMonitor: macAudioOutputMonitor
+        )
+        let playbackSyncController = PlaybackSyncController(
+            outputDirectory: outputDirectory,
+            outputSelection: outputSelection,
+            activePlaybackObserver: spotifyConnectService,
+            volumeService: spotifyConnectService,
+            roomHandoffService: spotifyConnectService,
+            groupingEditor: spotifyConnectService,
+            groupSuggestionStore: groupSuggestionStore,
+            groupSuggestionPresenter: groupSuggestionPresenter
+        )
+        let volumeHotkeys = VolumeHotkeyController(
+            volumeService: spotifyConnectService,
+            outputSelection: outputSelection,
+            activePlaybackObserver: spotifyConnectService,
+            mediaSourceStore: mediaSourceStore,
+            mediaRemoteController: mediaRemoteController,
+            mediaTransportActions: mediaTransportActionController
+        )
+        mediaTransportActionController.relaxRouteShield = { [weak volumeHotkeys] reason in
+            volumeHotkeys?.suspendCommandCenterRouteShield(reason: reason)
+        }
+
+        return AppEnvironment(
+            configImportService: configImportService,
+            configStore: configStore,
+            tokenStore: tokenStore,
+            connectTokenStatusStore: connectTokenStatusStore,
+            authCoordinator: authCoordinator,
+            volumeService: spotifyConnectService,
+            activePlaybackObserver: spotifyConnectService,
+            outputSelection: outputSelection,
+            outputDirectory: outputDirectory,
+            playbackBackgroundSync: playbackBackgroundSync,
+            playbackSyncController: playbackSyncController,
             chromiumNativeMessagingHostInstaller: chromiumNativeMessagingHostInstaller,
             chromiumBrowserExtensionController: chromiumBrowserExtensionController,
             mediaRemoteController: mediaRemoteController,
             mediaSourceStore: mediaSourceStore,
             mediaAudioControlController: mediaAudioControlController,
             mediaTransportActionController: mediaTransportActionController,
-            mediaRoutingProbeController: mediaRoutingProbeController
+            mediaRoutingProbeController: mediaRoutingProbeController,
+            volumeHotkeys: volumeHotkeys
         )
     }
 }
@@ -194,6 +203,14 @@ final class MediaRoutingProbeController {
                 self?.handle(payload)
             }
         }
+    }
+
+    func stop() {
+        guard let observer else {
+            return
+        }
+        DistributedNotificationCenter.default().removeObserver(observer)
+        self.observer = nil
     }
 
     private func handle(_ payload: String) {

@@ -23,8 +23,8 @@ final class PlaybackTransferActionController {
     private let roomHandoffService: any RoomHandoffPerforming
     private let logger = os.Logger(subsystem: "com.fpieringer.Keyway", category: "Transfer")
 
-    init(environment: AppEnvironment) {
-        self.roomHandoffService = environment.roomHandoffService
+    init(roomHandoffService: any RoomHandoffPerforming) {
+        self.roomHandoffService = roomHandoffService
     }
 
     func transfer(to speaker: SonosSpeaker, verification: RoomHandoffVerificationMode = .full) async -> PlaybackTransferOutcome {

@@ -81,6 +81,35 @@ final class ShortcutCarbonHotKeyRegistrar {
         onHotKey(id)
     }
 
+    func stop() {
+        for (name, hotKey) in [
+            ("shift_f10_mute_toggle", muteHotKey),
+            ("shift_f11_volume_down", volumeDownHotKey),
+            ("shift_f12_volume_up", volumeUpHotKey),
+        ] {
+            guard let hotKey else {
+                continue
+            }
+            let status = UnregisterEventHotKey(hotKey)
+            if status != noErr {
+                logger.error("SonosHandoffHotkeys carbon=stop_failed hotkey=\(name, privacy: .public) status=\(status, privacy: .public)")
+            }
+        }
+        muteHotKey = nil
+        volumeDownHotKey = nil
+        volumeUpHotKey = nil
+        plainHotkeysRegistered = false
+
+        if let eventHandler {
+            let status = RemoveEventHandler(eventHandler)
+            if status != noErr {
+                logger.error("SonosHandoffHotkeys carbon=stop_failed resource=event_handler status=\(status, privacy: .public)")
+            }
+        }
+        eventHandler = nil
+        didInstallHandler = false
+    }
+
     private func registerCarbonHotKey(
         keyCode: UInt32,
         id: UInt32,

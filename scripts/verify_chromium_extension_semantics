@@ -34,6 +34,7 @@ models = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaRemoteMo
 action_controller = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportActionController.swift").read_text()
 target_resolver = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportTargetResolver.swift").read_text()
 environment = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/Support/AppEnvironment.swift").read_text()
+sonos_app = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/SonosHandoffApp.swift").read_text()
 settings = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/Features/SettingsFeature.swift").read_text()
 project = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar.xcodeproj/project.pbxproj").read_text()
 installer = (repo_root / "scripts/install_chromium_native_host").read_text()
@@ -448,7 +449,7 @@ for forbidden in [
             "verify_chromium_extension_semantics: Chromium native host must not crash on malformed extension or command payloads"
         )
 expect(
-    environment,
+    sonos_app,
     "let state = try chromiumNativeMessagingHostInstaller.install()",
     "app startup must install or repair Chromium native messaging manifests",
 )
@@ -494,7 +495,7 @@ if start_method.index("snapshotObserver =") > start_method.index(reload_payload)
     raise SystemExit(
         "verify_chromium_extension_semantics: app startup must observe the replacement extension hello before requesting reload"
     )
-if "_ = try! chromiumNativeMessagingHostInstaller.install()" in environment:
+if "try! chromiumNativeMessagingHostInstaller.install()" in environment or "try! chromiumNativeMessagingHostInstaller.install()" in sonos_app:
     raise SystemExit(
         "verify_chromium_extension_semantics: app startup must not crash when the Chromium bridge install fails"
     )

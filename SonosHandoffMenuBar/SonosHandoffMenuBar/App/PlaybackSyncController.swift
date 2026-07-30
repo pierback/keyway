@@ -45,31 +45,39 @@ final class PlaybackSyncController: ObservableObject {
     private var currentGroupState = SonosGroupState.empty
 
     init(
-        environment: AppEnvironment,
-        outputDirectory: PlaybackOutputDirectory? = nil,
+        outputDirectory: PlaybackOutputDirectory,
+        outputSelection: PlaybackOutputSelection,
+        activePlaybackObserver: any SpotifyActivePlaybackObserving,
+        volumeService: any SpeakerVolumeAdjusting,
+        roomHandoffService: any RoomHandoffPerforming,
+        groupingEditor: any SonosGroupingEditing,
+        groupSuggestionStore: PlaybackGroupSuggestionStore,
+        groupSuggestionPresenter: PlaybackGroupSuggestionPresenter,
         volumeMonitor: SonosVolumeMonitor = .shared,
         volumeActions: PlaybackVolumeActionController? = nil,
         transferActions: PlaybackTransferActionController? = nil
     ) {
         let resolvedVolumeActions = volumeActions ?? PlaybackVolumeActionController(
-            environment: environment,
+            volumeService: volumeService,
             volumeMonitor: volumeMonitor
         )
-        let resolvedTransferActions = transferActions ?? PlaybackTransferActionController(environment: environment)
+        let resolvedTransferActions = transferActions ?? PlaybackTransferActionController(
+            roomHandoffService: roomHandoffService
+        )
 
-        self.outputDirectory = outputDirectory ?? environment.outputDirectory
-        self.outputSelection = environment.outputSelection
-        self.activePlaybackObserver = environment.activePlaybackObserver
+        self.outputDirectory = outputDirectory
+        self.outputSelection = outputSelection
+        self.activePlaybackObserver = activePlaybackObserver
         self.volumeMonitor = volumeMonitor
         self.volumeActions = resolvedVolumeActions
         self.transferActions = resolvedTransferActions
-        self.groupingEditor = environment.groupingEditor
+        self.groupingEditor = groupingEditor
         self.memberVolumeController = PlaybackMemberVolumeController(
             volumeActions: resolvedVolumeActions
         )
         self.groupEditController = PlaybackGroupEditController(
-            groupSuggestionStore: environment.groupSuggestionStore,
-            groupSuggestionPresenter: environment.groupSuggestionPresenter
+            groupSuggestionStore: groupSuggestionStore,
+            groupSuggestionPresenter: groupSuggestionPresenter
         )
         self.memberVolumeController.onChange = { [weak self] in
             self?.objectWillChange.send()

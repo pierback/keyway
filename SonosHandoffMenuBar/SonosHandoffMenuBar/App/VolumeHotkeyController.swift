@@ -80,6 +80,7 @@ final class VolumeHotkeyController {
             isStoppingCommandCenterRoute = true
             commandCenterInterceptor.stop()
             eventTap.stop()
+            carbonRegistrar.stop()
         }
     }
 
@@ -89,6 +90,19 @@ final class VolumeHotkeyController {
             runtimeReporter.plainHotkeysRegistered(registered)
         }
         refreshMediaFallback()
+    }
+
+    func stop() {
+        stopVolumeRepeat()
+        stopPermissionRetry()
+        commandCenterRouteShieldRearmTask?.cancel()
+        commandCenterRouteShieldRearmTask = nil
+        mediaTransportActions.resetMediaKeyState()
+        stopCommandCenterRoute(reason: "runtime_stopped")
+        eventTap.stop()
+        carbonRegistrar.stop()
+        lastCarbonAction = nil
+        lastReportedPermissionState = nil
     }
 
     @discardableResult

@@ -10,14 +10,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var runtime: AppRuntime?
     private var statusItemController: KeywayStatusItemController?
     private var permissionOnboardingController: PermissionOnboardingWindowController?
+    private var refreshHotkeysObserver: NSObjectProtocol?
 
     func configure(
-        environment: AppEnvironment,
-        runtime: AppRuntime
+        runtime: AppRuntime,
+        playback: PlaybackSyncController,
+        mediaRemoteController: MediaRemoteController,
+        mediaSourceStore: MediaSourceStore,
+        mediaAudioControlController: MediaAudioControlController,
+        mediaTransportActionController: MediaTransportActionController
     ) {
         self.runtime = runtime
         statusItemController = KeywayStatusItemController(
-            environment: environment,
+            playback: playback,
+            mediaRemoteController: mediaRemoteController,
+            mediaSourceStore: mediaSourceStore,
+            mediaAudioControlController: mediaAudioControlController,
+            mediaTransportActionController: mediaTransportActionController,
             isRuntimeStarted: { [weak runtime] in
                 runtime?.isStarted == true
             },
@@ -38,7 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
         statusItemController?.start()
-        NotificationCenter.default.addObserver(
+        refreshHotkeysObserver = NotificationCenter.default.addObserver(
             forName: .sonosHandoffRefreshHotkeys,
             object: nil,
             queue: .main
@@ -55,6 +64,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if !permissionOnboardingController!.presentIfNeeded() {
             runtime.start()
         }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        if let refreshHotkeysObserver {
+            NotificationCenter.default.removeObserver(refreshHotkeysObserver)
+        }
+        refreshHotkeysObserver = nil
+        statusItemController?.stop()
+        runtime?.stop()
+        UNUserNotificationCenter.current().delegate = nil
     }
 
     nonisolated func userNotificationCenter(

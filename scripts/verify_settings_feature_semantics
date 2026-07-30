@@ -67,8 +67,10 @@ if ".onDisappear {\n            _ = NSApp.setActivationPolicy(.accessory)\n     
     raise SystemExit("verify_settings_feature_semantics: closing Settings must restore menu-bar-only activation")
 if "NSWindow.willCloseNotification" in app_delegate:
     raise SystemExit("verify_settings_feature_semantics: Settings view lifecycle must not be duplicated by a title-matching window observer")
-if "initialChromiumBridgeMessage: environment.chromiumNativeMessagingHostInstallMessage" not in app:
-    raise SystemExit("verify_settings_feature_semantics: the canonical Settings scene must retain the Chromium bridge install result")
+if "chromiumNativeMessagingHostInstaller: environment.chromiumNativeMessagingHostInstaller" not in app:
+    raise SystemExit("verify_settings_feature_semantics: the canonical Settings scene must retain the manual Chromium bridge repair adapter")
+if "chromiumNativeMessagingHostInstallMessage" in app:
+    raise SystemExit("verify_settings_feature_semantics: the composition root must not retain launch side-effect results")
 if "isSpotifyAuthenticated" in text:
     raise SystemExit("verify_settings_feature_semantics: Spotify readiness must derive directly from the two credential states")
 if text.count("desktopTokenAvailable && webAPITokenAvailable") < 3:

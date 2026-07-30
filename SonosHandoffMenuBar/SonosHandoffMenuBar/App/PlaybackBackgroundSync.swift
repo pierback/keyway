@@ -8,10 +8,18 @@ final class PlaybackBackgroundSync {
     private static let pollIntervalNanoseconds: UInt64 = 2_000_000_000
     private static let discoveryRefreshInterval: TimeInterval = 20
 
-    private let environment: AppEnvironment
+    private let activePlaybackObserver: any SpotifyActivePlaybackObserving
+    private let roomHandoffService: any RoomHandoffPerforming
+    private let groupingEditor: any SonosGroupingEditing
+    private let outputDirectory: PlaybackOutputDirectory
+    private let outputSelection: PlaybackOutputSelection
+    private let groupSuggestionStore: PlaybackGroupSuggestionStore
     private let groupSuggestionPresenter: PlaybackGroupSuggestionPresenter
+    private let transferSuggestionStore: PlaybackTransferSuggestionStore
     private let transferSuggestionPresenter: PlaybackTransferSuggestionPresenter
+    private let headphoneTransferSuggestionStore: HeadphoneTransferSuggestionStore
     private let headphoneTransferSuggestionPresenter: HeadphoneTransferSuggestionPresenter
+    private let macAudioOutputMonitor: MacAudioOutputMonitor
     private let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "Playback")
     private let groupSuggestionTracker = SonosGroupSuggestionTracker()
     private let transferSuggestionTracker = SonosTransferSuggestionTracker()
@@ -31,11 +39,32 @@ final class PlaybackBackgroundSync {
     private var lastObservedAudioOutput: MacAudioOutputDevice?
     private var pendingHeadphoneConnectionOutputID: UInt32?
 
-    init(environment: AppEnvironment) {
-        self.environment = environment
-        self.groupSuggestionPresenter = environment.groupSuggestionPresenter
-        self.transferSuggestionPresenter = environment.transferSuggestionPresenter
-        self.headphoneTransferSuggestionPresenter = environment.headphoneTransferSuggestionPresenter
+    init(
+        activePlaybackObserver: any SpotifyActivePlaybackObserving,
+        roomHandoffService: any RoomHandoffPerforming,
+        groupingEditor: any SonosGroupingEditing,
+        outputDirectory: PlaybackOutputDirectory,
+        outputSelection: PlaybackOutputSelection,
+        groupSuggestionStore: PlaybackGroupSuggestionStore,
+        groupSuggestionPresenter: PlaybackGroupSuggestionPresenter,
+        transferSuggestionStore: PlaybackTransferSuggestionStore,
+        transferSuggestionPresenter: PlaybackTransferSuggestionPresenter,
+        headphoneTransferSuggestionStore: HeadphoneTransferSuggestionStore,
+        headphoneTransferSuggestionPresenter: HeadphoneTransferSuggestionPresenter,
+        macAudioOutputMonitor: MacAudioOutputMonitor
+    ) {
+        self.activePlaybackObserver = activePlaybackObserver
+        self.roomHandoffService = roomHandoffService
+        self.groupingEditor = groupingEditor
+        self.outputDirectory = outputDirectory
+        self.outputSelection = outputSelection
+        self.groupSuggestionStore = groupSuggestionStore
+        self.groupSuggestionPresenter = groupSuggestionPresenter
+        self.transferSuggestionStore = transferSuggestionStore
+        self.transferSuggestionPresenter = transferSuggestionPresenter
+        self.headphoneTransferSuggestionStore = headphoneTransferSuggestionStore
+        self.headphoneTransferSuggestionPresenter = headphoneTransferSuggestionPresenter
+        self.macAudioOutputMonitor = macAudioOutputMonitor
     }
 
     private func bindRuntimeEvents() {
@@ -59,7 +88,7 @@ final class PlaybackBackgroundSync {
                 sync.ignoreHeadphoneTransferSuggestion(id: suggestionID)
             },
         ]
-        macAudioOutputCancellable = environment.macAudioOutputMonitor.$output
+        macAudioOutputCancellable = macAudioOutputMonitor.$output
             .dropFirst()
             .sink { [weak self] output in
                 Task { @MainActor [weak self] in
@@ -93,8 +122,8 @@ final class PlaybackBackgroundSync {
         }
 
         bindRuntimeEvents()
-        environment.macAudioOutputMonitor.start()
-        establishMacAudioOutputBaselineIfNeeded(environment.macAudioOutputMonitor.output)
+        macAudioOutputMonitor.start()
+        establishMacAudioOutputBaselineIfNeeded(macAudioOutputMonitor.output)
         task = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 await self?.syncOnce()
@@ -103,12 +132,31 @@ final class PlaybackBackgroundSync {
         }
     }
 
+    func stop() {
+        task?.cancel()
+        task = nil
+        suggestionActionCancellables.removeAll()
+        macAudioOutputCancellable?.cancel()
+        macAudioOutputCancellable = nil
+        macAudioOutputMonitor.stop()
+        lastDiscoveryRefresh = .distantPast
+        lastSeenGroupSuggestionSpeakerIDs = nil
+        lastSeenTransferSuggestionSpeakerIDs = nil
+        acceptingGroupSuggestionIDs.removeAll()
+        acceptingTransferSuggestionIDs.removeAll()
+        acceptingHeadphoneTransferSuggestionIDs.removeAll()
+        hasShownAuthPrompt = false
+        hasAudioOutputBaseline = false
+        lastObservedAudioOutput = nil
+        pendingHeadphoneConnectionOutputID = nil
+    }
+
     private func syncOnce() async {
         let cachedTransferBaselineSpeakerIDs = await cachedTransferSuggestionBaselineSpeakerIDs()
         let discoveryRefreshStarted = await refreshDiscoveryCacheIfNeeded()
 
         do {
-            guard let status = try await environment.activePlaybackObserver.activePlaybackDeviceStatus(),
+            guard let status = try await activePlaybackObserver.activePlaybackDeviceStatus(),
                   let activeRoomName = SonosRoomName.normalized(status.deviceName)
             else {
                 hasShownAuthPrompt = false
@@ -226,17 +274,17 @@ final class PlaybackBackgroundSync {
 
     private func outputRefresh(currentRoomName: String, forceRefresh: Bool) async throws -> PlaybackOutputRefresh {
         if forceRefresh {
-            return try await environment.outputDirectory.refreshAfterBackgroundRefresh(currentRoomName: currentRoomName)
+            return try await outputDirectory.refreshAfterBackgroundRefresh(currentRoomName: currentRoomName)
         }
 
         let shouldRefreshDiscovery = Date().timeIntervalSince(lastDiscoveryRefresh) >= Self.discoveryRefreshInterval
         if !shouldRefreshDiscovery,
-           let cachedRefresh = await environment.outputDirectory.cachedRefresh(currentRoomName: currentRoomName) {
+           let cachedRefresh = await outputDirectory.cachedRefresh(currentRoomName: currentRoomName) {
             return cachedRefresh
         }
 
         lastDiscoveryRefresh = Date()
-        return try await environment.outputDirectory.refresh(currentRoomName: currentRoomName)
+        return try await outputDirectory.refresh(currentRoomName: currentRoomName)
     }
 
     private func updateGroupSuggestion(
@@ -249,7 +297,7 @@ final class PlaybackBackgroundSync {
             let refresh = groupSuggestionTracker.refresh(
                 in: refresh.state,
                 selectedRoomName: selectedRoomName,
-                currentSuggestions: environment.groupSuggestionStore.suggestions.map(\.reference)
+                currentSuggestions: groupSuggestionStore.suggestions.map(\.reference)
             )
             groupSuggestionPresenter.apply(refresh)
             return
@@ -260,7 +308,7 @@ final class PlaybackBackgroundSync {
             selectedRoomName: selectedRoomName,
             spotifyPlaying: spotifyPlaying,
             previousSpeakerIDs: previousSpeakerIDs,
-            currentSuggestions: environment.groupSuggestionStore.suggestions.map(\.reference)
+            currentSuggestions: groupSuggestionStore.suggestions.map(\.reference)
         )
         lastSeenGroupSuggestionSpeakerIDs = update.seenSpeakerIDs
         let suggestion = groupSuggestionPresenter.apply(update)
@@ -288,7 +336,7 @@ final class PlaybackBackgroundSync {
             selectedRoomName: selectedRoomName,
             spotifyPlaying: spotifyPlaying,
             previousSpeakerIDs: lastSeenTransferSuggestionSpeakerIDs ?? cachedBaselineSpeakerIDs,
-            currentSuggestions: environment.transferSuggestionStore.suggestions.map(\.reference)
+            currentSuggestions: transferSuggestionStore.suggestions.map(\.reference)
         )
         lastSeenTransferSuggestionSpeakerIDs = update.seenSpeakerIDs
         let suggestion = transferSuggestionPresenter.apply(update)
@@ -298,7 +346,7 @@ final class PlaybackBackgroundSync {
     }
 
     private func updateHeadphoneTransferSuggestion(activeRoomName: String) async throws {
-        guard let output = environment.macAudioOutputMonitor.output else {
+        guard let output = macAudioOutputMonitor.output else {
             clearHeadphoneTransferSuggestion(currentHeadphoneOutputID: nil)
             return
         }
@@ -335,7 +383,7 @@ final class PlaybackBackgroundSync {
             return nil
         }
 
-        let devices = try await environment.activePlaybackObserver.availablePlaybackDevices()
+        let devices = try await activePlaybackObserver.availablePlaybackDevices()
         return devices.first { device in
             !device.isRestricted
                 && device.type.caseInsensitiveCompare("Computer") == .orderedSame
@@ -375,7 +423,7 @@ final class PlaybackBackgroundSync {
 
     private func cachedTransferSuggestionBaselineSpeakerIDs() async -> Set<String>? {
         guard lastSeenTransferSuggestionSpeakerIDs == nil,
-              let refresh = await environment.outputDirectory.cachedRefresh(currentRoomName: nil)
+              let refresh = await outputDirectory.cachedRefresh(currentRoomName: nil)
         else {
             return nil
         }
@@ -421,7 +469,7 @@ final class PlaybackBackgroundSync {
         }
 
         do {
-            let refresh = try await environment.outputDirectory.refreshAfterBackgroundRefresh(currentRoomName: nil)
+            let refresh = try await outputDirectory.refreshAfterBackgroundRefresh(currentRoomName: nil)
             updateGroupSuggestion(refresh: refresh, selectedRoomName: nil, spotifyPlaying: false)
             updateTransferSuggestion(
                 refresh: refresh,
@@ -436,7 +484,7 @@ final class PlaybackBackgroundSync {
     }
 
     private func acceptGroupSuggestion(id: String) async {
-        guard let suggestion = environment.groupSuggestionStore.suggestions.first(where: { $0.matches(identifier: id) })
+        guard let suggestion = groupSuggestionStore.suggestions.first(where: { $0.matches(identifier: id) })
         else {
             return
         }
@@ -462,7 +510,7 @@ final class PlaybackBackgroundSync {
                 outputSelectedRoomName: nil,
                 fallbackRoomName: suggestion.coordinatorRoomName
             )
-            let refresh = try await environment.outputDirectory.refresh(
+            let refresh = try await outputDirectory.refresh(
                 currentRoomName: preRefreshPlan.discoveryRoomName
             )
             let decision = groupSuggestionAcceptanceResolver.decision(
@@ -482,7 +530,7 @@ final class PlaybackBackgroundSync {
             }
 
             do {
-                try await environment.groupingEditor.join(
+                try await groupingEditor.join(
                     roomName: suggestion.speaker.roomName,
                     toCoordinatorRoomName: coordinatorRoomName
                 )
@@ -500,7 +548,7 @@ final class PlaybackBackgroundSync {
             )
             let postRefresh: PlaybackOutputRefresh
             do {
-                postRefresh = try await environment.outputDirectory.refresh(
+                postRefresh = try await outputDirectory.refresh(
                     currentRoomName: postRefreshPlan.discoveryRoomName
                 )
             } catch {
@@ -549,7 +597,7 @@ final class PlaybackBackgroundSync {
     }
 
     private func acceptTransferSuggestion(id: String) async {
-        guard let suggestion = environment.transferSuggestionStore.suggestions.first(where: { $0.matches(identifier: id) })
+        guard let suggestion = transferSuggestionStore.suggestions.first(where: { $0.matches(identifier: id) })
         else {
             return
         }
@@ -563,7 +611,7 @@ final class PlaybackBackgroundSync {
         }
 
         transferSuggestionPresenter.clear(id: suggestion.id)
-        let result = await environment.roomHandoffService.transfer(
+        let result = await roomHandoffService.transfer(
             toRoomName: suggestion.speaker.roomName,
             verification: .full
         )
@@ -587,7 +635,7 @@ final class PlaybackBackgroundSync {
         let roomName = suggestion.speaker.roomName
 
         do {
-            let refresh = try await environment.outputDirectory.refresh(currentRoomName: roomName)
+            let refresh = try await outputDirectory.refresh(currentRoomName: roomName)
             lastDiscoveryRefresh = Date()
             let selectedRoomName = refresh.selectedRoomName ?? roomName
             selectRoomName(
@@ -626,7 +674,7 @@ final class PlaybackBackgroundSync {
     }
 
     private func acceptHeadphoneTransferSuggestion(id: String) async {
-        guard let suggestion = environment.headphoneTransferSuggestionStore.suggestion,
+        guard let suggestion = headphoneTransferSuggestionStore.suggestion,
               suggestion.matches(identifier: id)
         else {
             return
@@ -648,7 +696,7 @@ final class PlaybackBackgroundSync {
                 logger.error("SonosHandoffHeadphoneTransferSuggestion result=notification_failure output=\(suggestion.outputName, privacy: .public) reason=local_spotify_computer_unavailable")
                 return
             }
-            try await environment.activePlaybackObserver.transferActivePlayback(
+            try await activePlaybackObserver.transferActivePlayback(
                 deviceName: deviceName,
                 deviceType: "Computer",
                 play: true
@@ -683,7 +731,7 @@ final class PlaybackBackgroundSync {
 
     private func activePlaybackRoomNameForSuggestionRefresh() async -> String? {
         do {
-            guard let status = try await environment.activePlaybackObserver.activePlaybackDeviceStatus(),
+            guard let status = try await activePlaybackObserver.activePlaybackDeviceStatus(),
                   status.isPlaying
             else {
                 return nil
@@ -708,7 +756,7 @@ final class PlaybackBackgroundSync {
         }
 
         lastDiscoveryRefresh = Date()
-        await environment.outputDirectory.startBackgroundRefresh()
+        await outputDirectory.startBackgroundRefresh()
         return true
     }
 
@@ -717,7 +765,7 @@ final class PlaybackBackgroundSync {
         selectedGroup: SonosSpeakerGroup?,
         source: PlaybackOutputSelection.UpdateSource
     ) {
-        environment.outputSelection.update(
+        outputSelection.update(
             roomName: roomName,
             group: selectedGroup,
             source: source
@@ -725,11 +773,11 @@ final class PlaybackBackgroundSync {
     }
 
     private func clearSelection(reason: String) {
-        guard environment.outputSelection.roomName != nil else {
+        guard outputSelection.roomName != nil else {
             return
         }
 
-        environment.outputSelection.update(roomName: nil, group: nil, source: .reset)
+        outputSelection.update(roomName: nil, group: nil, source: .reset)
         logger.info("SonosHandoffPlaybackSync state=cleared reason=\(reason, privacy: .public)")
     }
 

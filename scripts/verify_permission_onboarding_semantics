@@ -52,7 +52,7 @@ for required in (
 launch = section(
     app_delegate,
     "    func applicationDidFinishLaunching",
-    "\n    nonisolated func userNotificationCenter",
+    "\n    func applicationWillTerminate",
 )
 if "volumeHotkeys.start()" in launch:
     fail("AppDelegate must not start operational hotkeys before Local Network consent")
@@ -67,11 +67,11 @@ runtime_start = section(
     "\n    func refreshMediaPermissions",
 )
 for required in (
-    "environment.chromiumBrowserExtensionController.start()",
-    "environment.mediaRemoteController.start()",
-    "environment.mediaRoutingProbeController.start()",
+    "chromiumBrowserExtensionController.start()",
+    "mediaRemoteController.start()",
+    "mediaRoutingProbeController.start()",
     "SonosVolumeMonitor.shared.start(",
-    "await environment.outputDirectory.startBackgroundRefresh()",
+    "await outputDirectory.startBackgroundRefresh()",
     "playbackBackgroundSync.start()",
     "volumeHotkeys.start()",
 ):
@@ -79,6 +79,35 @@ for required in (
         fail(f"operational startup must be owned by AppRuntime.start(): missing {required}")
 if "guard !isStarted else" not in runtime_start or "isStarted = true" not in runtime_start:
     fail("AppRuntime.start() must be idempotent and publish activation before starting services")
+
+runtime_stop = section(
+    sonos_app,
+    "    func stop() {",
+    "\n    func refreshMediaPermissions",
+)
+for required in (
+    "volumeHotkeys.stop()",
+    "playbackBackgroundSync.stop()",
+    "SonosVolumeMonitor.shared.stop()",
+    "mediaRoutingProbeController.stop()",
+    "mediaRemoteController.stop()",
+    "chromiumBrowserExtensionController.stop()",
+):
+    if required not in runtime_stop:
+        fail(f"operational shutdown must be owned by AppRuntime.stop(): missing {required}")
+
+termination = section(
+    app_delegate,
+    "    func applicationWillTerminate",
+    "\n    nonisolated func userNotificationCenter",
+)
+for required in (
+    "NotificationCenter.default.removeObserver(refreshHotkeysObserver)",
+    "statusItemController?.stop()",
+    "runtime?.stop()",
+):
+    if required not in termination:
+        fail(f"AppDelegate termination must release app-owned resources: missing {required}")
 
 for required in (
     "static let schemaVersion = 2",
@@ -153,9 +182,11 @@ if "if isRuntimeStarted()" not in utility_menu:
 
 background_init = section(
     background_sync,
-    "    init(environment: AppEnvironment)",
+    "    init(",
     "\n    private func bindRuntimeEvents",
 )
+if "AppEnvironment" in background_init:
+    fail("background sync must receive explicit dependencies instead of the app composition root")
 for forbidden in (
     "bindSuggestionAction(",
     "macAudioOutputMonitor.$output",

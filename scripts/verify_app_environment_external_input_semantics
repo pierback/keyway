@@ -3,16 +3,18 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 environment="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/Support/AppEnvironment.swift"
+sonos_app="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/SonosHandoffApp.swift"
 transport="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionTransport.swift"
 settings="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/Features/SettingsFeature.swift"
 
-python3 - "$environment" "$transport" "$settings" <<'PY'
+python3 - "$environment" "$sonos_app" "$transport" "$settings" <<'PY'
 import pathlib
 import sys
 
 environment = pathlib.Path(sys.argv[1]).read_text()
-transport = pathlib.Path(sys.argv[2]).read_text()
-settings = pathlib.Path(sys.argv[3]).read_text()
+sonos_app = pathlib.Path(sys.argv[2]).read_text()
+transport = pathlib.Path(sys.argv[3]).read_text()
+settings = pathlib.Path(sys.argv[4]).read_text()
 
 def fail(message):
     raise SystemExit(f"verify_app_environment_external_input_semantics: {message}")
@@ -31,18 +33,55 @@ live = section(
     "    static func live() -> AppEnvironment {",
     "\n}\n\n@MainActor",
 )
-if "try! chromiumNativeMessagingHostInstaller.install()" in live:
-    fail("AppEnvironment.live() must not crash when Chromium native bridge install throws")
+if "@MainActor\nstruct AppEnvironment {" not in environment:
+    fail("AppEnvironment must be main-actor isolated")
+if "@unchecked Sendable" in environment:
+    fail("AppEnvironment must not bypass Swift concurrency checks")
 for required in (
-    "let chromiumNativeMessagingHostInstallMessage: String?",
-    "do {",
-    "let state = try chromiumNativeMessagingHostInstaller.install()",
-    "Chromium bridge install failed: \\(error.localizedDescription)",
-    "logger.error(\"Chromium native bridge install failed",
-    "chromiumNativeMessagingHostInstallMessage: chromiumNativeMessagingHostInstallMessage",
+    "let playbackBackgroundSync = PlaybackBackgroundSync(",
+    "let playbackSyncController = PlaybackSyncController(",
+    "let volumeHotkeys = VolumeHotkeyController(",
 ):
     if required not in live:
-        fail(f"AppEnvironment.live() must log and store launch install failures: missing {required}")
+        fail(f"AppEnvironment.live() must remain the explicit composition root: missing {required}")
+for forbidden in (
+    "chromiumNativeMessagingHostInstaller.install()",
+    "groupSuggestionNotifier.prepare()",
+    ".start()",
+):
+    if forbidden in live:
+        fail(f"AppEnvironment.live() must be side-effect free: found {forbidden}")
+
+runtime_start = section(
+    sonos_app,
+    "    func start() {",
+    "\n    func stop()",
+)
+for required in (
+    "prepareNotifications()",
+    "installChromiumNativeMessagingHost()",
+    "chromiumBrowserExtensionController.start()",
+    "mediaRemoteController.start()",
+):
+    if required not in runtime_start:
+        fail(f"AppRuntime.start() must own launch side effects: missing {required}")
+if runtime_start.index("prepareNotifications()") > runtime_start.index("chromiumBrowserExtensionController.start()"):
+    fail("notification registration must finish before operational controllers start")
+if runtime_start.index("installChromiumNativeMessagingHost()") > runtime_start.index("chromiumBrowserExtensionController.start()"):
+    fail("Chromium native host installation must precede bridge observation")
+
+runtime_install = section(
+    sonos_app,
+    "    private func installChromiumNativeMessagingHost() {",
+    "\n    }\n}",
+)
+for required in (
+    "let state = try chromiumNativeMessagingHostInstaller.install()",
+    'logger.info("Chromium native bridge installed',
+    'logger.error("Chromium native bridge install failed',
+):
+    if required not in runtime_install:
+        fail(f"AppRuntime must explicitly report optional bridge installation failure: missing {required}")
 
 install = section(
     transport,

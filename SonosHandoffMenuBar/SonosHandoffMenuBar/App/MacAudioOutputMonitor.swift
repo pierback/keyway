@@ -42,8 +42,31 @@ final class MacAudioOutputMonitor: ObservableObject {
         )
         if status != noErr {
             self.listener = nil
+            isStarted = false
             logger.error("KeywayMacAudioOutput listener=failed status=\(status, privacy: .public)")
         }
+    }
+
+    func stop() {
+        guard isStarted else {
+            return
+        }
+        isStarted = false
+
+        if let listener {
+            var address = Self.defaultOutputDeviceAddress
+            let status = AudioObjectRemovePropertyListenerBlock(
+                AudioObjectID(kAudioObjectSystemObject),
+                &address,
+                .main,
+                listener
+            )
+            if status != noErr {
+                logger.error("KeywayMacAudioOutput listener=stop_failed status=\(status, privacy: .public)")
+            }
+        }
+        listener = nil
+        output = nil
     }
 
     func refresh() {

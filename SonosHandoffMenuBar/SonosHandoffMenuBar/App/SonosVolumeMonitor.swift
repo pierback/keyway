@@ -43,6 +43,18 @@ final class SonosVolumeMonitor: ObservableObject {
         }
     }
 
+    func stop() {
+        pollTask?.cancel()
+        pollTask = nil
+        volumeService = nil
+        selectedRoomName = nil
+        selectedScope = .member
+        pollInFlight = false
+        suppressUntil = .distantPast
+        suppressedRoomName = nil
+        snapshot = nil
+    }
+
     func setTarget(roomName: String?, scope: PlaybackVolumeScope) {
         let normalizedRoomName = SonosRoomName.normalized(roomName)
         guard !SonosRoomName.matches(selectedRoomName, normalizedRoomName) || selectedScope != scope else {

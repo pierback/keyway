@@ -4,8 +4,11 @@ import SwiftUI
 
 @MainActor
 final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
-    private let environment: AppEnvironment
     private let playback: PlaybackSyncController
+    private let mediaRemoteController: MediaRemoteController
+    private let mediaSourceStore: MediaSourceStore
+    private let mediaAudioControlController: MediaAudioControlController
+    private let mediaTransportActionController: MediaTransportActionController
     private let isRuntimeStarted: @MainActor () -> Bool
     private let presentPermissionOnboarding: @MainActor () -> Void
     private lazy var statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -14,23 +17,35 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
     private var popoverGlobalDismissMonitor: Any?
     private var appDeactivationObserver: NSObjectProtocol?
     private var postPopoverCloseAction: (@MainActor () -> Void)?
+    private var isStarted = false
 
     init(
-        environment: AppEnvironment,
+        playback: PlaybackSyncController,
+        mediaRemoteController: MediaRemoteController,
+        mediaSourceStore: MediaSourceStore,
+        mediaAudioControlController: MediaAudioControlController,
+        mediaTransportActionController: MediaTransportActionController,
         isRuntimeStarted: @escaping @MainActor () -> Bool,
         presentPermissionOnboarding: @escaping @MainActor () -> Void
     ) {
-        self.environment = environment
-        self.playback = PlaybackSyncController(environment: environment)
+        self.playback = playback
+        self.mediaRemoteController = mediaRemoteController
+        self.mediaSourceStore = mediaSourceStore
+        self.mediaAudioControlController = mediaAudioControlController
+        self.mediaTransportActionController = mediaTransportActionController
         self.isRuntimeStarted = isRuntimeStarted
         self.presentPermissionOnboarding = presentPermissionOnboarding
         super.init()
     }
 
     func start() {
+        guard !isStarted else {
+            return
+        }
         guard let button = statusItem.button else {
             return
         }
+        isStarted = true
 
         button.image = NSImage(
             systemSymbolName: "play.rectangle.on.rectangle",
@@ -45,6 +60,21 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
             self?.statusItemButtonScreenFrame()
         }
         startAppDeactivationObserver()
+    }
+
+    func stop() {
+        guard isStarted else {
+            return
+        }
+        isStarted = false
+        postPopoverCloseAction = nil
+        closePopover()
+        stopPopoverDismissMonitors()
+        if let appDeactivationObserver {
+            NotificationCenter.default.removeObserver(appDeactivationObserver)
+        }
+        appDeactivationObserver = nil
+        NSStatusBar.system.removeStatusItem(statusItem)
     }
 
     @objc private func handleStatusItemClick(_ sender: NSStatusBarButton) {
@@ -76,7 +106,7 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
 
     private func showPopover(relativeTo button: NSStatusBarButton) {
         postPopoverCloseAction = nil
-        environment.mediaRemoteController.refreshSnapshot()
+        mediaRemoteController.refreshSnapshot()
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
         startPopoverDismissMonitors()
@@ -91,7 +121,7 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
     }
 
     private func showCenteredChooser() {
-        environment.mediaTransportActionController.showTargetChooser()
+        mediaTransportActionController.showTargetChooser()
     }
 
     private func openSettings() {
@@ -128,7 +158,7 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
     }
 
     @objc private func restartMediaRemoteHelper(_ sender: Any?) {
-        environment.mediaRemoteController.restart()
+        mediaRemoteController.restart()
     }
 
     @objc private func quit(_ sender: Any?) {
@@ -168,10 +198,10 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
         let hostingController = NSHostingController(
             rootView: KeywayControlCenterPopoverView(
                 playback: playback,
-                mediaRemoteController: environment.mediaRemoteController,
-                mediaSourceStore: environment.mediaSourceStore,
-                mediaAudioControlController: environment.mediaAudioControlController,
-                mediaTransportActions: environment.mediaTransportActionController,
+                mediaRemoteController: mediaRemoteController,
+                mediaSourceStore: mediaSourceStore,
+                mediaAudioControlController: mediaAudioControlController,
+                mediaTransportActions: mediaTransportActionController,
                 openChooser: { [weak self] in self?.openChooserFromPopover() },
                 openSettings: { [weak self] in self?.openSettings() },
                 restartMediaRemoteHelper: { [weak self] in self?.restartMediaRemoteHelper(nil) },

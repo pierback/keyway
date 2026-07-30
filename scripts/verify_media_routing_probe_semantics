@@ -9,7 +9,7 @@ app="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/SonosHandoffApp.swif
 ast-grep --pattern '@MainActor
 final class MediaRoutingProbeController { $$$ }' "$environment" --lang swift >/dev/null
 ast-grep --pattern 'mediaTransportActionController.route(command: $COMMAND, to: $TARGET)' "$environment" --lang swift >/dev/null
-ast-grep --pattern 'environment.mediaRoutingProbeController.start()' "$app" --lang swift >/dev/null
+ast-grep --pattern 'mediaRoutingProbeController.start()' "$app" --lang swift >/dev/null
 ast-grep --pattern 'DistributedNotificationCenter.default().postNotificationName($$$)' "$status" --lang swift >/dev/null
 
 python3 - "$environment" "$status" "$app" <<'PY'
@@ -118,8 +118,8 @@ assert_order(
 assert_order(
     app,
     [
-        "environment.mediaRemoteController.start()",
-        "environment.mediaRoutingProbeController.start()",
+        "mediaRemoteController.start()",
+        "mediaRoutingProbeController.start()",
     ],
     "probe startup must happen after media target controllers start",
 )

@@ -8,11 +8,11 @@ final class PlaybackVolumeActionController {
     private let volumeCommands: SpeakerVolumeCommandQueue
 
     init(
-        environment: AppEnvironment,
+        volumeService: any SpeakerVolumeAdjusting,
         volumeMonitor: SonosVolumeMonitor = .shared,
         volumeCommands: SpeakerVolumeCommandQueue = .shared
     ) {
-        self.volumeService = environment.volumeService
+        self.volumeService = volumeService
         self.volumeMonitor = volumeMonitor
         self.volumeCommands = volumeCommands
     }

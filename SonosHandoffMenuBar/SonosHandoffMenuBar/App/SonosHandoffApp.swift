@@ -2,6 +2,7 @@ import AppKit
 import os
 import SonosHandoffCore
 import SwiftUI
+@preconcurrency import UserNotifications
 
 @main
 struct KeywayApp: App {
@@ -11,12 +12,27 @@ struct KeywayApp: App {
 
     init() {
         let environment = AppEnvironment.live()
-        let runtime = AppRuntime(environment: environment)
+        let runtime = AppRuntime(
+            chromiumNativeMessagingHostInstaller: environment.chromiumNativeMessagingHostInstaller,
+            chromiumBrowserExtensionController: environment.chromiumBrowserExtensionController,
+            mediaRemoteController: environment.mediaRemoteController,
+            mediaRoutingProbeController: environment.mediaRoutingProbeController,
+            volumeService: environment.volumeService,
+            activePlaybackObserver: environment.activePlaybackObserver,
+            outputSelection: environment.outputSelection,
+            outputDirectory: environment.outputDirectory,
+            playbackBackgroundSync: environment.playbackBackgroundSync,
+            volumeHotkeys: environment.volumeHotkeys
+        )
         self.environment = environment
         self.runtime = runtime
         appDelegate.configure(
-            environment: environment,
-            runtime: runtime
+            runtime: runtime,
+            playback: environment.playbackSyncController,
+            mediaRemoteController: environment.mediaRemoteController,
+            mediaSourceStore: environment.mediaSourceStore,
+            mediaAudioControlController: environment.mediaAudioControlController,
+            mediaTransportActionController: environment.mediaTransportActionController
         )
     }
 
@@ -29,7 +45,6 @@ struct KeywayApp: App {
                 authCoordinator: environment.authCoordinator,
                 configImportService: environment.configImportService,
                 chromiumNativeMessagingHostInstaller: environment.chromiumNativeMessagingHostInstaller,
-                initialChromiumBridgeMessage: environment.chromiumNativeMessagingHostInstallMessage,
                 mediaRemoteController: environment.mediaRemoteController,
                 chromiumBrowserExtensionController: environment.chromiumBrowserExtensionController
             )
@@ -42,7 +57,14 @@ final class AppRuntime {
     private static let volumeMonitorSeedRetryNanoseconds: UInt64 = 5_000_000_000
     private static let volumeMonitorSeedAttemptsMax = 3
 
-    private let environment: AppEnvironment
+    private let chromiumNativeMessagingHostInstaller: ChromiumNativeMessagingHostInstaller
+    private let chromiumBrowserExtensionController: ChromiumBrowserExtensionController
+    private let mediaRemoteController: MediaRemoteController
+    private let mediaRoutingProbeController: MediaRoutingProbeController
+    private let volumeService: any SpeakerVolumeAdjusting
+    private let activePlaybackObserver: any SpotifyActivePlaybackObserving
+    private let outputSelection: PlaybackOutputSelection
+    private let outputDirectory: PlaybackOutputDirectory
     private let playbackBackgroundSync: PlaybackBackgroundSync
     private let volumeHotkeys: VolumeHotkeyController
     private let logger = Logger(subsystem: AppIdentity.loggerSubsystem, category: "Playback")
@@ -50,21 +72,28 @@ final class AppRuntime {
     private var volumeMonitorSeedTask: Task<Void, Never>?
     private(set) var isStarted = false
 
-    init(environment: AppEnvironment) {
-        self.environment = environment
-        self.playbackBackgroundSync = PlaybackBackgroundSync(environment: environment)
-        let volumeHotkeys = VolumeHotkeyController(
-            volumeService: environment.volumeService,
-            outputSelection: environment.outputSelection,
-            activePlaybackObserver: environment.activePlaybackObserver,
-            mediaSourceStore: environment.mediaSourceStore,
-            mediaRemoteController: environment.mediaRemoteController,
-            mediaTransportActions: environment.mediaTransportActionController
-        )
+    init(
+        chromiumNativeMessagingHostInstaller: ChromiumNativeMessagingHostInstaller,
+        chromiumBrowserExtensionController: ChromiumBrowserExtensionController,
+        mediaRemoteController: MediaRemoteController,
+        mediaRoutingProbeController: MediaRoutingProbeController,
+        volumeService: any SpeakerVolumeAdjusting,
+        activePlaybackObserver: any SpotifyActivePlaybackObserving,
+        outputSelection: PlaybackOutputSelection,
+        outputDirectory: PlaybackOutputDirectory,
+        playbackBackgroundSync: PlaybackBackgroundSync,
+        volumeHotkeys: VolumeHotkeyController
+    ) {
+        self.chromiumNativeMessagingHostInstaller = chromiumNativeMessagingHostInstaller
+        self.chromiumBrowserExtensionController = chromiumBrowserExtensionController
+        self.mediaRemoteController = mediaRemoteController
+        self.mediaRoutingProbeController = mediaRoutingProbeController
+        self.volumeService = volumeService
+        self.activePlaybackObserver = activePlaybackObserver
+        self.outputSelection = outputSelection
+        self.outputDirectory = outputDirectory
+        self.playbackBackgroundSync = playbackBackgroundSync
         self.volumeHotkeys = volumeHotkeys
-        environment.mediaTransportActionController.relaxRouteShield = { [weak volumeHotkeys] reason in
-            volumeHotkeys?.suspendCommandCenterRouteShield(reason: reason)
-        }
     }
 
     func start() {
@@ -73,12 +102,14 @@ final class AppRuntime {
         }
         isStarted = true
 
-        environment.chromiumBrowserExtensionController.start()
-        environment.mediaRemoteController.start()
-        environment.mediaRoutingProbeController.start()
-        SonosVolumeMonitor.shared.start(volumeService: environment.volumeService)
+        prepareNotifications()
+        installChromiumNativeMessagingHost()
+        chromiumBrowserExtensionController.start()
+        mediaRemoteController.start()
+        mediaRoutingProbeController.start()
+        SonosVolumeMonitor.shared.start(volumeService: volumeService)
         outputDirectoryTask = Task {
-            await environment.outputDirectory.startBackgroundRefresh()
+            await outputDirectory.startBackgroundRefresh()
         }
         volumeMonitorSeedTask = Task { @MainActor [weak self] in
             await self?.seedVolumeMonitor()
@@ -86,6 +117,25 @@ final class AppRuntime {
         playbackBackgroundSync.start()
         volumeHotkeys.start()
         logger.info("KeywayRuntime state=started")
+    }
+
+    func stop() {
+        guard isStarted else {
+            return
+        }
+        isStarted = false
+
+        volumeMonitorSeedTask?.cancel()
+        volumeMonitorSeedTask = nil
+        outputDirectoryTask?.cancel()
+        outputDirectoryTask = nil
+        volumeHotkeys.stop()
+        playbackBackgroundSync.stop()
+        SonosVolumeMonitor.shared.stop()
+        mediaRoutingProbeController.stop()
+        mediaRemoteController.stop()
+        chromiumBrowserExtensionController.stop()
+        logger.info("KeywayRuntime state=stopped")
     }
 
     func refreshMediaPermissions() {
@@ -96,7 +146,6 @@ final class AppRuntime {
     }
 
     private func seedVolumeMonitor() async {
-        let outputDirectory = environment.outputDirectory
         for attempt in 1 ... Self.volumeMonitorSeedAttemptsMax {
             guard !Task.isCancelled else {
                 return
@@ -106,7 +155,7 @@ final class AppRuntime {
                 let currentRoomName = await preferredStartupRoomName()
                 let refresh = try await outputDirectory.refresh(currentRoomName: currentRoomName)
                 if let selectedRoomName = refresh.selectedRoomName {
-                    environment.outputSelection.update(
+                    outputSelection.update(
                         roomName: selectedRoomName,
                         group: refresh.selectedGroup,
                         source: .activePlaybackObservation
@@ -115,7 +164,7 @@ final class AppRuntime {
                     return
                 }
 
-                environment.outputSelection.update(
+                outputSelection.update(
                     roomName: nil,
                     group: nil,
                     source: .activePlaybackObservation
@@ -141,7 +190,7 @@ final class AppRuntime {
 
     private func preferredStartupRoomName() async -> String? {
         do {
-            if let status = try await environment.activePlaybackObserver.activePlaybackDeviceStatus(),
+            if let status = try await activePlaybackObserver.activePlaybackDeviceStatus(),
                status.isPlaying,
                let roomName = SonosRoomName.normalized(status.deviceName)
             {
@@ -152,5 +201,21 @@ final class AppRuntime {
         }
 
         return nil
+    }
+
+    private func prepareNotifications() {
+        PlaybackSuggestionNotificationRegistrar.prepare(
+            notificationCenter: .current(),
+            logger: logger
+        )
+    }
+
+    private func installChromiumNativeMessagingHost() {
+        do {
+            let state = try chromiumNativeMessagingHostInstaller.install()
+            logger.info("Chromium native bridge installed manifests=\(state.manifestPaths.count, privacy: .public)")
+        } catch {
+            logger.error("Chromium native bridge install failed error=\(error.localizedDescription, privacy: .public)")
+        }
     }
 }
