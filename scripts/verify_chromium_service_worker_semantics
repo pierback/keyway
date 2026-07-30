@@ -850,6 +850,69 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
     "Current Song",
     "retired document messages must not mutate the replacement route"
   );
+
+  let delayedReplacementStateResponse = null;
+  runtimeMessageListener(
+    {
+      type: "keywayMediaState",
+      documentID: "doc-main-next",
+      mediaId: "media-next",
+      title: "Delayed Replacement Song",
+      artist: "Current Artist",
+      playing: true,
+      muted: false,
+      volume: 0.5,
+    },
+    {
+      tab: { id: 22, windowId: 11 },
+      frameId: 0,
+      documentId: "browser-doc-main-next",
+    },
+    response => {
+      delayedReplacementStateResponse = response;
+    }
+  );
+  navigationCommittedListener({ tabId: 22, frameId: 0, documentId: "browser-doc-main" });
+  await Promise.resolve();
+  assertEqual(
+    delayedReplacementStateResponse?.ok,
+    false,
+    "a replacement continuation must be rejected when browser history reactivates the prior document"
+  );
+  runtimeMessageListener(
+    {
+      type: "keywayMediaState",
+      documentID: "doc-main",
+      mediaId: "media-1",
+      title: "Restored Song",
+      artist: "Restored Artist",
+      playing: true,
+      muted: false,
+      volume: 0.5,
+      duration: 120,
+      elapsedTime: 30,
+      hasMediaSessionMetadata: true,
+    },
+    {
+      tab: {
+        id: 22,
+        windowId: 11,
+        url: "https://example.test/video",
+        title: "Restored Document",
+      },
+      frameId: 0,
+      documentId: "browser-doc-main",
+    },
+    () => {}
+  );
+  await Promise.resolve();
+  const restoredDocumentSnapshot = postedMessages.filter(message => message.type === "snapshot").at(-1);
+  assertEqual(restoredDocumentSnapshot.targets.length, 2, "a browser-history-restored document must republish its tab target");
+  assertEqual(
+    restoredDocumentSnapshot.targets.find(target => target.tabId === 22)?.title,
+    "Restored Song",
+    "an authoritative browser lifecycle commit must reactivate a previously retired document ID"
+  );
   tabRemovedListener(22);
 
   runtimeMessageListener(

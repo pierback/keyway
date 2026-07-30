@@ -432,6 +432,7 @@ function commitDocumentAuthority(details) {
     if (existing) retireDocumentAuthority(existing);
     clearSourcesForFrame(details.tabId, details.frameId);
   }
+  retiredBrowserDocumentIDs.delete(details.documentId);
   establishDocumentAuthority(details.tabId, details.frameId, details.documentId);
 }
 
