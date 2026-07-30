@@ -6,9 +6,10 @@ selection="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/PlaybackOutput
 policy="$repo_root/packages/SonosHandoffCore/Sources/SonosHandoffCore/Handoff/PlaybackOutputSelectionPolicy.swift"
 controller="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/PlaybackSyncController.swift"
 background_sync="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/PlaybackBackgroundSync.swift"
+status_item="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/KeywayStatusItemController.swift"
 app_dir="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar"
 
-python3 - "$selection" "$policy" "$controller" "$background_sync" "$app_dir" <<'PY'
+python3 - "$selection" "$policy" "$controller" "$background_sync" "$status_item" "$app_dir" <<'PY'
 import pathlib
 import sys
 
@@ -16,11 +17,13 @@ selection_path = pathlib.Path(sys.argv[1])
 policy_path = pathlib.Path(sys.argv[2])
 controller_path = pathlib.Path(sys.argv[3])
 background_path = pathlib.Path(sys.argv[4])
-app_dir = pathlib.Path(sys.argv[5])
+status_item_path = pathlib.Path(sys.argv[5])
+app_dir = pathlib.Path(sys.argv[6])
 selection = selection_path.read_text()
 policy = policy_path.read_text()
 controller = controller_path.read_text()
 background = background_path.read_text()
+status_item = status_item_path.read_text()
 app_sources = "\n".join(path.read_text() for path in app_dir.rglob("*.swift"))
 
 for source in (
@@ -90,11 +93,95 @@ refresh_start = controller.index(
 )
 refresh_end = controller.index("\n    private func preferredCurrentRoomName()", refresh_start)
 refresh_body = controller[refresh_start:refresh_end]
-current_selection_index = refresh_body.index("outputSelectionResolver.selectedRoomName(")
-suggested_selection_index = refresh_body.index("?? resolvedSelectedRoomName")
-if current_selection_index > suggested_selection_index:
+for required in (
+    "currentRoomName: selectedRoomName ?? outputSelection.roomName",
+    "directoryRoomName: resolvedSelectedRoomName",
+):
+    if required not in refresh_body:
+        raise SystemExit(
+            f"verify_playback_output_selection_semantics: directory refresh must use the core authority policy: {required}"
+        )
+if "refresh.rows.first" in refresh_body:
     raise SystemExit(
-        "verify_playback_output_selection_semantics: directory refresh must preserve an available current selection"
+        "verify_playback_output_selection_semantics: directory refresh must not synthesize the first speaker as selection"
+    )
+
+bind_start = background.index("    private func bindRuntimeEvents() {")
+bind_end = background.index("\n    private func runEventTask(", bind_start)
+bind_body = background[bind_start:bind_end]
+if "Task { @MainActor" in bind_body:
+    raise SystemExit(
+        "verify_playback_output_selection_semantics: background event subscriptions must not create unowned tasks"
+    )
+if bind_body.count("runEventTask") < 2:
+    raise SystemExit(
+        "verify_playback_output_selection_semantics: background events must enter the shared task owner"
+    )
+for required in (
+    "private var eventTasks: [UUID: Task<Void, Never>] = [:]",
+    "eventTasks[id] = Task { @MainActor [weak self] in",
+    "guard let self, !Task.isCancelled else",
+    "for eventTask in eventTasks.values",
+    "eventTask.cancel()",
+    "eventTasks.removeAll()",
+):
+    if required not in background:
+        raise SystemExit(
+            f"verify_playback_output_selection_semantics: background task ownership is incomplete: {required}"
+        )
+if background.count("guard !Task.isCancelled else") < 12:
+    raise SystemExit(
+        "verify_playback_output_selection_semantics: cancelled Sonos work must reject late async results"
+    )
+
+controller_bind = controller[
+    controller.index("        self.outputRefreshCancellable ="):
+    controller.index("\n    var canControlVolume:")
+]
+if "Task { @MainActor" in controller_bind:
+    raise SystemExit(
+        "verify_playback_output_selection_semantics: playback notifications must not create unowned tasks"
+    )
+for required in (
+    "private var notificationTasks: [UUID: Task<Void, Never>] = [:]",
+    "self?.runAppearanceTask { controller in",
+    "notificationTasks[id] = Task { @MainActor [weak self] in",
+    "for notificationTask in notificationTasks.values",
+    "notificationTask.cancel()",
+    "notificationTasks.removeAll()",
+    "groupMutationTask = Task { @MainActor [weak self] in",
+    "guard !Task.isCancelled else",
+):
+    if required not in controller:
+        raise SystemExit(
+            f"verify_playback_output_selection_semantics: playback UI task ownership is incomplete: {required}"
+        )
+
+stop_start = controller.index("    func stop() {")
+stop_end = controller.index("\n    private func runAppearanceTask(", stop_start)
+stop_body = controller[stop_start:stop_end]
+for required in (
+    "groupMutationTask?.cancel()",
+    "sliderCommitter.cancel()",
+    "operationGate.cancelVolume()",
+    "operationGate.cancelTransfer()",
+    "monitorCancellable?.cancel()",
+    "outputSelectionCancellable?.cancel()",
+    "outputRefreshCancellable?.cancel()",
+    "cachedOutputRefreshCancellable?.cancel()",
+):
+    if required not in stop_body:
+        raise SystemExit(
+            f"verify_playback_output_selection_semantics: playback shutdown must cancel owned work: {required}"
+        )
+
+status_stop_start = status_item.index("    func stop() {")
+status_stop_end = status_item.index(
+    "\n    @objc private func handleStatusItemClick(", status_stop_start
+)
+if "playback.stop()" not in status_item[status_stop_start:status_stop_end]:
+    raise SystemExit(
+        "verify_playback_output_selection_semantics: status item shutdown must stop playback-owned work"
     )
 PY
 

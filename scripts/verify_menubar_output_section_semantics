@@ -40,7 +40,8 @@ expect_absent "$background_sync" 'clearSelection(reason: "no_active_spotify_play
 expect_absent "$background_sync" 'clearSelection(reason: "spotify_playback_paused")'
 expect_absent "$background_sync" 'clearSelection(reason: "active_device_not_visible")'
 expect_absent "$background_sync" 'clearSelection(reason: "spotify_auth_required")'
-expect_contains "$sync_controller" '?? refresh.rows.first?.coordinator.roomName'
+expect_contains "$sync_controller" "directoryRoomName: resolvedSelectedRoomName"
+expect_absent "$sync_controller" "refresh.rows.first?.coordinator.roomName"
 
 expect_contains "$menu_section" "if loading || selected"
 expect_contains "$menu_section" "rowStatus(loading: loading, selected: selected)"

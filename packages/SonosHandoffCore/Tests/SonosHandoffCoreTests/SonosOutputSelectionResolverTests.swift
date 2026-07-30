@@ -5,6 +5,39 @@ struct SonosOutputSelectionResolverTests {
     private let resolver = SonosOutputSelectionResolver()
 
     @Test
+    func currentOutputTakesPrecedenceOverDirectorySelection() {
+        let selected = resolver.selectedRoomName(
+            currentRoomName: "Port",
+            directoryRoomName: "Kitchen",
+            groups: standaloneGroups("Kitchen", "Port")
+        )
+
+        #expect(selected == "Port")
+    }
+
+    @Test
+    func usesVisibleDirectorySelectionWhenCurrentOutputIsUnavailable() {
+        let selected = resolver.selectedRoomName(
+            currentRoomName: "Office",
+            directoryRoomName: "Port",
+            groups: standaloneGroups("Kitchen", "Port")
+        )
+
+        #expect(selected == "Port")
+    }
+
+    @Test
+    func doesNotSynthesizeSelectionWhenNeitherAuthorityIsVisible() {
+        let selected = resolver.selectedRoomName(
+            currentRoomName: "Office",
+            directoryRoomName: nil,
+            groups: standaloneGroups("Kitchen", "Port")
+        )
+
+        #expect(selected == nil)
+    }
+
+    @Test
     func preservesVisibleCurrentOutput() {
         let selected = resolver.selectedRoomName(
             currentRoomName: " port ",

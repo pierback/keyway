@@ -35,7 +35,10 @@ final class PlaybackSyncController: ObservableObject {
     private var outputRefreshCancellable: AnyCancellable?
     private var cachedOutputRefreshCancellable: AnyCancellable?
     private var appearTask: Task<Void, Never>?
+    private var notificationTasks: [UUID: Task<Void, Never>] = [:]
+    private var groupMutationTask: Task<Void, Never>?
     private var appearGeneration = 0
+    private var isAppeared = false
     private var outputRefreshInProgress = false
     private var hasPendingOutputRefresh = false
     private var pendingOutputRefreshRoomName: String?
@@ -101,16 +104,16 @@ final class PlaybackSyncController: ObservableObject {
             .publisher(for: .sonosHandoffRefreshOutputs)
             .sink { [weak self] notification in
                 let currentRoomName = notification.object as? String
-                Task { @MainActor [weak self] in
-                    await self?.refreshOutputs(showLoading: false, currentRoomName: currentRoomName)
+                self?.runAppearanceTask { controller in
+                    await controller.refreshOutputs(showLoading: false, currentRoomName: currentRoomName)
                 }
             }
         self.cachedOutputRefreshCancellable = NotificationCenter.default
             .publisher(for: .sonosHandoffApplyCachedOutputs)
             .sink { [weak self] notification in
                 let currentRoomName = notification.object as? String
-                Task { @MainActor [weak self] in
-                    _ = await self?.applyCachedOutputs(
+                self?.runAppearanceTask { controller in
+                    _ = await controller.applyCachedOutputs(
                         currentRoomName: currentRoomName,
                         fallbackToPreferredRoom: false
                     )
@@ -141,6 +144,7 @@ final class PlaybackSyncController: ObservableObject {
 
     func appear() {
         appearGeneration += 1
+        isAppeared = true
         let generation = appearGeneration
         appearTask?.cancel()
         if selectedRoomName == nil {
@@ -177,9 +181,48 @@ final class PlaybackSyncController: ObservableObject {
     }
 
     func disappear() {
+        isAppeared = false
         appearGeneration += 1
         appearTask?.cancel()
         appearTask = nil
+        for notificationTask in notificationTasks.values {
+            notificationTask.cancel()
+        }
+        notificationTasks.removeAll()
+    }
+
+    func stop() {
+        disappear()
+        groupMutationTask?.cancel()
+        groupMutationTask = nil
+        sliderCommitter.cancel()
+        operationGate.cancelVolume()
+        operationGate.cancelTransfer()
+        monitorCancellable?.cancel()
+        monitorCancellable = nil
+        outputSelectionCancellable?.cancel()
+        outputSelectionCancellable = nil
+        outputRefreshCancellable?.cancel()
+        outputRefreshCancellable = nil
+        cachedOutputRefreshCancellable?.cancel()
+        cachedOutputRefreshCancellable = nil
+    }
+
+    private func runAppearanceTask(
+        _ operation: @escaping @MainActor (PlaybackSyncController) async -> Void
+    ) {
+        guard isAppeared else {
+            return
+        }
+        let id = UUID()
+        let generation = appearGeneration
+        notificationTasks[id] = Task { @MainActor [weak self] in
+            guard let self, isCurrentAppearance(generation) else {
+                return
+            }
+            await operation(self)
+            notificationTasks[id] = nil
+        }
     }
 
     func setSliderEditing(_ editing: Bool) {
@@ -310,6 +353,9 @@ final class PlaybackSyncController: ObservableObject {
         ) else {
             return false
         }
+        guard !Task.isCancelled else {
+            return false
+        }
 
         applyOutputRefresh(refresh)
         return true
@@ -363,11 +409,10 @@ final class PlaybackSyncController: ObservableObject {
 
     private func applyOutputRefresh(_ refresh: PlaybackOutputRefresh, selectedRoomName resolvedSelectedRoomName: String?) {
         let resolvedSelectedRoomName = outputSelectionResolver.selectedRoomName(
-                currentRoomName: selectedRoomName ?? outputSelection.roomName,
-                groups: refresh.state.groups
-            )
-            ?? resolvedSelectedRoomName
-            ?? refresh.rows.first?.coordinator.roomName
+            currentRoomName: selectedRoomName ?? outputSelection.roomName,
+            directoryRoomName: resolvedSelectedRoomName,
+            groups: refresh.state.groups
+        )
         setOutputRows(refresh.rows)
         currentGroupState = refresh.state
         selectRoomName(resolvedSelectedRoomName, source: .directoryRefresh)
@@ -491,7 +536,7 @@ final class PlaybackSyncController: ObservableObject {
     }
 
     func toggleGroupMembership(_ row: PlaybackGroupEditRow) {
-        guard row.canToggle else {
+        guard row.canToggle, groupMutationTask == nil else {
             return
         }
         guard let group = selectedOutputGroup else {
@@ -502,9 +547,18 @@ final class PlaybackSyncController: ObservableObject {
         groupLoadingRoomName = row.displayName
         menuMessage = nil
 
-        Task { @MainActor in
+        groupMutationTask = Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+            defer {
+                groupMutationTask = nil
+            }
             do {
                 let outcome = try await applyGroupMembershipChange(change)
+                guard !Task.isCancelled else {
+                    return
+                }
                 groupLoadingRoomName = nil
                 if let message = outcome.menuMessage {
                     menuMessage = message
@@ -513,6 +567,9 @@ final class PlaybackSyncController: ObservableObject {
                     groupEditController.clearSuggestionsCoveredByGroupEdit(row)
                     let optimisticRoomName = optimisticSelectedRoomName(after: change, previousGroup: group)
                     if let observedRefresh = await refreshAfterGroupMutation(change, row: row) {
+                        guard !Task.isCancelled else {
+                            return
+                        }
                         applyOutputRefresh(
                             observedRefresh,
                             selectedRoomName: observedRefresh.selectedRoomName ?? optimisticRoomName
@@ -526,6 +583,9 @@ final class PlaybackSyncController: ObservableObject {
                     }
                 }
             } catch {
+                guard !Task.isCancelled else {
+                    return
+                }
                 groupLoadingRoomName = nil
                 menuMessage = groupEditMessage(for: row.displayName, error: error)
                 shortcutLogger.error("SonosHandoffGroupEdit result=failure target=\(row.displayName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")

@@ -75,6 +75,7 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
         isStarted = false
         postPopoverCloseAction = nil
         closePopover()
+        playback.stop()
         stopPopoverDismissMonitors()
         if let appDeactivationObserver {
             NotificationCenter.default.removeObserver(appDeactivationObserver)

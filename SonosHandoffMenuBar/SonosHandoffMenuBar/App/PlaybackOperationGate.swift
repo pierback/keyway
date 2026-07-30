@@ -48,6 +48,12 @@ final class PlaybackOperationGate {
         }
     }
 
+    func cancelTransfer() {
+        transferTask?.cancel()
+        transferTask = nil
+        transferGeneration += 1
+    }
+
     func isCurrentVolume(_ ticket: PlaybackOperationTicket, selectedRoomName: String?) -> Bool {
         ticket.generation == volumeGeneration && SonosRoomName.matches(ticket.roomName, selectedRoomName)
     }
