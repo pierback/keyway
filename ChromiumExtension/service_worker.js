@@ -1,5 +1,5 @@
 const nativeHostName = "com.fpieringer.keyway.chromium";
-const protocolVersion = 3;
+const protocolVersion = 4;
 const profileGuidStorageKey = "profileGuid";
 const snapshotStorageKey = "lastPublishedSnapshotTargets";
 const snapshotEpochStorageKey = "snapshotEpoch";
@@ -8,6 +8,7 @@ const activeHeartbeatIntervalMs = 1000;
 const idleKeepaliveIntervalMs = 25000;
 const resumeBridgeMaxAgeMs = 10000;
 let nativePort = null;
+let nativePortGeneration = 0;
 let reconnectTimer = null;
 let heartbeatTimer = null;
 let heartbeatMode = null;
@@ -26,16 +27,21 @@ function connectNativeHost() {
   if (nativePort) return;
 
   const port = chrome.runtime.connectNative(nativeHostName);
+  nativePortGeneration += 1;
+  const generation = nativePortGeneration;
   nativePort = port;
-  port.onMessage.addListener(handleNativeMessage);
+  port.onMessage.addListener(message => {
+    if (!isCurrentNativePort(port, generation)) return;
+    handleNativeMessage(message, port, generation);
+  });
   port.onDisconnect.addListener(() => {
-    if (nativePort !== port) return;
+    if (!isCurrentNativePort(port, generation)) return;
     nativePort = null;
     stopHeartbeat();
     scheduleReconnect();
   });
   loadResumeState(resume => {
-    if (nativePort !== port) return;
+    if (!isCurrentNativePort(port, generation)) return;
     snapshotEpoch = resume.epoch;
     resumeStateLoaded = true;
     setPendingResumeTargets(resume.resumed ? resume.snapshot : null);
@@ -50,6 +56,10 @@ function connectNativeHost() {
     probeTabsForMedia();
     publishSnapshot();
   });
+}
+
+function isCurrentNativePort(port, generation) {
+  return nativePort === port && nativePortGeneration === generation;
 }
 
 function loadProfileGuid(callback) {
@@ -91,9 +101,9 @@ function scheduleReconnect() {
   }, 1000);
 }
 
-function sendNative(message) {
-  if (!nativePort) return;
-  nativePort.postMessage(message);
+function sendNative(message, port = nativePort, generation = nativePortGeneration) {
+  if (!port || !isCurrentNativePort(port, generation)) return;
+  port.postMessage(message);
 }
 
 function startHeartbeat(mode) {
@@ -499,9 +509,9 @@ function probeTabsForMedia() {
   });
 }
 
-function handleNativeMessage(message) {
+function handleNativeMessage(message, port, generation) {
   if (message.protocolVersion !== protocolVersion) {
-    rejectUnsupportedProtocol(message);
+    rejectUnsupportedProtocol(message, port, generation);
     return;
   }
 
@@ -510,15 +520,15 @@ function handleNativeMessage(message) {
     return;
   }
   if (message.type === "command") {
-    handleCommandMessage(message);
+    handleCommandMessage(message, port, generation);
     return;
   }
   if (message.type === "focusTarget") {
-    handleFocusMessage(message);
+    handleFocusMessage(message, port, generation);
   }
 }
 
-function rejectUnsupportedProtocol(message) {
+function rejectUnsupportedProtocol(message, port, generation) {
   if (message.type === "command") {
     sendNative({
       type: "commandResult",
@@ -530,7 +540,7 @@ function rejectUnsupportedProtocol(message) {
       unsupported: true,
       message: "Chromium extension protocol mismatch.",
       backend: "chromium_extension",
-    });
+    }, port, generation);
   }
   if (message.type === "focusTarget") {
     sendNative({
@@ -542,11 +552,11 @@ function rejectUnsupportedProtocol(message) {
       message: "Chromium extension protocol mismatch.",
       backend: "chromium_extension",
       failureReason: "chromium_extension_protocol_mismatch",
-    });
+    }, port, generation);
   }
 }
 
-function handleCommandMessage(message) {
+function handleCommandMessage(message, port, generation) {
   removeStaleSources();
   const source = sources.get(message.targetID);
   const route = source?.route;
@@ -561,7 +571,7 @@ function handleCommandMessage(message) {
       unsupported: false,
       message: "Chromium extension target is no longer available.",
       backend: "chromium_extension",
-    });
+    }, port, generation);
     return;
   }
 
@@ -577,12 +587,12 @@ function handleCommandMessage(message) {
       unsupported: true,
       message: `${message.command} is unsupported for this Chromium media source.`,
       backend: "chromium_extension",
-    });
+    }, port, generation);
     return;
   }
 
   if (message.command === "mute") {
-    handleTabMuteCommand(message, source);
+    handleTabMuteCommand(message, source, port, generation);
     return;
   }
 
@@ -609,12 +619,12 @@ function handleCommandMessage(message) {
         unsupported: Boolean(response && response.unsupported),
         message: error ? error.message || "Chromium tab command failed." : response && response.message ? response.message : "Chromium tab did not acknowledge the command.",
         backend: "chromium_extension",
-      });
+      }, port, generation);
     }
   );
 }
 
-function sendCommandResult(message, ok, unsupported, resultMessage) {
+function sendCommandResult(message, ok, unsupported, resultMessage, port, generation) {
   sendNative({
     type: "commandResult",
     protocolVersion,
@@ -625,10 +635,10 @@ function sendCommandResult(message, ok, unsupported, resultMessage) {
     unsupported,
     message: resultMessage,
     backend: "chromium_extension",
-  });
+  }, port, generation);
 }
 
-function handleTabMuteCommand(message, source) {
+function handleTabMuteCommand(message, source, port, generation) {
   chrome.tabs.get(source.tabId, tab => {
     const lookupError = chrome.runtime.lastError;
     if (lookupError || !tab) {
@@ -636,7 +646,9 @@ function handleTabMuteCommand(message, source) {
         message,
         false,
         false,
-        lookupError ? lookupError.message || "Could not find browser tab." : "Could not find browser tab."
+        lookupError ? lookupError.message || "Could not find browser tab." : "Could not find browser tab.",
+        port,
+        generation
       );
       return;
     }
@@ -645,12 +657,19 @@ function handleTabMuteCommand(message, source) {
     chrome.tabs.update(source.tabId, { muted: !muted }, updatedTab => {
       const updateError = chrome.runtime.lastError;
       if (updateError) {
-        sendCommandResult(message, false, false, updateError.message || "Chromium tab mute failed.");
+        sendCommandResult(
+          message,
+          false,
+          false,
+          updateError.message || "Chromium tab mute failed.",
+          port,
+          generation
+        );
         return;
       }
 
       updateSourceTabState(source.tabId, updatedTab || { mutedInfo: { muted: !muted } });
-      sendCommandResult(message, true, false, muted ? "unmuted" : "muted");
+      sendCommandResult(message, true, false, muted ? "unmuted" : "muted", port, generation);
     });
   });
 }
@@ -671,7 +690,7 @@ function updateSourceTabState(tabId, tab) {
   if (changed) publishSnapshot();
 }
 
-function handleFocusMessage(message) {
+function handleFocusMessage(message, port, generation) {
   removeStaleSources();
   const source = sources.get(message.targetID);
   if (!source) {
@@ -684,7 +703,7 @@ function handleFocusMessage(message) {
       message: "Chromium extension target is no longer available.",
       backend: "chromium_extension",
       failureReason: "browser_target_unavailable",
-    });
+    }, port, generation);
     return;
   }
 
@@ -700,7 +719,7 @@ function handleFocusMessage(message) {
         message: lookupError ? lookupError.message || "Could not find browser tab." : "Could not find browser tab.",
         backend: "chromium_extension",
         failureReason: "browser_target_unavailable",
-      });
+      }, port, generation);
       return;
     }
 
@@ -714,7 +733,7 @@ function handleFocusMessage(message) {
         message: "Could not resolve browser tab.",
         backend: "chromium_extension",
         failureReason: "browser_target_unavailable",
-      });
+      }, port, generation);
       return;
     }
 
@@ -730,7 +749,7 @@ function handleFocusMessage(message) {
           message: tabError.message || "Could not activate browser tab.",
           backend: "chromium_extension",
           failureReason: "browser_target_unavailable",
-        });
+        }, port, generation);
         return;
       }
 
@@ -746,7 +765,7 @@ function handleFocusMessage(message) {
             message: windowError.message || "Could not focus browser window.",
             backend: "chromium_extension",
             failureReason: "browser_activation_failed",
-          });
+          }, port, generation);
           return;
         }
 
@@ -766,7 +785,7 @@ function handleFocusMessage(message) {
             message: selected ? "focused" : errorMessage,
             backend: "chromium_extension",
             failureReason: selected ? undefined : "browser_target_unavailable",
-          });
+          }, port, generation);
         });
       });
     });

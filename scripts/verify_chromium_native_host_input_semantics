@@ -98,7 +98,10 @@ result = section("func payloadStringForResult(_ payload: Data) -> String? {", "\
 for required in (
     "try? JSONSerialization.jsonObject(with: payload)",
     'fputs("Keyway Chromium native host: ignoring malformed result payload.\\n", stderr)',
-    'fputs("Keyway Chromium native host: ignoring non-UTF-8 result payload.\\n", stderr)',
+    'root["connectionID"] = connectionID',
+    'root["connectionGeneration"] = connectionGeneration',
+    "try? JSONSerialization.data(withJSONObject: root)",
+    'fputs("Keyway Chromium native host: ignoring result payload rewrite failure.\\n", stderr)',
     "return nil",
 ):
     if required not in result:

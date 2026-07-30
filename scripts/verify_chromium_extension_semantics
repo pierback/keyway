@@ -53,8 +53,8 @@ def expect(text, needle, message):
 
 expect(
     transport,
-    "static let protocolVersion = 3",
-    "Swift Chromium transport must hard-cut the browser extension protocol at v3",
+    "static let protocolVersion = 4",
+    "Swift Chromium transport must hard-cut the browser extension protocol at v4",
 )
 expect(
     transport,
@@ -197,8 +197,8 @@ expect(
 )
 expect(
     service_worker,
-    "const protocolVersion = 3",
-    "Chromium extension service worker must speak protocol v3",
+    "const protocolVersion = 4",
+    "Chromium extension service worker must speak protocol v4",
 )
 expect(
     service_worker,
@@ -242,7 +242,7 @@ expect(
 )
 expect(
     service_worker,
-    "rejectUnsupportedProtocol(message)",
+    "rejectUnsupportedProtocol(message, port, generation)",
     "Chromium extension service worker must reject unsupported native protocol versions",
 )
 expect(

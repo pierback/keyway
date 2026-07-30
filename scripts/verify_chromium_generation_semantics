@@ -1,0 +1,124 @@
+#!/usr/bin/env python3
+
+from pathlib import Path
+
+root = Path(__file__).resolve().parent.parent
+transport = (
+    root
+    / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionTransport.swift"
+).read_text()
+native_host = (
+    root
+    / "packages/SonosHandoffCore/Sources/KeywayChromiumNativeHost/main.swift"
+).read_text()
+worker = (root / "ChromiumExtension/service_worker.js").read_text()
+
+
+def fail(message: str) -> None:
+    raise SystemExit(f"verify_chromium_generation_semantics=fail reason={message}")
+
+
+def require(text: str, needle: str, message: str) -> None:
+    if needle not in text:
+        fail(message)
+
+
+for text, needle, message in (
+    (transport, "static let protocolVersion = 4", "swift_protocol_not_v4"),
+    (worker, "const protocolVersion = 4", "worker_protocol_not_v4"),
+    (
+        transport,
+        "let connectionGeneration: UInt64",
+        "snapshot_envelope_missing_process_generation",
+    ),
+    (
+        transport,
+        "private var highestAcceptedConnectionGenerationByProfileGuid: [String: UInt64] = [:]",
+        "controller_missing_profile_generation_authority",
+    ),
+    (
+        transport,
+        "guard connectionGeneration >= acceptedGeneration else",
+        "controller_does_not_reject_older_process_generation",
+    ),
+    (
+        transport,
+        "if connectionGeneration > acceptedGeneration",
+        "controller_does_not_require_strictly_newer_adoption",
+    ),
+    (
+        transport,
+        "guard let currentConnectionID = connectionIDByProfileGuid[profileGuid]",
+        "controller_missing_terminated_connection_tombstone_guard",
+    ),
+    (
+        transport,
+        "private var runGeneration: UInt = 0",
+        "controller_missing_run_generation",
+    ),
+    (
+        native_host,
+        "let connectionGeneration = mach_continuous_time()",
+        "native_host_missing_monotonic_process_generation",
+    ),
+    (
+        native_host,
+        'root["connectionGeneration"] = connectionGeneration',
+        "native_host_does_not_stamp_generation",
+    ),
+    (
+        worker,
+        "let nativePortGeneration = 0",
+        "worker_missing_port_generation",
+    ),
+    (
+        worker,
+        "if (!isCurrentNativePort(port, generation)) return;",
+        "worker_missing_current_port_guard",
+    ),
+    (
+        worker,
+        "handleNativeMessage(message, port, generation)",
+        "worker_messages_not_bound_to_port_generation",
+    ),
+    (
+        worker,
+        "sendNative(message, port = nativePort, generation = nativePortGeneration)",
+        "worker_results_not_bound_to_port_generation",
+    ),
+):
+    require(text, needle, message)
+
+start = transport[
+    transport.index("    func start() {") : transport.index("\n    func stop() {")
+]
+if start.count("runGeneration == generation") != 5:
+    fail("not_every_controller_callback_is_run_generation_bound")
+
+stop = transport[
+    transport.index("    func stop() {") : transport.index("\n    func markConnected(")
+]
+if stop.index("runGeneration &+= 1") > stop.index("removeObserver"):
+    fail("controller_stop_invalidates_generation_too_late")
+
+accept = transport[
+    transport.index("    private func acceptSnapshot(") : transport.index(
+        "\n    private func hideSilentProfiles"
+    )
+]
+if "if resumed != nil {" in accept:
+    fail("hello_still_has_unconditional_connection_authority")
+
+for pending in (
+    "ChromiumBrowserExtensionPendingCommand",
+    "ChromiumBrowserExtensionPendingFocus",
+):
+    block = transport[
+        transport.index(f"private struct {pending}") : transport.index(
+            "\n}", transport.index(f"private struct {pending}")
+        )
+    ]
+    if "let connectionID: String" not in block or "let connectionGeneration: UInt64" not in block:
+        fail(f"{pending}_missing_connection_authority")
+
+print("verify_chromium_generation_semantics=ok")

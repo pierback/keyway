@@ -231,7 +231,7 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
 (async () => {
   assert(postedMessages.some(message => message.type === "hello"), "service worker must announce hello to native host");
   const hello = postedMessages.find(message => message.type === "hello");
-  assertEqual(hello.protocolVersion, 3, "hello must use Chromium extension protocol v3");
+  assertEqual(hello.protocolVersion, 4, "hello must use Chromium extension protocol v4");
   assertEqual(hello.profileGuid, "profile-guid-a", "hello must include the persisted profile GUID");
   assertEqual(hello.epoch, 0, "fresh-session hello must start at epoch 0");
   assertEqual(hello.resumed, false, "fresh-session hello must report resumed=false");
@@ -239,7 +239,7 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   assertEqual(localStorageSets[0].profileGuid, "profile-guid-a", "service worker must persist a generated profile GUID");
   assert(postedMessages.some(message => message.type === "snapshot"), "service worker must publish a snapshot immediately");
   const initialSnapshot = postedMessages.find(message => message.type === "snapshot");
-  assertEqual(initialSnapshot.protocolVersion, 3, "snapshot must use Chromium extension protocol v3");
+  assertEqual(initialSnapshot.protocolVersion, 4, "snapshot must use Chromium extension protocol v4");
   assertEqual(initialSnapshot.epoch, 1, "first fresh-session snapshot must increment the epoch");
   assertEqual(sessionStorageSets.at(-1).snapshotEpoch, 1, "published snapshots must persist their incremented epoch to session storage");
   assertEqual(queryRequests.length, 1, "service worker must probe tabs after connecting to the native host");
@@ -551,14 +551,14 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   assert(typeof nativeMessageListener === "function", "service worker must register native command listener");
   nativeMessageListener({
     type: "reloadExtension",
-    protocolVersion: 3,
+    protocolVersion: 4,
   });
   assertEqual(reloadCount, 1, "native reload command must reload the extension runtime");
   assertEqual(tabMessages.length, 0, "native reload command must not dispatch into any tab");
 
   nativeMessageListener({
     type: "command",
-    protocolVersion: 2,
+    protocolVersion: 3,
     requestID: "protocol-mismatch",
     targetID: twoTargetSnapshot.targets[1].id,
     command: "playPause",
@@ -573,7 +573,7 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
 
   nativeMessageListener({
     type: "command",
-    protocolVersion: 3,
+    protocolVersion: 4,
     requestID: "ignored-command",
     targetID: "chromium-tab:other-profile:23",
     command: "playPause",
@@ -593,7 +593,7 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   const focusResultCountBeforeIgnored = postedMessages.filter(message => message.type === "focusResult").length;
   nativeMessageListener({
     type: "focusTarget",
-    protocolVersion: 3,
+    protocolVersion: 4,
     requestID: "ignored-focus",
     targetID: "chromium-tab:other-profile:23",
   });
@@ -608,7 +608,7 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
 
   nativeMessageListener({
     type: "focusTarget",
-    protocolVersion: 3,
+    protocolVersion: 4,
     requestID: "focus-1",
     targetID: twoTargetSnapshot.targets[1].id,
   });
@@ -634,7 +634,7 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
 
   nativeMessageListener({
     type: "command",
-    protocolVersion: 3,
+    protocolVersion: 4,
     requestID: "command-1",
     targetID: twoTargetSnapshot.targets[1].id,
     tabId: 999,
@@ -657,7 +657,7 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   const snapshotCountBeforeMute = postedMessages.filter(message => message.type === "snapshot").length;
   nativeMessageListener({
     type: "command",
-    protocolVersion: 3,
+    protocolVersion: 4,
     requestID: "mute-command",
     targetID: twoTargetSnapshot.targets[1].id,
     command: "mute",
@@ -682,7 +682,7 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   tabMessages.length = 0;
   nativeMessageListener({
     type: "command",
-    protocolVersion: 3,
+    protocolVersion: 4,
     requestID: "unsupported-command",
     targetID: twoTargetSnapshot.targets[1].id,
     command: "next",
@@ -745,12 +745,22 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   assertEqual(afterRemovalSnapshot.targets.length, 0, "tab removal must clear browser targets");
 
   assert(typeof disconnectListener === "function", "service worker must register native disconnect listener");
-  disconnectListener();
+  const staleNativeMessageListener = nativeMessageListener;
+  const staleDisconnectListener = disconnectListener;
+  staleDisconnectListener();
   assert(
     clearedIntervals.includes(`interval-${intervals.length}`),
     "service worker must clear the current heartbeat on disconnect"
   );
   assertEqual(timeouts[0].delay, 1000, "service worker reconnect delay");
+  timeouts[0].callback();
+  assert(nativeMessageListener !== staleNativeMessageListener, "reconnect must install a generation-bound native message listener");
+  const reloadCountBeforeStaleMessage = reloadCount;
+  staleNativeMessageListener({ type: "reloadExtension", protocolVersion: 4 });
+  assertEqual(reloadCount, reloadCountBeforeStaleMessage, "a superseded native port must not dispatch delayed messages");
+  staleDisconnectListener();
+  nativeMessageListener({ type: "reloadExtension", protocolVersion: 4 });
+  assertEqual(reloadCount, reloadCountBeforeStaleMessage + 1, "a stale disconnect callback must not invalidate the replacement port");
 
   console.log("verify_chromium_extension_semantics=ok");
 })().catch(error => {

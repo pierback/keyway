@@ -11,6 +11,7 @@ let chromiumTargetIDPrefix = "chromium-tab:"
 let writeLock = NSLock()
 let hostBrowserIdentity = HostBrowserIdentity.current()
 let connectionID = UUID().uuidString.lowercased()
+let connectionGeneration = mach_continuous_time()
 let hostConnectionState = HostConnectionState()
 
 struct NativeMessageEnvelope: Decodable {
@@ -208,6 +209,7 @@ func payloadByAddingHostBrowserIdentity(
     root["browserBundleIdentifier"] = hostBrowserIdentity.bundleIdentifier
     // Private routing token only; target identity is chromium-tab:<profileGuid>:<tabId>.
     root["connectionID"] = connectionID
+    root["connectionGeneration"] = connectionGeneration
     root["targets"] = targets
 
     guard let enriched = try? JSONSerialization.data(withJSONObject: root),
@@ -285,16 +287,19 @@ func payloadByMatchingConnectionID(_ payload: String) -> Data? {
 
 func payloadStringForResult(_ payload: Data) -> String? {
     guard let rootObject = try? JSONSerialization.jsonObject(with: payload),
-          let root = rootObject as? [String: Any],
+          var root = rootObject as? [String: Any],
           (root["targetID"] as? String) != nil
     else {
         fputs("Keyway Chromium native host: ignoring malformed result payload.\n", stderr)
         return nil
     }
 
-    guard let payload = String(data: payload, encoding: .utf8)
+    root["connectionID"] = connectionID
+    root["connectionGeneration"] = connectionGeneration
+    guard let enriched = try? JSONSerialization.data(withJSONObject: root),
+          let payload = String(data: enriched, encoding: .utf8)
     else {
-        fputs("Keyway Chromium native host: ignoring non-UTF-8 result payload.\n", stderr)
+        fputs("Keyway Chromium native host: ignoring result payload rewrite failure.\n", stderr)
         return nil
     }
     return payload

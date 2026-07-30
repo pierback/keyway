@@ -6,7 +6,7 @@ import os
 enum ChromiumBrowserExtensionTransport {
     static let backendName = "chromium_extension"
     static let mediaType = "chromium_extension"
-    static let protocolVersion = 3
+    static let protocolVersion = 4
     static let targetIDPrefix = "chromium-tab:"
     static let nativeMessagingHostName = "com.fpieringer.keyway.chromium"
     static let extensionID = "gmdpkggbaohimgacbclndlfjghgcbael"
@@ -284,6 +284,7 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         let protocolVersion: Int
         let profileGuid: String
         let connectionID: String
+        let connectionGeneration: UInt64
         let epoch: Int?
         let resumed: Bool?
         let browserBundleIdentifier: String?
@@ -292,11 +293,15 @@ final class ChromiumBrowserExtensionController: ObservableObject {
     private struct ChromiumBrowserExtensionCommandResultEnvelope: Decodable {
         let protocolVersion: Int
         let requestID: String
+        let connectionID: String
+        let connectionGeneration: UInt64
     }
 
     private struct ChromiumBrowserExtensionFocusResultEnvelope: Decodable {
         let protocolVersion: Int
         let requestID: String
+        let connectionID: String
+        let connectionGeneration: UInt64
     }
 
     @Published private(set) var connected = false
@@ -312,11 +317,13 @@ final class ChromiumBrowserExtensionController: ObservableObject {
     private var workspaceTerminationObserver: NSObjectProtocol?
     private var snapshotSourcesByProfileGuid: [String: SnapshotSource] = [:]
     private var connectionIDByProfileGuid: [String: String] = [:]
+    private var highestAcceptedConnectionGenerationByProfileGuid: [String: UInt64] = [:]
     private var highestAcceptedEpochByProfileGuid: [String: Int] = [:]
     private var pendingCommands: [String: ChromiumBrowserExtensionPendingCommand] = [:]
     private var commandResultTimeouts: [String: Task<Void, Never>] = [:]
     private var pendingFocusRequests: [String: ChromiumBrowserExtensionPendingFocus] = [:]
     private var focusResultTimeouts: [String: Task<Void, Never>] = [:]
+    private var runGeneration: UInt = 0
 
     var hasRoutableTargets: Bool {
         connected && !targets.isEmpty
@@ -326,6 +333,8 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         guard snapshotObserver == nil else {
             return
         }
+        runGeneration &+= 1
+        let generation = runGeneration
 
         snapshotObserver = DistributedNotificationCenter.default().addObserver(
             forName: ChromiumBrowserExtensionTransport.snapshotNotificationName,
@@ -337,7 +346,10 @@ final class ChromiumBrowserExtensionController: ObservableObject {
                 return
             }
             Task { @MainActor [weak self, payload] in
-                self?.handleSnapshotPayload(payload)
+                guard let self, runGeneration == generation else {
+                    return
+                }
+                handleSnapshotPayload(payload)
             }
         }
 
@@ -351,7 +363,10 @@ final class ChromiumBrowserExtensionController: ObservableObject {
                 return
             }
             Task { @MainActor [weak self, payload] in
-                self?.handleCommandResultPayload(payload)
+                guard let self, runGeneration == generation else {
+                    return
+                }
+                handleCommandResultPayload(payload)
             }
         }
 
@@ -365,13 +380,19 @@ final class ChromiumBrowserExtensionController: ObservableObject {
                 return
             }
             Task { @MainActor [weak self, payload] in
-                self?.handleFocusResultPayload(payload)
+                guard let self, runGeneration == generation else {
+                    return
+                }
+                handleFocusResultPayload(payload)
             }
         }
 
         profileRetentionTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.hideSilentProfiles(now: Date())
+                guard let self, runGeneration == generation else {
+                    return
+                }
+                hideSilentProfiles(now: Date())
             }
         }
 
@@ -386,7 +407,10 @@ final class ChromiumBrowserExtensionController: ObservableObject {
                 return
             }
             Task { @MainActor [weak self, bundleIdentifier] in
-                self?.handleBrowserTermination(bundleIdentifier: bundleIdentifier)
+                guard let self, runGeneration == generation else {
+                    return
+                }
+                handleBrowserTermination(bundleIdentifier: bundleIdentifier)
             }
         }
 
@@ -400,6 +424,7 @@ final class ChromiumBrowserExtensionController: ObservableObject {
     }
 
     func stop() {
+        runGeneration &+= 1
         if let snapshotObserver {
             DistributedNotificationCenter.default().removeObserver(snapshotObserver)
         }
@@ -432,13 +457,21 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         connectionID: String,
         targets: [MediaRemoteTarget],
         epoch: Int = 0,
-        resumed: Bool? = nil,
+        resumed: Bool? = false,
+        connectionGeneration: UInt64 = 0,
         browserBundleIdentifier: String? = nil,
         now: Date = Date()
     ) {
-        guard acceptSnapshot(profileGuid: profileGuid, connectionID: connectionID, epoch: epoch, resumed: resumed) else {
+        guard acceptSnapshot(
+            profileGuid: profileGuid,
+            connectionID: connectionID,
+            connectionGeneration: connectionGeneration,
+            epoch: epoch,
+            resumed: resumed
+        ) else {
             return
         }
+        let previousConnectionID = connectionIDByProfileGuid[profileGuid]
         let chromiumTargets = targets.filter(ChromiumBrowserExtensionTransport.isTarget)
         snapshotSourcesByProfileGuid[profileGuid] = SnapshotSource(
             lastSnapshotAt: now,
@@ -449,12 +482,16 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         )
         clearSilentSuspects(profileGuid: profileGuid)
         connectionIDByProfileGuid[profileGuid] = connectionID
+        if let previousConnectionID, previousConnectionID != connectionID {
+            failPendingRequests(connectionID: previousConnectionID)
+        }
         rebuildConnectionState()
     }
 
     func markDisconnected() {
         snapshotSourcesByProfileGuid = [:]
         connectionIDByProfileGuid = [:]
+        highestAcceptedConnectionGenerationByProfileGuid = [:]
         highestAcceptedEpochByProfileGuid = [:]
         connected = false
         targets = []
@@ -531,7 +568,7 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         guard connected,
               targets.contains(where: { $0.id == target.id }),
               !suspectTargetIDs.contains(target.id),
-              let connectionID = connectionID(for: target)
+              let authority = connectionAuthority(for: target)
         else {
 
             return nil
@@ -543,7 +580,7 @@ final class ChromiumBrowserExtensionController: ObservableObject {
             protocolVersion: ChromiumBrowserExtensionTransport.protocolVersion,
             requestID: requestID,
             targetID: target.id,
-            connectionID: connectionID
+            connectionID: authority.connectionID
         )
         let data: Data
         do {
@@ -575,6 +612,8 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         pendingFocusRequests[requestID] = ChromiumBrowserExtensionPendingFocus(
             startedAt: ProcessInfo.processInfo.systemUptime,
             targetID: target.id,
+            connectionID: authority.connectionID,
+            connectionGeneration: authority.connectionGeneration,
             resultHandler: onResult
         )
         armFocusResultTimeout(requestID: requestID)
@@ -594,7 +633,7 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         target: MediaRemoteTarget,
         onResult: @escaping (MediaRemoteCommandResultEvent) -> Void
     ) -> Bool? {
-        guard let connectionID = connectionID(for: target) else {
+        guard let authority = connectionAuthority(for: target) else {
             onResult(MediaRemoteCommandResultEvent(
                 type: "commandResult",
                 requestID: UUID().uuidString,
@@ -614,7 +653,7 @@ final class ChromiumBrowserExtensionController: ObservableObject {
             targetID: target.id,
             command: commandName,
             volumeDelta: volumeDelta,
-            connectionID: connectionID
+            connectionID: authority.connectionID
         )
         let data: Data
         do {
@@ -649,6 +688,8 @@ final class ChromiumBrowserExtensionController: ObservableObject {
             startedAt: ProcessInfo.processInfo.systemUptime,
             commandName: commandName,
             targetID: target.id,
+            connectionID: authority.connectionID,
+            connectionGeneration: authority.connectionGeneration,
             resultHandler: onResult
         )
         armCommandResultTimeout(requestID: requestID)
@@ -662,11 +703,16 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         return true
     }
 
-    private func connectionID(for target: MediaRemoteTarget) -> String? {
-        guard let profileGuid = ChromiumBrowserExtensionTransport.profileGuid(targetID: target.id) else {
+    private func connectionAuthority(
+        for target: MediaRemoteTarget
+    ) -> (connectionID: String, connectionGeneration: UInt64)? {
+        guard let profileGuid = ChromiumBrowserExtensionTransport.profileGuid(targetID: target.id),
+              let connectionID = connectionIDByProfileGuid[profileGuid],
+              let connectionGeneration = highestAcceptedConnectionGenerationByProfileGuid[profileGuid]
+        else {
             return nil
         }
-        return connectionIDByProfileGuid[profileGuid]
+        return (connectionID, connectionGeneration)
     }
 
     private func handleSnapshotPayload(_ payload: String) {
@@ -698,6 +744,7 @@ final class ChromiumBrowserExtensionController: ObservableObject {
             targets: snapshot.targets.map(\.mediaRemoteTarget),
             epoch: snapshotEnvelope.epoch ?? 0,
             resumed: snapshotEnvelope.resumed,
+            connectionGeneration: snapshotEnvelope.connectionGeneration,
             browserBundleIdentifier: snapshotEnvelope.browserBundleIdentifier
         )
     }
@@ -744,7 +791,9 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         else {
             return
         }
-        guard result.targetID == pending.targetID,
+        guard commandEnvelope.connectionID == pending.connectionID,
+              commandEnvelope.connectionGeneration == pending.connectionGeneration,
+              result.targetID == pending.targetID,
               result.command == pending.commandName
         else {
             pendingCommands.removeValue(forKey: requestID)
@@ -811,7 +860,10 @@ final class ChromiumBrowserExtensionController: ObservableObject {
         else {
             return
         }
-        guard result.targetID == pending.targetID else {
+        guard focusEnvelope.connectionID == pending.connectionID,
+              focusEnvelope.connectionGeneration == pending.connectionGeneration,
+              result.targetID == pending.targetID
+        else {
             pendingFocusRequests.removeValue(forKey: requestID)
             focusResultTimeouts.removeValue(forKey: requestID)?.cancel()
             let elapsed = ProcessInfo.processInfo.systemUptime - pending.startedAt
@@ -851,27 +903,34 @@ final class ChromiumBrowserExtensionController: ObservableObject {
     private func acceptSnapshot(
         profileGuid: String,
         connectionID: String,
+        connectionGeneration: UInt64,
         epoch: Int,
         resumed: Bool?
     ) -> Bool {
-        // A hello-derived snapshot (resumed true or false) always wins and adopts its
-        // connectionID: it can only originate from the newest live worker for this
-        // profile, so trusting it unconditionally is safe. Rejecting a resumed:true
-        // hello whose persisted epoch lagged behind (a real race: the extension sends
-        // the snapshot before its chrome.storage.session.set() write lands) would
-        // otherwise leave connectionIDByProfileGuid pointing at the dead connection
-        // forever -- every later ordinary snapshot (resumed == nil) from the live
-        // worker would then fail the connectionID-mismatch check below regardless of
-        // how high its epoch climbs, permanently wedging the profile until the
-        // browser quits. Worst case of accepting eagerly is a sub-second regression
-        // to slightly-stale bridge targets before the next real snapshot lands.
-        if resumed != nil {
+        guard let acceptedGeneration = highestAcceptedConnectionGenerationByProfileGuid[profileGuid] else {
+            guard resumed != nil else {
+                return false
+            }
+            highestAcceptedConnectionGenerationByProfileGuid[profileGuid] = connectionGeneration
             highestAcceptedEpochByProfileGuid[profileGuid] = epoch
             return true
         }
-        if let currentConnectionID = connectionIDByProfileGuid[profileGuid],
-           currentConnectionID != connectionID,
-           resumed == nil {
+
+        guard connectionGeneration >= acceptedGeneration else {
+            return false
+        }
+        if connectionGeneration > acceptedGeneration {
+            guard resumed != nil else {
+                return false
+            }
+            highestAcceptedConnectionGenerationByProfileGuid[profileGuid] = connectionGeneration
+            highestAcceptedEpochByProfileGuid[profileGuid] = epoch
+            return true
+        }
+
+        guard let currentConnectionID = connectionIDByProfileGuid[profileGuid],
+              currentConnectionID == connectionID
+        else {
             return false
         }
         if let highestAcceptedEpoch = highestAcceptedEpochByProfileGuid[profileGuid],
@@ -931,6 +990,45 @@ final class ChromiumBrowserExtensionController: ObservableObject {
             }
         )
         rebuildConnectionState()
+    }
+
+    private func failPendingRequests(connectionID: String) {
+        let commandRequestIDs = pendingCommands.compactMap {
+            $0.value.connectionID == connectionID ? $0.key : nil
+        }
+        for requestID in commandRequestIDs {
+            guard let pending = pendingCommands.removeValue(forKey: requestID) else {
+                continue
+            }
+            commandResultTimeouts.removeValue(forKey: requestID)?.cancel()
+            pending.resultHandler(MediaRemoteCommandResultEvent(
+                type: "commandResult",
+                requestID: requestID,
+                targetID: pending.targetID,
+                command: pending.commandName,
+                ok: false,
+                message: "Chromium extension connection was replaced.",
+                backend: ChromiumBrowserExtensionTransport.backendName
+            ))
+        }
+
+        let focusRequestIDs = pendingFocusRequests.compactMap {
+            $0.value.connectionID == connectionID ? $0.key : nil
+        }
+        for requestID in focusRequestIDs {
+            guard let pending = pendingFocusRequests.removeValue(forKey: requestID) else {
+                continue
+            }
+            focusResultTimeouts.removeValue(forKey: requestID)?.cancel()
+            pending.resultHandler(SourceFocusResult(
+                requestID: requestID,
+                targetID: pending.targetID,
+                ok: false,
+                message: "Chromium extension connection was replaced.",
+                backend: ChromiumBrowserExtensionTransport.backendName,
+                failureReason: .browserTargetUnavailable
+            ))
+        }
     }
 
     private func clearSilentSuspects(profileGuid: String) {
@@ -993,12 +1091,16 @@ private struct ChromiumBrowserExtensionPendingCommand {
     let startedAt: TimeInterval
     let commandName: String
     let targetID: String
+    let connectionID: String
+    let connectionGeneration: UInt64
     let resultHandler: (MediaRemoteCommandResultEvent) -> Void
 }
 
 private struct ChromiumBrowserExtensionPendingFocus {
     let startedAt: TimeInterval
     let targetID: String
+    let connectionID: String
+    let connectionGeneration: UInt64
     let resultHandler: (SourceFocusResult) -> Void
 }
 
