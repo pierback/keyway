@@ -18,7 +18,7 @@ for source in \
 perl -0pi -e 's/private static let responseTimeoutNanoseconds/static let responseTimeoutNanoseconds/g; s/private struct SnapshotSource/struct SnapshotSource/g; s/private var snapshotSourcesByProfileGuid:/var snapshotSourcesByProfileGuid:/g; s/private var connectionIDByProfileGuid:/var connectionIDByProfileGuid:/g; s/private var highestAcceptedConnectionGenerationByProfileGuid:/var highestAcceptedConnectionGenerationByProfileGuid:/g; s/private var highestAcceptedEpochByProfileGuid:/var highestAcceptedEpochByProfileGuid:/g; s/private var pendingCommands:/var pendingCommands:/g; s/private var commandResultTimeouts:/var commandResultTimeouts:/g; s/private var pendingFocusRequests:/var pendingFocusRequests:/g; s/private var focusResultTimeouts:/var focusResultTimeouts:/g; s/private func handleSnapshotPayload/func handleSnapshotPayload/g; s/private func handleCommandResultPayload/func handleCommandResultPayload/g; s/private func handleFocusResultPayload/func handleFocusResultPayload/g; s/private func hideSilentProfiles/func hideSilentProfiles/g; s/private func handleBrowserTermination/func handleBrowserTermination/g; s/, privacy: \.public//g' \
   "$workdir/ChromiumBrowserExtensionController.swift"
 
-sed -i '/^import AppKit$/d; /^import Combine$/d; /^import os$/d' \
+sed -i '' '/^import AppKit$/d; /^import Combine$/d; /^import os$/d' \
   "$workdir/ChromiumBrowserExtensionController.swift"
 
 cat >"$workdir/Stubs.swift" <<'SWIFT'
