@@ -421,8 +421,9 @@ final class MediaRemoteController: ObservableObject {
     private func armSnapshotRefreshTimeout(requestID: String) {
         snapshotRefreshTimeout?.cancel()
         snapshotRefreshTimeout = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: Self.snapshotRefreshTimeoutNanoseconds)
-            guard let self,
+            guard (try? await Task.sleep(nanoseconds: Self.snapshotRefreshTimeoutNanoseconds)) != nil,
+                  !Task.isCancelled,
+                  let self,
                   self.refreshGate.finish(requestID: requestID)
             else {
                 return
@@ -773,8 +774,9 @@ final class MediaRemoteController: ObservableObject {
     private func armCommandCacheRefreshTimeout(requestID: String) {
         commandRequestTimeouts[requestID]?.cancel()
         commandRequestTimeouts[requestID] = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: Self.commandResultTimeoutNanoseconds)
-            guard let self,
+            guard (try? await Task.sleep(nanoseconds: Self.commandResultTimeoutNanoseconds)) != nil,
+                  !Task.isCancelled,
+                  let self,
                   self.commandCacheRefreshRequestIDs.remove(requestID) != nil
             else {
                 return
@@ -795,8 +797,9 @@ final class MediaRemoteController: ObservableObject {
     ) {
         commandRequestTimeouts[requestID]?.cancel()
         commandRequestTimeouts[requestID] = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: Self.commandResultTimeoutNanoseconds)
-            guard let self,
+            guard (try? await Task.sleep(nanoseconds: Self.commandResultTimeoutNanoseconds)) != nil,
+                  !Task.isCancelled,
+                  let self,
                   let startedAt = self.commandRequestStartedAt.removeValue(forKey: requestID)
             else {
                 return
@@ -822,8 +825,9 @@ final class MediaRemoteController: ObservableObject {
     private func armRouteShieldResultTimeout(requestID: String) {
         commandRequestTimeouts[requestID]?.cancel()
         commandRequestTimeouts[requestID] = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: Self.routeShieldResultTimeoutNanoseconds)
-            guard let self,
+            guard (try? await Task.sleep(nanoseconds: Self.routeShieldResultTimeoutNanoseconds)) != nil,
+                  !Task.isCancelled,
+                  let self,
                   let resultHandler = self.routeShieldResultHandlers.removeValue(forKey: requestID)
             else {
                 return

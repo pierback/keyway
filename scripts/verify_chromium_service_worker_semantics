@@ -3,12 +3,19 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-SERVICE_WORKER_PATH="$repo_root/ChromiumExtension/service_worker.js" node - <<'NODE'
+DOCUMENT_AUTHORITY_PATH="$repo_root/ChromiumExtension/document_authority.js" MEDIA_SOURCE_SELECTION_PATH="$repo_root/ChromiumExtension/media_source_selection.js" SERVICE_WORKER_PATH="$repo_root/ChromiumExtension/service_worker.js" node - <<'NODE'
 const fs = require("fs");
 const vm = require("vm");
 
 const serviceWorkerPath = process.env.SERVICE_WORKER_PATH;
-const code = fs.readFileSync(serviceWorkerPath, "utf8");
+const code = [
+  fs.readFileSync(process.env.DOCUMENT_AUTHORITY_PATH, "utf8").replace(/^export /gm, ""),
+  fs.readFileSync(process.env.MEDIA_SOURCE_SELECTION_PATH, "utf8").replace(/^export /gm, ""),
+  fs.readFileSync(serviceWorkerPath, "utf8").replace(
+    /import\s+\{[\s\S]*?\}\s+from\s+"\.\/(?:document_authority|media_source_selection)\.js";\n?/g,
+    ""
+  ),
+].join("\n") + "\nglobalThis.captureDocumentAuthority = (sender, contentDocumentID) => documentAuthorities.capture(sender, contentDocumentID);";
 const postedMessages = [];
 const intervals = [];
 const timeouts = [];
@@ -1076,12 +1083,19 @@ function assertEqual(actual, expected, message) {
 }
 NODE
 
-SERVICE_WORKER_PATH="$repo_root/ChromiumExtension/service_worker.js" node - <<'NODE'
+DOCUMENT_AUTHORITY_PATH="$repo_root/ChromiumExtension/document_authority.js" MEDIA_SOURCE_SELECTION_PATH="$repo_root/ChromiumExtension/media_source_selection.js" SERVICE_WORKER_PATH="$repo_root/ChromiumExtension/service_worker.js" node - <<'NODE'
 const fs = require("fs");
 const vm = require("vm");
 
 const serviceWorkerPath = process.env.SERVICE_WORKER_PATH;
-const code = fs.readFileSync(serviceWorkerPath, "utf8");
+const code = [
+  fs.readFileSync(process.env.DOCUMENT_AUTHORITY_PATH, "utf8").replace(/^export /gm, ""),
+  fs.readFileSync(process.env.MEDIA_SOURCE_SELECTION_PATH, "utf8").replace(/^export /gm, ""),
+  fs.readFileSync(serviceWorkerPath, "utf8").replace(
+    /import\s+\{[\s\S]*?\}\s+from\s+"\.\/(?:document_authority|media_source_selection)\.js";\n?/g,
+    ""
+  ),
+].join("\n") + "\nglobalThis.captureDocumentAuthority = (sender, contentDocumentID) => documentAuthorities.capture(sender, contentDocumentID);";
 const ports = [];
 const timeouts = [];
 const sessionGetCallbacks = [];
@@ -1212,12 +1226,19 @@ function assertEqual(actual, expected, message) {
 }
 NODE
 
-SERVICE_WORKER_PATH="$repo_root/ChromiumExtension/service_worker.js" node - <<'NODE'
+DOCUMENT_AUTHORITY_PATH="$repo_root/ChromiumExtension/document_authority.js" MEDIA_SOURCE_SELECTION_PATH="$repo_root/ChromiumExtension/media_source_selection.js" SERVICE_WORKER_PATH="$repo_root/ChromiumExtension/service_worker.js" node - <<'NODE'
 const fs = require("fs");
 const vm = require("vm");
 
 const serviceWorkerPath = process.env.SERVICE_WORKER_PATH;
-const code = fs.readFileSync(serviceWorkerPath, "utf8");
+const code = [
+  fs.readFileSync(process.env.DOCUMENT_AUTHORITY_PATH, "utf8").replace(/^export /gm, ""),
+  fs.readFileSync(process.env.MEDIA_SOURCE_SELECTION_PATH, "utf8").replace(/^export /gm, ""),
+  fs.readFileSync(serviceWorkerPath, "utf8").replace(
+    /import\s+\{[\s\S]*?\}\s+from\s+"\.\/(?:document_authority|media_source_selection)\.js";\n?/g,
+    ""
+  ),
+].join("\n") + "\nglobalThis.captureDocumentAuthority = (sender, contentDocumentID) => documentAuthorities.capture(sender, contentDocumentID);";
 const postedMessages = [];
 const intervals = [];
 const scriptExecutions = [];

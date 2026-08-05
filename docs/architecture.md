@@ -2,51 +2,92 @@
 
 ## Overview
 
-The repository is split into two layers:
+Keyway is a macOS menu-bar application with a shared Swift package, two app-owned helper paths, and a Chromium Manifest V3 extension. The architecture is organized by responsibility rather than by process alone:
 
 ```text
-Menu Bar App  ---->  SonosHandoffCore
+SwiftUI / AppKit presentation
+            |
+            v
+macOS app orchestration and mutable UI state
+       |                         |
+       v                         v
+SonosHandoffCore policy      focused process adapters
+(Sonos, Spotify, config)     (MediaRemote and Chromium)
+                                  |
+                    +-------------+-------------+
+                    |                           |
+                    v                           v
+          Perl / MediaRemote helper     Swift native host
+                                                |
+                                                v
+                                      Chromium MV3 extension
+                         content script -> pure policy -> worker
 ```
 
-## Responsibilities
+The menu-bar target is the application composition root. It constructs concrete integrations and publishes state for the UI, but deterministic selection, planning, normalization, and command rules remain independently testable. Process adapters translate bounded contracts; they do not own product policy. Browser API behavior stays inside the extension.
+
+## Layer and dependency rules
+
+1. **Presentation — `SonosHandoffMenuBar` SwiftUI/AppKit views.** Views render published state and send user intent. They do not discover Sonos devices, call Spotify, parse browser messages, own subprocesses, or choose transport routes.
+2. **Application orchestration — controllers in `SonosHandoffMenuBar/.../App`.** Controllers own user-session lifecycle, asynchronous operation gates, request correlation, and publication of UI state. They may depend on core policy and concrete integration adapters. They must not move browser-specific behavior into the app or duplicate deterministic core rules.
+3. **Domain and integration policy — `packages/SonosHandoffCore`.** The package owns shared models, configuration, Sonos and Spotify workflows, normalization, planners, resolvers, verification policies, and command-line composition. It does not import or depend on the menu-bar target.
+4. **Process adapters.** `MediaRemoteHelperProcess`, `MediaRemoteController`, `ChromiumBrowserExtensionController`, and the native host own concrete process/transport lifecycles. Their contracts are intentionally small: newline-delimited helper JSON, distributed-notification payloads, and Chrome native-messaging frames.
+5. **External/runtime-specific implementation.** The Perl/MediaRemote helper and the Chromium extension contain framework- or browser-specific behavior. The extension's pure policy modules do not call Chrome APIs; `service_worker.js` remains the only owner of MV3 lifecycle and browser APIs.
+
+Dependencies flow downward through these layers. Reverse dependencies, circular imports, UI-owned transport policy, native-host-owned product policy, and browser APIs outside the extension are prohibited. A new interface or wrapper is justified only when it establishes a real ownership or process boundary.
+
+## Mutable-state and lifecycle authority
+
+| Authority | Owned state and invariant |
+| --- | --- |
+| `PlaybackSyncController` and focused app action controllers | Current user-facing playback/output state, operation tickets, and cancellation. Results apply only while their ticket and selected/loading target remain current. |
+| `MediaRemoteController` | Helper-pair generation, snapshot refresh gate, pending command/route-shield requests, liveness, timeout tasks, and target publication. One controller owns both helper roles as an atomic pair. |
+| `MediaRemoteHelperProcess` | One subprocess generation, its process and pipes, bounded stdout buffer, and line delivery. A retired generation cannot deliver further buffered lines. |
+| `ChromiumBrowserExtensionController` | Browser profile snapshots, connection generations, pending command/focus requests, profile silence, suspect targets, and app-visible Chromium targets. No other app type mutates this state. |
+| `keyway-chromium-native-host` | One private connection ID and monotonic connection generation, native-message framing, browser-process identity, and notification translation. It never chooses a media candidate or app route. |
+| `service_worker.js` | Profile GUID, native-port generation, snapshot epoch, Chrome listener registration, reconstructed source state, and per-tab command routing. |
+| `DocumentAuthorityRegistry` | Tab/frame/browser-document/content-document authority and monotonic document generations. Late or retired document messages cannot replace current authority. |
+| `media_source_selection.js` | Pure visibility, audibility, route-stickiness, deterministic candidate scoring, and target materialization. It owns no Chrome state. |
+| Each content-script instance | Document ID, media-element IDs, observer/listener lifetime, and publication timer for one frame document. Invalidated extension contexts retire the whole instance. |
+
+## Process and contract boundaries
+
+### MediaRemote helper
+
+The app launches separate snapshot and command helper processes but supervises them as one generation. Requests and events remain newline-delimited JSON. `MediaRemoteHelperProcess` scans each stdout chunk once, retains an unterminated suffix, compacts the shared buffer once, and validates the active run generation before and after every callback. Oversized frames fail the pair instead of being silently discarded. Delayed refresh, cache, command, and route-shield work must stop when its task is cancelled.
+
+### Chromium extension and native host
+
+Native messaging keeps the existing four-byte little-endian length prefix and JSON wire format. The extension sends `hello`, `snapshot`, `keepalive`, command-result, and focus-result messages. The native host enriches snapshots/results with browser identity plus private connection correlation, and strips the private connection token before a command crosses the native wire. The app rejects stale connection generations and stale request results.
+
+Target identity remains:
+
+```text
+chromium-tab:<profile-guid>:<tab-id>
+```
+
+The persisted profile GUID survives service-worker suspension and native-host churn. Frame/media identifiers stay private routing state. `DocumentAuthorityRegistry` rejects late messages from navigated or retired documents. On worker restart, the worker restores persisted profile/epoch metadata, reconnects the native port, rebuilds candidates from content-script probes and tab state, and republishes a canonical snapshot. Listener registration remains top-level and synchronous for MV3 wake-up semantics.
+
+The content script takes one document/open-shadow-root snapshot per publication or command pass and reuses the supported-control result for all media elements in that pass. A synchronous exception or callback-time `chrome.runtime.lastError` reporting `Extension context invalidated.` disconnects its observer and clears its timer.
+
+### Sonos and Spotify
+
+`SonosHandoffCore` owns Sonos discovery, grouping, AVTransport/rendering-control operations, Spotify credential/token flows, transfer, and verification policy. The menu app coordinates these operations and reflects results; it does not duplicate network, XML, token, room-name, or group-planning rules. Concrete network, DNS-SD, keychain, AppleEvent, and file access stay behind their existing focused integration boundaries.
+
+## Repository responsibilities
 
 ### `SonosHandoffMenuBar`
 
-- owns the native macOS status item lifecycle
-- exposes transfer, settings, Output volume, and Output mute actions
-- keeps the native-style Sound drop-down presentation in the Menu Bar View Module
-- keeps Output discovery, grouped Output selection, transfer progress, group editing, volume writes, slider debounce, and external volume reconciliation in the Playback Sync Module
-- keeps global shortcut registration and key-repeat handling in the Shortcut Runtime Module
-- keeps temporary shortcut and external-volume feedback in the Status HUD Module
-- logs and displays the Port's reported volume and fixed-output state for volume troubleshooting
-- registers Carbon global hotkeys for `Shift+F10/F11/F12`
-- enables the held `fn+F10/F11/F12` key-intercept path only after Accessibility permission allows the app to intercept and suppress native media/function-key events
-- delegates all non-UI work to `SonosHandoffCore`
+- owns the native status item, menu, overlays, settings, shortcut runtime, HUD, permission onboarding, and app lifecycle;
+- coordinates Output discovery and selection, transfer progress, group editing, volume actions, external-volume reconciliation, media-source routing, and helper/native-host lifecycle;
+- keeps UI modules limited to rendering and intent forwarding;
+- composes `SonosHandoffCore` and the concrete macOS/Chromium adapters.
 
 ### `SonosHandoffCore`
 
-- shared models and errors
-- config loading and saving
-- keychain abstraction
-- Spotify token status and playback-state verification boundaries
-- Accessibility permission boundary
-- public handoff Adapter through `SpotifyConnectHandoffService`
-- direct composition of the Sonos and Spotify workflow services in `SpotifyConnectHandoffService`
-- Sonos Directory for actor-owned Output target resolution, speaker discovery, Spotify zeroconf metadata lookup, and target caching
-- Sonos Volume Service for room-name volume actions and Spotify volume mirror handoff
-- Spotify Connect Bridge for active Spotify device lookup and verification
-- Spotify Connect Transfer Service for `addUser` activation and readiness verification
-- Sonos Transfer Verification for bounded AVTransport readiness checks after activation
-- Sonos Speaker Discovery for bounded local-network Output list discovery
-- Sonos Room Name and Sonos Output Selection Resolver for shared room matching and visible selected-Output rules
-- Speaker Volume Control State for shared selected-Output volume UI state transitions
-- Sonos DNS-SD Resolver for shared Sonos browse and host resolution
-- Sonos Spotify Zeroconf Client for Sonos `/spotifyzc` request construction and response validation
-- Sonos Rendering Control for volume, mute, fixed-output status, and volume status
-- Spotify Connect Bridge for Spotify Desktop token refresh, Sonos authorization-code exchange, active-device verification, and active-device volume mirroring
-- Spotify Desktop Credential Provider for Desktop Connect token selection, refresh, and persistence
-- Spotify Connect Token Client for Spotify Accounts token refresh and Spotify Connect token exchange
-- Spotify Project Access Token Provider for Web API token readiness and refresh
+- owns shared models, errors, configuration, keychain abstractions, deterministic policy, and the public handoff adapter;
+- composes Sonos discovery, grouping, rendering control, AVTransport verification, Spotify Connect/Desktop/Web API token flows, transfer, active-device verification, and volume mirroring;
+- supplies the same behavior to the menu app, helper executables, semantic harnesses, and `sonos-handoff-port` without depending on presentation code.
 
 ## Important Modules
 
@@ -94,7 +135,7 @@ Menu Bar App  ---->  SonosHandoffCore
 
 ### Shortcut Runtime
 
-`VolumeHotkeyController` is the app seam for global volume shortcuts. It owns shortcut policy: parsed shortcut outcomes, held-key repeat coalescing, Carbon duplicate suppression, mute handling, and volume intent dispatch. `AppDelegate` configures it with the same live App Environment used by the menu, so shortcuts do not construct a separate `SpotifyConnectHandoffService` or `ConfigStore`. `ShortcutCarbonHotKeyRegistrar` owns Carbon handler installation and plain function-key registration. `ShortcutEventTap` owns the Accessibility-gated `CGEvent` tap lifecycle and is the sole handler for `Shift+fn+F10/F11/F12`, so fn shortcuts cannot double-fire through Carbon and the event tap. `ShortcutEventParser` owns OS key-code decoding. `ShortcutRuntimeReporter` owns shortcut readiness transitions into `ShortcutRuntimeStatus`, including Accessibility permission, fn fallback state, and Carbon registration state. `ShortcutVolumeActionController` owns live Output lookup through Playback Output Selection, in-flight shortcut write coalescing, HUD feedback, and Volume Monitor echo suppression. Shortcut volume writes cross the shared Speaker Volume Command Queue seam, shared live volume Adapter, and shared selected-Output seam, so shortcut writes, menu writes, monitor reads, and Spotify volume mirroring stay ordered inside one runtime graph. The result is locality: Carbon, event-tap, key decoding, status reporting, and Sonos volume writes can change independently.
+`VolumeHotkeyController` is the app seam for global volume shortcuts. It owns shortcut policy: parsed shortcut outcomes, held-key repeat coalescing, cross-source Carbon/event-tap duplicate suppression, mute handling, and volume intent dispatch. `AppDelegate` configures it with the same live App Environment used by the menu, so shortcuts do not construct a separate `SpotifyConnectHandoffService` or `ConfigStore`. `ShortcutCarbonHotKeyRegistrar` owns Carbon handler installation and plain function-key registration. `ShortcutEventTap` owns the Accessibility-gated `CGEvent` tap lifecycle for hardware media keys and `Shift+fn+F10/F11/F12`; the Shortcut Runtime coalesces the duplicate callback when macOS also delivers the same physical press through Carbon. `ShortcutEventParser` owns OS key-code decoding. `ShortcutRuntimeReporter` owns shortcut readiness transitions into `ShortcutRuntimeStatus`, including Accessibility permission, fn fallback state, and Carbon registration state. `ShortcutVolumeActionController` owns live Output lookup through Playback Output Selection, in-flight shortcut write coalescing, HUD feedback, and Volume Monitor echo suppression. Shortcut volume writes cross the shared Speaker Volume Command Queue seam, shared live volume Adapter, and shared selected-Output seam, so shortcut writes, menu writes, monitor reads, and Spotify volume mirroring stay ordered inside one runtime graph. The result is locality: Carbon, event-tap, key decoding, status reporting, and Sonos volume writes can change independently.
 
 ### Media Target Router
 

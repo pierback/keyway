@@ -6,6 +6,7 @@ workdir="$(mktemp -d)"
 trap 'rm -rf "$workdir"' EXIT
 
 cp "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaSourceStore.swift" "$workdir/MediaSourceStore.swift"
+sed -i '/^import Combine$/d' "$workdir/MediaSourceStore.swift"
 
 if grep -q 'try!' "$workdir/MediaSourceStore.swift"; then
   echo "verify_source_store_semantics: MediaSourceStore.swift must not use try! (crashes on task cancellation; use try?)" >&2
@@ -13,8 +14,113 @@ if grep -q 'try!' "$workdir/MediaSourceStore.swift"; then
 fi
 
 cat >"$workdir/SourceStoreStubs.swift" <<'SWIFT'
-import Combine
 import Foundation
+
+protocol ObservableObject {}
+
+final class AnyCancellable {
+    private var cancelAction: (() -> Void)?
+
+    init(_ cancelAction: @escaping () -> Void = {}) {
+        self.cancelAction = cancelAction
+    }
+
+    func cancel() {
+        cancelAction?()
+        cancelAction = nil
+    }
+
+    deinit {
+        cancel()
+    }
+}
+
+final class TestPublisher<Output> {
+    private let subscribeAction: (@escaping (Output) -> Void) -> AnyCancellable
+
+    init(subscribe: @escaping (@escaping (Output) -> Void) -> AnyCancellable) {
+        subscribeAction = subscribe
+    }
+
+    func sink(receiveValue: @escaping (Output) -> Void) -> AnyCancellable {
+        subscribeAction(receiveValue)
+    }
+
+    func map<Transformed>(_ transform: @escaping (Output) -> Transformed) -> TestPublisher<Transformed> {
+        TestPublisher<Transformed> { receiveValue in
+            self.sink { output in receiveValue(transform(output)) }
+        }
+    }
+
+    func dropFirst(_ count: Int = 1) -> TestPublisher<Output> {
+        TestPublisher<Output> { receiveValue in
+            var remaining = count
+            return self.sink { output in
+                if remaining > 0 {
+                    remaining -= 1
+                } else {
+                    receiveValue(output)
+                }
+            }
+        }
+    }
+
+    func removeDuplicates() -> TestPublisher<Output> where Output: Equatable {
+        TestPublisher<Output> { receiveValue in
+            var previous: Output?
+            return self.sink { output in
+                guard previous != output else { return }
+                previous = output
+                receiveValue(output)
+            }
+        }
+    }
+}
+
+final class TestSubject<Value> {
+    private var value: Value
+    private var observers: [UUID: (Value) -> Void] = [:]
+
+    init(_ value: Value) {
+        self.value = value
+    }
+
+    lazy var publisher = TestPublisher<Value> { [weak self] receiveValue in
+        guard let self else { return AnyCancellable() }
+        let id = UUID()
+        observers[id] = receiveValue
+        receiveValue(value)
+        return AnyCancellable { [weak self] in self?.observers.removeValue(forKey: id) }
+    }
+
+    func send(_ value: Value) {
+        self.value = value
+        for observer in observers.values {
+            observer(value)
+        }
+    }
+}
+
+@propertyWrapper
+final class Published<Value> {
+    private var value: Value
+    private let subject: TestSubject<Value>
+
+    init(wrappedValue: Value) {
+        value = wrappedValue
+        subject = TestSubject(wrappedValue)
+    }
+
+    var wrappedValue: Value {
+        get { value }
+        set {
+            value = newValue
+            subject.send(newValue)
+        }
+    }
+
+    var projectedValue: TestPublisher<Value> { subject.publisher }
+}
 
 enum MediaRemoteTransportCommand: String, Equatable, Sendable {
     case play
@@ -93,7 +199,6 @@ final class MediaRemoteController: ObservableObject {
 SWIFT
 
 cat >"$workdir/SourceStoreSemantics.swift" <<'SWIFT'
-import Combine
 import Foundation
 
 @main

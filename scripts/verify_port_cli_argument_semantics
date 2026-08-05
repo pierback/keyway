@@ -4,9 +4,91 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PACKAGE_DIR="$ROOT_DIR/packages/SonosHandoffCore"
 SOURCE="$PACKAGE_DIR/Sources/SonosHandoffPortCLI/main.swift"
+workdir="$(mktemp -d)"
+trap 'rm -rf "$workdir"' EXIT
 
-swift build --disable-sandbox --package-path "$PACKAGE_DIR" --product sonos-handoff-port >/dev/null
-CLI="$(swift build --disable-sandbox --package-path "$PACKAGE_DIR" --show-bin-path)/sonos-handoff-port"
+cp "$SOURCE" "$workdir/main.swift"
+sed -i '/^import SonosHandoffCore$/d' "$workdir/main.swift"
+
+cat >"$workdir/Stubs.swift" <<'SWIFT'
+import Foundation
+
+enum SpotifyPlaybackCommand: String {
+    case play
+    case pause
+    case playPause
+    case next
+    case previous
+}
+
+enum HandoffVerification {
+    case full
+}
+
+enum HandoffResult {
+    case success
+    case failure(code: Int?, message: String)
+}
+
+struct VolumeStatus {
+    let volume: Int
+    let outputFixed: Bool
+    let muted: Bool
+}
+
+struct ActivePlaybackStatus {
+    let deviceName: String
+    let type: String
+    let isRestricted: Bool
+    let volumePercent: Int?
+    let isPlaying: Bool
+    let itemName: String?
+    let itemURI: String?
+}
+
+struct PlaybackDevice {
+    let name: String
+    let type: String
+    let isActive: Bool
+    let isRestricted: Bool
+}
+
+struct SonosTransportStatus {
+    let currentURI: String
+    let transportState: String
+}
+
+struct SpotifyConnectHandoffService {
+    init(loginID: String?) {}
+
+    func transfer(toRoomName: String, verification: HandoffVerification) async -> HandoffResult {
+        .failure(code: nil, message: "test stub")
+    }
+
+    func volumeUp(roomName: String, step: Int) async throws -> Int { 0 }
+    func volumeDown(roomName: String, step: Int) async throws -> Int { 0 }
+    func setVolume(roomName: String, volume: Int) async throws -> Int { volume }
+    func volumeStatus(roomName: String) async throws -> VolumeStatus {
+        VolumeStatus(volume: 0, outputFixed: false, muted: false)
+    }
+    func toggleMute(roomName: String) async throws -> Bool { false }
+    func setMute(roomName: String, muted: Bool) async throws -> Bool { muted }
+    func activePlaybackDeviceStatus() async throws -> ActivePlaybackStatus? { nil }
+    func availablePlaybackDevices() async throws -> [PlaybackDevice] { [] }
+    func startActivePlayback(spotifyURI: String?, deviceName: String?, deviceType: String?) async throws {}
+    func sendActivePlaybackCommand(_ command: SpotifyPlaybackCommand) async throws {}
+    func sonosTransportStatus(roomName: String) async throws -> SonosTransportStatus {
+        SonosTransportStatus(currentURI: "", transportState: "STOPPED")
+    }
+}
+SWIFT
+
+swiftc \
+  -module-cache-path "$workdir/module-cache" \
+  "$workdir/Stubs.swift" \
+  "$workdir/main.swift" \
+  -o "$workdir/sonos-handoff-port"
+CLI="$workdir/sonos-handoff-port"
 
 python3 - "$SOURCE" "$CLI" <<'PY'
 import subprocess

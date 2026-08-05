@@ -6,6 +6,7 @@ workdir="$(mktemp -d)"
 trap 'rm -rf "$workdir"' EXIT
 
 cp "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportTargetResolver.swift" "$workdir/"
+sed -i '/^import AppKit$/d' "$workdir/MediaTransportTargetResolver.swift"
 
 perl -0pi -e 's/NSWorkspace/ResolverWorkspace/g' "$workdir/MediaTransportTargetResolver.swift"
 perl -0pi -e 's/NSRunningApplication/ResolverRunningApplication/g' "$workdir/MediaTransportTargetResolver.swift"
@@ -16,8 +17,76 @@ perl -0pi -e 's/CGDisplayBounds/ResolverDisplayBounds/g' "$workdir/MediaTranspor
 perl -0pi -e 's/private func target\(forProcessID/func target(forProcessID/' "$workdir/MediaTransportTargetResolver.swift"
 
 cat >"$workdir/Stubs.swift" <<'SWIFT'
-import AppKit
 import Foundation
+
+typealias CGFloat = Double
+typealias pid_t = Int32
+
+struct CGPoint: Equatable {
+    let x: CGFloat
+    let y: CGFloat
+    static let zero = CGPoint(x: 0, y: 0)
+}
+
+struct CGRect: Equatable {
+    let x: CGFloat
+    let y: CGFloat
+    let width: CGFloat
+    let height: CGFloat
+
+    static let zero = CGRect(x: 0, y: 0, width: 0, height: 0)
+
+    var minX: CGFloat { x }
+    var minY: CGFloat { y }
+    var maxX: CGFloat { x + width }
+    var maxY: CGFloat { y + height }
+    var midX: CGFloat { x + width / 2 }
+    var midY: CGFloat { y + height / 2 }
+    var isNull: Bool { false }
+    var isEmpty: Bool { width <= 0 || height <= 0 }
+
+    func contains(_ point: CGPoint) -> Bool {
+        point.x >= minX && point.x <= maxX && point.y >= minY && point.y <= maxY
+    }
+
+    func intersection(_ other: CGRect) -> CGRect {
+        let left = max(minX, other.minX)
+        let bottom = max(minY, other.minY)
+        let right = min(maxX, other.maxX)
+        let top = min(maxY, other.maxY)
+        guard right > left, top > bottom else {
+            return .zero
+        }
+        return CGRect(x: left, y: bottom, width: right - left, height: top - bottom)
+    }
+}
+
+struct NSDeviceDescriptionKey: Hashable, RawRepresentable {
+    let rawValue: String
+
+    init(rawValue: String) {
+        self.rawValue = rawValue
+    }
+
+    init(_ rawValue: String) {
+        self.rawValue = rawValue
+    }
+}
+
+typealias CGDirectDisplayID = UInt32
+typealias CGWindowID = UInt32
+
+struct CGWindowListOption: OptionSet {
+    let rawValue: UInt32
+    static let optionOnScreenOnly = CGWindowListOption(rawValue: 1 << 0)
+    static let excludeDesktopElements = CGWindowListOption(rawValue: 1 << 1)
+}
+
+let kCGNullWindowID: CGWindowID = 0
+let kCGWindowLayer = "kCGWindowLayer"
+let kCGWindowAlpha = "kCGWindowAlpha"
+let kCGWindowOwnerPID = "kCGWindowOwnerPID"
+let kCGWindowBounds = "kCGWindowBounds"
 
 enum MediaRemoteTransportCommand: String {
     case playPause
@@ -131,8 +200,8 @@ enum ResolverEvent {
 var resolverWindowInfo: [[String: Any]] = []
 var resolverDisplayBounds: [CGDirectDisplayID: CGRect] = [:]
 
-func ResolverWindowListCopyWindowInfo(_ option: CGWindowListOption, _ relativeToWindow: CGWindowID) -> CFArray? {
-    resolverWindowInfo as CFArray
+func ResolverWindowListCopyWindowInfo(_ option: CGWindowListOption, _ relativeToWindow: CGWindowID) -> Any? {
+    resolverWindowInfo
 }
 
 func ResolverDisplayBounds(_ displayID: CGDirectDisplayID) -> CGRect {
@@ -141,7 +210,6 @@ func ResolverDisplayBounds(_ displayID: CGDirectDisplayID) -> CGRect {
 SWIFT
 
 cat >"$workdir/Semantics.swift" <<'SWIFT'
-import AppKit
 import Foundation
 
 @main

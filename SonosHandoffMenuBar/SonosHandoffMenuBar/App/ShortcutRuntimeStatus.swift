@@ -46,7 +46,7 @@ struct ShortcutRuntimeSnapshot {
 
     var message: String {
         if isReady {
-            return "Shift+fn+F10/F11/F12 enabled; step \(step)%"
+            return "Volume and mute media keys enabled; step \(step)%"
         }
 
         if mediaFallback == .starting, eventTapRunning {

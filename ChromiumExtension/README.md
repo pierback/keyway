@@ -10,12 +10,77 @@ The profile GUID is minted once by the extension and persisted in `chrome.storag
 
 ## Architecture
 
-- `content_script.js` discovers `video` and `audio` elements in each page/frame and reports title, page title, URL, playback state, duration, and elapsed time.
-- `service_worker.js` aggregates media candidates into one live source per tab/session and talks to Chrome native messaging.
-- `keyway-chromium-native-host` bridges native messages into Keyway with distributed notifications.
-- `ChromiumBrowserExtensionController` merges browser targets into Keyway's existing media target list and routes browser commands back through the native host.
+```text
+page/frame content_script.js
+          |
+          v
+DocumentAuthorityRegistry + media_source_selection.js
+          |
+          v
+service_worker.js (Chrome lifecycle and native port)
+          |
+   Chrome native messaging
+          |
+          v
+keyway-chromium-native-host
+          |
+ distributed notifications
+          |
+          v
+ChromiumBrowserExtensionController
+```
+
+- `content_script.js` owns one frame document. It discovers `video` and `audio` elements, assigns document-local media IDs, reports state, and applies commands to the selected element or a page-backed control. Each publication or command pass scans the document and open shadow roots once and reuses that snapshot. Re-injection is idempotent. An invalidated extension context disconnects the mutation observer and clears the heartbeat timer.
+- `document_authority.js` is a pure `DocumentAuthorityRegistry`. It is the sole authority for tab, frame, browser-document, content-document, and monotonic document-generation matching. Navigated or retired documents cannot publish late state into a newer page.
+- `media_source_selection.js` is pure policy for visibility, audibility, route stickiness, deterministic candidate scoring, source refresh, and target materialization. It has no Chrome API dependency and is exercised directly by Node semantic tests.
+- `service_worker.js` owns all Chrome APIs and MV3 lifecycle: top-level listener registration, persisted profile GUID, native-port generation, snapshot epoch, suspension/reconnect recovery, tab/frame events, candidate maps, command routing, and snapshot publication. It delegates document authority and selection policy to the pure modules.
+- `keyway-chromium-native-host` owns four-byte little-endian native-message framing, parent-browser identity, JSON validation/enrichment, private connection correlation, and distributed-notification translation. It does not select media or own app state.
+- `ChromiumBrowserExtensionController` is the app-side mutable authority for profile snapshots, native-host connection generations, pending command/focus requests, silence detection, stale-result rejection, and publication into Keyway's media target list.
 
 The browser backend supports `play`, `pause`, `playPause`, `mute`, and volume delta. Browser `next` and `previous` are exposed only when the page provides a usable track control, such as Spotify Web or YouTube skip controls; generic `<audio>` and `<video>` elements still report those commands as unsupported.
+
+## Identity, ordering, and recovery
+
+The canonical app-visible target ID remains:
+
+```text
+chromium-tab:<profile-guid>:<tab-id>
+```
+
+The profile GUID is persisted in `chrome.storage.local`, so target identity survives service-worker suspension and native-host process churn. Frame IDs, browser document IDs, content document IDs, media IDs, and candidate keys remain private route state.
+
+Every native-host process owns a private `connectionID` and a monotonic `connectionGeneration`. Snapshots and results are stamped with both values before they enter the app process. Commands must match the current connection ID; the host removes that private token before writing to Chrome. The app rejects stale generations and stale request IDs, so a late response from a retired browser/host connection cannot complete a newer request.
+
+MV3 listeners remain registered synchronously at module evaluation. After suspension or worker restart, the worker reloads persisted profile/epoch metadata, opens a new native port generation, probes current tabs/frames, reconstructs media candidates from fresh content-script state, and republishes one canonical snapshot. Port disconnects retire only that port generation; callbacks from older generations are ignored.
+
+## Verification
+
+Focused semantics are covered by:
+
+```bash
+scripts/verify_chromium_content_script_semantics
+scripts/verify_chromium_worker_policy_semantics
+scripts/verify_chromium_service_worker_semantics
+scripts/verify_chromium_generation_semantics
+scripts/verify_chromium_native_host_protocol_semantics
+scripts/verify_chromium_extension_transport_semantics
+```
+
+These tests exercise page-snapshot reuse, context retirement, navigation authority, candidate selection and stickiness, service-worker suspension/reconstruction, stale-port rejection, native framing/correlation, and app-side stale-result handling. Live browser/native-host smoke still requires macOS and a supported Chromium browser.
+
+## Distribution
+
+Public macOS distribution goes through the Chrome Web Store. Chrome and Chromium browsers allow an unpacked extension for local development, but ordinary macOS users cannot install a self-hosted extension directly; self-hosting is limited to managed enterprise browsers.
+
+The notarized release builder creates both deliverables:
+
+```bash
+scripts/build_notarized_app
+```
+
+Upload `.build/distribution/Keyway-Chromium-Extension-<version>.zip` in the Chrome Developer Dashboard. The ZIP contains `manifest.json` at its root, as required by the store.
+
+Before the first public submission, compare the dashboard Item ID with `ChromiumBrowserExtensionTransport.extensionID`. If they differ, copy the dashboard public key into `manifest.json`, update the Swift extension ID to the resulting Item ID, and rebuild both release archives. The IDs must match because Chrome native-messaging manifests accept explicit extension origins and do not allow a wildcard.
 
 ## Local Install
 

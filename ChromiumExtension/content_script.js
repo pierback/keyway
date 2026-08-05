@@ -100,11 +100,13 @@ function mediaIdFor(element) {
   return id;
 }
 
-function mediaElements() {
-  const elements = [];
+function scanPage() {
+  const mediaElements = [];
+  const roots = [];
   const visit = root => {
+    roots.push(root);
     for (const element of root.querySelectorAll("video,audio")) {
-      elements.push(element);
+      mediaElements.push(element);
     }
     for (const element of root.querySelectorAll("*")) {
       if (element.shadowRoot) visit(element.shadowRoot);
@@ -112,7 +114,16 @@ function mediaElements() {
   };
 
   visit(document);
-  return elements;
+  return { mediaElements, roots };
+}
+
+function querySelectorInRoots(roots, selector) {
+  for (const root of roots) {
+    if (typeof root.matches === "function" && root.matches(selector)) return root;
+    const match = typeof root.querySelector === "function" ? root.querySelector(selector) : null;
+    if (match) return match;
+  }
+  return null;
 }
 
 function isClickable(element) {
@@ -121,16 +132,16 @@ function isClickable(element) {
   return rect.width > 0 && rect.height > 0;
 }
 
-function trackControl(command) {
+function trackControl(command, roots) {
   const selectors = trackControlSelectors[command] || [];
   for (const selector of selectors) {
-    const element = querySelectorDeep(document, selector);
+    const element = querySelectorInRoots(roots, selector);
     if (isClickable(element)) return element;
   }
   return null;
 }
 
-function playbackControl(command, element) {
+function playbackControl(command, element, page) {
   const commands = command === "playPause"
     ? (element.paused || element.ended ? ["play", "playPause"] : ["pause", "playPause"])
     : [command];
@@ -145,12 +156,12 @@ function playbackControl(command, element) {
     const root = typeof scope.getRootNode === "function" ? scope.getRootNode() : null;
     scope = scope.parentElement || root?.host || null;
   }
-  if (mediaElements().length !== 1) {
+  if (page.mediaElements.length !== 1) {
     return null;
   }
   for (const name of commands) {
     for (const selector of playbackControlSelectors[name] || []) {
-      const control = querySelectorDeep(document, selector);
+      const control = querySelectorInRoots(page.roots, selector);
       if (isClickable(control)) return control;
     }
   }
@@ -172,10 +183,10 @@ function querySelectorDeep(root, selector) {
   return null;
 }
 
-function supportedCommands() {
+function supportedCommands(roots) {
   const commands = baseSupportedCommands.slice();
-  if (trackControl("next")) commands.push("next");
-  if (trackControl("previous")) commands.push("previous");
+  if (trackControl("next", roots)) commands.push("next");
+  if (trackControl("previous", roots)) commands.push("previous");
   return commands;
 }
 
@@ -226,7 +237,9 @@ function sendRuntimeMessage(message) {
   }
 
   try {
-    chrome.runtime.sendMessage(message);
+    chrome.runtime.sendMessage(message, () => {
+      retireIfExtensionContextInvalidated(chrome.runtime.lastError);
+    });
     return true;
   } catch {
     retireBridge();
@@ -234,7 +247,7 @@ function sendRuntimeMessage(message) {
   }
 }
 
-function publishElement(element) {
+function publishElement(element, commands = null) {
   runBridgeTask(() => {
     if (!isUsableMedia(element)) {
       sendRuntimeMessage({
@@ -267,14 +280,16 @@ function publishElement(element) {
       elapsedTime: element.currentTime,
       hasMediaSessionMetadata,
       hasPlaybackActivity,
-      supportedCommands: supportedCommands(),
+      supportedCommands: commands || supportedCommands(scanPage().roots),
     });
   });
 }
 
-function publishAll() {
+function publishAll(page = null) {
   runBridgeTask(() => {
-    for (const element of mediaElements()) publishElement(element);
+    const snapshot = page || scanPage();
+    const commands = supportedCommands(snapshot.roots);
+    for (const element of snapshot.mediaElements) publishElement(element, commands);
   });
 }
 
@@ -283,7 +298,8 @@ function applyCommand(message) {
     return Promise.resolve({ ok: false, message: "Media document is no longer available." });
   }
 
-  const element = runBridgeTask(() => mediaElements().find(element => mediaIdFor(element) === message.mediaId));
+  const page = runBridgeTask(scanPage);
+  const element = page?.mediaElements.find(element => mediaIdFor(element) === message.mediaId);
   if (!element) {
     return Promise.resolve({ ok: false, message: "Media element is no longer available." });
   }
@@ -292,7 +308,7 @@ function applyCommand(message) {
     if (!element.paused && !element.ended) {
       return Promise.resolve({ ok: true, message: "already playing" });
     }
-    const control = playbackControl(message.command, element);
+    const control = playbackControl(message.command, element, page);
     if (control) {
       control.click();
       return Promise.resolve({ ok: true, message: "playing" });
@@ -304,7 +320,7 @@ function applyCommand(message) {
     if (element.paused || element.ended) {
       return Promise.resolve({ ok: true, message: "already paused" });
     }
-    const control = playbackControl(message.command, element);
+    const control = playbackControl(message.command, element, page);
     if (control) {
       control.click();
       return Promise.resolve({ ok: true, message: "paused" });
@@ -314,7 +330,7 @@ function applyCommand(message) {
   }
 
   if (message.command === "playPause") {
-    const control = playbackControl(message.command, element);
+    const control = playbackControl(message.command, element, page);
     if (control) {
       const wasPaused = element.paused || element.ended;
       control.click();
@@ -333,7 +349,7 @@ function applyCommand(message) {
   }
 
   if (message.command === "next" || message.command === "previous") {
-    const control = trackControl(message.command);
+    const control = trackControl(message.command, page.roots);
     if (!control) {
       return Promise.resolve({ ok: false, unsupported: true, message: `${message.command} is unsupported for this Chromium page.` });
     }
@@ -344,18 +360,20 @@ function applyCommand(message) {
   return Promise.resolve({ ok: false, unsupported: true, message: `${message.command} is unsupported for this Chromium media element.` });
 }
 
-function observeElement(element) {
+function observeElement(element, commands = null) {
   if (observedMedia.has(element)) return;
   observedMedia.add(element);
   for (const eventName of ["play", "pause", "volumechange", "durationchange", "timeupdate", "loadedmetadata", "emptied", "abort", "ended"]) {
     element.addEventListener(eventName, () => publishElement(element), { passive: true });
   }
-  publishElement(element);
+  publishElement(element, commands);
 }
 
 const observer = new MutationObserver(() => {
   runBridgeTask(() => {
-    for (const element of mediaElements()) observeElement(element);
+    const page = scanPage();
+    const commands = supportedCommands(page.roots);
+    for (const element of page.mediaElements) observeElement(element, commands);
   });
 });
 

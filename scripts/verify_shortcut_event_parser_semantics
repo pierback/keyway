@@ -8,8 +8,124 @@ trap 'rm -rf "$workdir"' EXIT
 harness="$workdir/shortcut-event-parser-harness.swift"
 
 cat >"$harness" <<'SWIFT'
-import AppKit
-import ApplicationServices
+import Foundation
+
+typealias CGKeyCode = UInt16
+typealias CGEventMask = UInt64
+
+struct CGPoint {
+    let x: Double
+    let y: Double
+    static let zero = CGPoint(x: 0, y: 0)
+}
+
+struct CGEventType: RawRepresentable, Equatable {
+    let rawValue: UInt32
+
+    init?(rawValue: UInt32) {
+        self.rawValue = rawValue
+    }
+
+    static let keyDown = CGEventType(rawValue: 10)!
+    static let keyUp = CGEventType(rawValue: 11)!
+}
+
+enum CGEventField: Hashable {
+    case eventSourceUnixProcessID
+    case eventSourceStateID
+    case eventSourceUserData
+    case eventTargetUnixProcessID
+    case eventSourceUserID
+    case eventSourceGroupID
+    case keyboardEventKeycode
+}
+
+struct CGEventFlags: OptionSet {
+    let rawValue: UInt64
+    static let maskSecondaryFn = CGEventFlags(rawValue: 1 << 0)
+    static let maskShift = CGEventFlags(rawValue: 1 << 1)
+}
+
+final class CGEventSource {}
+
+final class CGEvent {
+    private var integerFields: [CGEventField: Int64] = [:]
+    var flags: CGEventFlags = []
+    var timestamp: UInt64 = 0
+    var systemDefinedData1 = 0
+    var systemDefinedSubtype = 0
+    var systemDefinedModifierFlags: NSEvent.ModifierFlags = []
+
+    init() {}
+
+    convenience init?(keyboardEventSource: CGEventSource?, virtualKey: CGKeyCode, keyDown: Bool) {
+        self.init()
+        setIntegerValueField(.keyboardEventKeycode, value: Int64(virtualKey))
+    }
+
+    func setIntegerValueField(_ field: CGEventField, value: Int64) {
+        integerFields[field] = value
+    }
+
+    func getIntegerValueField(_ field: CGEventField) -> Int64 {
+        integerFields[field] ?? 0
+    }
+}
+
+final class NSEvent {
+    enum EventType {
+        case systemDefined
+    }
+
+    struct ModifierFlags: OptionSet {
+        let rawValue: UInt64
+        static let shift = ModifierFlags(rawValue: 1 << 0)
+    }
+
+    struct EventSubtype {
+        let rawValue: Int
+    }
+
+    let subtype: EventSubtype
+    let data1: Int
+    let modifierFlags: ModifierFlags
+    private let backingEvent: CGEvent
+
+    init?(cgEvent: CGEvent) {
+        subtype = EventSubtype(rawValue: cgEvent.systemDefinedSubtype)
+        data1 = cgEvent.systemDefinedData1
+        modifierFlags = cgEvent.systemDefinedModifierFlags
+        backingEvent = cgEvent
+    }
+
+    private init(subtype: Int, data1: Int, modifierFlags: ModifierFlags) {
+        self.subtype = EventSubtype(rawValue: subtype)
+        self.data1 = data1
+        self.modifierFlags = modifierFlags
+        backingEvent = CGEvent()
+        backingEvent.systemDefinedSubtype = subtype
+        backingEvent.systemDefinedData1 = data1
+        backingEvent.systemDefinedModifierFlags = modifierFlags
+    }
+
+    static func otherEvent(
+        with type: EventType,
+        location: CGPoint,
+        modifierFlags: ModifierFlags,
+        timestamp: TimeInterval,
+        windowNumber: Int,
+        context: Any?,
+        subtype: Int,
+        data1: Int,
+        data2: Int
+    ) -> NSEvent? {
+        NSEvent(subtype: subtype, data1: data1, modifierFlags: modifierFlags)
+    }
+
+    var cgEvent: CGEvent? {
+        backingEvent
+    }
+}
 
 enum MediaRemoteTransportCommand: String, Equatable {
     case play

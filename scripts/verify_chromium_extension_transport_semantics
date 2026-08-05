@@ -5,15 +5,95 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 workdir="$(mktemp -d)"
 trap 'rm -rf "$workdir"' EXIT
 
-cp \
-  "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionTransport.swift" \
-  "$workdir/ChromiumBrowserExtensionTransport.swift"
+for source in \
+  ChromiumBrowserExtensionTransport.swift \
+  ChromiumBrowserExtensionMessages.swift \
+  ChromiumBrowserExtensionController.swift
+ do
+  cp \
+    "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/$source" \
+    "$workdir/$source"
+ done
 
-perl -0pi -e 's/private struct SnapshotSource/struct SnapshotSource/g; s/private var snapshotSourcesByProfileGuid:/var snapshotSourcesByProfileGuid:/g; s/private var connectionIDByProfileGuid:/var connectionIDByProfileGuid:/g; s/private var highestAcceptedConnectionGenerationByProfileGuid:/var highestAcceptedConnectionGenerationByProfileGuid:/g; s/private var highestAcceptedEpochByProfileGuid:/var highestAcceptedEpochByProfileGuid:/g; s/private var pendingCommands:/var pendingCommands:/g; s/private var commandResultTimeouts:/var commandResultTimeouts:/g; s/private var pendingFocusRequests:/var pendingFocusRequests:/g; s/private var focusResultTimeouts:/var focusResultTimeouts:/g; s/private func handleSnapshotPayload/func handleSnapshotPayload/g; s/private func handleCommandResultPayload/func handleCommandResultPayload/g; s/private func handleFocusResultPayload/func handleFocusResultPayload/g; s/private func hideSilentProfiles/func hideSilentProfiles/g; s/private func handleBrowserTermination/func handleBrowserTermination/g; s/private struct ChromiumBrowserExtensionPendingCommand/struct ChromiumBrowserExtensionPendingCommand/g; s/private struct ChromiumBrowserExtensionPendingFocus/struct ChromiumBrowserExtensionPendingFocus/g' \
-  "$workdir/ChromiumBrowserExtensionTransport.swift"
+perl -0pi -e 's/private static let responseTimeoutNanoseconds/static let responseTimeoutNanoseconds/g; s/private struct SnapshotSource/struct SnapshotSource/g; s/private var snapshotSourcesByProfileGuid:/var snapshotSourcesByProfileGuid:/g; s/private var connectionIDByProfileGuid:/var connectionIDByProfileGuid:/g; s/private var highestAcceptedConnectionGenerationByProfileGuid:/var highestAcceptedConnectionGenerationByProfileGuid:/g; s/private var highestAcceptedEpochByProfileGuid:/var highestAcceptedEpochByProfileGuid:/g; s/private var pendingCommands:/var pendingCommands:/g; s/private var commandResultTimeouts:/var commandResultTimeouts:/g; s/private var pendingFocusRequests:/var pendingFocusRequests:/g; s/private var focusResultTimeouts:/var focusResultTimeouts:/g; s/private func handleSnapshotPayload/func handleSnapshotPayload/g; s/private func handleCommandResultPayload/func handleCommandResultPayload/g; s/private func handleFocusResultPayload/func handleFocusResultPayload/g; s/private func hideSilentProfiles/func hideSilentProfiles/g; s/private func handleBrowserTermination/func handleBrowserTermination/g; s/, privacy: \.public//g' \
+  "$workdir/ChromiumBrowserExtensionController.swift"
+
+sed -i '/^import AppKit$/d; /^import Combine$/d; /^import os$/d' \
+  "$workdir/ChromiumBrowserExtensionController.swift"
 
 cat >"$workdir/Stubs.swift" <<'SWIFT'
 import Foundation
+
+protocol ObservableObject {}
+
+@propertyWrapper
+struct Published<Value> {
+    var wrappedValue: Value
+
+    init(wrappedValue: Value) {
+        self.wrappedValue = wrappedValue
+    }
+}
+
+struct Logger {
+    init(subsystem: String, category: String) {}
+    func error(_ message: String) {}
+    func info(_ message: String) {}
+}
+
+final class NSRunningApplication: NSObject {
+    let processIdentifier: Int32
+
+    init(processIdentifier: Int32) {
+        self.processIdentifier = processIdentifier
+    }
+}
+
+final class TestNotificationCenter {
+    func addObserver(
+        forName name: Notification.Name?,
+        object: Any?,
+        queue: OperationQueue?,
+        using block: @escaping (Notification) -> Void
+    ) -> NSObjectProtocol {
+        NSObject()
+    }
+
+    func removeObserver(_ observer: Any) {}
+}
+
+final class NSWorkspace {
+    static let shared = NSWorkspace()
+    static let didTerminateApplicationNotification = Notification.Name("NSWorkspaceDidTerminateApplicationNotification")
+    static let applicationUserInfoKey = "NSWorkspaceApplicationKey"
+    let notificationCenter = TestNotificationCenter()
+}
+
+final class DistributedNotificationCenter {
+    private static let shared = DistributedNotificationCenter()
+
+    static func `default`() -> DistributedNotificationCenter {
+        shared
+    }
+
+    func addObserver(
+        forName name: Notification.Name?,
+        object: String?,
+        queue: OperationQueue?,
+        using block: @escaping (Notification) -> Void
+    ) -> NSObjectProtocol {
+        NSObject()
+    }
+
+    func removeObserver(_ observer: Any) {}
+
+    func postNotificationName(
+        _ name: Notification.Name,
+        object: String?,
+        userInfo: [AnyHashable: Any]?,
+        deliverImmediately: Bool
+    ) {}
+}
 
 enum AppIdentity {
     static let loggerSubsystem = "com.fpieringer.Keyway.tests"
@@ -184,6 +264,11 @@ struct Semantics {
             ChromiumBrowserExtensionTransport.protocolVersion,
             4,
             "Chromium extension transport must use protocol v4"
+        )
+        expectEqual(
+            ChromiumBrowserExtensionController.responseTimeoutNanoseconds,
+            2_000_000_000,
+            "Chromium extension commands must allow a full browser-content round trip"
         )
         expectEqual(
             ChromiumBrowserExtensionTransport.targetIDPrefix,
@@ -693,6 +778,8 @@ swiftc \
   -module-cache-path "$workdir/module-cache" \
   "$workdir/Stubs.swift" \
   "$workdir/ChromiumBrowserExtensionTransport.swift" \
+  "$workdir/ChromiumBrowserExtensionMessages.swift" \
+  "$workdir/ChromiumBrowserExtensionController.swift" \
   "$workdir/Semantics.swift" \
   -o "$workdir/verify_chromium_extension_transport_semantics"
 
@@ -705,8 +792,16 @@ import re
 import sys
 
 repo_root = pathlib.Path(sys.argv[1])
-transport = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionTransport.swift").read_text()
-native_host = (repo_root / "packages/SonosHandoffCore/Sources/KeywayChromiumNativeHost/main.swift").read_text()
+transport_sources = [
+    repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionTransport.swift",
+    repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionMessages.swift",
+    repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionController.swift",
+]
+transport = "\n".join(source.read_text() for source in transport_sources)
+native_host_sources = sorted(
+    (repo_root / "packages/SonosHandoffCore/Sources/KeywayChromiumNativeHost").glob("*.swift")
+)
+native_host = "\n".join(source.read_text() for source in native_host_sources)
 service_worker = (repo_root / "ChromiumExtension/service_worker.js").read_text()
 
 def fail(message):

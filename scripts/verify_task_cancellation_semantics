@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="$repo_root" python3 - <<'PY'
+import os
+import re
+from pathlib import Path
+
+repo = Path(os.environ["REPO_ROOT"])
+app = repo / "SonosHandoffMenuBar/SonosHandoffMenuBar/App"
+
+
+def fail(message: str) -> None:
+    raise SystemExit(f"verify_task_cancellation_semantics: {message}")
+
+
+def function_body(path: Path, name: str) -> str:
+    source = path.read_text()
+    match = re.search(rf"\bfunc\s+{re.escape(name)}\b", source)
+    if not match:
+        fail(f"missing function {name} in {path.relative_to(repo)}")
+    opening = source.find("{", match.end())
+    if opening < 0:
+        fail(f"missing body for {name} in {path.relative_to(repo)}")
+    depth = 0
+    in_string = False
+    escaped = False
+    line_comment = False
+    block_comment_depth = 0
+    index = opening
+    while index < len(source):
+        char = source[index]
+        next_char = source[index + 1] if index + 1 < len(source) else ""
+        if line_comment:
+            if char == "\n":
+                line_comment = False
+            index += 1
+            continue
+        if block_comment_depth:
+            if char == "/" and next_char == "*":
+                block_comment_depth += 1
+                index += 2
+                continue
+            if char == "*" and next_char == "/":
+                block_comment_depth -= 1
+                index += 2
+                continue
+            index += 1
+            continue
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            index += 1
+            continue
+        if char == "/" and next_char == "/":
+            line_comment = True
+            index += 2
+            continue
+        if char == "/" and next_char == "*":
+            block_comment_depth = 1
+            index += 2
+            continue
+        if char == '"':
+            in_string = True
+            index += 1
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return source[opening : index + 1]
+        index += 1
+    fail(f"unterminated body for {name} in {path.relative_to(repo)}")
+
+
+def verify_guard(path: Path, name: str, mutation_marker: str | None) -> None:
+    body = function_body(path, name)
+    sleep_matches = list(re.finditer(r"Task\.sleep\s*\(", body))
+    if len(sleep_matches) != 1:
+        fail(f"{name} must own exactly one delayed cancellation point; found {len(sleep_matches)}")
+    guarded_sleep = re.search(
+        r"guard\s*\(try\?\s+await\s+Task\.sleep\s*\([^\n]*\)\)\s*!=\s*nil\s*,",
+        body,
+    )
+    if not guarded_sleep:
+        fail(f"{name} must stop when Task.sleep throws cancellation")
+    cancellation = body.find("!Task.isCancelled", guarded_sleep.start())
+    if cancellation < 0:
+        fail(f"{name} must explicitly reject an already-cancelled task")
+    guard_end = body.find("else", cancellation)
+    if guard_end < 0 or "return" not in body[guard_end : body.find("}", guard_end) + 1]:
+        fail(f"{name} cancellation guard must exit without continuing delayed work")
+    if mutation_marker is not None:
+        mutation = body.find(mutation_marker)
+        if mutation < 0:
+            fail(f"{name} no longer contains expected state transition {mutation_marker}")
+        if cancellation > mutation:
+            fail(f"{name} mutates state before checking cancellation")
+    if re.search(r"try\?\s+await\s+Task\.sleep[^\n]*\n\s*guard\s+let\s+self", body):
+        fail(f"{name} contains the cancelled-sleep continuation pattern")
+
+
+media_remote = app / "MediaRemoteController.swift"
+chromium = app / "ChromiumBrowserExtensionController.swift"
+playback = app / "PlaybackSyncController.swift"
+
+for function_name, marker in (
+    ("armSnapshotRefreshTimeout", "self.refreshGate.finish"),
+    ("armCommandCacheRefreshTimeout", "self.commandCacheRefreshRequestIDs.remove"),
+    ("armCommandResultTimeout", "self.commandRequestStartedAt.removeValue"),
+    ("armRouteShieldResultTimeout", "self.routeShieldResultHandlers.removeValue"),
+):
+    verify_guard(media_remote, function_name, marker)
+
+verify_guard(chromium, "armCommandResultTimeout", "self.pendingCommands.removeValue")
+verify_guard(chromium, "armFocusResultTimeout", "self.pendingFocusRequests.removeValue")
+verify_guard(playback, "refreshAfterGroupMutation", None)
+
+print("verify_task_cancellation_semantics=ok")
+PY

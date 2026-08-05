@@ -168,7 +168,7 @@ The menu app Module that owns global keyboard shortcuts for Sonos volume and mut
 
 ### Shortcut Carbon HotKey Registrar
 
-The menu app Module that owns Carbon hotkey handler installation and `Shift+F10/F11/F12` registration. It does not register `Shift+fn+F10/F11/F12`; the Accessibility-gated Shortcut Event Tap is the sole fn-key handler so volume and mute shortcuts cannot double-fire. It hides Carbon references, hotkey IDs, modifier masks, and registration logging behind a small hotkey-id callback.
+The menu app Module that owns Carbon hotkey handler installation and `Shift+F10/F11/F12` registration. The Accessibility-gated Shortcut Event Tap handles hardware media keys and the fn-key form; the Shortcut Runtime suppresses the duplicate Carbon callback when macOS delivers one physical press through both paths. The registrar hides Carbon references, hotkey IDs, modifier masks, and registration logging behind a small hotkey-id callback.
 
 ### Shortcut Event Tap
 

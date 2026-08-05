@@ -3,15 +3,19 @@
 from pathlib import Path
 
 root = Path(__file__).resolve().parent.parent
-transport = (
-    root
-    / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionTransport.swift"
-).read_text()
-native_host = (
-    root
-    / "packages/SonosHandoffCore/Sources/KeywayChromiumNativeHost/main.swift"
-).read_text()
+app_sources = [
+    root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionTransport.swift",
+    root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionMessages.swift",
+    root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionController.swift",
+]
+transport = "\n".join(source.read_text() for source in app_sources)
+native_host_sources = sorted(
+    (root / "packages/SonosHandoffCore/Sources/KeywayChromiumNativeHost").glob("*.swift")
+)
+native_host = "\n".join(source.read_text() for source in native_host_sources)
 worker = (root / "ChromiumExtension/service_worker.js").read_text()
+document_authority = (root / "ChromiumExtension/document_authority.js").read_text()
+media_selection = (root / "ChromiumExtension/media_source_selection.js").read_text()
 manifest = (root / "ChromiumExtension/manifest.json").read_text()
 
 
@@ -104,13 +108,18 @@ for text, needle, message in (
     ),
     (
         worker,
-        "function captureDocumentAuthority(sender, contentDocumentID)",
+        "const documentAuthorities = new DocumentAuthorityRegistry();",
         "worker_missing_document_authority",
     ),
     (
-        worker,
+        document_authority,
         "const browserDocumentID = sender.documentId;",
-        "worker_does_not_use_browser_document_identity",
+        "document_authority_does_not_use_browser_document_identity",
+    ),
+    (
+        worker,
+        "documentAuthorities.capture(sender, message.documentID)",
+        "worker_does_not_capture_document_authority",
     ),
     (
         worker,
@@ -118,9 +127,29 @@ for text, needle, message in (
         "worker_missing_committed_navigation_authority",
     ),
     (
-        worker,
+        media_selection,
         "documentAuthorityGeneration: selected.documentAuthorityGeneration",
         "worker_routes_not_bound_to_document_authority",
+    ),
+    (
+        document_authority,
+        "export class DocumentAuthorityRegistry",
+        "document_authority_not_extracted",
+    ),
+    (
+        media_selection,
+        "export function selectPrimaryCandidate",
+        "media_selection_not_extracted",
+    ),
+    (
+        worker,
+        'from "./document_authority.js"',
+        "worker_does_not_import_document_authority",
+    ),
+    (
+        worker,
+        'from "./media_source_selection.js"',
+        "worker_does_not_import_media_selection",
     ),
     (
         manifest,
@@ -155,8 +184,8 @@ for pending in (
     "ChromiumBrowserExtensionPendingFocus",
 ):
     block = transport[
-        transport.index(f"private struct {pending}") : transport.index(
-            "\n}", transport.index(f"private struct {pending}")
+        transport.index(f"struct {pending}") : transport.index(
+            "\n}", transport.index(f"struct {pending}")
         )
     ]
     if "let connectionID: String" not in block or "let connectionGeneration: UInt64" not in block:

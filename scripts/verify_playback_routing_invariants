@@ -61,7 +61,7 @@ grep -q 'guard !ChromiumBrowserExtensionTransport.isTarget(target) else' "$deskt
 ! grep -q 'net.imput.helium' "$desktop_adapter" \
   || fail "Helium must not have a desktop JavaScript fallback; it is extension-owned"
 
-grep -q 'Library/Application Support/net.imput.helium/NativeMessagingHosts' "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionTransport.swift" \
+grep -q 'Library/Application Support/net.imput.helium/NativeMessagingHosts' "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumNativeMessagingHostInstaller.swift" \
   || fail "Helium must be installed through the Chromium extension native host path"
 
 ! grep -q 'cachedTargetsGraceInterval\|cachedTargetsUpdatedAt\|canShowCachedTargets' "$menu_bar_media_sources" \

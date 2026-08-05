@@ -776,7 +776,11 @@ final class PlaybackSyncController: ObservableObject {
             guard attempt < Self.groupMutationObservationAttemptsMax else {
                 break
             }
-            try? await Task.sleep(nanoseconds: Self.groupMutationObservationRetryNanoseconds)
+            guard (try? await Task.sleep(nanoseconds: Self.groupMutationObservationRetryNanoseconds)) != nil,
+                  !Task.isCancelled
+            else {
+                return nil
+            }
         }
 
         shortcutLogger.info("SonosHandoffGroupEdit observation=timeout target=\(row.displayName, privacy: .public)")

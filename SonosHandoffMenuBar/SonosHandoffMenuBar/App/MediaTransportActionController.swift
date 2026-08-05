@@ -973,6 +973,14 @@ final class MediaTransportActionController {
             )
             return
         }
+        if result.backend == ChromiumBrowserExtensionTransport.backendName {
+            StatusHUD.shared.finish(
+                title: "Media Command Failed",
+                message: result.message,
+                dismissAfter: 2.2
+            )
+            return
+        }
         StatusHUD.shared.finish(
             title: "Media Command Failed",
             message: "Keyway could not reach \(target.appName).",

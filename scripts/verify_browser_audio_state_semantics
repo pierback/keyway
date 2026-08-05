@@ -6,7 +6,7 @@ workdir="$(mktemp -d)"
 trap 'rm -rf "$workdir"' EXIT
 
 cp "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaAudioControlController.swift" "$workdir/MediaAudioControlController.swift"
-perl -0pi -e 's/^import SonosHandoffCore\n//m' "$workdir/MediaAudioControlController.swift"
+perl -0pi -e 's/^import (Combine|os|SonosHandoffCore)\n//mg; s/, privacy: \.public//g' "$workdir/MediaAudioControlController.swift"
 
 if grep -q 'try!' "$workdir/MediaAudioControlController.swift"; then
   echo "verify_browser_audio_state_semantics: MediaAudioControlController.swift must not use try!" >&2
@@ -14,8 +14,58 @@ if grep -q 'try!' "$workdir/MediaAudioControlController.swift"; then
 fi
 
 cat >"$workdir/Stubs.swift" <<'SWIFT'
-import Combine
 import Foundation
+
+protocol ObservableObject {}
+
+final class AnyCancellable {}
+
+final class TestPublisher<Value> {
+    private var observers: [(Value) -> Void] = []
+    private var value: Value
+
+    init(_ value: Value) {
+        self.value = value
+    }
+
+    func send(_ value: Value) {
+        self.value = value
+        for observer in observers {
+            observer(value)
+        }
+    }
+
+    func sink(receiveValue: @escaping (Value) -> Void) -> AnyCancellable {
+        observers.append(receiveValue)
+        receiveValue(value)
+        return AnyCancellable()
+    }
+}
+
+@propertyWrapper
+final class Published<Value> {
+    private var value: Value
+    let projectedValue: TestPublisher<Value>
+
+    init(wrappedValue: Value) {
+        value = wrappedValue
+        projectedValue = TestPublisher(wrappedValue)
+    }
+
+    var wrappedValue: Value {
+        get { value }
+        set {
+            value = newValue
+            projectedValue.send(newValue)
+        }
+    }
+}
+
+struct Logger {
+    init(subsystem: String, category: String) {}
+    func error(_ message: String) {}
+    func info(_ message: String) {}
+}
 
 enum AppIdentity {
     static let loggerSubsystem = "com.fpieringer.Keyway.tests"

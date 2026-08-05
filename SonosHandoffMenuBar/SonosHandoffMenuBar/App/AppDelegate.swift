@@ -36,7 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 runtime?.isSonosEnabled == true
             },
             presentPermissionOnboarding: { [weak self] in
-                _ = self?.permissionOnboardingController?.presentIfNeeded()
+                _ = self?.permissionOnboardingController?.present()
             }
         )
         permissionOnboardingController = PermissionOnboardingWindowController(

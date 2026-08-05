@@ -92,7 +92,114 @@ for required in (
 ):
     if required not in body:
         raise SystemExit(f"verify_media_remote_helper_process_semantics: send() must guard dead helpers and tear down broken pipes: {required}")
+
+start = text.index("    private func handleOutput(")
+body = text[start:]
+for required in (
+    "for index in outputBuffer.indices where outputBuffer[index] == 0x0A",
+    "outputBuffer.removeSubrange(outputBuffer.startIndex ..< consumedEnd)",
+    "for line in lines where !line.isEmpty",
+):
+    if required not in body:
+        raise SystemExit(f"verify_media_remote_helper_process_semantics: output framing must scan and compact each chunk once: {required}")
+if body.count("outputBuffer.removeSubrange") != 1:
+    raise SystemExit("verify_media_remote_helper_process_semantics: output framing must compact the shared buffer exactly once per chunk")
+if "while let newlineIndex = outputBuffer.firstIndex" in body:
+    raise SystemExit("verify_media_remote_helper_process_semantics: output framing must not repeatedly rescan and compact the shared buffer")
+run_guard = "guard activeRunID == runID else {"
+if body.count(run_guard) < 2:
+    raise SystemExit("verify_media_remote_helper_process_semantics: each delivered line must be generation-guarded before and after its callback")
+first_guard = body.index(run_guard)
+delivery = body.index("onLine(line)", first_guard)
+second_guard = body.index(run_guard, delivery)
+if not first_guard < delivery < second_guard:
+    raise SystemExit("verify_media_remote_helper_process_semantics: callback delivery must remain enclosed by generation guards")
 PY
+
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+python3 - "$helper" "$tmp_dir/MediaRemoteHelperProcess.swift" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+source = Path(sys.argv[1]).read_text()
+source = source.replace("import Darwin", "import Glibc")
+source = source.replace("import os\n", "")
+source = source.replace("Darwin.kill", "Glibc.kill")
+source = source.replace("private var activeRunID: UUID?", "var activeRunID: UUID?")
+source = source.replace("private func handleOutput(", "func handleOutput(")
+source = re.sub(r", privacy: \.public", "", source)
+Path(sys.argv[2]).write_text(source)
+PY
+cat > "$tmp_dir/Harness.swift" <<'SWIFT'
+import Foundation
+import Glibc
+
+struct Logger {
+    func error(_ message: String) {}
+}
+
+@MainActor
+final class OutputCollector {
+    var lines: [String] = []
+    var failures: [String] = []
+}
+
+func fail(_ message: String) -> Never {
+    fputs("verify_media_remote_helper_process_semantics: \(message)\n", stderr)
+    exit(1)
+}
+
+@main
+struct Harness {
+    @MainActor
+    static func main() {
+        let helper = MediaRemoteHelperProcess(role: .snapshot, logger: Logger())
+        let collector = OutputCollector()
+        helper.activeRunID = UUID()
+        helper.handleOutput(
+            Data("one\ntwo\npartial".utf8),
+            onLine: { collector.lines.append(String(decoding: $0, as: UTF8.self)) },
+            onFailure: { collector.failures.append($0) }
+        )
+        guard collector.lines == ["one", "two"] else {
+            fail("one chunk must deliver every complete line exactly once")
+        }
+        helper.handleOutput(
+            Data("-end\n".utf8),
+            onLine: { collector.lines.append(String(decoding: $0, as: UTF8.self)) },
+            onFailure: { collector.failures.append($0) }
+        )
+        guard collector.lines == ["one", "two", "partial-end"] else {
+            fail("partial lines must remain buffered until their terminating newline")
+        }
+        guard collector.failures.isEmpty else {
+            fail("valid framed output must not report failure")
+        }
+
+        collector.lines.removeAll()
+        helper.activeRunID = UUID()
+        helper.handleOutput(
+            Data("first\nsecond\nthird\n".utf8),
+            onLine: { line in
+                collector.lines.append(String(decoding: line, as: UTF8.self))
+                if collector.lines.count == 1 {
+                    helper.activeRunID = nil
+                }
+            },
+            onFailure: { collector.failures.append($0) }
+        )
+        guard collector.lines == ["first"] else {
+            fail("retiring a helper generation during a callback must suppress the remaining buffered lines")
+        }
+
+        print("verify_media_remote_output_framing_semantics=ok")
+    }
+}
+SWIFT
+swiftc -parse-as-library "$tmp_dir/MediaRemoteHelperProcess.swift" "$tmp_dir/Harness.swift" -o "$tmp_dir/output-framing-verifier"
+"$tmp_dir/output-framing-verifier"
 
 python3 - "$controller" <<'PY'
 import pathlib

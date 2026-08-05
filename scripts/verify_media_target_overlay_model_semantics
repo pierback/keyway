@@ -6,9 +6,21 @@ workdir="$(mktemp -d)"
 trap 'rm -rf "$workdir"' EXIT
 
 cp "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTargetOverlayModel.swift" "$workdir/MediaTargetOverlayModel.swift"
+sed -i '/^import Combine$/d' "$workdir/MediaTargetOverlayModel.swift"
 
 cat >"$workdir/ModelStubs.swift" <<'SWIFT'
 import Foundation
+
+protocol ObservableObject {}
+
+@propertyWrapper
+struct Published<Value> {
+    var wrappedValue: Value
+
+    init(wrappedValue: Value) {
+        self.wrappedValue = wrappedValue
+    }
+}
 
 enum MediaRemoteTransportCommand: String {
     case playPause

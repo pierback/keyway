@@ -74,15 +74,7 @@ struct ShortcutEventParser {
 
         if keyState == keyUpState,
            keyCode == soundDownKeyCode || keyCode == soundUpKeyCode {
-            guard isRepeating || nsEvent.modifierFlags.contains(.shift) else {
-                return .passThrough
-            }
-
             return .volumeHoldStop(source: "media_key")
-        }
-
-        guard nsEvent.modifierFlags.contains(.shift) else {
-            return .passThrough
         }
 
         if keyState == keyDownState {

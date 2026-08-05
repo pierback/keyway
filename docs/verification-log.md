@@ -1,10 +1,23 @@
 # Keyway Verification Log
 
-Last updated: 2026-07-21
+Last updated: 2026-07-31
 
-This file records the current worktree, not a cumulative history. Git retains earlier device-run notes.
+This file records the current refactored worktree first, then retains the prior macOS/device evidence from 2026-07-21 as historical context. The historical section was not rerun in the Linux refactoring environment.
 
-## Passed in the current worktree
+## Current refactored worktree — Linux evidence (2026-07-31)
+
+- An untouched extraction of the uploaded repository was retained as the baseline. Its 40 semantic verifiers produced 26 passes, nine pre-execution harness failures caused by unavailable AppKit/ApplicationServices/Combine or a full macOS-only package build, and five tool-unavailable results (`ast-grep` or Apple `xcrun`).
+- The refactored repository contains 43 semantic verifiers. The final run produced **38 passes, five tool-unavailable results, and zero executable behavioral failures**. All 35 original verifiers that can execute in this environment pass, plus three new focused suites.
+- New focused coverage exercises pure Chromium document/candidate policy, native-host framing/routing/connection correlation, and cancellation invariants for corrected delayed tasks.
+- The content-script suite also proves one document/open-shadow-root enumeration per multi-element publication cycle and callback-time extension-context retirement.
+- The MediaRemote helper suite compiles the production framing implementation with test-only platform substitutions and proves complete-line delivery, partial-line buffering, and generation retirement during callback reentrancy.
+- Static checks passed for 4 JavaScript modules, 180 Swift files, 80 shell scripts, 1 Perl file, 1 Ruby file, 1 Python verifier, 5 JSON files, 2 property lists, the checked-in Xcode project, the Swift package manifest, and 327 text files checked for trailing whitespace or conflict markers.
+- `Package.swift`, the Chromium extension manifest, native-host manifest, and app `Info.plist` are byte-for-byte unchanged from the uploaded baseline.
+- `swift build` for `keyway-chromium-native-host` is environment-blocked by missing AppKit; `sonos-handoff-port` is blocked by missing ApplicationServices; `swift test` is blocked by the same Apple-only frameworks.
+- `xcodebuild` is not installed. Executing the existing Xcode-project generator in a temporary copy is blocked because the existing Ruby `xcodeproj` gem is not installed; `ruby -c` for the generator passes.
+- Live macOS, browser, MediaRemote, Sonos, Spotify, permissions, signing, notarization, and hardware checks were not claimed in this environment.
+
+## Retained macOS verification from 2026-07-21 (not rerun here)
 
 - The regression gate's non-installing checks completed successfully against the current reviewed worktree.
   - All 250 tests in 44 suites passed, including the Spotify OAuth callback-listener and token-status tests.

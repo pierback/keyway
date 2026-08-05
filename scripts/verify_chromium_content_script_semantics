@@ -22,6 +22,7 @@ function makeContext(options = {}) {
   let observerDisconnected = false;
   let runtimeMessageListener = null;
   let sendMessageThrows = false;
+  let sendMessageCallbackInvalidates = false;
   let domTraversalInvalidated = false;
   let playbackButtonClickCount = 0;
 
@@ -116,11 +117,21 @@ function makeContext(options = {}) {
     ? undefined
     : {
         id: "extensionid",
-        sendMessage(message) {
+        lastError: null,
+        sendMessage(message, callback) {
           if (sendMessageThrows) {
             throw new Error("Extension context invalidated.");
           }
           sentMessages.push(message);
+          if (typeof callback === "function") {
+            if (sendMessageCallbackInvalidates) {
+              runtime.lastError = { message: "Extension context invalidated." };
+              callback();
+              runtime.lastError = null;
+            } else {
+              callback();
+            }
+          }
         },
         onMessage: {
           addListener(listener) {
@@ -175,6 +186,9 @@ function makeContext(options = {}) {
     invalidateRuntime() {
       sendMessageThrows = true;
     },
+    invalidateRuntimeOnCallback() {
+      sendMessageCallbackInvalidates = true;
+    },
     invalidateDomTraversal() {
       domTraversalInvalidated = true;
     },
@@ -185,6 +199,8 @@ function makeScopedPlaybackContext() {
   const sentMessages = [];
   const intervals = [];
   let runtimeMessageListener = null;
+  let mediaEnumerationCount = 0;
+  let shadowEnumerationCount = 0;
   let firstButtonClickCount = 0;
   let secondButtonClickCount = 0;
 
@@ -292,13 +308,20 @@ function makeScopedPlaybackContext() {
       return isPlaybackSelector(selector) ? firstButton : null;
     },
     querySelectorAll(selector) {
-      if (selector === "video,audio") return [firstVideo, secondVideo];
-      if (selector === "*") return [];
+      if (selector === "video,audio") {
+        mediaEnumerationCount += 1;
+        return [firstVideo, secondVideo];
+      }
+      if (selector === "*") {
+        shadowEnumerationCount += 1;
+        return [];
+      }
       return [];
     },
   };
 
   return {
+    intervals,
     context: {
       console,
       crypto: { getRandomValues: values => values.fill(1) },
@@ -332,6 +355,12 @@ function makeScopedPlaybackContext() {
     secondVideo,
     get runtimeMessageListener() {
       return runtimeMessageListener;
+    },
+    get mediaEnumerationCount() {
+      return mediaEnumerationCount;
+    },
+    get shadowEnumerationCount() {
+      return shadowEnumerationCount;
     },
     get firstButtonClickCount() {
       return firstButtonClickCount;
@@ -385,6 +414,16 @@ async function sendCommand(fixture, command, mediaId = "media-1") {
   assertEqual(live.sentMessages.length, sentMessageCountAfterRetire, "retired extension heartbeat must not keep publishing media state");
   assert(live.observerDisconnected, "invalidated extension context must disconnect the DOM observer");
 
+  const callbackInvalidation = makeContext();
+  vm.runInNewContext(code, callbackInvalidation.context, { filename: contentScriptPath });
+  callbackInvalidation.invalidateRuntimeOnCallback();
+  callbackInvalidation.intervals[0].callback();
+  assertEqual(callbackInvalidation.clearedIntervals.length, 1, "callback-time runtime invalidation must clear the heartbeat interval");
+  assert(callbackInvalidation.observerDisconnected, "callback-time runtime invalidation must disconnect the DOM observer");
+  const messagesAfterCallbackInvalidation = callbackInvalidation.sentMessages.length;
+  callbackInvalidation.intervals[0].callback();
+  assertEqual(callbackInvalidation.sentMessages.length, messagesAfterCallbackInvalidation, "callback-time invalidation must retire further publication");
+
   const staleDomTraversal = makeContext({ withShadowHost: true });
   vm.runInNewContext(code, staleDomTraversal.context, { filename: contentScriptPath });
   staleDomTraversal.mutationCallback();
@@ -432,6 +471,11 @@ async function sendCommand(fixture, command, mediaId = "media-1") {
 
   const scopedControls = makeScopedPlaybackContext();
   vm.runInNewContext(code, scopedControls.context, { filename: contentScriptPath });
+  assertEqual(scopedControls.mediaEnumerationCount, 1, "initial publication must enumerate media once even with multiple elements");
+  assertEqual(scopedControls.shadowEnumerationCount, 1, "initial publication must enumerate shadow hosts once even with multiple elements");
+  scopedControls.intervals[0].callback();
+  assertEqual(scopedControls.mediaEnumerationCount, 2, "each heartbeat publication must reuse one page media snapshot");
+  assertEqual(scopedControls.shadowEnumerationCount, 2, "each heartbeat publication must reuse one shadow-root snapshot");
   const scopedPlayResponse = await sendCommand(scopedControls, "play", "media-2");
   assertEqual(scopedControls.firstButtonClickCount, 0, "scoped play must not click a competing page control");
   assertEqual(scopedControls.secondButtonClickCount, 1, "scoped play must click the selected media element's page control");

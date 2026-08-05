@@ -13,7 +13,8 @@ final class VolumeHotkeyController {
     private let mediaTransportActions: MediaTransportActionController
     private let runtimeReporter: ShortcutRuntimeReporter
     private let runtimeStatus = ShortcutRuntimeStatus.shared
-    private var lastCarbonAction: (direction: VolumeDirection, timestamp: CFAbsoluteTime)?
+    private var lastVolumeInput: (direction: VolumeDirection, timestamp: CFAbsoluteTime)?
+    private var lastMuteInputTimestamp: CFAbsoluteTime?
     private var repeatTimer: DispatchSourceTimer?
     private var permissionRetryTimer: DispatchSourceTimer?
     private var mediaRemoteHealthCancellable: AnyCancellable?
@@ -134,7 +135,8 @@ final class VolumeHotkeyController {
         stopCommandCenterRoute(reason: "runtime_stopped")
         eventTap.stop()
         carbonRegistrar.stop()
-        lastCarbonAction = nil
+        lastVolumeInput = nil
+        lastMuteInputTimestamp = nil
         lastReportedPermissionState = nil
     }
 
@@ -498,8 +500,16 @@ final class VolumeHotkeyController {
             guard isSonosVolumeInputEnabled else {
                 return Unmanaged.passUnretained(event)
             }
+            let now = CFAbsoluteTimeGetCurrent()
+            let dispatchInitial = lastVolumeInput.map {
+                $0.direction != direction || now - $0.timestamp >= 0.15
+            } ?? true
+            lastVolumeInput = (direction, now)
             logger.info("SonosHandoffHotkeys decision=swallow phase=down action=volume_\(direction.logName, privacy: .public) source=\(source, privacy: .public)_hold_start tap=\(self.activeTapName, privacy: .public)")
-            startVolumeRepeat(direction: direction, source: source)
+            if !dispatchInitial {
+                logger.info("SonosHandoffHotkeys duplicate=ignored action=volume_\(direction.logName, privacy: .public) source=\(source, privacy: .public)")
+            }
+            startVolumeRepeat(direction: direction, source: source, dispatchInitial: dispatchInitial)
             return nil
         case .volumeHoldStop(let source):
             guard isSonosVolumeInputEnabled else {
@@ -512,6 +522,12 @@ final class VolumeHotkeyController {
             guard isSonosVolumeInputEnabled else {
                 return Unmanaged.passUnretained(event)
             }
+            let now = CFAbsoluteTimeGetCurrent()
+            if let lastMuteInputTimestamp, now - lastMuteInputTimestamp < 0.15 {
+                logger.info("SonosHandoffHotkeys duplicate=ignored action=mute_toggle source=\(source, privacy: .public)")
+                return nil
+            }
+            lastMuteInputTimestamp = now
             logger.info("SonosHandoffHotkeys decision=swallow phase=down action=mute_toggle source=\(source, privacy: .public) tap=\(self.activeTapName, privacy: .public)")
             toggleMute()
             return nil
@@ -663,14 +679,16 @@ final class VolumeHotkeyController {
         )
     }
 
-    private func startVolumeRepeat(direction: VolumeDirection, source: String) {
+    private func startVolumeRepeat(direction: VolumeDirection, source: String, dispatchInitial: Bool) {
         if repeatingDirection == direction {
             return
         }
 
         stopVolumeRepeat()
         repeatingDirection = direction
-        volumeActions.adjustVolume(direction: direction)
+        if dispatchInitial {
+            volumeActions.adjustVolume(direction: direction)
+        }
 
         let timer = DispatchSource.makeTimerSource(queue: .main)
         timer.schedule(deadline: .now() + 0.22, repeating: 0.09)
@@ -711,6 +729,12 @@ final class VolumeHotkeyController {
             direction = .up
             source = "carbon_shift_f12"
         case 5:
+            let now = CFAbsoluteTimeGetCurrent()
+            if let lastMuteInputTimestamp, now - lastMuteInputTimestamp < 0.15 {
+                logger.info("SonosHandoffHotkeys duplicate=ignored action=mute_toggle source=carbon_shift_f10")
+                return
+            }
+            lastMuteInputTimestamp = now
             logger.info("SonosHandoffHotkeys action=mute_toggle source=carbon_shift_f10")
             toggleMute()
             return
@@ -720,14 +744,14 @@ final class VolumeHotkeyController {
         }
 
         let now = CFAbsoluteTimeGetCurrent()
-        if let lastCarbonAction,
-           lastCarbonAction.direction == direction,
-           now - lastCarbonAction.timestamp < 0.15 {
+        if let lastVolumeInput,
+           lastVolumeInput.direction == direction,
+           now - lastVolumeInput.timestamp < 0.15 {
             logger.info("SonosHandoffHotkeys duplicate=ignored action=volume_\(direction.logName, privacy: .public) source=\(source, privacy: .public)")
             return
         }
 
-        lastCarbonAction = (direction, now)
+        lastVolumeInput = (direction, now)
         logger.info("SonosHandoffHotkeys action=volume_\(direction.logName, privacy: .public) source=\(source, privacy: .public)")
         volumeActions.adjustVolume(direction: direction)
     }

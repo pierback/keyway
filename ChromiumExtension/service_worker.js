@@ -1,3 +1,11 @@
+import { DocumentAuthorityRegistry } from "./document_authority.js";
+import {
+  isAudiblePlayback,
+  isVisibleTarget,
+  materializeSource,
+  refreshSource,
+} from "./media_source_selection.js";
+
 const nativeHostName = "com.fpieringer.keyway.chromium";
 const protocolVersion = 4;
 const profileGuidStorageKey = "profileGuid";
@@ -19,11 +27,9 @@ let snapshotEpoch = 0;
 let resumeStateGeneration = 0;
 let pendingResumeTargets = null;
 let pendingResumeExpiresAt = 0;
-let documentAuthorityGeneration = 0;
 const profileGuidCallbacks = [];
 const sources = new Map();
-const documentAuthorityByFrame = new Map();
-const retiredBrowserDocumentIDs = new Set();
+const documentAuthorities = new DocumentAuthorityRegistry();
 const targetStaleAfterMs = 15000;
 
 function connectNativeHost() {
@@ -176,77 +182,6 @@ function candidateID(documentID, frameId, mediaId) {
   return `${documentID}:${frameId}:${mediaId}`;
 }
 
-function documentFrameKey(tabId, frameId) {
-  return `${tabId}:${frameId}`;
-}
-
-function establishDocumentAuthority(tabId, frameId, browserDocumentID) {
-  documentAuthorityGeneration += 1;
-  const authority = {
-    tabId,
-    frameId,
-    browserDocumentID,
-    contentDocumentID: null,
-    generation: documentAuthorityGeneration,
-  };
-  documentAuthorityByFrame.set(documentFrameKey(tabId, frameId), authority);
-  return authority;
-}
-
-function retireDocumentAuthority(authority) {
-  retiredBrowserDocumentIDs.add(authority.browserDocumentID);
-  documentAuthorityByFrame.delete(documentFrameKey(authority.tabId, authority.frameId));
-}
-
-function captureDocumentAuthority(sender, contentDocumentID) {
-  const tabId = sender.tab?.id;
-  const frameId = sender.frameId;
-  const browserDocumentID = sender.documentId;
-  if (!Number.isInteger(tabId)
-      || !Number.isInteger(frameId)
-      || typeof browserDocumentID !== "string"
-      || !browserDocumentID
-      || typeof contentDocumentID !== "string"
-      || !contentDocumentID
-      || retiredBrowserDocumentIDs.has(browserDocumentID)) {
-    return null;
-  }
-
-  const key = documentFrameKey(tabId, frameId);
-  const authority = documentAuthorityByFrame.get(key)
-    || establishDocumentAuthority(tabId, frameId, browserDocumentID);
-  if (authority.browserDocumentID !== browserDocumentID) return null;
-  if (authority.contentDocumentID && authority.contentDocumentID !== contentDocumentID) return null;
-  authority.contentDocumentID = contentDocumentID;
-  return { ...authority };
-}
-
-function currentDocumentAuthority(sender, contentDocumentID) {
-  const tabId = sender.tab?.id;
-  const frameId = sender.frameId;
-  const browserDocumentID = sender.documentId;
-  if (!Number.isInteger(tabId) || !Number.isInteger(frameId)) return null;
-  const authority = documentAuthorityByFrame.get(documentFrameKey(tabId, frameId));
-  if (!authority
-      || authority.browserDocumentID !== browserDocumentID
-      || authority.contentDocumentID !== contentDocumentID) {
-    return null;
-  }
-  return { ...authority };
-}
-
-function isCurrentDocumentAuthority(authority) {
-  const current = documentAuthorityByFrame.get(
-    documentFrameKey(authority.tabId, authority.frameId)
-  );
-  return Boolean(
-    current
-    && current.generation === authority.generation
-    && current.browserDocumentID === authority.browserDocumentID
-    && current.contentDocumentID === authority.contentDocumentID
-  );
-}
-
 function browserInfo() {
   if (cachedBrowserInfo) return Promise.resolve(cachedBrowserInfo);
 
@@ -295,7 +230,9 @@ function publishSnapshot(port = nativePort, generation = nativePortGeneration) {
   // connect-time publish (which runs after resume state loads) covers it.
   if (resumeStateGeneration !== generation) return;
   removeStaleSources();
-  const materializedTargets = Array.from(sources.values()).map(materializeSource).filter(Boolean);
+  const materializedTargets = Array.from(sources.values())
+    .map(source => materializeSource(source, Date.now(), targetStaleAfterMs))
+    .filter(Boolean);
   let targets = materializedTargets.filter(isVisibleTarget);
   if (materializedTargets.length > 0) {
     clearPendingResumeTargets();
@@ -343,44 +280,28 @@ function loadResumeState(callback) {
   });
 }
 
-function isVisibleTarget(target) {
-  if (isAudiblePlayback(target)) return true;
-  if (target.hasMediaSessionMetadata) return true;
-  return target.hasPlaybackActivity;
-}
-
-function isAudiblePlayback(target, source = null) {
-  const muted = source ? source.muted : target.muted;
-  if (!target.playing || muted || target.volume === 0) return false;
-  if (source && typeof source.tabAudible === "boolean") return source.tabAudible;
-  if (typeof target.tabAudible === "boolean") return target.tabAudible;
-  return true;
-}
-
 function removeStaleSources() {
   const now = Date.now();
   for (const [id, source] of sources) {
+    let removedCandidate = false;
     for (const [candidateKey, candidate] of source.candidates) {
       if (now - candidate.updatedAt > targetStaleAfterMs) {
         source.candidates.delete(candidateKey);
+        removedCandidate = true;
       }
     }
 
     if (source.candidates.size === 0) {
       sources.delete(id);
-    } else {
-      refreshSource(source);
+    } else if (removedCandidate) {
+      refreshSource(source, now, targetStaleAfterMs);
     }
   }
 }
 
 function clearSourcesForTab(tabId) {
   let changed = false;
-  for (const authority of Array.from(documentAuthorityByFrame.values())) {
-    if (authority.tabId === tabId) {
-      retireDocumentAuthority(authority);
-    }
-  }
+  documentAuthorities.retireTab(tabId);
   if (prunePendingResumeTargets(target => target.tabId !== tabId)) {
     changed = true;
   }
@@ -408,7 +329,7 @@ function clearSourcesForFrame(tabId, frameId) {
     if (source.candidates.size === 0) {
       sources.delete(id);
     } else if (sourceChanged) {
-      refreshSource(source);
+      refreshSource(source, Date.now(), targetStaleAfterMs);
     }
   }
   if (changed) publishSnapshot();
@@ -417,7 +338,7 @@ function clearSourcesForFrame(tabId, frameId) {
 function reactivateCommittedFrameTree(tabId, mainAuthority) {
   chrome.webNavigation.getAllFrames({ tabId }, frames => {
     const error = chrome.runtime.lastError;
-    const currentMain = documentAuthorityByFrame.get(documentFrameKey(tabId, 0));
+    const currentMain = documentAuthorities.authority(tabId, 0);
     if (error
         || !Array.isArray(frames)
         || !currentMain
@@ -435,9 +356,8 @@ function reactivateCommittedFrameTree(tabId, mainAuthority) {
         continue;
       }
 
-      const existing = documentAuthorityByFrame.get(documentFrameKey(tabId, frame.frameId));
-      if (existing || !retiredBrowserDocumentIDs.delete(frame.documentId)) continue;
-      establishDocumentAuthority(tabId, frame.frameId, frame.documentId);
+      const authority = documentAuthorities.reactivateRetired(tabId, frame.frameId, frame.documentId);
+      if (!authority) continue;
       chrome.tabs.sendMessage(
         tabId,
         { type: "keywayProbeMedia", protocolVersion },
@@ -458,26 +378,23 @@ function commitDocumentAuthority(details) {
     return;
   }
 
-  const key = documentFrameKey(details.tabId, details.frameId);
-  const existing = documentAuthorityByFrame.get(key);
+  const existing = documentAuthorities.authority(details.tabId, details.frameId);
   if (existing?.browserDocumentID === details.documentId) return;
 
   if (details.frameId === 0) {
     clearSourcesForTab(details.tabId);
-    retiredBrowserDocumentIDs.delete(details.documentId);
-    const authority = establishDocumentAuthority(details.tabId, details.frameId, details.documentId);
+    const authority = documentAuthorities.activateCommitted(details.tabId, details.frameId, details.documentId);
     reactivateCommittedFrameTree(details.tabId, authority);
     return;
   } else {
-    if (existing) retireDocumentAuthority(existing);
+    if (existing) documentAuthorities.retire(existing);
     clearSourcesForFrame(details.tabId, details.frameId);
   }
-  retiredBrowserDocumentIDs.delete(details.documentId);
-  establishDocumentAuthority(details.tabId, details.frameId, details.documentId);
+  documentAuthorities.activateCommitted(details.tabId, details.frameId, details.documentId);
 }
 
 function upsertCandidate(browser, tab, frameId, message, authority) {
-  if (!isCurrentDocumentAuthority(authority)) return null;
+  if (!documentAuthorities.isCurrent(authority)) return null;
   const now = Date.now();
   const id = ["chromium-tab", profileGuid, tab.id].join(":");
   const candidateKey = candidateID(message.documentID, frameId, message.mediaId);
@@ -543,130 +460,9 @@ function upsertCandidate(browser, tab, frameId, message, authority) {
   source.tabTitle = tab.title || source.tabTitle || "";
   source.tabUrl = tab.url || source.tabUrl || "";
   source.candidates.set(candidateKey, candidate);
-  refreshSource(source);
+  refreshSource(source, now, targetStaleAfterMs);
   sources.set(source.id, source);
   return source;
-}
-
-function refreshSource(source) {
-  const selected = selectPrimaryCandidate(source);
-  if (!selected) {
-    source.route = null;
-    source.updatedAt = Date.now();
-    source.lastActiveAt = 0;
-    return;
-  }
-
-  let updatedAt = 0;
-  let lastActiveAt = 0;
-  for (const candidate of source.candidates.values()) {
-    updatedAt = Math.max(updatedAt, candidate.updatedAt);
-    lastActiveAt = Math.max(lastActiveAt, candidate.lastActiveAt);
-  }
-
-  source.route = {
-    candidateKey: selected.candidateKey,
-    documentID: selected.documentID,
-    documentAuthorityGeneration: selected.documentAuthorityGeneration,
-    browserDocumentID: selected.browserDocumentID,
-    frameId: selected.frameId,
-    mediaId: selected.mediaId,
-  };
-  source.updatedAt = updatedAt;
-  source.lastActiveAt = lastActiveAt;
-}
-
-function selectPrimaryCandidate(source) {
-  const now = Date.now();
-  const current = source.route ? source.candidates.get(source.route.candidateKey) : null;
-  const audible = bestCandidate(source, candidate => isAudiblePlayback(candidate, source), current, now);
-  if (audible) {
-    if (current && current.candidateKey !== audible.candidateKey && isAudiblePlayback(current, source)) {
-      return current;
-    }
-    return audible;
-  }
-
-  if (current && isStickyCandidate(current, now)) {
-    return current;
-  }
-
-  return bestCandidate(source, () => true, current, now);
-}
-
-function bestCandidate(source, predicate, current, now) {
-  let selected = null;
-  for (const candidate of source.candidates.values()) {
-    if (!predicate(candidate)) continue;
-    if (!selected || compareCandidates(candidate, selected, current, now, source) < 0) {
-      selected = candidate;
-    }
-  }
-  return selected;
-}
-
-function isStickyCandidate(candidate, now) {
-  return now - candidate.updatedAt <= targetStaleAfterMs
-    && (candidate.playing || candidate.hasPlaybackActivity);
-}
-
-function compareCandidates(left, right, current, now, source) {
-  const scoreDifference = candidateScore(right, current, now, source) - candidateScore(left, current, now, source);
-  if (scoreDifference !== 0) return scoreDifference;
-  if (right.updatedAt !== left.updatedAt) return right.updatedAt - left.updatedAt;
-  return left.candidateKey.localeCompare(right.candidateKey);
-}
-
-function candidateScore(candidate, current, now, source) {
-  let score = 0;
-  if (isAudiblePlayback(candidate, source)) {
-    score += 100000;
-  } else if (candidate.playing && !source.muted) {
-    score += 50000;
-  } else if (candidate.playing) {
-    score += 1000;
-  }
-  if (current?.candidateKey === candidate.candidateKey && isStickyCandidate(candidate, now)) score += 75000;
-  if (candidate.hasPlaybackActivity) score += 20000;
-  if (candidate.duration !== null && candidate.duration > 0) score += 500;
-  if (candidate.hasMediaSessionMetadata) score += 100;
-  score += Math.max(0, 100 - Math.floor((now - candidate.updatedAt) / 100));
-  return score;
-}
-
-function materializeSource(source) {
-  const selected = source.route ? source.candidates.get(source.route.candidateKey) : selectPrimaryCandidate(source);
-  if (!selected) return null;
-
-  const pageTitle = source.tabTitle || selected.frameTitle || "";
-  const title = selected.hasMediaSessionMetadata && selected.title
-    ? selected.title
-    : source.tabTitle || selected.title || selected.frameTitle || "Browser media";
-  return {
-    type: "target",
-    id: source.id,
-    browser: source.browser,
-    browserFamily: source.browserFamily,
-    browserRuntimeID: source.browserRuntimeID,
-    profileGuid: source.profileGuid,
-    tabId: source.tabId,
-    url: source.tabUrl || selected.url,
-    pageTitle,
-    title,
-    artist: selected.artist,
-    album: selected.album,
-    playing: selected.playing,
-    muted: source.muted,
-    tabAudible: source.tabAudible,
-    volume: selected.volume,
-    duration: selected.duration,
-    elapsedTime: selected.elapsedTime,
-    hasMediaSessionMetadata: selected.hasMediaSessionMetadata,
-    hasPlaybackActivity: selected.hasPlaybackActivity,
-    supportedCommands: selected.supportedCommands,
-    updatedAt: source.updatedAt,
-    lastActiveAt: source.lastActiveAt,
-  };
 }
 
 function probeTabsForMedia() {
@@ -761,7 +557,7 @@ function handleCommandMessage(message, port, generation) {
     contentDocumentID: route.documentID,
     generation: route.documentAuthorityGeneration,
   };
-  if (!selected || !isCurrentDocumentAuthority(routeAuthority)) {
+  if (!selected || !documentAuthorities.isCurrent(routeAuthority)) {
     sendNative({
       type: "commandResult",
       protocolVersion,
@@ -882,7 +678,7 @@ function updateSourceTabState(tabId, tab) {
     if (source.muted !== nextMuted || source.tabAudible !== nextTabAudible) {
       source.muted = nextMuted;
       source.tabAudible = nextTabAudible;
-      refreshSource(source);
+      refreshSource(source, Date.now(), targetStaleAfterMs);
       changed = true;
     }
   }
@@ -994,7 +790,7 @@ function handleFocusMessage(message, port, generation) {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "keywayMediaState") {
     const tab = sender.tab;
-    const authority = captureDocumentAuthority(sender, message.documentID);
+    const authority = documentAuthorities.capture(sender, message.documentID);
     if (!tab || !authority) {
       sendResponse({ ok: false });
       return false;
@@ -1002,7 +798,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     loadProfileGuid(() => {
       browserInfo().then(browser => {
-        if (!isCurrentDocumentAuthority(authority)) {
+        if (!documentAuthorities.isCurrent(authority)) {
           sendResponse({ ok: false });
           return;
         }
@@ -1015,7 +811,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "keywayMediaGone") {
-    const authority = currentDocumentAuthority(sender, message.documentID);
+    const authority = documentAuthorities.current(sender, message.documentID);
     if (!authority) {
       sendResponse({ ok: false });
       return false;
@@ -1032,7 +828,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           if (source.candidates.size === 0) {
             sources.delete(id);
           } else {
-            refreshSource(source);
+            refreshSource(source, Date.now(), targetStaleAfterMs);
           }
         }
       }

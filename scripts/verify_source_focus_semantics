@@ -10,12 +10,26 @@ cp \
   "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTargetOverlayKeyboardAction.swift" \
   "$workdir/"
 
-perl -0pi -e 's/NSRunningApplication/SourceFocusRunningApplication/g' \
+perl -0pi -e 's/NSRunningApplication/SourceFocusRunningApplication/g; s/, privacy: \.public//g' \
   "$workdir/SourceFocusActionController.swift"
+sed -i '/^import AppKit$/d; /^import os$/d' "$workdir/SourceFocusActionController.swift"
 
 cat >"$workdir/Stubs.swift" <<'SWIFT'
-import AppKit
 import Foundation
+
+typealias pid_t = Int32
+
+enum NSApplication {
+    struct ActivationOptions: OptionSet {
+        let rawValue: UInt
+    }
+}
+
+struct Logger {
+    init(subsystem: String, category: String) {}
+    func info(_ message: String) {}
+    func error(_ message: String) {}
+}
 
 enum AppIdentity {
     static let loggerSubsystem = "com.fpieringer.Keyway.tests"

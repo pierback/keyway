@@ -15,7 +15,7 @@ Keyway supports local development and notarized Developer ID builds for installa
 - One-time import copies existing Sonos Handoff config/token files from `~/Library/Application Support/sonos-handoff` without modifying the source files.
 - Sonos discovery, Spotify-to-Sonos handoff, Sonos volume, mute, token readiness, and existing smoke scripts remain in the codebase.
 - MediaRemote helper runs as `/usr/bin/perl .../MediaRemoteHelper/keyway-mediaremote-helper.pl .../libkeyway_mediaremote.dylib` and speaks newline-delimited JSON.
-- Media keys handled by Keyway are only Play/Pause, Next, and Previous. Hardware volume and mute keys are not intercepted.
+- When a Sonos Output is selected, Keyway routes hardware volume down, volume up, and mute keys to that Sonos Output. `Shift+F10/F11/F12` remains the function-key path.
 - MediaRemote transport routing remains available when the Chromium extension is absent.
 - The Chromium extension is required for per-tab targets, exact tab focus, reflected mute, and element-level volume.
 
@@ -23,7 +23,7 @@ Keyway supports local development and notarized Developer ID builds for installa
 
 - macOS with Xcode and Swift available.
 - Ruby with the `xcodeproj` gem when regenerating the Xcode project.
-- A Developer ID Application certificate for installs and Release builds; Xcode must be signed into the matching Apple Developer account for notarization.
+- Xcode signed into the matching paid Apple Developer account with access to cloud-managed Developer ID signing for notarized releases. The local installer still requires a Developer ID Application certificate in the keychain.
 - Spotify and at least one browser or browser-wrapper Now Playing session for media-target checks.
 - The unpacked Keyway Chromium extension for per-tab browser checks; see [ChromiumExtension/README.md](ChromiumExtension/README.md).
 - Local Sonos network access for real-device Sonos smoke checks.
@@ -57,7 +57,7 @@ Build, submit, staple, verify, and package a release for other Macs:
 scripts/build_notarized_app
 ```
 
-The notarized app and versioned ZIP are written to `.build/distribution/`.
+Release archives use automatic signing, and Xcode cloud-signs the exported app with Developer ID before notarization. The notarized app ZIP and a separate Chrome Web Store extension ZIP are written to `.build/distribution/`.
 
 Run the deterministic regression gate:
 

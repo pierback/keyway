@@ -8,10 +8,72 @@ trap 'rm -rf "$workdir"' EXIT
 cp \
   "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaDesktopTransportAdapter.swift" \
   "$workdir/MediaDesktopTransportAdapter.swift"
+sed -i '/^import AppKit$/d; /^import ApplicationServices$/d' "$workdir/MediaDesktopTransportAdapter.swift"
 
 cat >"$workdir/Stubs.swift" <<'SWIFT'
-import AppKit
 import Foundation
+
+final class NSAppleEventDescriptor {
+    let stringValue: String?
+
+    init(stringValue: String? = nil) {
+        self.stringValue = stringValue
+    }
+}
+
+final class NSAppleScript {
+    init?(source: String) {}
+
+    func executeAndReturnError(_ error: inout NSDictionary?) -> NSAppleEventDescriptor {
+        NSAppleEventDescriptor(stringValue: "stopped")
+    }
+}
+
+typealias OSStatus = Int32
+typealias OSType = UInt32
+typealias DescType = UInt32
+typealias AEEventClass = UInt32
+typealias AEEventID = UInt32
+typealias AEReturnID = Int16
+typealias AETransactionID = Int32
+typealias AESendMode = UInt32
+
+struct AEAddressDesc {}
+typealias AppleEvent = AEAddressDesc
+
+let noErr: OSStatus = 0
+let typeApplicationBundleID: OSType = 0
+let kAutoGenerateReturnID: AEReturnID = 0
+let kAnyTransactionID: AETransactionID = 0
+let kAENoReply: UInt32 = 1
+let kAECanInteract: UInt32 = 2
+let kAECanSwitchLayer: UInt32 = 4
+let kAEDefaultTimeout: Int32 = 0
+
+func AECreateDesc(
+    _ descriptorType: DescType,
+    _ dataPtr: UnsafeRawPointer?,
+    _ dataSize: Int,
+    _ result: inout AEAddressDesc
+) -> OSStatus { noErr }
+
+func AECreateAppleEvent(
+    _ eventClass: AEEventClass,
+    _ eventID: AEEventID,
+    _ target: inout AEAddressDesc,
+    _ returnID: AEReturnID,
+    _ transactionID: AETransactionID,
+    _ result: inout AppleEvent
+) -> OSStatus { noErr }
+
+func AEDisposeDesc(_ descriptor: inout AEAddressDesc) -> OSStatus { noErr }
+
+func AESendMessage(
+    _ event: inout AppleEvent,
+    _ reply: UnsafeMutablePointer<AppleEvent>?,
+    _ sendMode: AESendMode,
+    _ timeout: Int32
+) -> OSStatus { noErr }
 
 enum MediaRemoteTransportCommand: String, Equatable {
     case play

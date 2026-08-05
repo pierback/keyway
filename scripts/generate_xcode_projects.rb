@@ -16,8 +16,12 @@ def configure_base_settings(target, bundle_id:, deployment_target:, info_plist: 
     settings['MACOSX_DEPLOYMENT_TARGET'] = deployment_target
     settings['PRODUCT_BUNDLE_IDENTIFIER'] = bundle_id if bundle_id
     settings['PRODUCT_NAME'] = product_name if product_name
-    settings['CODE_SIGN_IDENTITY'] = 'Developer ID Application'
-    settings['CODE_SIGN_STYLE'] = 'Manual'
+    if config.name == 'Release'
+      settings['CODE_SIGN_STYLE'] = 'Automatic'
+    else
+      settings['CODE_SIGN_IDENTITY'] = 'Developer ID Application'
+      settings['CODE_SIGN_STYLE'] = 'Manual'
+    end
     settings['DEVELOPMENT_TEAM'] = '7Q44SDV7BM'
     settings['ENABLE_HARDENED_RUNTIME'] = 'YES'
     settings['GENERATE_INFOPLIST_FILE'] = info_plist.nil? ? 'YES' : 'NO'
@@ -114,6 +118,10 @@ def add_chromium_native_host_build_phase(target)
     /usr/bin/codesign --force --options runtime --timestamp --sign "$EXPANDED_CODE_SIGN_IDENTITY" "$HELPER"
   SH
   phase.input_paths = [
+    '$(SRCROOT)/../packages/SonosHandoffCore/Sources/KeywayChromiumNativeHost/HostBrowserIdentity.swift',
+    '$(SRCROOT)/../packages/SonosHandoffCore/Sources/KeywayChromiumNativeHost/NativeMessageRouting.swift',
+    '$(SRCROOT)/../packages/SonosHandoffCore/Sources/KeywayChromiumNativeHost/NativeMessageTypes.swift',
+    '$(SRCROOT)/../packages/SonosHandoffCore/Sources/KeywayChromiumNativeHost/NativeMessagingFraming.swift',
     '$(SRCROOT)/../packages/SonosHandoffCore/Sources/KeywayChromiumNativeHost/main.swift',
     '$(SRCROOT)/../packages/SonosHandoffCore/Package.swift',
   ]
@@ -137,12 +145,16 @@ def add_chromium_extension_copy_phase(target)
   phase.input_paths = [
     '$(SRCROOT)/../ChromiumExtension/manifest.json',
     '$(SRCROOT)/../ChromiumExtension/service_worker.js',
+    '$(SRCROOT)/../ChromiumExtension/document_authority.js',
+    '$(SRCROOT)/../ChromiumExtension/media_source_selection.js',
     '$(SRCROOT)/../ChromiumExtension/content_script.js',
     '$(SRCROOT)/../ChromiumExtension/native-host-manifest.json',
   ]
   phase.output_paths = [
     '$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/ChromiumExtension/manifest.json',
     '$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/ChromiumExtension/service_worker.js',
+    '$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/ChromiumExtension/document_authority.js',
+    '$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/ChromiumExtension/media_source_selection.js',
     '$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/ChromiumExtension/content_script.js',
     '$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/ChromiumExtension/native-host-manifest.json',
   ]

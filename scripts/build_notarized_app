@@ -28,6 +28,7 @@ xcodebuild \
   -configuration Release \
   -destination 'generic/platform=macOS' \
   -archivePath "$ARCHIVE_PATH" \
+  -allowProvisioningUpdates \
   archive
 
 xcodebuild \
@@ -68,7 +69,22 @@ spctl --assess --type execute --verbose=4 "$APP_PATH"
 
 VERSION="$(plutil -extract CFBundleShortVersionString raw -o - "$APP_PATH/Contents/Info.plist")"
 ZIP_PATH="$OUTPUT_DIR/Keyway-$VERSION.zip"
+EXTENSION_VERSION="$(plutil -extract version raw -o - "$ROOT_DIR/ChromiumExtension/manifest.json")"
+if [[ "$EXTENSION_VERSION" != "$VERSION" ]]; then
+  echo "error: app version $VERSION does not match Chromium extension version $EXTENSION_VERSION" >&2
+  exit 1
+fi
+EXTENSION_ZIP_PATH="$OUTPUT_DIR/Keyway-Chromium-Extension-$VERSION.zip"
 rm -f "$ZIP_PATH"
 ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
+rm -f "$EXTENSION_ZIP_PATH"
+(
+  cd "$ROOT_DIR/ChromiumExtension"
+  export COPYFILE_DISABLE=1
+  /usr/bin/zip -q "$EXTENSION_ZIP_PATH" manifest.json service_worker.js document_authority.js media_source_selection.js content_script.js
+)
 
-printf 'notarized_app=%s\nrelease_zip=%s\n' "$APP_PATH" "$ZIP_PATH"
+printf 'notarized_app=%s\nrelease_zip=%s\nchrome_extension_zip=%s\n' \
+  "$APP_PATH" \
+  "$ZIP_PATH" \
+  "$EXTENSION_ZIP_PATH"

@@ -23,6 +23,8 @@ struct PermissionOnboardingFeature: View {
     let showPermissionCompanion: @MainActor (PermissionOnboardingCompanionPermission) -> Void
     let hidePermissionCompanion: @MainActor () -> Void
     let startLocalNetworkFeatures: @MainActor () -> Void
+    let requireRestart: @MainActor () -> Void
+    let quitForPermissionRestart: @MainActor () -> Void
     let finish: @MainActor () -> Void
     let skip: @MainActor () -> Void
 
@@ -31,10 +33,33 @@ struct PermissionOnboardingFeature: View {
     @State private var notificationAuthorizationStatus: UNAuthorizationStatus = .notDetermined
     @State private var hasCheckedNotificationAuthorization = false
     @State private var isRequestingNotifications = false
-    @State private var localNetworkRequested = false
+    @State private var localNetworkRequested: Bool
+    @State private var restartRequired = false
 
     private var requiredSetupComplete: Bool {
-        accessibilityGranted && inputMonitoringGranted && localNetworkRequested
+        accessibilityGranted && inputMonitoringGranted && localNetworkRequested && !restartRequired
+    }
+
+    init(
+        refreshMediaPermissions: @escaping @MainActor () -> Void,
+        showPermissionCompanion: @escaping @MainActor (PermissionOnboardingCompanionPermission) -> Void,
+        hidePermissionCompanion: @escaping @MainActor () -> Void,
+        startLocalNetworkFeatures: @escaping @MainActor () -> Void,
+        localNetworkAlreadyRequested: Bool,
+        requireRestart: @escaping @MainActor () -> Void,
+        quitForPermissionRestart: @escaping @MainActor () -> Void,
+        finish: @escaping @MainActor () -> Void,
+        skip: @escaping @MainActor () -> Void
+    ) {
+        self.refreshMediaPermissions = refreshMediaPermissions
+        self.showPermissionCompanion = showPermissionCompanion
+        self.hidePermissionCompanion = hidePermissionCompanion
+        self.startLocalNetworkFeatures = startLocalNetworkFeatures
+        self.requireRestart = requireRestart
+        self.quitForPermissionRestart = quitForPermissionRestart
+        self.finish = finish
+        self.skip = skip
+        _localNetworkRequested = State(initialValue: localNetworkAlreadyRequested)
     }
 
     private var notificationsGranted: Bool {
@@ -137,21 +162,35 @@ struct PermissionOnboardingFeature: View {
 
                 Spacer()
 
-                if requiredSetupComplete {
+                if restartRequired {
+                    Label("Reopen Keyway to activate the new permission.", systemImage: "arrow.clockwise.circle.fill")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.orange)
+
+                    Button("Quit Keyway", action: quitForPermissionRestart)
+                        .buttonStyle(.borderedProminent)
+                        .keyboardShortcut(.defaultAction)
+                } else if requiredSetupComplete {
                     Label("Core setup ready", systemImage: "checkmark.circle.fill")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(.green)
+
+                    Button("Finish Setup", action: finish)
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!requiredSetupComplete)
+                        .keyboardShortcut(.defaultAction)
+                        .accessibilityIdentifier("onboarding.finish")
                 } else {
                     Text("Complete the three required steps to finish.")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
-                }
 
-                Button("Finish Setup", action: finish)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!requiredSetupComplete)
-                    .keyboardShortcut(.defaultAction)
-                    .accessibilityIdentifier("onboarding.finish")
+                    Button("Finish Setup", action: finish)
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!requiredSetupComplete)
+                        .keyboardShortcut(.defaultAction)
+                        .accessibilityIdentifier("onboarding.finish")
+                }
             }
         }
         .padding(.horizontal, 30)
@@ -252,6 +291,8 @@ struct PermissionOnboardingFeature: View {
         if (!wasAccessibilityGranted && accessibilityGranted)
             || (!wasInputMonitoringGranted && inputMonitoringGranted)
         {
+            restartRequired = true
+            requireRestart()
             hidePermissionCompanion()
         }
         if !wasReady, requiredSetupComplete {

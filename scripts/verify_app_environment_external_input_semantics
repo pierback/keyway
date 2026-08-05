@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 environment="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/Support/AppEnvironment.swift"
 sonos_app="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/SonosHandoffApp.swift"
-transport="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionTransport.swift"
+transport="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumNativeMessagingHostInstaller.swift"
 settings="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/Features/SettingsFeature.swift"
 app_delegate="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/AppDelegate.swift"
 status_item="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/KeywayStatusItemController.swift"

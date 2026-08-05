@@ -15,6 +15,8 @@ repo_root = pathlib.Path(sys.argv[1])
 manifest = json.loads((repo_root / "ChromiumExtension/manifest.json").read_text())
 service_worker = (repo_root / "ChromiumExtension/service_worker.js").read_text()
 content_script = (repo_root / "ChromiumExtension/content_script.js").read_text()
+document_authority = (repo_root / "ChromiumExtension/document_authority.js").read_text()
+media_source_selection = (repo_root / "ChromiumExtension/media_source_selection.js").read_text()
 declared_permissions = set(manifest.get("permissions", []))
 chrome_api_to_permission = {
     "chrome.storage.": "storage",
@@ -28,7 +30,13 @@ for api_prefix, required_permission in chrome_api_to_permission.items():
             "at runtime without it, silently breaking the extension outside this repo's static checks"
         )
 
-transport = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionTransport.swift").read_text()
+app_chromium_sources = [
+    repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionTransport.swift",
+    repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumNativeMessagingHostInstaller.swift",
+    repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionMessages.swift",
+    repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionController.swift",
+]
+transport = "\n".join(source.read_text() for source in app_chromium_sources)
 source_store = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaSourceStore.swift").read_text()
 models = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaRemoteModels.swift").read_text()
 action_controller = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportActionController.swift").read_text()
@@ -45,11 +53,55 @@ helium_smoke = (repo_root / "scripts/smoke_helium_chromium_extension_transport")
 chromium_smoke = (repo_root / "scripts/smoke_chromium_extension_transport").read_text()
 worker_suspension_smoke = (repo_root / "scripts/smoke_chromium_worker_suspension").read_text()
 regression_gate = (repo_root / "scripts/regression_gate").read_text()
-native_host = (repo_root / "packages/SonosHandoffCore/Sources/KeywayChromiumNativeHost/main.swift").read_text()
+native_host_sources = sorted(
+    (repo_root / "packages/SonosHandoffCore/Sources/KeywayChromiumNativeHost").glob("*.swift")
+)
+native_host = "\n".join(source.read_text() for source in native_host_sources)
+release_builder = (repo_root / "scripts/build_notarized_app").read_text()
 
 def expect(text, needle, message):
     if needle not in text:
         raise SystemExit(f"verify_chromium_extension_semantics: {message}")
+
+for source in app_chromium_sources + native_host_sources:
+    if not source.exists():
+        raise SystemExit(f"verify_chromium_extension_semantics: missing split Chromium source {source}")
+for module_name in ("document_authority.js", "media_source_selection.js"):
+    expect(
+        project,
+        f"ChromiumExtension/{module_name}",
+        f"Xcode project must copy Chromium worker module {module_name}",
+    )
+    expect(
+        generator,
+        f"ChromiumExtension/{module_name}",
+        f"project generator must copy Chromium worker module {module_name}",
+    )
+    expect(
+        release_builder,
+        module_name,
+        f"notarized release extension ZIP must include {module_name}",
+    )
+expect(
+    service_worker,
+    'from "./document_authority.js"',
+    "service worker must import focused document authority policy",
+)
+expect(
+    service_worker,
+    'from "./media_source_selection.js"',
+    "service worker must import focused media selection policy",
+)
+expect(
+    document_authority,
+    "export class DocumentAuthorityRegistry",
+    "document authority must remain an independently testable module",
+)
+expect(
+    media_source_selection,
+    "export function materializeSource",
+    "media source materialization must remain an independently testable module",
+)
 
 expect(
     transport,
@@ -118,6 +170,26 @@ expect(
     transport,
     'appendingPathComponent("Contents/Helpers/keyway-chromium-native-host")',
     "Swift installer must point browser manifests at the bundled native host",
+)
+expect(
+    release_builder,
+    'EXTENSION_ZIP_PATH="$OUTPUT_DIR/Keyway-Chromium-Extension-$VERSION.zip"',
+    "notarized releases must emit a versioned Chrome Web Store upload",
+)
+expect(
+    release_builder,
+    'cd "$ROOT_DIR/ChromiumExtension"',
+    "Chrome Web Store uploads must place manifest.json at the ZIP root",
+)
+expect(
+    release_builder,
+    "chrome_extension_zip=%s",
+    "release output must report the Chrome Web Store upload path",
+)
+expect(
+    action_controller,
+    "if result.backend == ChromiumBrowserExtensionTransport.backendName {",
+    "Chromium command failures must show the browser bridge's actual result instead of claiming the browser was unreachable",
 )
 expect(
     models,
@@ -251,9 +323,9 @@ expect(
     "Chromium extension service worker must expire stale media targets",
 )
 expect(
-    service_worker,
+    media_source_selection,
     "return target.hasPlaybackActivity",
-    "Chromium extension service worker must keep paused media with prior playback activity visible",
+    "Chromium media policy must keep paused media with prior playback activity visible",
 )
 expect(
     content_script,
@@ -271,7 +343,7 @@ expect(
     "Chromium extension service worker must capability-gate commands against the selected route",
 )
 expect(
-    service_worker,
+    media_source_selection,
     "browserFamily: source.browserFamily",
     "Chromium extension snapshots must expose browser family as typed metadata",
 )
@@ -286,9 +358,9 @@ expect(
     "Chromium extension service worker must expose stable profile-and-tab source identities instead of media-element target identities",
 )
 expect(
-    service_worker,
+    media_source_selection,
     "source.tabTitle || selected.frameTitle ||",
-    "Chromium extension service worker must prefer tab titles over frame titles for browser source rows",
+    "Chromium media policy must prefer tab titles over frame titles for browser source rows",
 )
 expect(
     content_script,

@@ -1,0 +1,214 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source_root="$repo_root/packages/SonosHandoffCore/Sources/KeywayChromiumNativeHost"
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+
+cp "$source_root/NativeMessageTypes.swift" "$tmp_dir/NativeMessageTypes.swift"
+cp "$source_root/NativeMessagingFraming.swift" "$tmp_dir/NativeMessagingFraming.swift"
+cp "$source_root/NativeMessageRouting.swift" "$tmp_dir/NativeMessageRouting.swift"
+
+cat > "$tmp_dir/main.swift" <<'SWIFT'
+import Foundation
+#if os(Linux)
+import Glibc
+#endif
+
+struct HostBrowserIdentity {
+    let family: String
+    let displayName: String
+    let bundleIdentifier: String
+    let processIdentifier: Int
+}
+
+let chromiumTargetIDPrefix = "chromium-tab:"
+let hostBrowserIdentity = HostBrowserIdentity(
+    family: "chrome",
+    displayName: "Google Chrome",
+    bundleIdentifier: "com.google.Chrome",
+    processIdentifier: 4321
+)
+let connectionID = "connection-test"
+let connectionGeneration: UInt64 = 4242
+let hostConnectionState = HostConnectionState()
+
+func fail(_ message: String) -> Never {
+    fputs("verify_chromium_native_host_protocol_semantics: \(message)\n", stderr)
+    exit(1)
+}
+
+func require(_ condition: @autoclosure () -> Bool, _ message: String) {
+    if !condition() {
+        fail(message)
+    }
+}
+
+func object(_ payload: String) -> [String: Any] {
+    guard let data = payload.data(using: .utf8),
+          let value = try? JSONSerialization.jsonObject(with: data),
+          let root = value as? [String: Any]
+    else {
+        fail("could not decode routed JSON")
+    }
+    return root
+}
+
+func object(_ payload: Data) -> [String: Any] {
+    guard let value = try? JSONSerialization.jsonObject(with: payload),
+          let root = value as? [String: Any]
+    else {
+        fail("could not decode routed JSON data")
+    }
+    return root
+}
+
+func runProtocolTests() {
+    let state = HostConnectionState()
+    require(state.currentProfileGuid() == nil, "new connection state must be empty")
+    state.record(profileGuid: "profile-state")
+    require(state.currentProfileGuid() == "profile-state", "connection state must retain the latest profile")
+
+    let defaultHelloData = Data(#"{"type":"hello","profileGuid":"profile-default","snapshot":[{"tabId":9}]}"#.utf8)
+    guard let defaultHello = try? JSONDecoder().decode(NativeHelloMessage.self, from: defaultHelloData) else {
+        fail("hello model must decode documented minimum fields")
+    }
+    require(defaultHello.profileGuid == "profile-default", "hello profile must decode exactly")
+    require(defaultHello.epoch == 0, "missing hello epoch must retain protocol default")
+    require(defaultHello.resumed == false, "missing hello resumed flag must retain protocol default")
+    require(defaultHello.snapshot?.first?.tabId == 9, "hello snapshot tab identity must decode")
+
+    let snapshotBeforeHello = Data(#"{"type":"snapshot","targets":[{"tabId":7}]}"#.utf8)
+    require(payloadByAddingHostBrowserIdentity(snapshotBeforeHello) == nil, "snapshots before hello must be rejected")
+
+    let helloData = Data(#"{"type":"hello","profileGuid":"profile-a","epoch":17,"resumed":true,"snapshot":[{"tabId":7,"title":"Song"}]}"#.utf8)
+    guard let helloPayload = payloadStringForHello(helloData) else {
+        fail("valid hello must become an enriched snapshot")
+    }
+    let helloRoot = object(helloPayload)
+    require(helloRoot["type"] as? String == "snapshot", "hello must publish as snapshot")
+    require(helloRoot["profileGuid"] as? String == "profile-a", "hello snapshot must preserve profile")
+    require(helloRoot["epoch"] as? Int == 17, "hello snapshot must preserve epoch")
+    require(helloRoot["resumed"] as? Bool == true, "hello snapshot must preserve resume state")
+    require(helloRoot["connectionID"] as? String == connectionID, "snapshot must carry the private connection token")
+    require((helloRoot["connectionGeneration"] as? NSNumber)?.uint64Value == connectionGeneration, "snapshot must carry the connection generation")
+    require(helloRoot["browserFamily"] as? String == "chrome", "snapshot root must carry host browser family")
+    guard let helloTargets = helloRoot["targets"] as? [[String: Any]], let helloTarget = helloTargets.first else {
+        fail("hello snapshot must materialize its targets")
+    }
+    require(helloTarget["id"] as? String == "chromium-tab:profile-a:7", "target identity must remain profile-and-tab based")
+    require(helloTarget["browser"] as? String == "Google Chrome", "target browser display name must come from the host process")
+    require(helloTarget["browserFamily"] as? String == "chrome", "target browser family must be explicit")
+    require(helloTarget["browserBundleIdentifier"] as? String == "com.google.Chrome", "target browser bundle identity must be explicit")
+    require(helloTarget["browserProcessIdentifier"] as? Int == 4321, "target browser process identity must be explicit")
+    require(helloTarget["profileGuid"] as? String == "profile-a", "target must preserve profile routing identity")
+
+    let snapshotData = Data(#"{"type":"snapshot","targets":[{"tabId":8,"playing":true}]}"#.utf8)
+    guard let snapshotPayload = payloadByAddingHostBrowserIdentity(snapshotData) else {
+        fail("snapshot after hello must be enriched")
+    }
+    let snapshotRoot = object(snapshotPayload)
+    guard let snapshotTargets = snapshotRoot["targets"] as? [[String: Any]], let snapshotTarget = snapshotTargets.first else {
+        fail("enriched snapshot must contain targets")
+    }
+    require(snapshotTarget["id"] as? String == "chromium-tab:profile-a:8", "subsequent snapshots must use the recorded profile")
+    require(snapshotTarget["playing"] as? Bool == true, "snapshot rewrite must preserve extension fields")
+
+    let malformedTarget = Data(#"{"type":"snapshot","targets":[{"title":"Missing tab"}]}"#.utf8)
+    require(payloadByAddingHostBrowserIdentity(malformedTarget) == nil, "snapshot targets without tabId must be rejected")
+    require(payloadByAddingHostBrowserIdentity(Data("[]".utf8)) == nil, "non-object snapshots must be rejected")
+
+    let matchingCommand = #"{"type":"command","connectionID":"connection-test","requestID":"request-a","targetID":"chromium-tab:profile-a:8"}"#
+    guard let routedCommand = payloadByMatchingConnectionID(matchingCommand) else {
+        fail("command for current connection must be routed")
+    }
+    let commandRoot = object(routedCommand)
+    require(commandRoot["requestID"] as? String == "request-a", "command routing must preserve request correlation")
+    require(commandRoot["targetID"] as? String == "chromium-tab:profile-a:8", "command routing must preserve target identity")
+    require(commandRoot["connectionID"] == nil, "private connection token must not cross the native wire")
+
+    require(payloadByMatchingConnectionID(#"{"type":"command","connectionID":"other"}"#) == nil, "stale connection commands must be dropped")
+    require(payloadByMatchingConnectionID(#"{"type":"command"}"#) == nil, "commands without a connection token must be dropped")
+    require(payloadByMatchingConnectionID("not-json") == nil, "malformed commands must be dropped")
+
+    let reload = #"{"type":"reloadExtension","requestID":"reload-a"}"#
+    guard let reloadData = payloadByMatchingConnectionID(reload) else {
+        fail("connectionless extension reload must remain routable")
+    }
+    require(object(reloadData)["requestID"] as? String == "reload-a", "reload routing must preserve its request")
+
+    let resultData = Data(#"{"type":"commandResult","targetID":"chromium-tab:profile-a:8","requestID":"request-a","ok":true}"#.utf8)
+    guard let resultPayload = payloadStringForResult(resultData) else {
+        fail("valid result must be enriched")
+    }
+    let resultRoot = object(resultPayload)
+    require(resultRoot["connectionID"] as? String == connectionID, "result must be correlated to its host connection")
+    require((resultRoot["connectionGeneration"] as? NSNumber)?.uint64Value == connectionGeneration, "result must carry host generation")
+    require(resultRoot["requestID"] as? String == "request-a", "result rewrite must preserve request correlation")
+    require(resultRoot["ok"] as? Bool == true, "result rewrite must preserve extension outcome")
+    require(payloadStringForResult(Data(#"{"type":"commandResult","requestID":"missing-target"}"#.utf8)) == nil, "results without target identity must be rejected")
+    require(payloadStringForResult(Data("[]".utf8)) == nil, "non-object results must be rejected")
+
+    print("verify_chromium_native_host_protocol_semantics=ok")
+}
+
+switch CommandLine.arguments.dropFirst().first {
+case "write-frame":
+    writeNativeMessage(Data("frame-body".utf8))
+case "read-frame":
+    guard let payload = readNativeMessage() else {
+        exit(2)
+    }
+    FileHandle.standardOutput.write(payload)
+default:
+    runProtocolTests()
+}
+SWIFT
+
+swiftc \
+  "$tmp_dir/NativeMessageTypes.swift" \
+  "$tmp_dir/NativeMessagingFraming.swift" \
+  "$tmp_dir/NativeMessageRouting.swift" \
+  "$tmp_dir/main.swift" \
+  -o "$tmp_dir/protocol-verifier"
+
+"$tmp_dir/protocol-verifier"
+
+PROTOCOL_VERIFIER="$tmp_dir/protocol-verifier" python3 - <<'PY'
+import os
+import struct
+import subprocess
+
+executable = os.environ["PROTOCOL_VERIFIER"]
+body = b"frame-body"
+written = subprocess.run([executable, "write-frame"], check=True, capture_output=True)
+expected = struct.pack("<I", len(body)) + body
+if written.stdout != expected:
+    raise SystemExit(
+        "verify_chromium_native_host_protocol_semantics: native output framing is not four-byte little endian"
+    )
+
+read = subprocess.run(
+    [executable, "read-frame"],
+    input=expected,
+    check=True,
+    capture_output=True,
+)
+if read.stdout != body:
+    raise SystemExit(
+        "verify_chromium_native_host_protocol_semantics: framed native input did not round-trip exactly"
+    )
+
+truncated = subprocess.run(
+    [executable, "read-frame"],
+    input=struct.pack("<I", len(body)) + body[:-1],
+    capture_output=True,
+)
+if truncated.returncode != 2 or truncated.stdout:
+    raise SystemExit(
+        "verify_chromium_native_host_protocol_semantics: truncated native input must terminate without a partial message"
+    )
+
+print("verify_chromium_native_host_framing_semantics=ok")
+PY

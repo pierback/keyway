@@ -2,13 +2,23 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-native_host="$repo_root/packages/SonosHandoffCore/Sources/KeywayChromiumNativeHost/main.swift"
+native_host_dir="$repo_root/packages/SonosHandoffCore/Sources/KeywayChromiumNativeHost"
 
-python3 - "$native_host" <<'PY'
+python3 - "$native_host_dir" <<'PY'
 import pathlib
 import sys
 
-text = pathlib.Path(sys.argv[1]).read_text()
+source_dir = pathlib.Path(sys.argv[1])
+sources = sorted(source_dir.glob("*.swift"))
+if {source.name for source in sources} != {
+    "HostBrowserIdentity.swift",
+    "NativeMessageRouting.swift",
+    "NativeMessageTypes.swift",
+    "NativeMessagingFraming.swift",
+    "main.swift",
+}:
+    raise SystemExit("verify_chromium_native_host_input_semantics: native host source inventory is incomplete")
+text = "\n".join(source.read_text() for source in sources)
 
 def fail(message):
     raise SystemExit(f"verify_chromium_native_host_input_semantics: {message}")
@@ -97,7 +107,7 @@ for required in (
     if required not in command:
         fail(f"command payload rewriting must ignore malformed distributed-notification input: missing {required}")
 
-result = section("func payloadStringForResult(_ payload: Data) -> String? {", "\n}\n\nlet commandObserver")
+result = section("func payloadStringForResult(_ payload: Data) -> String? {", "let commandObserver")
 for required in (
     "try? JSONSerialization.jsonObject(with: payload)",
     'fputs("Keyway Chromium native host: ignoring malformed result payload.\\n", stderr)',

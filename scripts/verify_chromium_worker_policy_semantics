@@ -1,0 +1,256 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+DOCUMENT_AUTHORITY_PATH="$repo_root/ChromiumExtension/document_authority.js" \
+MEDIA_SOURCE_SELECTION_PATH="$repo_root/ChromiumExtension/media_source_selection.js" \
+node - <<'NODE'
+const fs = require("fs");
+const vm = require("vm");
+
+const context = { console };
+vm.runInNewContext(
+  fs.readFileSync(process.env.DOCUMENT_AUTHORITY_PATH, "utf8")
+    .replace(/^export /gm, "")
+    + "\nglobalThis.DocumentAuthorityRegistry = DocumentAuthorityRegistry;",
+  context,
+  { filename: process.env.DOCUMENT_AUTHORITY_PATH }
+);
+vm.runInNewContext(
+  fs.readFileSync(process.env.MEDIA_SOURCE_SELECTION_PATH, "utf8")
+    .replace(/^export /gm, "")
+    + "\nglobalThis.workerPolicy = { isVisibleTarget, isAudiblePlayback, refreshSource, selectPrimaryCandidate, materializeSource };",
+  context,
+  { filename: process.env.MEDIA_SOURCE_SELECTION_PATH }
+);
+
+const { DocumentAuthorityRegistry } = context;
+const {
+  isVisibleTarget,
+  isAudiblePlayback,
+  refreshSource,
+  selectPrimaryCandidate,
+  materializeSource,
+} = context.workerPolicy;
+
+function fail(message) {
+  console.error(`verify_chromium_worker_policy_semantics: ${message}`);
+  process.exit(1);
+}
+
+function assert(condition, message) {
+  if (!condition) fail(message);
+}
+
+function assertEqual(actual, expected, message) {
+  if (actual !== expected) {
+    fail(`${message}: expected ${String(expected)}, got ${String(actual)}`);
+  }
+}
+
+function sender(tabId, frameId, documentId) {
+  return { tab: { id: tabId }, frameId, documentId };
+}
+
+const authority = new DocumentAuthorityRegistry();
+const first = authority.capture(sender(22, 0, "browser-doc-a"), "content-doc-a");
+assert(first, "first content message must establish document authority");
+assertEqual(first.generation, 1, "first authority generation must be monotonic");
+assert(authority.isCurrent(first), "captured authority must be current");
+assertEqual(
+  authority.current(sender(22, 0, "browser-doc-a"), "content-doc-a")?.generation,
+  first.generation,
+  "current lookup must require both browser and content document identity"
+);
+assertEqual(
+  authority.capture(sender(22, 0, "browser-doc-a"), "content-doc-other"),
+  null,
+  "one browser document must not acquire a competing content document identity"
+);
+assertEqual(
+  authority.capture(sender(22, 0, "browser-doc-b"), "content-doc-b"),
+  null,
+  "a message cannot replace an established browser-document authority without navigation"
+);
+assert(authority.retire(first), "current authority must retire exactly once");
+assert(!authority.isCurrent(first), "retired authority must become stale immediately");
+assertEqual(
+  authority.capture(sender(22, 0, "browser-doc-a"), "content-doc-a"),
+  null,
+  "retired browser documents must reject late messages"
+);
+assertEqual(authority.retire(first), false, "stale authority copies must not retire a newer generation");
+
+const restored = authority.reactivateRetired(22, 0, "browser-doc-a");
+assert(restored, "history restoration must reactivate a retired browser document only when the frame is vacant");
+assert(restored.generation > first.generation, "history restoration must mint a newer generation");
+const restoredCaptured = authority.capture(sender(22, 0, "browser-doc-a"), "content-doc-a");
+assert(restoredCaptured && authority.isCurrent(restoredCaptured), "restored documents must regain content authority");
+assertEqual(
+  authority.reactivateRetired(22, 0, "browser-doc-a"),
+  null,
+  "history reactivation must not replace an active frame authority"
+);
+
+authority.retireTab(22);
+assertEqual(authority.authority(22, 0), null, "tab retirement must clear every frame authority");
+const committed = authority.activateCommitted(22, 0, "browser-doc-c");
+assertEqual(committed.generation, restored.generation + 1, "committed navigation generation must remain monotonic");
+assertEqual(
+  authority.current(sender(22, 0, "browser-doc-c"), "content-doc-c"),
+  null,
+  "committed authority must wait for the matching content document handshake"
+);
+
+function candidate(key, overrides = {}) {
+  return {
+    candidateKey: key,
+    documentID: `content-${key}`,
+    documentAuthorityGeneration: 1,
+    browserDocumentID: `browser-${key}`,
+    frameId: 0,
+    mediaId: `media-${key}`,
+    url: `https://example.test/${key}`,
+    frameTitle: `Frame ${key}`,
+    title: `Title ${key}`,
+    artist: "Artist",
+    album: "Album",
+    playing: false,
+    volume: 0.5,
+    duration: 180,
+    elapsedTime: 42,
+    hasMediaSessionMetadata: false,
+    hasPlaybackActivity: false,
+    supportedCommands: ["play", "pause", "playPause"],
+    updatedAt: 10_000,
+    lastActiveAt: 0,
+    ...overrides,
+  };
+}
+
+function source(candidates, overrides = {}) {
+  return {
+    type: "target",
+    id: "chromium-tab:profile-a:22",
+    browser: "Chrome",
+    browserFamily: "chrome",
+    browserRuntimeID: "runtime-a",
+    profileGuid: "profile-a",
+    tabId: 22,
+    windowId: 11,
+    tabTitle: "Tab title",
+    tabUrl: "https://example.test/tab",
+    muted: false,
+    tabAudible: true,
+    candidates: new Map(candidates.map(item => [item.candidateKey, item])),
+    route: null,
+    updatedAt: 0,
+    lastActiveAt: 0,
+    ...overrides,
+  };
+}
+
+const pausedActive = candidate("paused", {
+  hasPlaybackActivity: true,
+  updatedAt: 10_500,
+});
+const audible = candidate("audible", {
+  playing: true,
+  hasMediaSessionMetadata: true,
+  updatedAt: 10_400,
+  lastActiveAt: 10_400,
+});
+let mediaSource = source([pausedActive, audible]);
+assertEqual(
+  selectPrimaryCandidate(mediaSource, 11_000, 15_000).candidateKey,
+  "audible",
+  "audible playback must outrank paused activity"
+);
+assert(isAudiblePlayback(audible, mediaSource), "unmuted audible playback must be classified as audible");
+assert(!isAudiblePlayback(audible, { ...mediaSource, muted: true }), "tab mute must suppress audible classification");
+assert(!isAudiblePlayback({ ...audible, volume: 0 }, mediaSource), "zero media volume must suppress audible classification");
+
+const currentAudible = candidate("current", {
+  playing: true,
+  updatedAt: 9_500,
+  lastActiveAt: 9_500,
+});
+const newerAudible = candidate("newer", {
+  playing: true,
+  updatedAt: 10_900,
+  lastActiveAt: 10_900,
+});
+mediaSource = source([currentAudible, newerAudible], {
+  route: { candidateKey: "current" },
+});
+assertEqual(
+  selectPrimaryCandidate(mediaSource, 11_000, 15_000).candidateKey,
+  "current",
+  "an already-routed audible candidate must remain sticky while it is active"
+);
+
+const stickyPaused = candidate("sticky", {
+  playing: false,
+  hasPlaybackActivity: true,
+  updatedAt: 10_900,
+});
+const metadataOnly = candidate("metadata", {
+  hasMediaSessionMetadata: true,
+  updatedAt: 10_950,
+});
+mediaSource = source([stickyPaused, metadataOnly], {
+  tabAudible: false,
+  route: { candidateKey: "sticky" },
+});
+assertEqual(
+  selectPrimaryCandidate(mediaSource, 11_000, 15_000).candidateKey,
+  "sticky",
+  "recent routed playback activity must remain sticky when nothing is audible"
+);
+const postStickinessPlayback = candidate("post-stickiness", {
+  playing: true,
+  updatedAt: 29_950,
+  lastActiveAt: 29_950,
+});
+mediaSource = source([stickyPaused, postStickinessPlayback], {
+  tabAudible: false,
+  route: { candidateKey: "sticky" },
+});
+assertEqual(
+  selectPrimaryCandidate(mediaSource, 30_000, 15_000).candidateKey,
+  "post-stickiness",
+  "expired route stickiness must yield to the highest current candidate"
+);
+
+const tieA = candidate("a", { updatedAt: 20_000 });
+const tieB = candidate("b", { updatedAt: 20_000 });
+mediaSource = source([tieB, tieA], { tabAudible: false });
+assertEqual(
+  selectPrimaryCandidate(mediaSource, 20_000, 15_000).candidateKey,
+  "a",
+  "candidate ties must resolve deterministically by candidate key"
+);
+
+mediaSource = source([pausedActive, audible]);
+refreshSource(mediaSource, 11_000, 15_000);
+assertEqual(mediaSource.route.candidateKey, "audible", "refresh must persist the selected private route");
+assertEqual(mediaSource.updatedAt, 10_500, "refresh must aggregate the newest candidate timestamp");
+assertEqual(mediaSource.lastActiveAt, 10_400, "refresh must aggregate the latest audible activity");
+const target = materializeSource(mediaSource, 11_000, 15_000);
+assertEqual(target.id, mediaSource.id, "materialization must preserve stable profile-and-tab identity");
+assertEqual(target.browserFamily, "chrome", "materialization must preserve typed browser family metadata");
+assertEqual(target.pageTitle, "Tab title", "materialization must prefer the browser tab title");
+assertEqual(target.title, "Title audible", "media-session metadata must remain the target title authority");
+assert(isVisibleTarget(target), "audible materialized targets must be visible");
+assert(isVisibleTarget({ playing: false, muted: false, volume: 0.5, hasMediaSessionMetadata: false, hasPlaybackActivity: true }), "paused prior playback activity must stay visible");
+assert(!isVisibleTarget({ playing: false, muted: false, volume: 0.5, hasMediaSessionMetadata: false, hasPlaybackActivity: false }), "inert targets must stay hidden");
+
+const emptySource = source([]);
+emptySource.route = { candidateKey: "missing" };
+refreshSource(emptySource, 50_000, 15_000);
+assertEqual(emptySource.route, null, "empty sources must clear stale private routes");
+assertEqual(materializeSource(emptySource, 50_000, 15_000), null, "empty sources must not materialize targets");
+
+console.log("verify_chromium_worker_policy_semantics=ok");
+NODE

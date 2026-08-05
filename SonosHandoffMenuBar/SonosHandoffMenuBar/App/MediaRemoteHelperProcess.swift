@@ -251,20 +251,36 @@ final class MediaRemoteHelperProcess {
             return
         }
 
-        let newline = Data([0x0A])
-        while let range = outputBuffer.range(of: newline) {
-            let line = outputBuffer.subdata(in: outputBuffer.startIndex ..< range.lowerBound)
-            outputBuffer.removeSubrange(outputBuffer.startIndex ..< range.upperBound)
-            guard !line.isEmpty else {
-                continue
-            }
+        guard let runID = activeRunID else {
+            return
+        }
+        var lineStart = outputBuffer.startIndex
+        var consumedEnd = outputBuffer.startIndex
+        var lines: [Data] = []
+        for index in outputBuffer.indices where outputBuffer[index] == 0x0A {
+            lines.append(outputBuffer.subdata(in: lineStart ..< index))
+            consumedEnd = outputBuffer.index(after: index)
+            lineStart = consumedEnd
+        }
+        guard consumedEnd != outputBuffer.startIndex else {
+            return
+        }
+        outputBuffer.removeSubrange(outputBuffer.startIndex ..< consumedEnd)
+
+        for line in lines where !line.isEmpty {
             guard line.count <= Self.maxOutputBufferBytes else {
                 logger.error("MediaRemoteHelper role=\(self.role.rawValue, privacy: .public) oversized_line=true")
                 onFailure("MediaRemote \(role.rawValue) helper produced an oversized response line.")
                 stop()
                 return
             }
+            guard activeRunID == runID else {
+                return
+            }
             onLine(line)
+            guard activeRunID == runID else {
+                return
+            }
         }
     }
 }
