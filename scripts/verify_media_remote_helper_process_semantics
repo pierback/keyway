@@ -124,9 +124,7 @@ import re
 import sys
 
 source = Path(sys.argv[1]).read_text()
-source = source.replace("import Darwin", "import Glibc")
 source = source.replace("import os\n", "")
-source = source.replace("Darwin.kill", "Glibc.kill")
 source = source.replace("private var activeRunID: UUID?", "var activeRunID: UUID?")
 source = source.replace("private func handleOutput(", "func handleOutput(")
 source = re.sub(r", privacy: \.public", "", source)
@@ -134,7 +132,7 @@ Path(sys.argv[2]).write_text(source)
 PY
 cat > "$tmp_dir/Harness.swift" <<'SWIFT'
 import Foundation
-import Glibc
+import Darwin
 
 struct Logger {
     func error(_ message: String) {}
