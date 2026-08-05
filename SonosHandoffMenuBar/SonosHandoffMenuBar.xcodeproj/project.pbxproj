@@ -347,7 +347,7 @@
 			minimizedProjectReferenceProxies = 0;
 			packageReferences = (
 				AB0CA09DC6F423D78F81A82CB691E2E3 /* XCLocalSwiftPackageReference "SonosHandoffCore" */,
-				411AE885A36CE3B07D7950C52743C40F /* XCLocalSwiftPackageReference "PermissionCompanionKit" */,
+				411AE885A36CE3B07D7950C52743C40F /* XCRemoteSwiftPackageReference "PermissionCompanionKit" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = A7870627B8703BA2D517A96C7E7AEBB0 /* Products */;
@@ -718,11 +718,6 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		411AE885A36CE3B07D7950C52743C40F /* XCLocalSwiftPackageReference "PermissionCompanionKit" */ = {
-			isa = XCLocalSwiftPackageReference;
-			path = ../../PermissionCompanionKit;
-			relativePath = ../../PermissionCompanionKit;
-		};
 		AB0CA09DC6F423D78F81A82CB691E2E3 /* XCLocalSwiftPackageReference "SonosHandoffCore" */ = {
 			isa = XCLocalSwiftPackageReference;
 			path = ../packages/SonosHandoffCore;
@@ -730,10 +725,21 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		411AE885A36CE3B07D7950C52743C40F /* XCRemoteSwiftPackageReference "PermissionCompanionKit" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/pierback/PermissionCompanionKit.git";
+			requirement = {
+				kind = exactVersion;
+				version = 0.2.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
 		3F79EAEF6C1427BEE44BFEF3BBD125BC /* PermissionCompanionKit */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 411AE885A36CE3B07D7950C52743C40F /* XCLocalSwiftPackageReference "PermissionCompanionKit" */;
+			package = 411AE885A36CE3B07D7950C52743C40F /* XCRemoteSwiftPackageReference "PermissionCompanionKit" */;
 			productName = PermissionCompanionKit;
 		};
 		5B648C330053AFD9B218F3612D195584 /* KeywayChromiumBridgeIPC */ = {

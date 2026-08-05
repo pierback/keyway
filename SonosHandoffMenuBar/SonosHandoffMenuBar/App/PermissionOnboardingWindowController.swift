@@ -161,8 +161,18 @@ final class PermissionOnboardingWindowController: NSObject, NSWindowDelegate {
                 permissionName: permission.displayName,
                 interaction: permission.supportsAppDrop ? .dragApplication : .informational
             ),
-            beneath: .systemSettings
+            beneath: .systemSettings,
+            onReturnToApplication: { [weak self] in
+                self?.returnToPermissionWizard()
+            }
         )
+    }
+
+    private func returnToPermissionWizard() {
+        _ = NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        window?.makeKeyAndOrderFront(nil)
+        refreshMediaPermissions()
     }
 
     private func hidePermissionCompanion() {

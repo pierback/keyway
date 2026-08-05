@@ -197,6 +197,30 @@ def add_local_package_dependency(project, target, relative_path, product_name)
   target.frameworks_build_phase.files << build_file
 end
 
+def add_remote_package_dependency(project, target, repository_url, exact_version, product_name)
+  package = project.root_object.package_references.find do |reference|
+    reference.respond_to?(:repositoryURL) && reference.repositoryURL == repository_url
+  end
+  unless package
+    package = project.new(Xcodeproj::Project::Object::XCRemoteSwiftPackageReference)
+    package.repositoryURL = repository_url
+    package.requirement = {
+      'kind' => 'exactVersion',
+      'version' => exact_version,
+    }
+    project.root_object.package_references << package
+  end
+
+  product = project.new(Xcodeproj::Project::Object::XCSwiftPackageProductDependency)
+  product.package = package
+  product.product_name = product_name
+  target.package_product_dependencies << product
+
+  build_file = project.new(Xcodeproj::Project::Object::PBXBuildFile)
+  build_file.product_ref = product
+  target.frameworks_build_phase.files << build_file
+end
+
 def create_shared_scheme(project, scheme_name, runnable_target, test_target = nil)
   scheme = Xcodeproj::XCScheme.new
   scheme.configure_with_targets(runnable_target, test_target, launch_target: runnable_target.launchable_target_type?)
@@ -242,7 +266,13 @@ def build_menu_bar_project
 
   add_local_package_dependency(project, target, '../packages/SonosHandoffCore', 'SonosHandoffCore')
   add_local_package_dependency(project, target, '../packages/SonosHandoffCore', 'KeywayChromiumBridgeIPC')
-  add_local_package_dependency(project, target, '../../PermissionCompanionKit', 'PermissionCompanionKit')
+  add_remote_package_dependency(
+    project,
+    target,
+    'https://github.com/pierback/PermissionCompanionKit.git',
+    '0.2.0',
+    'PermissionCompanionKit'
+  )
 
   normalize_system_framework_refs(project, 'Cocoa.framework')
   project.root_object.attributes['LastSwiftUpdateCheck'] = '1600'
