@@ -132,11 +132,10 @@ func runProtocolTests() {
     require(payloadByMatchingConnectionID(#"{"type":"command"}"#) == nil, "commands without a connection token must be dropped")
     require(payloadByMatchingConnectionID("not-json") == nil, "malformed commands must be dropped")
 
-    let reload = #"{"type":"reloadExtension","requestID":"reload-a"}"#
-    guard let reloadData = payloadByMatchingConnectionID(reload) else {
-        fail("connectionless extension reload must remain routable")
-    }
-    require(object(reloadData)["requestID"] as? String == "reload-a", "reload routing must preserve its request")
+    require(
+        payloadByMatchingConnectionID(#"{"type":"reloadExtension","requestID":"reload-a"}"#) == nil,
+        "connectionless messages must never bypass authenticated connection routing"
+    )
 
     let resultData = Data(#"{"type":"commandResult","targetID":"chromium-tab:profile-a:8","requestID":"request-a","ok":true}"#.utf8)
     guard let resultPayload = payloadStringForResult(resultData) else {

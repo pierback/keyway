@@ -1,32 +1,20 @@
-import AppKit
 import Darwin
 import Foundation
+import KeywayChromiumBridgeIPC
 
-let snapshotNotificationName = Notification.Name("com.fpieringer.keyway.chromium.snapshot")
-let commandResultNotificationName = Notification.Name("com.fpieringer.keyway.chromium.commandResult")
-let focusResultNotificationName = Notification.Name("com.fpieringer.keyway.chromium.focusResult")
-let commandNotificationName = Notification.Name("com.fpieringer.keyway.chromium.command")
-let hostName = "com.fpieringer.keyway.chromium"
 let chromiumTargetIDPrefix = "chromium-tab:"
 let hostBrowserIdentity = HostBrowserIdentity.current()
 let connectionID = UUID().uuidString.lowercased()
 let connectionGeneration = mach_continuous_time()
 let hostConnectionState = HostConnectionState()
 
-let commandObserver = DistributedNotificationCenter.default().addObserver(
-    forName: commandNotificationName,
-    object: hostName,
-    queue: .main
-) { notification in
-    guard let payload = notification.userInfo?["payload"] as? String else {
-        fputs("Keyway Chromium native host: ignoring command notification without payload.\n", stderr)
-        return
-    }
+let bridge = KeywayChromiumBridgeClient { payload in
     guard let routedPayload = payloadByMatchingConnectionID(payload) else {
         return
     }
     writeNativeMessage(routedPayload)
 }
+bridge.start()
 
 func postNativeMessage(_ payload: Data) {
     guard let envelope = try? JSONDecoder().decode(NativeMessageEnvelope.self, from: payload) else {
@@ -44,12 +32,7 @@ func postNativeMessage(_ payload: Data) {
         guard let postedPayload = payloadStringForHello(payload) else {
             return
         }
-        DistributedNotificationCenter.default().postNotificationName(
-            snapshotNotificationName,
-            object: hostName,
-            userInfo: ["payload": postedPayload],
-            deliverImmediately: true
-        )
+        bridge.publish(event: .snapshot, payload: postedPayload)
         return
     }
     let postedPayload = envelope.type == "snapshot"
@@ -58,20 +41,13 @@ func postNativeMessage(_ payload: Data) {
     guard let postedPayload else {
         return
     }
-    DistributedNotificationCenter.default().postNotificationName(
-        envelope.type == "snapshot" ? snapshotNotificationName : envelope.type == "commandResult" ? commandResultNotificationName : focusResultNotificationName,
-        object: hostName,
-        userInfo: ["payload": postedPayload],
-        deliverImmediately: true
-    )
+    let event: KeywayChromiumBridgeEvent = envelope.type == "snapshot"
+        ? .snapshot
+        : envelope.type == "commandResult" ? .commandResult : .focusResult
+    bridge.publish(event: event, payload: postedPayload)
 }
 
-DispatchQueue.global(qos: .userInitiated).async {
-    while let payload = readNativeMessage() {
-        postNativeMessage(payload)
-    }
-    exit(0)
+while let payload = readNativeMessage() {
+    postNativeMessage(payload)
 }
-
-RunLoop.main.run()
-DistributedNotificationCenter.default().removeObserver(commandObserver)
+bridge.stop()

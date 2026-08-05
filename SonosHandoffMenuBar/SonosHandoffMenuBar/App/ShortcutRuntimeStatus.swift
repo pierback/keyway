@@ -116,6 +116,7 @@ final class ShortcutRuntimeStatus {
     private var mediaTransportTrace: [[String: Any]] = []
     private var mediaTransportTraceSequence = 0
     private var tracePersistenceScheduled = false
+    private let processGeneration = UUID().uuidString
 
     private init() {}
 
@@ -238,27 +239,18 @@ final class ShortcutRuntimeStatus {
         mediaTransportTraceSequence &+= 1
         payload["event"] = event
         payload["sequence"] = mediaTransportTraceSequence
+        payload["processGeneration"] = processGeneration
         payload["monotonicMilliseconds"] = Int((ProcessInfo.processInfo.systemUptime * 1000).rounded())
         payload["at"] = Self.timestampFormatter.string(from: Date())
+        guard JSONSerialization.isValidJSONObject(payload) else {
+            fputs("ShortcutRuntimeStatus: dropping invalid media transport trace\n", stderr)
+            scheduleTracePersistence()
+            return
+        }
         mediaTransportTrace.append(payload)
         if mediaTransportTrace.count > 240 {
             mediaTransportTrace.removeFirst(mediaTransportTrace.count - 240)
         }
-        let data: Data
-        do {
-            data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
-        } catch {
-            fputs("ShortcutRuntimeStatus: dropping media transport trace notification: \(error.localizedDescription)\n", stderr)
-            scheduleTracePersistence()
-            return
-        }
-        let json = String(decoding: data, as: UTF8.self)
-        DistributedNotificationCenter.default().postNotificationName(
-            .keywayMediaTransportTrace,
-            object: "com.fpieringer.Keyway",
-            userInfo: ["payload": json],
-            deliverImmediately: true
-        )
         scheduleTracePersistence()
     }
 
@@ -286,6 +278,7 @@ final class ShortcutRuntimeStatus {
             "plainHotkeysRegistered": snapshot.plainHotkeysRegistered,
             "fnHotkeysRegistered": snapshot.fnHotkeysRegistered,
             "appPath": snapshot.appPath,
+            "processGeneration": processGeneration,
             "mediaTransportTraceSequence": mediaTransportTraceSequence,
             "step": snapshot.step,
             "updatedAt": Self.timestampFormatter.string(from: Date()),
@@ -319,6 +312,10 @@ final class ShortcutRuntimeStatus {
             )
             let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
             try data.write(to: Self.persistenceURL, options: .atomic)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o600],
+                ofItemAtPath: Self.persistenceURL.path
+            )
         } catch {
             fputs("ShortcutRuntimeStatus: could not persist snapshot: \(error.localizedDescription)\n", stderr)
             return
@@ -336,7 +333,4 @@ extension Notification.Name {
     static let sonosHandoffIgnoreHeadphoneTransferSuggestion = Notification.Name("com.fpieringer.Keyway.ignoreHeadphoneTransferSuggestion")
     static let sonosHandoffRefreshOutputs = Notification.Name("com.fpieringer.Keyway.refreshOutputs")
     static let sonosHandoffApplyCachedOutputs = Notification.Name("com.fpieringer.Keyway.applyCachedOutputs")
-    static let keywayMediaTransportTrace = Notification.Name("com.fpieringer.Keyway.mediaTransportTrace")
-    static let keywayMediaRoutingProbeRequest = Notification.Name("com.fpieringer.Keyway.mediaRoutingProbe.request")
-    static let keywayMediaRoutingProbeResponse = Notification.Name("com.fpieringer.Keyway.mediaRoutingProbe.response")
 }

@@ -8,15 +8,25 @@ workdir="$(mktemp -d)"
 server_pid=""
 browser_pid=""
 
+stop_process() {
+  local pid="$1"
+  [[ -n "$pid" ]] || return
+  kill -TERM "$pid" >/dev/null 2>&1 || true
+  for _ in {1..50}; do
+    if ! kill -0 "$pid" >/dev/null 2>&1; then
+      wait "$pid" >/dev/null 2>&1 || true
+      return
+    fi
+    sleep 0.1
+  done
+  pkill -TERM -P "$pid" >/dev/null 2>&1 || true
+  kill -KILL "$pid" >/dev/null 2>&1 || true
+  wait "$pid" >/dev/null 2>&1 || true
+}
+
 cleanup() {
-  if [[ -n "$browser_pid" ]]; then
-    kill "$browser_pid" >/dev/null 2>&1 || true
-    wait "$browser_pid" >/dev/null 2>&1 || true
-  fi
-  if [[ -n "$server_pid" ]]; then
-    kill "$server_pid" >/dev/null 2>&1 || true
-    wait "$server_pid" >/dev/null 2>&1 || true
-  fi
+  stop_process "$browser_pid"
+  stop_process "$server_pid"
   for _ in {1..20}; do
     if rm -rf "$workdir" >/dev/null 2>&1; then
       return
@@ -42,20 +52,10 @@ if (( iterations < 1 )); then
   fail "KEYWAY_CHROMIUM_EXTENSION_ITERATIONS must be at least 1"
 fi
 
-extension_id="$(
-  python3 - "$repo_root/ChromiumExtension/manifest.json" <<'PY'
-import base64
-import hashlib
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as manifest_file:
-    public_key = json.load(manifest_file)["key"]
-
-digest = hashlib.sha256(base64.b64decode(public_key)).digest()[:16]
-print("".join(chr(ord("a") + (byte >> 4)) + chr(ord("a") + (byte & 15)) for byte in digest))
-PY
-)"
+contract_path="$repo_root/ChromiumBridgeProtocol/contract.json"
+extension_id="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["extensionID"])' "$contract_path")"
+app_identifier="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["appBundleIdentifier"])' "$contract_path")"
+team_identifier="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["teamIdentifier"])' "$contract_path")"
 
 if [[ "$dry_run" == "1" ]]; then
   printf 'chromium_extension_id=%s\n' "$extension_id"
@@ -80,8 +80,9 @@ playwright_module="$(
 )"
 
 active_page_file="$workdir/active-page-title"
+bridge_endpoint="$workdir/chromium-bridge.sock"
 
-"$repo_root/scripts/install_chromium_native_host" "$extension_id" >/dev/null
+"$repo_root/scripts/install_chromium_native_host" >/dev/null
 
 cat >"$workdir/server.py" <<'PY'
 import http.server
@@ -250,8 +251,14 @@ const second = await context.newPage();
 await second.goto(secondURL);
 await fs.writeFile(readyFile, "ready", "utf8");
 
+let closing = false;
 const close = async () => {
-  await context.close();
+  if (closing) return;
+  closing = true;
+  await Promise.race([
+    context.close(),
+    new Promise(resolve => setTimeout(resolve, 4000)),
+  ]);
   process.exit(0);
 };
 
@@ -262,7 +269,7 @@ JS
 
 browser_ready_file="$workdir/browser-ready"
 browser_log_file="$workdir/browser.log"
-node "$workdir/launch-browser.mjs" \
+KEYWAY_CHROMIUM_BRIDGE_ENDPOINT="$bridge_endpoint" node "$workdir/launch-browser.mjs" \
   "$playwright_module" \
   "$browser_path" \
   "$profile_dir" \
@@ -287,16 +294,12 @@ if [[ ! -s "$browser_ready_file" ]]; then
   fail "Chromium smoke browser did not load both test pages"
 fi
 
-cat >"$workdir/ChromiumExtensionLiveSmoke.swift" <<'SWIFT'
+cat >"$workdir/main.swift" <<'SWIFT'
 import Foundation
 
-let hostName = "com.fpieringer.keyway.chromium"
-let snapshotNotificationName = Notification.Name("com.fpieringer.keyway.chromium.snapshot")
-let commandResultNotificationName = Notification.Name("com.fpieringer.keyway.chromium.commandResult")
-let focusResultNotificationName = Notification.Name("com.fpieringer.keyway.chromium.focusResult")
-let commandNotificationName = Notification.Name("com.fpieringer.keyway.chromium.command")
 let iterations = Int(CommandLine.arguments[1])!
 let activePageTitlePath = CommandLine.arguments[2]
+let bridgeEndpoint = URL(fileURLWithPath: CommandLine.arguments[3])
 
 struct Snapshot: Decodable {
     let protocolVersion: Int
@@ -353,7 +356,7 @@ struct FocusPayload: Encodable {
     let connectionID: String
 }
 
-final class State {
+final class State: @unchecked Sendable {
     private let decoder = JSONDecoder()
     private let lock = NSLock()
     private(set) var targetsByTitle: [String: Target] = [:]
@@ -364,7 +367,10 @@ final class State {
 
     func handleSnapshot(_ payload: String) {
         let snapshot = try! decoder.decode(Snapshot.self, from: Data(payload.utf8))
-        precondition(snapshot.protocolVersion == 3, "Chromium extension snapshots must use protocol v3.")
+        precondition(
+            snapshot.protocolVersion == KeywayChromiumBridgeContract.protocolVersion,
+            "Chromium extension snapshot protocol must match the canonical bridge contract."
+        )
         lock.lock()
         for target in snapshot.targets where target.pageTitle.hasPrefix("Keyway Chromium Smoke ") {
             targetsByTitle[target.pageTitle] = target
@@ -449,7 +455,7 @@ func percentile95(_ values: [Int]) -> Int {
 func postCommand(state: State, target: Target, requestID: String, command: String, volumeDelta: Double? = nil) {
     let payload = CommandPayload(
         type: "command",
-        protocolVersion: 3,
+        protocolVersion: KeywayChromiumBridgeContract.protocolVersion,
         requestID: requestID,
         targetID: target.id,
         command: command,
@@ -457,29 +463,19 @@ func postCommand(state: State, target: Target, requestID: String, command: Strin
         connectionID: state.connectionID(targetID: target.id)
     )
     let data = try! JSONEncoder().encode(payload)
-    DistributedNotificationCenter.default().postNotificationName(
-        commandNotificationName,
-        object: hostName,
-        userInfo: ["payload": String(data: data, encoding: .utf8)!],
-        deliverImmediately: true
-    )
+    bridgeServer.sendCommand(String(data: data, encoding: .utf8)!)
 }
 
 func postFocus(state: State, target: Target, requestID: String) {
     let payload = FocusPayload(
         type: "focusTarget",
-        protocolVersion: 3,
+        protocolVersion: KeywayChromiumBridgeContract.protocolVersion,
         requestID: requestID,
         targetID: target.id,
         connectionID: state.connectionID(targetID: target.id)
     )
     let data = try! JSONEncoder().encode(payload)
-    DistributedNotificationCenter.default().postNotificationName(
-        commandNotificationName,
-        object: hostName,
-        userInfo: ["payload": String(data: data, encoding: .utf8)!],
-        deliverImmediately: true
-    )
+    bridgeServer.sendCommand(String(data: data, encoding: .utf8)!)
 }
 
 func runCommand(
@@ -557,35 +553,27 @@ func currentSmokeTarget(state: State, pageTitle: String) -> Target? {
 }
 
 let state = State()
-let snapshotObserver = DistributedNotificationCenter.default().addObserver(
-    forName: snapshotNotificationName,
-    object: hostName,
-    queue: .main
-) { notification in
-    guard let payload = notification.userInfo?["payload"] as? String else {
-        preconditionFailure("Chromium snapshot notifications must include payload.")
+let bridgeServer = KeywayChromiumBridgeServer(
+    endpointURL: bridgeEndpoint,
+    onEvent: { event, payload in
+        switch event {
+        case .snapshot:
+            state.handleSnapshot(payload)
+        case .commandResult:
+            state.handleCommandResult(payload)
+        case .focusResult:
+            state.handleFocusResult(payload)
+        }
     }
-    state.handleSnapshot(payload)
+)
+do {
+    try bridgeServer.start()
+} catch {
+    FileHandle.standardError.write(Data("smoke_chromium_extension_transport: bridge server failed: \(error)\n".utf8))
+    exit(1)
 }
-let resultObserver = DistributedNotificationCenter.default().addObserver(
-    forName: commandResultNotificationName,
-    object: hostName,
-    queue: .main
-) { notification in
-    guard let payload = notification.userInfo?["payload"] as? String else {
-        preconditionFailure("Chromium result notifications must include payload.")
-    }
-    state.handleCommandResult(payload)
-}
-let focusResultObserver = DistributedNotificationCenter.default().addObserver(
-    forName: focusResultNotificationName,
-    object: hostName,
-    queue: .main
-) { notification in
-    guard let payload = notification.userInfo?["payload"] as? String else {
-        preconditionFailure("Chromium focus-result notifications must include payload.")
-    }
-    state.handleFocusResult(payload)
+defer {
+    bridgeServer.stop()
 }
 
 let discoveryStarted = ProcessInfo.processInfo.systemUptime
@@ -826,10 +814,6 @@ for iteration in 0..<iterations {
     }
 }
 
-DistributedNotificationCenter.default().removeObserver(snapshotObserver)
-DistributedNotificationCenter.default().removeObserver(resultObserver)
-DistributedNotificationCenter.default().removeObserver(focusResultObserver)
-
 print("chromium_extension_smoke_total=\(iterations)")
 print("chromium_extension_command_surface_success=\(commandSurfaceSuccess)")
 print("chromium_extension_command_surface_failure=\(commandSurfaceFailure)")
@@ -847,5 +831,31 @@ if commandSurfaceFailure > 0 || focusSurfaceFailure > 0 || failure > 0 {
 }
 SWIFT
 
-swiftc "$workdir/ChromiumExtensionLiveSmoke.swift" -o "$workdir/chromium-extension-live-smoke"
-"$workdir/chromium-extension-live-smoke" "$iterations" "$active_page_file"
+ipc_sources=("$repo_root"/packages/SonosHandoffCore/Sources/KeywayChromiumBridgeIPC/*.swift)
+swiftc \
+  -framework Security \
+  "${ipc_sources[@]}" \
+  "$workdir/main.swift" \
+  -o "$workdir/chromium-extension-live-smoke"
+
+signing_identity="${KEYWAY_SIGNING_IDENTITY:-}"
+if [[ -z "$signing_identity" ]]; then
+  signing_identity="$(security find-identity -v -p codesigning \
+    | awk '$0 ~ /Apple Development/ && $0 !~ /CSSMERR_/ { print $2; exit }')"
+fi
+if [[ -z "$signing_identity" ]]; then
+  fail "no Apple Development signing identity for team $team_identifier"
+fi
+codesign \
+  --force \
+  --options runtime \
+  --timestamp=none \
+  --identifier "$app_identifier" \
+  --sign "$signing_identity" \
+  "$workdir/chromium-extension-live-smoke"
+signed_team_identifier="$(codesign -dvv "$workdir/chromium-extension-live-smoke" 2>&1 \
+  | awk -F= '$1 == "TeamIdentifier" { print $2; exit }')"
+if [[ "$signed_team_identifier" != "$team_identifier" ]]; then
+  fail "smoke peer signed by unexpected team ${signed_team_identifier:-none}; expected $team_identifier"
+fi
+"$workdir/chromium-extension-live-smoke" "$iterations" "$active_page_file" "$bridge_endpoint"

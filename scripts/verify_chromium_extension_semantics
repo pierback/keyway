@@ -35,6 +35,7 @@ app_chromium_sources = [
     repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumNativeMessagingHostInstaller.swift",
     repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionMessages.swift",
     repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionController.swift",
+    repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionIPC.swift",
 ]
 transport = "\n".join(source.read_text() for source in app_chromium_sources)
 source_store = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaSourceStore.swift").read_text()
@@ -47,6 +48,7 @@ settings = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/Features/Settin
 project = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar.xcodeproj/project.pbxproj").read_text()
 installer = (repo_root / "scripts/install_chromium_native_host").read_text()
 readme = (repo_root / "ChromiumExtension/README.md").read_text()
+bridge_adr = (repo_root / "docs/adr/0006-authenticate-chromium-app-host-ipc.md").read_text()
 generator = (repo_root / "scripts/generate_xcode_projects.rb").read_text()
 setup = (repo_root / "scripts/setup_chromium_extension").read_text()
 helium_smoke = (repo_root / "scripts/smoke_helium_chromium_extension_transport").read_text()
@@ -58,6 +60,9 @@ native_host_sources = sorted(
 )
 native_host = "\n".join(source.read_text() for source in native_host_sources)
 release_builder = (repo_root / "scripts/build_notarized_app").read_text()
+bridge_contract = json.loads((repo_root / "ChromiumBridgeProtocol/contract.json").read_text())
+generated_bridge_javascript = (repo_root / "ChromiumExtension/chromium_bridge_contract.generated.js").read_text()
+generated_bridge_swift = (repo_root / "packages/SonosHandoffCore/Sources/KeywayChromiumBridgeIPC/KeywayChromiumBridgeContract.generated.swift").read_text()
 
 def expect(text, needle, message):
     if needle not in text:
@@ -105,18 +110,18 @@ expect(
 
 expect(
     transport,
-    "static let protocolVersion = 4",
-    "Swift Chromium transport must hard-cut the browser extension protocol at v4",
+    "static let protocolVersion = KeywayChromiumBridgeContract.protocolVersion",
+    "Swift Chromium transport must consume the canonical browser extension protocol version",
 )
 expect(
     transport,
-    'static let extensionID = "gmdpkggbaohimgacbclndlfjghgcbael"',
-    "Swift app must register manifests for the stable unpacked extension ID",
+    "static let extensionID = KeywayChromiumBridgeContract.extensionID",
+    "Swift app must consume the canonical unpacked extension ID",
 )
 expect(
     transport,
-    'static let focusResultNotificationName = Notification.Name("com.fpieringer.keyway.chromium.focusResult")',
-    "Swift Chromium transport must receive browser focus results separately from media command results",
+    "case .focusResult:",
+    "Swift Chromium transport must route authenticated browser focus results separately from media command results",
 )
 expect(
     transport,
@@ -269,8 +274,18 @@ expect(
 )
 expect(
     service_worker,
-    "const protocolVersion = 4",
-    "Chromium extension service worker must speak protocol v4",
+    "const protocolVersion = keywayChromiumBridgeProtocolVersion",
+    "Chromium extension service worker must consume the canonical protocol version",
+)
+expect(
+    generated_bridge_javascript,
+    f"keywayChromiumBridgeProtocolVersion = {bridge_contract['protocolVersion']}",
+    "generated JavaScript contract must match the canonical protocol version",
+)
+expect(
+    generated_bridge_swift,
+    f"protocolVersion = {bridge_contract['protocolVersion']}",
+    "generated Swift contract must match the canonical protocol version",
 )
 expect(
     service_worker,
@@ -312,6 +327,31 @@ expect(
     "chrome.alarms.create(nativePortAlarmName, { periodInMinutes: 0.5 })",
     "Chromium extension service worker must register a 30s native-port dead-man alarm",
 )
+disconnect_handler = service_worker[
+    service_worker.index("  port.onDisconnect.addListener(() => {"):
+    service_worker.index("  loadResumeState(resume => {", service_worker.index("  port.onDisconnect.addListener(() => {"))
+]
+expect(
+    disconnect_handler,
+    "void chrome.runtime.lastError;",
+    "native-host disconnects must consume runtime.lastError so Helium does not record unchecked extension errors",
+)
+expect(
+    disconnect_handler,
+    "retireNativePort(port, generation)",
+    "native-host disconnects must retire exactly their current port generation",
+)
+for needle in [
+    "const reconnectMinimumDelayMs = 1000",
+    "const reconnectMaximumDelayMs = 30000",
+    "reconnectDelayMs = Math.min(reconnectDelayMs * 2, reconnectMaximumDelayMs)",
+    "reconnectDelayMs = reconnectMinimumDelayMs",
+]:
+    expect(
+        service_worker,
+        needle,
+        "native-host reconnects must use bounded backoff and reset it only after a stable connection",
+    )
 expect(
     service_worker,
     "rejectUnsupportedProtocol(message, port, generation)",
@@ -529,43 +569,33 @@ start_method = transport[
     transport.index("    func start() {"):
     transport.index("\n    func stop() {")
 ]
-reload_payload = 'let reloadPayload = "{\\"type\\":\\"reloadExtension\\",\\"protocolVersion\\":\\(ChromiumBrowserExtensionTransport.protocolVersion)}"'
 expect(
     start_method,
-    reload_payload,
-    "app startup must reload connected extensions so browsers replace stale native hosts after an app update",
+    "try ipc.start(",
+    "Chromium controller startup must start authenticated IPC event delivery",
 )
-if start_method.count(reload_payload) != 1:
+for label, source in [
+    ("app transport", transport),
+    ("native host", native_host),
+    ("service worker", service_worker),
+]:
+    for forbidden in ["reloadExtension", "requestExtensionReload", "onClientConnected", "chrome.runtime.reload()"]:
+        if forbidden in source:
+            raise SystemExit(
+                f"verify_chromium_extension_semantics: {label} must reconnect without the obsolete extension-reload cycle: {forbidden}"
+            )
+expect(
+    bridge_adr,
+    "neither the app nor the host reloads the extension runtime or browser tabs",
+    "authenticated Chromium bridge ADR must document reconnect without an extension reload",
+)
+if "automatically asks its extension instance to reload" in bridge_adr:
     raise SystemExit(
-        "verify_chromium_extension_semantics: app startup must request exactly one extension reload"
+        "verify_chromium_extension_semantics: authenticated Chromium bridge ADR must not preserve the obsolete reload cycle"
     )
-expect(
-    start_method,
-    "ChromiumBrowserExtensionTransport.commandNotificationName",
-    "app startup must send extension reload through the native-host command channel",
-)
-expect(
-    start_method,
-    "object: ChromiumBrowserExtensionTransport.nativeMessagingHostName",
-    "app startup extension reload must target the native messaging host",
-)
-expect(
-    start_method,
-    'userInfo: ["payload": reloadPayload]',
-    "app startup extension reload must send the reload payload",
-)
-expect(
-    start_method,
-    "deliverImmediately: true",
-    "app startup extension reload must not wait for distributed-notification coalescing",
-)
-if "connectionID" in start_method:
+if "DistributedNotificationCenter" in transport or "DistributedNotificationCenter" in native_host:
     raise SystemExit(
-        "verify_chromium_extension_semantics: app startup reload must reach every connected browser profile without a connection ID"
-    )
-if start_method.index("snapshotObserver =") > start_method.index(reload_payload):
-    raise SystemExit(
-        "verify_chromium_extension_semantics: app startup must observe the replacement extension hello before requesting reload"
+        "verify_chromium_extension_semantics: Chromium app/native-host bridge must use authenticated IPC, not distributed notifications"
     )
 if "try! chromiumNativeMessagingHostInstaller.install()" in environment or "try! chromiumNativeMessagingHostInstaller.install()" in sonos_app:
     raise SystemExit(
@@ -616,6 +646,17 @@ expect(
     "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/ChromiumExtension/manifest.json",
     "Xcode build must copy the extension manifest into app resources",
 )
+for build_definition, label in ((project, "Xcode project"), (generator, "project generator")):
+    expect(
+        build_definition,
+        "$(SRCROOT)/../ChromiumExtension/README.md",
+        f"{label} must declare the extension README as a copy-phase input",
+    )
+    expect(
+        build_definition,
+        "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/ChromiumExtension/README.md",
+        f"{label} must declare the bundled extension README as a copy-phase output",
+    )
 expect(
     generator,
     "def add_chromium_native_host_build_phase(target)",
@@ -653,8 +694,8 @@ expect(
 )
 expect(
     chromium_smoke,
-    "focusResultNotificationName",
-    "live Chromium extension smoke must observe focus results",
+    "case .focusResult:",
+    "live Chromium extension smoke must observe authenticated focus results",
 )
 expect(
     chromium_smoke,

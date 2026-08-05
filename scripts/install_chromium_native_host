@@ -1,33 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -gt 1 ]]; then
-  printf 'usage: %s [chromium-extension-id]\n' "$0" >&2
+if [[ $# -ne 0 ]]; then
+  printf 'usage: %s\n' "$0" >&2
   exit 64
 fi
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
-host_name="com.fpieringer.keyway.chromium"
+contract_path="$repo_root/ChromiumBridgeProtocol/contract.json"
+host_name="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["nativeMessagingHostName"])' "$contract_path")"
+extension_id="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["extensionID"])' "$contract_path")"
 app_dir="${KEYWAY_APP:-$HOME/Applications/Keyway.app}"
 bundled_host_path="$app_dir/Contents/Helpers/keyway-chromium-native-host"
-
-extension_id="${1:-}"
-if [[ -z "$extension_id" ]]; then
-  extension_id="$(
-    python3 - "$repo_root/ChromiumExtension/manifest.json" <<'PY'
-import base64
-import hashlib
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as manifest_file:
-    public_key = json.load(manifest_file)["key"]
-
-digest = hashlib.sha256(base64.b64decode(public_key)).digest()[:16]
-print("".join(chr(ord("a") + (byte >> 4)) + chr(ord("a") + (byte & 15)) for byte in digest))
-PY
-  )"
-fi
 
 if [[ -x "$bundled_host_path" ]]; then
   host_path="$bundled_host_path"

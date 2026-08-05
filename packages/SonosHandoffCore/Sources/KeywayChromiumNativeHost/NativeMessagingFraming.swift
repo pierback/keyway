@@ -1,6 +1,7 @@
 import Foundation
 
 let writeLock = NSLock()
+let maximumNativeMessageSize = 4 * 1_024 * 1_024
 
 func readExact(_ byteCount: Int) -> Data? {
     var data = Data()
@@ -23,6 +24,10 @@ func readNativeMessage() -> Data? {
         | UInt32(bytes[1]) << 8
         | UInt32(bytes[2]) << 16
         | UInt32(bytes[3]) << 24
+    guard length <= maximumNativeMessageSize else {
+        fputs("Keyway Chromium native host: native message exceeds 4 MiB limit.\n", stderr)
+        return nil
+    }
     return readExact(Int(length))
 }
 

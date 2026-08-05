@@ -10,13 +10,54 @@ INSTALL_LOCK="$HOME/Applications/.Keyway-install.lock"
 APP_DIR="$HOME/Applications/Keyway.app"
 APP_PROCESS_NAME="Keyway"
 APP_EXECUTABLE="$APP_DIR/Contents/MacOS/$APP_PROCESS_NAME"
+NATIVE_HOST_PROCESS_NAME="keyway-chromium-native-host"
+NATIVE_HOST_EXECUTABLE="$APP_DIR/Contents/Helpers/$NATIVE_HOST_PROCESS_NAME"
 EXPECTED_TEAM_ID='7Q44SDV7BM'
+
+stop_exact_executable() {
+  local process_name="$1"
+  local executable="$2"
+  local label="$3"
+  local process_pids=()
+  local running_pids=()
+  local pid
+
+  while IFS= read -r pid; do
+    if lsof -a -p "$pid" -d txt -Fn \
+      | awk -v executable="n$executable" '$0 == executable { found = 1 } END { exit !found }'; then
+      process_pids+=("$pid")
+    fi
+  done < <(pgrep -x "$process_name" || true)
+
+  if (( ${#process_pids[@]} == 0 )); then
+    return
+  fi
+
+  kill "${process_pids[@]}"
+  for _ in {1..50}; do
+    running_pids=()
+    for pid in "${process_pids[@]}"; do
+      if lsof -a -p "$pid" -d txt -Fn \
+        | awk -v executable="n$executable" '$0 == executable { found = 1 } END { exit !found }'; then
+        running_pids+=("$pid")
+      fi
+    done
+    if (( ${#running_pids[@]} == 0 )); then
+      return
+    fi
+    sleep 0.1
+  done
+
+  echo "error: $label did not stop: ${running_pids[*]}" >&2
+  exit 1
+}
 
 mkdir -p "$HOME/Applications"
 mkdir "$INSTALL_LOCK"
 trap 'rm -rf "$STAGING_DIR"; rmdir "$INSTALL_LOCK"' EXIT
 
 xcodebuild \
+  -quiet \
   -workspace "$ROOT_DIR/Keyway.xcworkspace" \
   -scheme Keyway \
   -configuration Debug \
@@ -47,39 +88,11 @@ if [[ -d "$APP_DIR" ]]; then
   fi
 fi
 
-app_pids=()
-while IFS= read -r pid; do
-  if lsof -a -p "$pid" -d txt -Fn \
-    | awk -v executable="n$APP_EXECUTABLE" '$0 == executable { found = 1 } END { exit !found }'; then
-    app_pids+=("$pid")
-  fi
-done < <(pgrep -x "$APP_PROCESS_NAME")
-
-if (( ${#app_pids[@]} > 0 )); then
-  kill "${app_pids[@]}"
-  for _ in {1..50}; do
-    running_pids=()
-    for pid in "${app_pids[@]}"; do
-      if lsof -a -p "$pid" -d txt -Fn \
-        | awk -v executable="n$APP_EXECUTABLE" '$0 == executable { found = 1 } END { exit !found }'; then
-        running_pids+=("$pid")
-      fi
-    done
-    if (( ${#running_pids[@]} == 0 )); then
-      break
-    fi
-    sleep 0.1
-  done
-
-  if (( ${#running_pids[@]} > 0 )); then
-    echo "error: Keyway did not stop: ${running_pids[*]}" >&2
-    exit 1
-  fi
-fi
+stop_exact_executable "$APP_PROCESS_NAME" "$APP_EXECUTABLE" "Keyway"
 
 rm -rf "$APP_DIR"
 mv "$STAGED_APP" "$APP_DIR"
-open "$APP_DIR"
-"$ROOT_DIR/scripts/reload_chromium_extension"
+stop_exact_executable "$NATIVE_HOST_PROCESS_NAME" "$NATIVE_HOST_EXECUTABLE" "Keyway Chromium native host"
+open -n "$APP_DIR"
 
 echo "$APP_DIR"

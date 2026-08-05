@@ -31,7 +31,7 @@ The menu-bar target is the application composition root. It constructs concrete 
 1. **Presentation — `SonosHandoffMenuBar` SwiftUI/AppKit views.** Views render published state and send user intent. They do not discover Sonos devices, call Spotify, parse browser messages, own subprocesses, or choose transport routes.
 2. **Application orchestration — controllers in `SonosHandoffMenuBar/.../App`.** Controllers own user-session lifecycle, asynchronous operation gates, request correlation, and publication of UI state. They may depend on core policy and concrete integration adapters. They must not move browser-specific behavior into the app or duplicate deterministic core rules.
 3. **Domain and integration policy — `packages/SonosHandoffCore`.** The package owns shared models, configuration, Sonos and Spotify workflows, normalization, planners, resolvers, verification policies, and command-line composition. It does not import or depend on the menu-bar target.
-4. **Process adapters.** `MediaRemoteHelperProcess`, `MediaRemoteController`, `ChromiumBrowserExtensionController`, and the native host own concrete process/transport lifecycles. Their contracts are intentionally small: newline-delimited helper JSON, distributed-notification payloads, and Chrome native-messaging frames.
+4. **Process adapters.** `MediaRemoteHelperProcess`, `MediaRemoteController`, `ChromiumBrowserExtensionController`, `KeywayChromiumBridgeIPC`, and the native host own concrete process/transport lifecycles. Their contracts are intentionally small: newline-delimited helper JSON, authenticated length-prefixed Unix-socket envelopes, and Chrome native-messaging frames.
 5. **External/runtime-specific implementation.** The Perl/MediaRemote helper and the Chromium extension contain framework- or browser-specific behavior. The extension's pure policy modules do not call Chrome APIs; `service_worker.js` remains the only owner of MV3 lifecycle and browser APIs.
 
 Dependencies flow downward through these layers. Reverse dependencies, circular imports, UI-owned transport policy, native-host-owned product policy, and browser APIs outside the extension are prohibited. A new interface or wrapper is justified only when it establishes a real ownership or process boundary.
@@ -44,7 +44,7 @@ Dependencies flow downward through these layers. Reverse dependencies, circular 
 | `MediaRemoteController` | Helper-pair generation, snapshot refresh gate, pending command/route-shield requests, liveness, timeout tasks, and target publication. One controller owns both helper roles as an atomic pair. |
 | `MediaRemoteHelperProcess` | One subprocess generation, its process and pipes, bounded stdout buffer, and line delivery. A retired generation cannot deliver further buffered lines. |
 | `ChromiumBrowserExtensionController` | Browser profile snapshots, connection generations, pending command/focus requests, profile silence, suspect targets, and app-visible Chromium targets. No other app type mutates this state. |
-| `keyway-chromium-native-host` | One private connection ID and monotonic connection generation, native-message framing, browser-process identity, and notification translation. It never chooses a media candidate or app route. |
+| `keyway-chromium-native-host` | One private connection ID and monotonic connection generation, native-message framing, browser-process identity, and authenticated app-bridge translation. It never chooses a media candidate or app route. |
 | `service_worker.js` | Profile GUID, native-port generation, snapshot epoch, Chrome listener registration, reconstructed source state, and per-tab command routing. |
 | `DocumentAuthorityRegistry` | Tab/frame/browser-document/content-document authority and monotonic document generations. Late or retired document messages cannot replace current authority. |
 | `media_source_selection.js` | Pure visibility, audibility, route-stickiness, deterministic candidate scoring, and target materialization. It owns no Chrome state. |
@@ -60,15 +60,19 @@ The app launches separate snapshot and command helper processes but supervises t
 
 Native messaging keeps the existing four-byte little-endian length prefix and JSON wire format. The extension sends `hello`, `snapshot`, `keepalive`, command-result, and focus-result messages. The native host enriches snapshots/results with browser identity plus private connection correlation, and strips the private connection token before a command crosses the native wire. The app rejects stale connection generations and stale request results.
 
+The app/native-host boundary is a separate private Unix-domain socket owned by `KeywayChromiumBridgeIPC`. Its parent directory is mode `0700`, its socket is mode `0600`, and its internal frames are capped at 4 MiB. Authentication is mutual and bound to the kernel-provided peer audit token: the app accepts only the signed native-host identifier, while the native host accepts only the signed Keyway app identifier, and both require the canonical Apple team. `DistributedNotificationCenter` is prohibited on this boundary because any process in the login session could otherwise inject browser state or commands. The canonical protocol version, extension ID, native-host name, bundle/code identifiers, and team ID live in `ChromiumBridgeProtocol/contract.json`; generated Swift, JavaScript, and native-host manifest artifacts must pass `scripts/generate_chromium_bridge_contract --check`.
+
 Target identity remains:
 
 ```text
 chromium-tab:<profile-guid>:<tab-id>
 ```
 
-The persisted profile GUID survives service-worker suspension and native-host churn. Frame/media identifiers stay private routing state. `DocumentAuthorityRegistry` rejects late messages from navigated or retired documents. On worker restart, the worker restores persisted profile/epoch metadata, reconnects the native port, rebuilds candidates from content-script probes and tab state, and republishes a canonical snapshot. Listener registration remains top-level and synchronous for MV3 wake-up semantics.
+The persisted profile GUID survives service-worker suspension and native-host churn. Frame/media identifiers stay private routing state. `DocumentAuthorityRegistry` rejects late messages from navigated or retired documents. On worker restart, the worker restores persisted profile/epoch metadata, reconnects the native port, rebuilds candidates from content-script probes and tab state, and republishes a canonical snapshot. Native-port disconnects are generation-bound, consume Chrome's `runtime.lastError`, and retry with bounded exponential backoff. The app and native host never request an extension-runtime reload; installed-app replacement rotates only exact helper processes and lets the worker reconnect normally. Listener registration remains top-level and synchronous for MV3 wake-up semantics.
 
 The content script takes one document/open-shadow-root snapshot per publication or command pass and reuses the supported-control result for all media elements in that pass. A synchronous exception or callback-time `chrome.runtime.lastError` reporting `Extension context invalidated.` disconnects its observer and clears its timer.
+
+Test-only media-routing and shortcut-runtime probes are explicit filesystem capabilities, disabled unless their dedicated environment variable is present. Their directories must be owner-only mode `0700`; request and trace files are bounded, generation-bound, atomically replaced, and mode `0600`. Normal app runtime exposes no session-wide notification channel for these probes.
 
 ### Sonos and Spotify
 
@@ -86,6 +90,7 @@ The content script takes one document/open-shadow-root snapshot per publication 
 ### `SonosHandoffCore`
 
 - owns shared models, errors, configuration, keychain abstractions, deterministic policy, and the public handoff adapter;
+- exposes `KeywayChromiumBridgeIPC` as the shared, policy-free authenticated transport used by the app and native host;
 - composes Sonos discovery, grouping, rendering control, AVTransport verification, Spotify Connect/Desktop/Web API token flows, transfer, active-device verification, and volume mirroring;
 - supplies the same behavior to the menu app, helper executables, semantic harnesses, and `sonos-handoff-port` without depending on presentation code.
 

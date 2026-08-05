@@ -222,15 +222,21 @@ for forbidden in (
     if forbidden in probe:
         fail(f"MediaRoutingProbeController must not force untrusted probe input: found {forbidden}")
 for required in (
-    'guard let payload = notification.userInfo?["payload"] as? String else {',
-    'logger.error("Ignoring media routing probe request without string payload")',
-    "request = try decoder.decode(",
+    'private static let environmentDirectory = "KEYWAY_MEDIA_ROUTING_PROBE_DIRECTORY"',
+    "guard validateProbeDirectory(directoryURL)",
+    "attributes[.type] as? FileAttributeType == .typeRegular",
+    "owner.uint32Value == geteuid()",
+    "permissions.intValue & 0o077 == 0",
+    "fileSize.intValue <= Self.maximumRequestBytes",
+    "request = try decoder.decode(MediaRoutingProbeRequest.self, from: data)",
     'logger.error("Ignoring media routing probe decode failure',
+    "guard request.requestID.uppercased() == requestUUID.uuidString else {",
     'message: "missing_target_id"',
     'message: "missing_command"',
-    "data = try encoder.encode(response)",
-    'logger.error("Dropping media routing probe response encode failure',
-    "guard let json = String(data: data, encoding: .utf8) else {",
+    "let data = try encoder.encode(response)",
+    "[.posixPermissions: 0o600]",
+    "FileManager.default.moveItem(at: temporaryURL, to: responseURL)",
+    'logger.error("Dropping media routing probe response requestID=',
 ):
     if required not in probe:
         fail(f"MediaRoutingProbeController must log, ignore, or publish typed probe failures: missing {required}")

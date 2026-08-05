@@ -7,19 +7,26 @@ server_pid=""
 browser_pid=""
 monitor_pid=""
 
+stop_process() {
+  local pid="$1"
+  [[ -n "$pid" ]] || return
+  kill -TERM "$pid" >/dev/null 2>&1 || true
+  for _ in {1..50}; do
+    if ! kill -0 "$pid" >/dev/null 2>&1; then
+      wait "$pid" >/dev/null 2>&1 || true
+      return
+    fi
+    sleep 0.1
+  done
+  pkill -TERM -P "$pid" >/dev/null 2>&1 || true
+  kill -KILL "$pid" >/dev/null 2>&1 || true
+  wait "$pid" >/dev/null 2>&1 || true
+}
+
 cleanup() {
-  if [[ -n "$monitor_pid" ]]; then
-    kill "$monitor_pid" >/dev/null 2>&1 || true
-    wait "$monitor_pid" >/dev/null 2>&1 || true
-  fi
-  if [[ -n "$browser_pid" ]]; then
-    kill "$browser_pid" >/dev/null 2>&1 || true
-    wait "$browser_pid" >/dev/null 2>&1 || true
-  fi
-  if [[ -n "$server_pid" ]]; then
-    kill "$server_pid" >/dev/null 2>&1 || true
-    wait "$server_pid" >/dev/null 2>&1 || true
-  fi
+  stop_process "$monitor_pid"
+  stop_process "$browser_pid"
+  stop_process "$server_pid"
   for _ in {1..20}; do
     if rm -rf "$workdir" >/dev/null 2>&1; then
       return
@@ -35,20 +42,11 @@ fail() {
   exit 1
 }
 
-extension_id="$(
-  python3 - "$repo_root/ChromiumExtension/manifest.json" <<'PY'
-import base64
-import hashlib
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as manifest_file:
-    public_key = json.load(manifest_file)["key"]
-
-digest = hashlib.sha256(base64.b64decode(public_key)).digest()[:16]
-print("".join(chr(ord("a") + (byte >> 4)) + chr(ord("a") + (byte & 15)) for byte in digest))
-PY
-)"
+contract_path="$repo_root/ChromiumBridgeProtocol/contract.json"
+extension_id="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["extensionID"])' "$contract_path")"
+app_identifier="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["appBundleIdentifier"])' "$contract_path")"
+team_identifier="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["teamIdentifier"])' "$contract_path")"
+bridge_endpoint="$workdir/chromium-bridge.sock"
 
 browser_path="${KEYWAY_CHROMIUM_SMOKE_BROWSER_PATH:-}"
 if [[ -z "$browser_path" ]]; then
@@ -66,7 +64,7 @@ playwright_module="$(
     || fail "Playwright must be available to launch Chromium with extension support"
 )"
 
-"$repo_root/scripts/install_chromium_native_host" "$extension_id" >/dev/null
+"$repo_root/scripts/install_chromium_native_host" >/dev/null
 
 cat >"$workdir/server.py" <<'PY'
 import http.server
@@ -156,8 +154,14 @@ const page = await context.newPage();
 await page.goto(targetURL);
 await fs.writeFile(readyFile, "ready", "utf8");
 
+let closing = false;
 const close = async () => {
-  await context.close();
+  if (closing) return;
+  closing = true;
+  await Promise.race([
+    context.close(),
+    new Promise(resolve => setTimeout(resolve, 4000)),
+  ]);
   process.exit(0);
 };
 
@@ -168,7 +172,7 @@ JS
 
 browser_ready_file="$workdir/browser-ready"
 browser_log_file="$workdir/browser.log"
-node "$workdir/launch-browser.mjs" \
+KEYWAY_CHROMIUM_BRIDGE_ENDPOINT="$bridge_endpoint" node "$workdir/launch-browser.mjs" \
   "$playwright_module" \
   "$browser_path" \
   "$profile_dir" \
@@ -178,7 +182,7 @@ node "$workdir/launch-browser.mjs" \
   >"$browser_log_file" 2>&1 &
 browser_pid="$!"
 
-for _ in {1..200}; do
+for _ in {1..600}; do
   if [[ -s "$browser_ready_file" ]]; then
     break
   fi
@@ -201,14 +205,13 @@ for _ in {1..100}; do
 done
 [[ -s "$devtools_active_port" ]] || fail "Chromium did not expose DevToolsActivePort"
 
-cat >"$workdir/WorkerSuspensionMonitor.swift" <<'SWIFT'
+cat >"$workdir/main.swift" <<'SWIFT'
 import Foundation
 
-let hostName = "com.fpieringer.keyway.chromium"
-let snapshotNotificationName = Notification.Name("com.fpieringer.keyway.chromium.snapshot")
 let readyPath = CommandLine.arguments[1]
 let donePath = CommandLine.arguments[2]
 let failPath = CommandLine.arguments[3]
+let bridgeEndpoint = URL(fileURLWithPath: CommandLine.arguments[4])
 let smokePageTitle = "Keyway Chromium Suspension Smoke"
 
 struct Snapshot: Decodable {
@@ -226,8 +229,9 @@ struct Target: Decodable {
     let title: String
 }
 
-final class Monitor {
+final class Monitor: @unchecked Sendable {
     private let decoder = JSONDecoder()
+    private let lock = NSLock()
     private var initialIDs: Set<String>?
     private var initialConnectionID: String?
     private var initialProfileGuid: String?
@@ -235,8 +239,13 @@ final class Monitor {
     private(set) var failed = false
 
     func handleSnapshot(_ payload: String) {
+        lock.lock()
+        defer { lock.unlock() }
         let snapshot = try! decoder.decode(Snapshot.self, from: Data(payload.utf8))
-        precondition(snapshot.protocolVersion == 3, "Chromium extension snapshots must use protocol v3.")
+        precondition(
+            snapshot.protocolVersion == KeywayChromiumBridgeContract.protocolVersion,
+            "Chromium extension snapshot protocol must match the canonical bridge contract."
+        )
         let smokeTargets = snapshot.targets.filter { $0.pageTitle == smokePageTitle }
         if initialIDs == nil {
             guard !smokeTargets.isEmpty else {
@@ -269,49 +278,86 @@ final class Monitor {
     }
 
     var done: Bool {
+        lock.lock()
+        defer { lock.unlock() }
         guard let resumedAt else {
             return false
         }
         return ProcessInfo.processInfo.systemUptime - resumedAt >= 2
     }
+
+    var hasFailed: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return failed
+    }
 }
 
 let monitor = Monitor()
-let observer = DistributedNotificationCenter.default().addObserver(
-    forName: snapshotNotificationName,
-    object: hostName,
-    queue: .main
-) { notification in
-    guard let payload = notification.userInfo?["payload"] as? String else {
-        preconditionFailure("Chromium snapshot notifications must include payload.")
+let bridgeServer = KeywayChromiumBridgeServer(
+    endpointURL: bridgeEndpoint,
+    onEvent: { event, payload in
+        if event == .snapshot {
+            monitor.handleSnapshot(payload)
+        }
     }
-    monitor.handleSnapshot(payload)
+)
+do {
+    try bridgeServer.start()
+} catch {
+    try! "bridge server failed: \(error)\n".write(toFile: failPath, atomically: true, encoding: .utf8)
+    exit(1)
+}
+defer {
+    bridgeServer.stop()
 }
 
 let deadline = Date(timeIntervalSinceNow: 30)
 while Date() < deadline {
     RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.025))
-    if monitor.failed {
-        DistributedNotificationCenter.default().removeObserver(observer)
+    if monitor.hasFailed {
         exit(1)
     }
     if monitor.done {
         try! "done".write(toFile: donePath, atomically: true, encoding: .utf8)
-        DistributedNotificationCenter.default().removeObserver(observer)
         exit(0)
     }
 }
 
 try! "timed out waiting for resumed worker snapshot\n".write(toFile: failPath, atomically: true, encoding: .utf8)
-DistributedNotificationCenter.default().removeObserver(observer)
 exit(1)
 SWIFT
 
-swiftc "$workdir/WorkerSuspensionMonitor.swift" -o "$workdir/worker-suspension-monitor"
+ipc_sources=("$repo_root"/packages/SonosHandoffCore/Sources/KeywayChromiumBridgeIPC/*.swift)
+swiftc \
+  -framework Security \
+  "${ipc_sources[@]}" \
+  "$workdir/main.swift" \
+  -o "$workdir/worker-suspension-monitor"
+signing_identity="${KEYWAY_SIGNING_IDENTITY:-}"
+if [[ -z "$signing_identity" ]]; then
+  signing_identity="$(security find-identity -v -p codesigning \
+    | awk '$0 ~ /Apple Development/ && $0 !~ /CSSMERR_/ { print $2; exit }')"
+fi
+if [[ -z "$signing_identity" ]]; then
+  fail "no Apple Development signing identity for team $team_identifier"
+fi
+codesign \
+  --force \
+  --options runtime \
+  --timestamp=none \
+  --identifier "$app_identifier" \
+  --sign "$signing_identity" \
+  "$workdir/worker-suspension-monitor"
+signed_team_identifier="$(codesign -dvv "$workdir/worker-suspension-monitor" 2>&1 \
+  | awk -F= '$1 == "TeamIdentifier" { print $2; exit }')"
+if [[ "$signed_team_identifier" != "$team_identifier" ]]; then
+  fail "smoke peer signed by unexpected team ${signed_team_identifier:-none}; expected $team_identifier"
+fi
 monitor_ready_file="$workdir/monitor-ready"
 monitor_done_file="$workdir/monitor-done"
 monitor_fail_file="$workdir/monitor-fail"
-"$workdir/worker-suspension-monitor" "$monitor_ready_file" "$monitor_done_file" "$monitor_fail_file" &
+"$workdir/worker-suspension-monitor" "$monitor_ready_file" "$monitor_done_file" "$monitor_fail_file" "$bridge_endpoint" &
 monitor_pid="$!"
 
 for _ in {1..200}; do

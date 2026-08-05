@@ -92,20 +92,8 @@ for _ in {1..100}; do
 done
 pgrep -x Helium >/dev/null || fail "Helium must be running before mixed media routing smoke"
 
-extension_id="$(
-  python3 - "$repo_root/ChromiumExtension/manifest.json" <<'PY'
-import base64
-import hashlib
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as manifest_file:
-    public_key = json.load(manifest_file)["key"]
-
-digest = hashlib.sha256(base64.b64decode(public_key)).digest()[:16]
-print("".join(chr(ord("a") + (byte >> 4)) + chr(ord("a") + (byte & 15)) for byte in digest))
-PY
-)"
+contract_path="$repo_root/ChromiumBridgeProtocol/contract.json"
+extension_id="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["extensionID"])' "$contract_path")"
 
 browser_path="${KEYWAY_CHROMIUM_SMOKE_BROWSER_PATH:-}"
 if [[ -z "$browser_path" ]]; then
@@ -123,7 +111,7 @@ playwright_module="$(
     || fail "Playwright must be available to launch Chromium with extension support"
 )"
 
-"$repo_root/scripts/install_chromium_native_host" "$extension_id" >/dev/null
+"$repo_root/scripts/install_chromium_native_host" >/dev/null
 
 cat >"$workdir/server.py" <<'PY'
 import http.server
@@ -292,17 +280,19 @@ if pgrep -f "$app_executable" >/dev/null; then
   done
 fi
 
-KEYWAY_MEDIA_ROUTING_PROBE=1 "$app_executable" >/dev/null 2>&1 &
+probe_dir="$workdir/media-routing-probe"
+mkdir -m 700 "$probe_dir"
+runtime_status_file="$HOME/Library/Application Support/keyway/shortcut-runtime-status.json"
+KEYWAY_MEDIA_ROUTING_PROBE_DIRECTORY="$probe_dir" "$app_executable" >/dev/null 2>&1 &
 keyway_pid="$!"
 
 cat >"$workdir/MixedMediaRoutingSmoke.swift" <<'SWIFT'
+import Darwin
 import Foundation
 
-let notificationObject = "com.fpieringer.Keyway"
-let probeRequestName = Notification.Name("com.fpieringer.Keyway.mediaRoutingProbe.request")
-let probeResponseName = Notification.Name("com.fpieringer.Keyway.mediaRoutingProbe.response")
-let traceName = Notification.Name("com.fpieringer.Keyway.mediaTransportTrace")
 let iterations = Int(CommandLine.arguments[1])!
+let probeDirectoryURL = URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true)
+let runtimeStatusURL = URL(fileURLWithPath: CommandLine.arguments[3], isDirectory: false)
 
 struct Target: Decodable {
     let id: String
@@ -331,65 +321,75 @@ struct ProbeResponse: Decodable {
 
 struct TraceEvent {
     let sequence: Int
-    let event: String
     let command: String
     let targetID: String
     let ok: Bool
     let unsupported: Bool
     let backend: String
-    let receivedUptime: TimeInterval
+    let recordedUptime: TimeInterval
+}
+
+struct TraceCursor {
+    let processGeneration: String?
+    let sequence: Int
 }
 
 final class State {
-    private let lock = NSLock()
-    private let decoder = JSONDecoder()
-    private var responses: [String: ProbeResponse] = [:]
+    private let runtimeStatusURL: URL
+    private var processGeneration: String?
     private var traces: [TraceEvent] = []
 
-    func handleResponse(_ payload: String) {
-        let response = try! decoder.decode(ProbeResponse.self, from: Data(payload.utf8))
-        lock.lock()
-        responses[response.requestID] = response
-        lock.unlock()
+    init(runtimeStatusURL: URL) {
+        self.runtimeStatusURL = runtimeStatusURL
     }
 
-    func handleTrace(_ payload: String) {
-        let object = try! JSONSerialization.jsonObject(with: Data(payload.utf8)) as! [String: Any]
-        guard object["event"] as! String == "helper_command_result" else {
+    private func refreshTraces() {
+        guard let data = try? Data(contentsOf: runtimeStatusURL),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let generation = object["processGeneration"] as? String,
+              let rows = object["mediaTransportTrace"] as? [[String: Any]]
+        else {
             return
         }
-        let trace = TraceEvent(
-            sequence: object["sequence"] as! Int,
-            event: object["event"] as! String,
-            command: object["command"] as! String,
-            targetID: object["targetID"] as! String,
-            ok: object["ok"] as! Bool,
-            unsupported: object["unsupported"] as! Bool,
-            backend: object["transportBackend"] as? String ?? "",
-            receivedUptime: ProcessInfo.processInfo.systemUptime
+
+        processGeneration = generation
+        traces = rows.compactMap { row in
+            guard row["processGeneration"] as? String == generation,
+                  row["event"] as? String == "helper_command_result",
+                  let sequence = row["sequence"] as? Int,
+                  let command = row["command"] as? String,
+                  let targetID = row["targetID"] as? String,
+                  let ok = row["ok"] as? Bool,
+                  let unsupported = row["unsupported"] as? Bool,
+                  let monotonicMilliseconds = row["monotonicMilliseconds"] as? Int
+            else {
+                return nil
+            }
+            return TraceEvent(
+                sequence: sequence,
+                command: command,
+                targetID: targetID,
+                ok: ok,
+                unsupported: unsupported,
+                backend: row["transportBackend"] as? String ?? "",
+                recordedUptime: Double(monotonicMilliseconds) / 1000
+            )
+        }
+    }
+
+    func cursor() -> TraceCursor {
+        refreshTraces()
+        return TraceCursor(
+            processGeneration: processGeneration,
+            sequence: traces.map(\.sequence).max() ?? 0
         )
-        lock.lock()
-        traces.append(trace)
-        lock.unlock()
     }
 
-    func response(requestID: String) -> ProbeResponse? {
-        lock.lock()
-        defer { lock.unlock() }
-        return responses[requestID]
-    }
-
-    func maxSequence() -> Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return traces.map(\.sequence).max() ?? 0
-    }
-
-    func helperResults(after sequence: Int, command: String) -> [TraceEvent] {
-        lock.lock()
-        defer { lock.unlock() }
+    func helperResults(after cursor: TraceCursor, command: String) -> [TraceEvent] {
+        refreshTraces()
+        let minimumSequence = processGeneration == cursor.processGeneration ? cursor.sequence : 0
         return traces
-            .filter { $0.sequence > sequence && $0.command == command }
+            .filter { $0.sequence > minimumSequence && $0.command == command }
             .sorted { $0.sequence < $1.sequence }
     }
 }
@@ -410,21 +410,42 @@ func percentile95(_ values: [Int]) -> Int {
     return sorted[index]
 }
 
-func postProbe(_ request: ProbeRequest) {
+func submitProbe(_ request: ProbeRequest) {
     let data = try! JSONEncoder().encode(request)
-    DistributedNotificationCenter.default().postNotificationName(
-        probeRequestName,
-        object: notificationObject,
-        userInfo: ["payload": String(data: data, encoding: .utf8)!],
-        deliverImmediately: true
-    )
+    let requestURL = probeDirectoryURL.appendingPathComponent("request-\(request.requestID).json")
+    let temporaryURL = probeDirectoryURL.appendingPathComponent(".request-\(request.requestID).tmp")
+    try! data.write(to: temporaryURL)
+    guard chmod(temporaryURL.path, S_IRUSR | S_IWUSR) == 0 else {
+        try? FileManager.default.removeItem(at: temporaryURL)
+        fatalError("could not make probe request owner-only")
+    }
+    try! FileManager.default.moveItem(at: temporaryURL, to: requestURL)
+}
+
+func takeProbeResponse(requestID: String) -> ProbeResponse? {
+    let responseURL = probeDirectoryURL.appendingPathComponent("response-\(requestID).json")
+    guard let attributes = try? FileManager.default.attributesOfItem(atPath: responseURL.path),
+          attributes[.type] as? FileAttributeType == .typeRegular,
+          let permissions = attributes[.posixPermissions] as? NSNumber,
+          permissions.intValue & 0o077 == 0,
+          let data = try? Data(contentsOf: responseURL),
+          let response = try? JSONDecoder().decode(ProbeResponse.self, from: data)
+    else {
+        return nil
+    }
+    try? FileManager.default.removeItem(at: responseURL)
+    return response
 }
 
 func snapshot(state: State) -> [Target]? {
     let requestID = UUID().uuidString
-    postProbe(ProbeRequest(requestID: requestID, action: "snapshot", targetID: nil, command: nil))
-    guard runLoop(until: Date(timeIntervalSinceNow: 2), condition: { state.response(requestID: requestID) != nil }),
-          let response = state.response(requestID: requestID),
+    submitProbe(ProbeRequest(requestID: requestID, action: "snapshot", targetID: nil, command: nil))
+    var response: ProbeResponse?
+    guard runLoop(until: Date(timeIntervalSinceNow: 2), condition: {
+        response = takeProbeResponse(requestID: requestID)
+        return response != nil
+    }),
+          let response,
           response.ok
     else {
         return nil
@@ -440,13 +461,17 @@ func route(
     expectedBackend: String,
     latencies: inout [Int]
 ) -> (success: Bool, wrongTarget: Bool, duplicate: Bool, reason: String) {
-    let baseline = state.maxSequence()
+    let baseline = state.cursor()
     let requestID = UUID().uuidString
     let started = ProcessInfo.processInfo.systemUptime
-    postProbe(ProbeRequest(requestID: requestID, action: "route", targetID: target.id, command: command))
+    submitProbe(ProbeRequest(requestID: requestID, action: "route", targetID: target.id, command: command))
 
-    guard runLoop(until: Date(timeIntervalSinceNow: 2), condition: { state.response(requestID: requestID) != nil }),
-          let response = state.response(requestID: requestID)
+    var response: ProbeResponse?
+    guard runLoop(until: Date(timeIntervalSinceNow: 2), condition: {
+        response = takeProbeResponse(requestID: requestID)
+        return response != nil
+    }),
+          let response
     else {
         return (false, false, false, "missing probe response")
     }
@@ -460,7 +485,7 @@ func route(
         return (false, false, false, "missing helper result")
     }
 
-    latencies.append(Int(((first.receivedUptime - started) * 1000).rounded()))
+    latencies.append(Int(((first.recordedUptime - started) * 1000).rounded()))
     RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.12))
     let results = state.helperResults(after: baseline, command: command)
     let wrongTarget = first.targetID != target.id
@@ -484,21 +509,7 @@ func chromiumTarget(_ targets: [Target], title: String) -> Target? {
     }
 }
 
-let state = State()
-let responseObserver = DistributedNotificationCenter.default().addObserver(
-    forName: probeResponseName,
-    object: notificationObject,
-    queue: .main
-) { notification in
-    state.handleResponse(notification.userInfo!["payload"] as! String)
-}
-let traceObserver = DistributedNotificationCenter.default().addObserver(
-    forName: traceName,
-    object: notificationObject,
-    queue: .main
-) { notification in
-    state.handleTrace(notification.userInfo!["payload"] as! String)
-}
+let state = State(runtimeStatusURL: runtimeStatusURL)
 
 let discoveryStarted = ProcessInfo.processInfo.systemUptime
 var discovered: (spotify: Target, helium: Target, chromiumA: Target, chromiumB: Target)?
@@ -589,9 +600,6 @@ for index in 0..<iterations {
     if result.duplicate { duplicate += 1 }
 }
 
-DistributedNotificationCenter.default().removeObserver(responseObserver)
-DistributedNotificationCenter.default().removeObserver(traceObserver)
-
 let p95 = latencies.isEmpty ? 0 : percentile95(latencies)
 let requiredSuccess = Int(ceil(Double(iterations) * 0.98))
 
@@ -612,4 +620,4 @@ if success < requiredSuccess || wrongTarget > 0 || duplicate > 0 || unsupportedF
 SWIFT
 
 swiftc "$workdir/MixedMediaRoutingSmoke.swift" -o "$workdir/mixed-media-routing-smoke"
-"$workdir/mixed-media-routing-smoke" "$iterations"
+"$workdir/mixed-media-routing-smoke" "$iterations" "$probe_dir" "$runtime_status_file"

@@ -1,8 +1,21 @@
 # Keyway Verification Log
 
-Last updated: 2026-07-31
+Last updated: 2026-08-05
 
-This file records the current refactored worktree first, then retains the prior macOS/device evidence from 2026-07-21 as historical context. The historical section was not rerun in the Linux refactoring environment.
+This file records the current macOS worktree first, then retains earlier refactoring and device evidence as historical context.
+
+## Current macOS evidence (2026-08-05)
+
+- All repository semantic verifiers pass, including authenticated Chromium bridge framing, service-worker disconnect/reconnect behavior, stale-port rejection, permission onboarding, media routing, and shortcut-runtime trace isolation.
+- `swift test --package-path packages/SonosHandoffCore` passes: three authenticated bridge XCTest cases plus 262 Swift Testing cases in 46 suites.
+- The isolated Chromium transport smoke passes all nine command-surface checks and both exact-tab focus checks. Three alternating-target stress iterations produced zero failures, wrong targets, or duplicate acknowledgements; discovery took 1,106 ms and p95 acknowledgement was 60 ms.
+- The Manifest V3 suspension smoke passes after forcibly stopping the active worker and observing the same target identities on a new native-host connection.
+- Helium's prior error storm was reproduced and traced to an app-driven extension reload on every native-host connection. That connection-to-reload cycle was removed from the app, shared IPC package, native host, extension worker, smoke harnesses, and semantic contracts.
+- Helium was re-enabled without reinstalling the unpacked extension. After clearing historical errors, terminating only Helium's exact signed native-host process produced a replacement in under one second; the extension remained enabled and its Errors page stayed empty. Toggling the extension off and on once cleared Helium's historical “reloaded itself too frequently” warning without touching browser tabs or extension storage.
+- The Xcode extension copy phase now declares the README as an explicit input and output, closing the final incremental-build hole where the folder-copy script could package stale documentation. A focused verifier covers both the generated project and its generator; the final signed reinstall contains byte-identical README and service-worker files.
+- The service worker now consumes `chrome.runtime.lastError` on disconnect and uses generation-bound exponential reconnect backoff from one to 30 seconds, resetting only after five seconds of stability.
+- Production Swift and JavaScript contain no `DistributedNotificationCenter` bridge and no extension-runtime reload command. App/native-host traffic uses the one mutually authenticated, audit-token-bound Unix socket; test-only probes use explicit owner-only filesystem capabilities.
+- `/Users/f.pieringer/Applications/Keyway.app` and its embedded Chromium native host are signed with Apple Development identity `Fabian Pieringer (BF6838D7AM)`, team `7Q44SDV7BM`. Strict signature checks pass, the installed app is running, and the live bridge socket is owner-only mode `0600` under its owner-only cache directory. After the signed extension-fix replacement, Helium showed Keyway enabled with an active service worker and an empty Errors page.
 
 ## Current refactored worktree — Linux evidence (2026-07-31)
 
@@ -57,7 +70,7 @@ This file records the current refactored worktree first, then retains the prior 
 - The installed app contains both `x86_64` and `arm64` slices. Strict code-signature verification and staple validation passed, and Gatekeeper accepted it as `Notarized Developer ID`.
 - The distributable ZIP is `/Users/fabian/projects/keyway/.build/distribution/Keyway-0.1.0.zip`; its SHA-256 is `b4b9e285c3484c41a7823b269b8c1c1fe86d1c3d19d9da35fc7660c47eba4e96`.
 - The previous and final apps have the same bundle identifier, team identifier, and designated requirement. Accessibility and Input Monitoring remained granted after replacement.
-- The final app restart asked the already-installed Chromium extension to reload once, replacing the browser-owned stale native host without restarting or reloading any tab. The live host then ran from `/Users/fabian/Applications/Keyway.app/Contents/Helpers/keyway-chromium-native-host`, every manifest pointed at that path, and Settings reported the extension connected with no active browser media.
+- Installed-app replacement rotates only exact native-host helper processes. The extension reconnects through its normal bounded lifecycle path without reloading the extension runtime or any browser tab.
 - The exact-Suno overlay transport/state-restoration smoke passed immediately before this lifecycle-only reconnect change. The final installed build's reconnect was verified without commanding or focusing a user browser tab.
 - Killing both installed MediaRemote helpers produced replacements, and the next targeted QuickTime command succeeded. The isolated QuickTime document was then closed.
 - The final Spotify Settings wording was inspected live, and its `Check` action preserved the correct split state: Desktop Connect token missing, Web API sign-in valid.
@@ -90,7 +103,7 @@ This file records the current refactored worktree first, then retains the prior 
 - Replaced three CLI argument scans and their hidden unchecked index dependency with one validated parsing pass.
 - Reworked the overlay browser smoke to toggle and restore mute only after reflected state arrives.
 - Made the QuickTime routing smoke close only the exact document it created.
-- Reloaded the Chromium extension once at app startup so an app update cannot leave the browser connected to a native host inside the discarded app bundle.
+- Removed app-driven extension reloads; app updates rotate exact native-host helper processes and rely on generation-bound worker reconnection.
 - Removed stale browser-extension, modifier-click chooser, and machine-specific path claims from the current product and acceptance documentation.
 
 ## External checks still required

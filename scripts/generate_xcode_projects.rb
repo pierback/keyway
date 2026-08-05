@@ -4,6 +4,7 @@ require 'fileutils'
 require 'xcodeproj'
 
 ROOT = File.expand_path('..', __dir__)
+abort 'failed to generate Chromium bridge contract' unless system(File.join(ROOT, 'scripts', 'generate_chromium_bridge_contract'))
 
 def reset_project(path)
   FileUtils.rm_rf(path)
@@ -120,6 +121,13 @@ def add_chromium_native_host_build_phase(target)
     '$(SRCROOT)/../packages/SonosHandoffCore/Sources/KeywayChromiumNativeHost/NativeMessageTypes.swift',
     '$(SRCROOT)/../packages/SonosHandoffCore/Sources/KeywayChromiumNativeHost/NativeMessagingFraming.swift',
     '$(SRCROOT)/../packages/SonosHandoffCore/Sources/KeywayChromiumNativeHost/main.swift',
+    '$(SRCROOT)/../packages/SonosHandoffCore/Sources/KeywayChromiumBridgeIPC/ChromiumBridgePeerValidator.swift',
+    '$(SRCROOT)/../packages/SonosHandoffCore/Sources/KeywayChromiumBridgeIPC/ChromiumBridgeSocket.swift',
+    '$(SRCROOT)/../packages/SonosHandoffCore/Sources/KeywayChromiumBridgeIPC/KeywayChromiumBridgeClient.swift',
+    '$(SRCROOT)/../packages/SonosHandoffCore/Sources/KeywayChromiumBridgeIPC/KeywayChromiumBridgeContract.generated.swift',
+    '$(SRCROOT)/../packages/SonosHandoffCore/Sources/KeywayChromiumBridgeIPC/KeywayChromiumBridgeEndpoint.swift',
+    '$(SRCROOT)/../packages/SonosHandoffCore/Sources/KeywayChromiumBridgeIPC/KeywayChromiumBridgeEvent.swift',
+    '$(SRCROOT)/../packages/SonosHandoffCore/Sources/KeywayChromiumBridgeIPC/KeywayChromiumBridgeServer.swift',
     '$(SRCROOT)/../packages/SonosHandoffCore/Package.swift',
   ]
   phase.output_paths = [
@@ -140,19 +148,23 @@ def add_chromium_extension_copy_phase(target)
     cp -R "$EXT_SRC/." "$EXT_DEST/"
   SH
   phase.input_paths = [
+    '$(SRCROOT)/../ChromiumExtension/README.md',
     '$(SRCROOT)/../ChromiumExtension/manifest.json',
     '$(SRCROOT)/../ChromiumExtension/service_worker.js',
     '$(SRCROOT)/../ChromiumExtension/document_authority.js',
     '$(SRCROOT)/../ChromiumExtension/media_source_selection.js',
     '$(SRCROOT)/../ChromiumExtension/content_script.js',
+    '$(SRCROOT)/../ChromiumExtension/chromium_bridge_contract.generated.js',
     '$(SRCROOT)/../ChromiumExtension/native-host-manifest.json',
   ]
   phase.output_paths = [
+    '$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/ChromiumExtension/README.md',
     '$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/ChromiumExtension/manifest.json',
     '$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/ChromiumExtension/service_worker.js',
     '$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/ChromiumExtension/document_authority.js',
     '$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/ChromiumExtension/media_source_selection.js',
     '$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/ChromiumExtension/content_script.js',
+    '$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/ChromiumExtension/chromium_bridge_contract.generated.js',
     '$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/ChromiumExtension/native-host-manifest.json',
   ]
 end
@@ -167,10 +179,13 @@ def normalize_system_framework_refs(project, framework_name)
 end
 
 def add_local_package_dependency(project, target, relative_path, product_name)
-  package = project.new(Xcodeproj::Project::Object::XCLocalSwiftPackageReference)
-  package.relative_path = relative_path
-  package.path = relative_path
-  project.root_object.package_references << package
+  package = project.root_object.package_references.find { |reference| reference.relative_path == relative_path }
+  unless package
+    package = project.new(Xcodeproj::Project::Object::XCLocalSwiftPackageReference)
+    package.relative_path = relative_path
+    package.path = relative_path
+    project.root_object.package_references << package
+  end
 
   product = project.new(Xcodeproj::Project::Object::XCSwiftPackageProductDependency)
   product.package = package
@@ -226,6 +241,7 @@ def build_menu_bar_project
   add_chromium_extension_copy_phase(target)
 
   add_local_package_dependency(project, target, '../packages/SonosHandoffCore', 'SonosHandoffCore')
+  add_local_package_dependency(project, target, '../packages/SonosHandoffCore', 'KeywayChromiumBridgeIPC')
   add_local_package_dependency(project, target, '../../PermissionCompanionKit', 'PermissionCompanionKit')
 
   normalize_system_framework_refs(project, 'Cocoa.framework')

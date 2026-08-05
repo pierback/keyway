@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+"$repo_root/scripts/generate_chromium_bridge_contract" --check
+
+native_host_matches="$(ast-grep --lang swift --pattern 'DistributedNotificationCenter.default()' \
+  "$repo_root/packages/SonosHandoffCore/Sources/KeywayChromiumNativeHost" || true)"
+controller_matches="$(ast-grep --lang swift --pattern 'DistributedNotificationCenter.default()' \
+  "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionController.swift" || true)"
+if [[ -n "$native_host_matches$controller_matches" ]]; then
+  echo 'error: Chromium bridge must not use DistributedNotificationCenter' >&2
+  exit 1
+fi
+
+echo 'chromium_bridge_contract_semantics=ok'

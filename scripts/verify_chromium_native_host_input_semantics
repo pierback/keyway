@@ -57,6 +57,8 @@ for forbidden in ("try!", "as!", "userInfo!", "preconditionFailure", "preconditi
 read_message = section("func readNativeMessage() -> Data? {", "\n}\n\nfunc writeNativeMessage")
 for required in (
     "guard let lengthData = readExact(4) else {",
+    "guard length <= maximumNativeMessageSize else {",
+    'fputs("Keyway Chromium native host: native message exceeds 4 MiB limit.\\n", stderr)',
     "return nil",
     "return readExact(Int(length))",
 ):
@@ -71,7 +73,7 @@ for required in (
     "snapshot = try container.decodeIfPresent([NativeHelloSnapshotTarget].self, forKey: .snapshot)",
 ):
     if required not in hello:
-        fail(f"hello payload decoding must tolerate additive v3 resume fields: missing {required}")
+        fail(f"hello payload decoding must tolerate additive resume fields: missing {required}")
 
 snapshot = section("func payloadByAddingHostBrowserIdentity(", "\n}\n\nfunc payloadByMatchingConnectionID")
 for required in (
@@ -95,8 +97,6 @@ for required in (
     "payload.data(using: .utf8)",
     "try? JSONSerialization.jsonObject(with: data)",
     'fputs("Keyway Chromium native host: ignoring malformed command payload.\\n", stderr)',
-    'if root["type"] as? String == "reloadExtension", root["connectionID"] == nil {',
-    "return data",
     'let payloadConnectionID = root["connectionID"] as? String',
     "guard payloadConnectionID == connectionID else {",
     'root.removeValue(forKey: "connectionID")',
@@ -105,9 +105,9 @@ for required in (
     "return nil",
 ):
     if required not in command:
-        fail(f"command payload rewriting must ignore malformed distributed-notification input: missing {required}")
+        fail(f"command payload rewriting must ignore malformed authenticated IPC input: missing {required}")
 
-result = section("func payloadStringForResult(_ payload: Data) -> String? {", "let commandObserver")
+result = section("func payloadStringForResult(_ payload: Data) -> String? {", "\n}\n\nimport Foundation\n\nstruct NativeMessageEnvelope")
 for required in (
     "try? JSONSerialization.jsonObject(with: payload)",
     'fputs("Keyway Chromium native host: ignoring malformed result payload.\\n", stderr)',
@@ -120,16 +120,15 @@ for required in (
     if required not in result:
         fail(f"result payload rewriting must ignore malformed native messages: missing {required}")
 
-observer = section("let commandObserver = DistributedNotificationCenter.default().addObserver(", "\n}\n\nfunc postNativeMessage")
+observer = section("let bridge = KeywayChromiumBridgeClient { payload in", "\n}\nbridge.start()")
 for required in (
-    'guard let payload = notification.userInfo?["payload"] as? String else {',
-    'fputs("Keyway Chromium native host: ignoring command notification without payload.\\n", stderr)',
     "guard let routedPayload = payloadByMatchingConnectionID(payload) else {",
+    "writeNativeMessage(routedPayload)",
 ):
     if required not in observer:
-        fail(f"distributed command notifications must be optional-decoded: missing {required}")
+        fail(f"authenticated bridge commands must be connection-routed: missing {required}")
 
-post = section("func postNativeMessage(_ payload: Data) {", "\n}\n\nDispatchQueue.global")
+post = section("func postNativeMessage(_ payload: Data) {", "\n}\n\nwhile let payload = readNativeMessage()")
 for required in (
     "try? JSONDecoder().decode(NativeMessageEnvelope.self, from: payload)",
     'fputs("Keyway Chromium native host: ignoring undecodable native message envelope.\\n", stderr)',
@@ -141,8 +140,10 @@ for required in (
     if required not in post:
         fail(f"native message posting must reject malformed envelopes without crashing: missing {required}")
 
-if "while let payload = readNativeMessage()" not in text or "exit(0)" not in text:
+if "while let payload = readNativeMessage()" not in text or "bridge.stop()" not in text:
     fail("native host stdio loop must exit cleanly when input closes")
+if "DistributedNotificationCenter" in text:
+    fail("native host must not accept unauthenticated distributed notifications")
 
 print("verify_chromium_native_host_input_semantics=ok")
 PY

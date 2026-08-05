@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import Foundation
+import KeywayChromiumBridgeIPC
 import os
 
 @MainActor
@@ -21,9 +22,8 @@ final class ChromiumBrowserExtensionController: ObservableObject {
 
     private let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "ChromiumExtension")
     private let decoder = JSONDecoder()
-    private var snapshotObserver: NSObjectProtocol?
-    private var commandResultObserver: NSObjectProtocol?
-    private var focusResultObserver: NSObjectProtocol?
+    private let ipc: any ChromiumBrowserExtensionIPC
+    private var ipcStarted = false
     private var profileRetentionTimer: Timer?
     private var workspaceTerminationObserver: NSObjectProtocol?
     private var snapshotSourcesByProfileGuid: [String: SnapshotSource] = [:]
@@ -36,66 +36,42 @@ final class ChromiumBrowserExtensionController: ObservableObject {
     private var focusResultTimeouts: [String: Task<Void, Never>] = [:]
     private var runGeneration: UInt = 0
 
+    init(ipc: (any ChromiumBrowserExtensionIPC)? = nil) {
+        self.ipc = ipc ?? ChromiumBrowserExtensionIPCAdapter()
+    }
+
     var hasRoutableTargets: Bool {
         connected && !targets.isEmpty
     }
 
     func start() {
-        guard snapshotObserver == nil else {
+        guard !ipcStarted else {
             return
         }
         runGeneration &+= 1
         let generation = runGeneration
 
-        snapshotObserver = DistributedNotificationCenter.default().addObserver(
-            forName: ChromiumBrowserExtensionTransport.snapshotNotificationName,
-            object: ChromiumBrowserExtensionTransport.nativeMessagingHostName,
-            queue: .main
-        ) { [weak self] notification in
-            guard let payload = notification.userInfo?["payload"] as? String else {
-                self?.logger.error("Ignoring Chromium extension snapshot notification without payload")
-                return
-            }
-            Task { @MainActor [weak self, payload] in
-                guard let self, runGeneration == generation else {
-                    return
+        do {
+            try ipc.start(
+                onEvent: { [weak self] event, payload in
+                    Task { @MainActor [weak self, payload] in
+                        guard let self, runGeneration == generation else {
+                            return
+                        }
+                        switch event {
+                        case .snapshot:
+                            handleSnapshotPayload(payload)
+                        case .commandResult:
+                            handleCommandResultPayload(payload)
+                        case .focusResult:
+                            handleFocusResultPayload(payload)
+                        }
+                    }
                 }
-                handleSnapshotPayload(payload)
-            }
-        }
-
-        commandResultObserver = DistributedNotificationCenter.default().addObserver(
-            forName: ChromiumBrowserExtensionTransport.commandResultNotificationName,
-            object: ChromiumBrowserExtensionTransport.nativeMessagingHostName,
-            queue: .main
-        ) { [weak self] notification in
-            guard let payload = notification.userInfo?["payload"] as? String else {
-                self?.logger.error("Ignoring Chromium extension command-result notification without payload")
-                return
-            }
-            Task { @MainActor [weak self, payload] in
-                guard let self, runGeneration == generation else {
-                    return
-                }
-                handleCommandResultPayload(payload)
-            }
-        }
-
-        focusResultObserver = DistributedNotificationCenter.default().addObserver(
-            forName: ChromiumBrowserExtensionTransport.focusResultNotificationName,
-            object: ChromiumBrowserExtensionTransport.nativeMessagingHostName,
-            queue: .main
-        ) { [weak self] notification in
-            guard let payload = notification.userInfo?["payload"] as? String else {
-                self?.logger.error("Ignoring Chromium extension focus-result notification without payload")
-                return
-            }
-            Task { @MainActor [weak self, payload] in
-                guard let self, runGeneration == generation else {
-                    return
-                }
-                handleFocusResultPayload(payload)
-            }
+            )
+            ipcStarted = true
+        } catch {
+            preconditionFailure("Unable to start authenticated Chromium bridge IPC: \(error)")
         }
 
         profileRetentionTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
@@ -124,32 +100,17 @@ final class ChromiumBrowserExtensionController: ObservableObject {
             }
         }
 
-        let reloadPayload = "{\"type\":\"reloadExtension\",\"protocolVersion\":\(ChromiumBrowserExtensionTransport.protocolVersion)}"
-        DistributedNotificationCenter.default().postNotificationName(
-            ChromiumBrowserExtensionTransport.commandNotificationName,
-            object: ChromiumBrowserExtensionTransport.nativeMessagingHostName,
-            userInfo: ["payload": reloadPayload],
-            deliverImmediately: true
-        )
     }
 
     func stop() {
         runGeneration &+= 1
-        if let snapshotObserver {
-            DistributedNotificationCenter.default().removeObserver(snapshotObserver)
-        }
-        if let commandResultObserver {
-            DistributedNotificationCenter.default().removeObserver(commandResultObserver)
-        }
-        if let focusResultObserver {
-            DistributedNotificationCenter.default().removeObserver(focusResultObserver)
+        if ipcStarted {
+            ipc.stop()
+            ipcStarted = false
         }
         if let workspaceTerminationObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(workspaceTerminationObserver)
         }
-        snapshotObserver = nil
-        commandResultObserver = nil
-        focusResultObserver = nil
         workspaceTerminationObserver = nil
         profileRetentionTimer?.invalidate()
         profileRetentionTimer = nil
@@ -329,12 +290,7 @@ final class ChromiumBrowserExtensionController: ObservableObject {
             resultHandler: onResult
         )
         armFocusResultTimeout(requestID: requestID)
-        DistributedNotificationCenter.default().postNotificationName(
-            ChromiumBrowserExtensionTransport.commandNotificationName,
-            object: ChromiumBrowserExtensionTransport.nativeMessagingHostName,
-            userInfo: ["payload": json],
-            deliverImmediately: true
-        )
+        ipc.sendCommand(json)
         logger.info("ChromiumExtension focus_sent requestID=\(requestID, privacy: .public) target=\(target.id, privacy: .public)")
         return true
     }
@@ -405,12 +361,7 @@ final class ChromiumBrowserExtensionController: ObservableObject {
             resultHandler: onResult
         )
         armCommandResultTimeout(requestID: requestID)
-        DistributedNotificationCenter.default().postNotificationName(
-            ChromiumBrowserExtensionTransport.commandNotificationName,
-            object: ChromiumBrowserExtensionTransport.nativeMessagingHostName,
-            userInfo: ["payload": json],
-            deliverImmediately: true
-        )
+        ipc.sendCommand(json)
         logger.info("ChromiumExtension command_sent requestID=\(requestID, privacy: .public) command=\(commandName, privacy: .public) target=\(target.id, privacy: .public)")
         return true
     }

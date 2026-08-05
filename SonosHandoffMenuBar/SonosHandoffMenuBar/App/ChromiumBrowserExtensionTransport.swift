@@ -1,16 +1,13 @@
 import Foundation
+import KeywayChromiumBridgeIPC
 
 enum ChromiumBrowserExtensionTransport {
     static let backendName = "chromium_extension"
     static let mediaType = "chromium_extension"
-    static let protocolVersion = 4
+    static let protocolVersion = KeywayChromiumBridgeContract.protocolVersion
     static let targetIDPrefix = "chromium-tab:"
-    static let nativeMessagingHostName = "com.fpieringer.keyway.chromium"
-    static let extensionID = "gmdpkggbaohimgacbclndlfjghgcbael"
-    static let snapshotNotificationName = Notification.Name("com.fpieringer.keyway.chromium.snapshot")
-    static let commandResultNotificationName = Notification.Name("com.fpieringer.keyway.chromium.commandResult")
-    static let focusResultNotificationName = Notification.Name("com.fpieringer.keyway.chromium.focusResult")
-    static let commandNotificationName = Notification.Name("com.fpieringer.keyway.chromium.command")
+    static let nativeMessagingHostName = KeywayChromiumBridgeContract.nativeMessagingHostName
+    static let extensionID = KeywayChromiumBridgeContract.extensionID
     private static let browserFamilyIdentityMatchers: [(family: String, keywords: [String])] = [
         ("helium", ["helium"]),
         ("arc", ["arc"]),

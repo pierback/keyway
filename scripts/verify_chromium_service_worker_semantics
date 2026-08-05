@@ -3,16 +3,17 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-DOCUMENT_AUTHORITY_PATH="$repo_root/ChromiumExtension/document_authority.js" MEDIA_SOURCE_SELECTION_PATH="$repo_root/ChromiumExtension/media_source_selection.js" SERVICE_WORKER_PATH="$repo_root/ChromiumExtension/service_worker.js" node - <<'NODE'
+CHROMIUM_BRIDGE_CONTRACT_PATH="$repo_root/ChromiumExtension/chromium_bridge_contract.generated.js" DOCUMENT_AUTHORITY_PATH="$repo_root/ChromiumExtension/document_authority.js" MEDIA_SOURCE_SELECTION_PATH="$repo_root/ChromiumExtension/media_source_selection.js" SERVICE_WORKER_PATH="$repo_root/ChromiumExtension/service_worker.js" node - <<'NODE'
 const fs = require("fs");
 const vm = require("vm");
 
 const serviceWorkerPath = process.env.SERVICE_WORKER_PATH;
 const code = [
+  fs.readFileSync(process.env.CHROMIUM_BRIDGE_CONTRACT_PATH, "utf8").replace(/^export /gm, ""),
   fs.readFileSync(process.env.DOCUMENT_AUTHORITY_PATH, "utf8").replace(/^export /gm, ""),
   fs.readFileSync(process.env.MEDIA_SOURCE_SELECTION_PATH, "utf8").replace(/^export /gm, ""),
   fs.readFileSync(serviceWorkerPath, "utf8").replace(
-    /import\s+\{[\s\S]*?\}\s+from\s+"\.\/(?:document_authority|media_source_selection)\.js";\n?/g,
+    /import\s+\{[\s\S]*?\}\s+from\s+"\.\/(?:chromium_bridge_contract\.generated|document_authority|media_source_selection)\.js";\n?/g,
     ""
   ),
 ].join("\n") + "\nglobalThis.captureDocumentAuthority = (sender, contentDocumentID) => documentAuthorities.capture(sender, contentDocumentID);";
@@ -20,6 +21,7 @@ const postedMessages = [];
 const intervals = [];
 const timeouts = [];
 const clearedIntervals = [];
+const clearedTimeouts = [];
 const alarmCreations = [];
 const tabMessages = [];
 const scriptExecutions = [];
@@ -47,7 +49,8 @@ let tabRemovedListener = null;
 let tabUpdatedListener = null;
 let navigationCommittedListener = null;
 let mediaStateResponse = null;
-let reloadCount = 0;
+let runtimeLastError = null;
+let lastErrorReadCount = 0;
 
 const context = {
   console,
@@ -69,6 +72,9 @@ const context = {
   setTimeout(callback, delay) {
     timeouts.push({ callback, delay });
     return `timeout-${timeouts.length}`;
+  },
+  clearTimeout(id) {
+    clearedTimeouts.push(id);
   },
   chrome: {
     storage: {
@@ -116,9 +122,12 @@ const context = {
     },
     runtime: {
       id: "extensionid",
-      lastError: null,
-      reload() {
-        reloadCount += 1;
+      get lastError() {
+        lastErrorReadCount += 1;
+        return runtimeLastError;
+      },
+      set lastError(value) {
+        runtimeLastError = value;
       },
       connectNative(name) {
         assertEqual(name, "com.fpieringer.keyway.chromium", "native host name");
@@ -576,12 +585,6 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   assertEqual(recentlyActiveSnapshot.targets.length, 2, "paused browser media with prior playback activity must remain commandable while the tab reports it");
 
   assert(typeof nativeMessageListener === "function", "service worker must register native command listener");
-  nativeMessageListener({
-    type: "reloadExtension",
-    protocolVersion: 4,
-  });
-  assertEqual(reloadCount, 1, "native reload command must reload the extension runtime");
-  assertEqual(tabMessages.length, 0, "native reload command must not dispatch into any tab");
 
   nativeMessageListener({
     type: "command",
@@ -1043,13 +1046,22 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   const staleNativeMessageListener = nativeMessageListener;
   const staleDisconnectListener = disconnectListener;
   const staleHeartbeatCallback = intervals.at(-1).callback;
+  context.chrome.runtime.lastError = { message: "Native host has exited." };
+  const lastErrorReadsBeforeDisconnect = lastErrorReadCount;
   staleDisconnectListener();
+  assert(
+    lastErrorReadCount > lastErrorReadsBeforeDisconnect,
+    "native disconnect must consume runtime.lastError so Chromium does not record an unchecked extension error"
+  );
+  context.chrome.runtime.lastError = null;
   assert(
     clearedIntervals.includes(`interval-${intervals.length}`),
     "service worker must clear the current heartbeat on disconnect"
   );
-  assertEqual(timeouts[0].delay, 1000, "service worker reconnect delay");
-  timeouts[0].callback();
+  assert(clearedTimeouts.includes("timeout-1"), "disconnect must clear the native-port stability timer");
+  const firstReconnectTimeout = timeouts.find(timeout => timeout.delay === 1000);
+  assert(firstReconnectTimeout, "service worker must schedule its first reconnect after one second");
+  firstReconnectTimeout.callback();
   assert(nativeMessageListener !== staleNativeMessageListener, "reconnect must install a generation-bound native message listener");
   const messageCountBeforeStaleHeartbeat = postedMessages.length;
   const storageCountBeforeStaleHeartbeat = sessionStorageSets.length;
@@ -1058,12 +1070,24 @@ assertEqual(context.browserInfoFromUserAgent("Mozilla/5.0 Helium/1.0 Chrome/126.
   assertEqual(postedMessages.length, messageCountBeforeStaleHeartbeat, "a retired heartbeat must not post through the replacement port");
   assertEqual(sessionStorageSets.length, storageCountBeforeStaleHeartbeat, "a retired heartbeat must not persist replacement-port state");
   assertEqual(sessionStorage.snapshotEpoch, epochBeforeStaleHeartbeat, "a retired heartbeat must not advance the replacement epoch");
-  const reloadCountBeforeStaleMessage = reloadCount;
-  staleNativeMessageListener({ type: "reloadExtension", protocolVersion: 4 });
-  assertEqual(reloadCount, reloadCountBeforeStaleMessage, "a superseded native port must not dispatch delayed messages");
+  const messageCountBeforeStaleNativeMessage = postedMessages.length;
+  staleNativeMessageListener({
+    type: "command",
+    protocolVersion: 4,
+    requestID: "stale-request",
+    targetID: "chromium-tab:profile-guid-a:missing",
+    command: "playPause",
+  });
+  assertEqual(postedMessages.length, messageCountBeforeStaleNativeMessage, "a superseded native port must not dispatch delayed messages");
   staleDisconnectListener();
-  nativeMessageListener({ type: "reloadExtension", protocolVersion: 4 });
-  assertEqual(reloadCount, reloadCountBeforeStaleMessage + 1, "a stale disconnect callback must not invalidate the replacement port");
+  nativeMessageListener({
+    type: "command",
+    protocolVersion: 4,
+    requestID: "current-request",
+    targetID: "chromium-tab:profile-guid-a:missing",
+    command: "playPause",
+  });
+  assertEqual(postedMessages.length, messageCountBeforeStaleNativeMessage + 1, "a stale disconnect callback must not invalidate the replacement port");
 
   console.log("verify_chromium_extension_semantics=ok");
 })().catch(error => {
@@ -1083,16 +1107,17 @@ function assertEqual(actual, expected, message) {
 }
 NODE
 
-DOCUMENT_AUTHORITY_PATH="$repo_root/ChromiumExtension/document_authority.js" MEDIA_SOURCE_SELECTION_PATH="$repo_root/ChromiumExtension/media_source_selection.js" SERVICE_WORKER_PATH="$repo_root/ChromiumExtension/service_worker.js" node - <<'NODE'
+CHROMIUM_BRIDGE_CONTRACT_PATH="$repo_root/ChromiumExtension/chromium_bridge_contract.generated.js" DOCUMENT_AUTHORITY_PATH="$repo_root/ChromiumExtension/document_authority.js" MEDIA_SOURCE_SELECTION_PATH="$repo_root/ChromiumExtension/media_source_selection.js" SERVICE_WORKER_PATH="$repo_root/ChromiumExtension/service_worker.js" node - <<'NODE'
 const fs = require("fs");
 const vm = require("vm");
 
 const serviceWorkerPath = process.env.SERVICE_WORKER_PATH;
 const code = [
+  fs.readFileSync(process.env.CHROMIUM_BRIDGE_CONTRACT_PATH, "utf8").replace(/^export /gm, ""),
   fs.readFileSync(process.env.DOCUMENT_AUTHORITY_PATH, "utf8").replace(/^export /gm, ""),
   fs.readFileSync(process.env.MEDIA_SOURCE_SELECTION_PATH, "utf8").replace(/^export /gm, ""),
   fs.readFileSync(serviceWorkerPath, "utf8").replace(
-    /import\s+\{[\s\S]*?\}\s+from\s+"\.\/(?:document_authority|media_source_selection)\.js";\n?/g,
+    /import\s+\{[\s\S]*?\}\s+from\s+"\.\/(?:chromium_bridge_contract\.generated|document_authority|media_source_selection)\.js";\n?/g,
     ""
   ),
 ].join("\n") + "\nglobalThis.captureDocumentAuthority = (sender, contentDocumentID) => documentAuthorities.capture(sender, contentDocumentID);";
@@ -1119,6 +1144,7 @@ const context = {
     timeouts.push({ callback, delay });
     return `timeout-${timeouts.length}`;
   },
+  clearTimeout() {},
   chrome: {
     storage: {
       local: {
@@ -1200,8 +1226,9 @@ vm.runInNewContext(code, context, { filename: serviceWorkerPath });
 assertEqual(ports.length, 1, "worker must create the first native port");
 assertEqual(sessionGetCallbacks.length, 1, "first native port must start resume loading");
 ports[0].disconnect();
-assertEqual(timeouts[0].delay, 1000, "worker must schedule a reconnect after port disconnect");
-timeouts[0].callback();
+const reconnectTimeout = timeouts.find(timeout => timeout.delay === 1000);
+assert(reconnectTimeout, "worker must schedule a reconnect after port disconnect");
+reconnectTimeout.callback();
 assertEqual(ports.length, 2, "worker must create the replacement native port");
 assertEqual(sessionGetCallbacks.length, 2, "replacement port must start its own resume loading");
 
@@ -1226,16 +1253,17 @@ function assertEqual(actual, expected, message) {
 }
 NODE
 
-DOCUMENT_AUTHORITY_PATH="$repo_root/ChromiumExtension/document_authority.js" MEDIA_SOURCE_SELECTION_PATH="$repo_root/ChromiumExtension/media_source_selection.js" SERVICE_WORKER_PATH="$repo_root/ChromiumExtension/service_worker.js" node - <<'NODE'
+CHROMIUM_BRIDGE_CONTRACT_PATH="$repo_root/ChromiumExtension/chromium_bridge_contract.generated.js" DOCUMENT_AUTHORITY_PATH="$repo_root/ChromiumExtension/document_authority.js" MEDIA_SOURCE_SELECTION_PATH="$repo_root/ChromiumExtension/media_source_selection.js" SERVICE_WORKER_PATH="$repo_root/ChromiumExtension/service_worker.js" node - <<'NODE'
 const fs = require("fs");
 const vm = require("vm");
 
 const serviceWorkerPath = process.env.SERVICE_WORKER_PATH;
 const code = [
+  fs.readFileSync(process.env.CHROMIUM_BRIDGE_CONTRACT_PATH, "utf8").replace(/^export /gm, ""),
   fs.readFileSync(process.env.DOCUMENT_AUTHORITY_PATH, "utf8").replace(/^export /gm, ""),
   fs.readFileSync(process.env.MEDIA_SOURCE_SELECTION_PATH, "utf8").replace(/^export /gm, ""),
   fs.readFileSync(serviceWorkerPath, "utf8").replace(
-    /import\s+\{[\s\S]*?\}\s+from\s+"\.\/(?:document_authority|media_source_selection)\.js";\n?/g,
+    /import\s+\{[\s\S]*?\}\s+from\s+"\.\/(?:chromium_bridge_contract\.generated|document_authority|media_source_selection)\.js";\n?/g,
     ""
   ),
 ].join("\n") + "\nglobalThis.captureDocumentAuthority = (sender, contentDocumentID) => documentAuthorities.capture(sender, contentDocumentID);";

@@ -41,12 +41,25 @@ trace_start = text.index("    func recordMediaTransportEvent(")
 trace_end = text.index("\n    private func scheduleTracePersistence()", trace_start)
 trace_body = text[trace_start:trace_end]
 for needle in (
-    'fputs("ShortcutRuntimeStatus: dropping media transport trace notification:',
+    'payload["processGeneration"] = processGeneration',
+    "JSONSerialization.isValidJSONObject(payload)",
+    'fputs("ShortcutRuntimeStatus: dropping invalid media transport trace',
+    "if mediaTransportTrace.count > 240",
     "scheduleTracePersistence()",
-    "return",
 ):
     if needle not in trace_body:
-        raise SystemExit(f"verify_shortcut_runtime_status_semantics: trace notification encode failures must log and skip posting: {needle}")
+        raise SystemExit(f"verify_shortcut_runtime_status_semantics: traces must be validated, bounded, generation-bound, and persisted: {needle}")
+
+if "DistributedNotificationCenter" in text:
+    raise SystemExit("verify_shortcut_runtime_status_semantics: runtime status must not publish unauthenticated distributed notifications")
+
+for needle in (
+    '"processGeneration": processGeneration',
+    "try data.write(to: Self.persistenceURL, options: .atomic)",
+    "[.posixPermissions: 0o600]",
+):
+    if needle not in body:
+        raise SystemExit(f"verify_shortcut_runtime_status_semantics: persisted runtime status must be generation-bound and owner-only: {needle}")
 
 route_start = command_center.index("    private func startRouteShieldAudio()")
 route_end = command_center.index("\n    private func stopRouteShieldAudio()", route_start)

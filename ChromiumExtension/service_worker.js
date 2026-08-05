@@ -1,13 +1,17 @@
 import { DocumentAuthorityRegistry } from "./document_authority.js";
 import {
+  keywayChromiumBridgeProtocolVersion,
+  keywayChromiumNativeMessagingHostName,
+} from "./chromium_bridge_contract.generated.js";
+import {
   isAudiblePlayback,
   isVisibleTarget,
   materializeSource,
   refreshSource,
 } from "./media_source_selection.js";
 
-const nativeHostName = "com.fpieringer.keyway.chromium";
-const protocolVersion = 4;
+const nativeHostName = keywayChromiumNativeMessagingHostName;
+const protocolVersion = keywayChromiumBridgeProtocolVersion;
 const profileGuidStorageKey = "profileGuid";
 const snapshotStorageKey = "lastPublishedSnapshotTargets";
 const snapshotEpochStorageKey = "snapshotEpoch";
@@ -15,9 +19,14 @@ const nativePortAlarmName = "keyway-native-port-dead-man";
 const activeHeartbeatIntervalMs = 1000;
 const idleKeepaliveIntervalMs = 25000;
 const resumeBridgeMaxAgeMs = 10000;
+const reconnectMinimumDelayMs = 1000;
+const reconnectMaximumDelayMs = 30000;
+const reconnectStableAfterMs = 5000;
 let nativePort = null;
 let nativePortGeneration = 0;
 let reconnectTimer = null;
+let reconnectDelayMs = reconnectMinimumDelayMs;
+let reconnectStabilityTimer = null;
 let heartbeatTimer = null;
 let heartbeatMode = null;
 let cachedBrowserInfo = null;
@@ -45,12 +54,12 @@ function connectNativeHost() {
     handleNativeMessage(message, port, generation);
   });
   port.onDisconnect.addListener(() => {
-    if (!isCurrentNativePort(port, generation)) return;
-    nativePort = null;
-    resumeStateGeneration = 0;
-    stopHeartbeat();
-    scheduleReconnect();
+    // Chromium reports an expected native-host restart through lastError. It
+    // must be read in this callback or Helium records it as an unchecked error.
+    void chrome.runtime.lastError;
+    retireNativePort(port, generation);
   });
+  armReconnectStabilityTimer(port, generation);
   loadResumeState(resume => {
     if (!isCurrentNativePort(port, generation)) return;
     snapshotEpoch = resume.epoch;
@@ -71,6 +80,15 @@ function connectNativeHost() {
 
 function isCurrentNativePort(port, generation) {
   return nativePort === port && nativePortGeneration === generation;
+}
+
+function retireNativePort(port, generation) {
+  if (!isCurrentNativePort(port, generation)) return;
+  nativePort = null;
+  resumeStateGeneration = 0;
+  clearReconnectStabilityTimer();
+  stopHeartbeat();
+  scheduleReconnect();
 }
 
 function loadProfileGuid(callback) {
@@ -106,15 +124,37 @@ function flushProfileGuidCallbacks() {
 
 function scheduleReconnect() {
   if (reconnectTimer) return;
+  const delay = reconnectDelayMs;
+  reconnectDelayMs = Math.min(reconnectDelayMs * 2, reconnectMaximumDelayMs);
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
     connectNativeHost();
-  }, 1000);
+  }, delay);
+}
+
+function armReconnectStabilityTimer(port, generation) {
+  clearReconnectStabilityTimer();
+  reconnectStabilityTimer = setTimeout(() => {
+    reconnectStabilityTimer = null;
+    if (isCurrentNativePort(port, generation)) {
+      reconnectDelayMs = reconnectMinimumDelayMs;
+    }
+  }, reconnectStableAfterMs);
+}
+
+function clearReconnectStabilityTimer() {
+  if (!reconnectStabilityTimer) return;
+  clearTimeout(reconnectStabilityTimer);
+  reconnectStabilityTimer = null;
 }
 
 function sendNative(message, port = nativePort, generation = nativePortGeneration) {
   if (!port || !isCurrentNativePort(port, generation)) return;
-  port.postMessage(message);
+  try {
+    port.postMessage(message);
+  } catch {
+    retireNativePort(port, generation);
+  }
 }
 
 function startHeartbeat(mode, port, generation) {
@@ -489,10 +529,6 @@ function handleNativeMessage(message, port, generation) {
     return;
   }
 
-  if (message.type === "reloadExtension") {
-    chrome.runtime.reload();
-    return;
-  }
   if (message.type === "command") {
     handleCommandMessage(message, port, generation);
     return;

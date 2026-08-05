@@ -1,0 +1,8 @@
+{
+  "protocolVersion": 4,
+  "nativeMessagingHostName": "com.fpieringer.keyway.chromium",
+  "extensionID": "gmdpkggbaohimgacbclndlfjghgcbael",
+  "appBundleIdentifier": "com.fpieringer.Keyway",
+  "nativeHostCodeIdentifier": "keyway-chromium-native-host",
+  "teamIdentifier": "7Q44SDV7BM"
+}

@@ -14,7 +14,7 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "E62467F70D969D2C5E6231B202F99CC5"
+               BlueprintIdentifier = "3C2E8FF5CC85D510472D18A664E450DA"
                BuildableName = "Keyway.app"
                BlueprintName = "Keyway"
                ReferencedContainer = "container:SonosHandoffMenuBar.xcodeproj">
@@ -30,7 +30,7 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "E62467F70D969D2C5E6231B202F99CC5"
+            BlueprintIdentifier = "3C2E8FF5CC85D510472D18A664E450DA"
             BuildableName = "Keyway.app"
             BlueprintName = "Keyway"
             ReferencedContainer = "container:SonosHandoffMenuBar.xcodeproj">
@@ -53,7 +53,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "E62467F70D969D2C5E6231B202F99CC5"
+            BlueprintIdentifier = "3C2E8FF5CC85D510472D18A664E450DA"
             BuildableName = "Keyway.app"
             BlueprintName = "Keyway"
             ReferencedContainer = "container:SonosHandoffMenuBar.xcodeproj">
@@ -70,7 +70,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "E62467F70D969D2C5E6231B202F99CC5"
+            BlueprintIdentifier = "3C2E8FF5CC85D510472D18A664E450DA"
             BuildableName = "Keyway.app"
             BlueprintName = "Keyway"
             ReferencedContainer = "container:SonosHandoffMenuBar.xcodeproj">

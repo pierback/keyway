@@ -18,7 +18,8 @@ for source in \
 perl -0pi -e 's/private static let responseTimeoutNanoseconds/static let responseTimeoutNanoseconds/g; s/private struct SnapshotSource/struct SnapshotSource/g; s/private var snapshotSourcesByProfileGuid:/var snapshotSourcesByProfileGuid:/g; s/private var connectionIDByProfileGuid:/var connectionIDByProfileGuid:/g; s/private var highestAcceptedConnectionGenerationByProfileGuid:/var highestAcceptedConnectionGenerationByProfileGuid:/g; s/private var highestAcceptedEpochByProfileGuid:/var highestAcceptedEpochByProfileGuid:/g; s/private var pendingCommands:/var pendingCommands:/g; s/private var commandResultTimeouts:/var commandResultTimeouts:/g; s/private var pendingFocusRequests:/var pendingFocusRequests:/g; s/private var focusResultTimeouts:/var focusResultTimeouts:/g; s/private func handleSnapshotPayload/func handleSnapshotPayload/g; s/private func handleCommandResultPayload/func handleCommandResultPayload/g; s/private func handleFocusResultPayload/func handleFocusResultPayload/g; s/private func hideSilentProfiles/func hideSilentProfiles/g; s/private func handleBrowserTermination/func handleBrowserTermination/g; s/, privacy: \.public//g' \
   "$workdir/ChromiumBrowserExtensionController.swift"
 
-sed -i '' '/^import AppKit$/d; /^import Combine$/d; /^import os$/d' \
+sed -i '' '/^import AppKit$/d; /^import Combine$/d; /^import KeywayChromiumBridgeIPC$/d; /^import os$/d' \
+  "$workdir/ChromiumBrowserExtensionTransport.swift" \
   "$workdir/ChromiumBrowserExtensionController.swift"
 
 cat >"$workdir/Stubs.swift" <<'SWIFT'
@@ -39,6 +40,36 @@ struct Logger {
     init(subsystem: String, category: String) {}
     func error(_ message: String) {}
     func info(_ message: String) {}
+}
+
+enum KeywayChromiumBridgeContract {
+    static let protocolVersion = 4
+    static let nativeMessagingHostName = "com.fpieringer.keyway.chromium"
+    static let extensionID = "gmdpkggbaohimgacbclndlfjghgcbael"
+}
+
+enum KeywayChromiumBridgeEvent: Sendable {
+    case snapshot
+    case commandResult
+    case focusResult
+}
+
+@MainActor
+protocol ChromiumBrowserExtensionIPC: AnyObject {
+    func start(
+        onEvent: @escaping @Sendable (KeywayChromiumBridgeEvent, String) -> Void
+    ) throws
+    func stop()
+    func sendCommand(_ payload: String)
+}
+
+@MainActor
+final class ChromiumBrowserExtensionIPCAdapter: ChromiumBrowserExtensionIPC {
+    func start(
+        onEvent: @escaping @Sendable (KeywayChromiumBridgeEvent, String) -> Void
+    ) throws {}
+    func stop() {}
+    func sendCommand(_ payload: String) {}
 }
 
 final class NSRunningApplication: NSObject {
@@ -67,32 +98,6 @@ final class NSWorkspace {
     static let didTerminateApplicationNotification = Notification.Name("NSWorkspaceDidTerminateApplicationNotification")
     static let applicationUserInfoKey = "NSWorkspaceApplicationKey"
     let notificationCenter = TestNotificationCenter()
-}
-
-final class DistributedNotificationCenter {
-    private static let shared = DistributedNotificationCenter()
-
-    static func `default`() -> DistributedNotificationCenter {
-        shared
-    }
-
-    func addObserver(
-        forName name: Notification.Name?,
-        object: String?,
-        queue: OperationQueue?,
-        using block: @escaping (Notification) -> Void
-    ) -> NSObjectProtocol {
-        NSObject()
-    }
-
-    func removeObserver(_ observer: Any) {}
-
-    func postNotificationName(
-        _ name: Notification.Name,
-        object: String?,
-        userInfo: [AnyHashable: Any]?,
-        deliverImmediately: Bool
-    ) {}
 }
 
 enum AppIdentity {
@@ -823,7 +828,7 @@ for forbidden in (
     if forbidden in transport or forbidden in native_host:
         fail(f"old Chromium identity mechanism must be removed from Swift/native host sources: {forbidden}")
 
-expect(service_worker, "const protocolVersion = 4", "service worker must speak Chromium extension protocol v4")
+expect(service_worker, "const protocolVersion = keywayChromiumBridgeProtocolVersion", "service worker must consume the canonical Chromium extension protocol")
 expect(service_worker, 'const id = ["chromium-tab", profileGuid, tab.id].join(":")', "service worker source IDs must use profile GUID plus tab ID")
 expect(service_worker, "chrome.storage.local.get([profileGuidStorageKey]", "service worker must load profile GUID from chrome.storage.local")
 expect(service_worker, "chrome.storage.local.set({ [profileGuidStorageKey]: profileGuid }", "service worker must persist minted profile GUIDs")
@@ -832,7 +837,7 @@ expect(service_worker, "profileGuid,", "service worker hello must include profil
 expect(service_worker, "epoch: snapshotEpoch", "service worker hello must include the current snapshot epoch")
 expect(service_worker, "resumed: resume.resumed", "service worker hello must include resume state")
 
-expect(transport, "static let protocolVersion = 4", "Swift transport must hard-cut the browser extension protocol at v4")
+expect(transport, "static let protocolVersion = KeywayChromiumBridgeContract.protocolVersion", "Swift transport must consume the canonical browser extension protocol")
 expect(transport, 'static let targetIDPrefix = "chromium-tab:"', "Swift transport must recognize the stable Chromium tab target prefix")
 expect(transport, "private var snapshotSourcesByProfileGuid: [String: SnapshotSource] = [:]", "Swift transport snapshots must be keyed by profile GUID")
 expect(transport, "private var connectionIDByProfileGuid: [String: String] = [:]", "Swift transport must maintain a profile-to-connection route table")
@@ -875,11 +880,14 @@ expect(native_host, 'let payloadConnectionID = root["connectionID"] as? String',
 expect(native_host, "guard payloadConnectionID == connectionID else {\n        return nil\n    }", "native host must silently drop commands for other connections")
 expect(native_host, 'root.removeValue(forKey: "connectionID")', "native host must not forward the private route token to the extension")
 
-observer = native_host[native_host.index("let commandObserver = DistributedNotificationCenter.default().addObserver("):native_host.index("\n}\n\nfunc postNativeMessage")]
-expect(observer, "guard let routedPayload = payloadByMatchingConnectionID(payload) else {\n        return\n    }", "native host observer must stop before forwarding mismatched connection IDs")
-expect(observer, "writeNativeMessage(routedPayload)", "native host observer must forward only matched payloads")
-if "postNotificationName" in observer:
-    fail("native host command observer must not post replies for commands owned by another connection")
+bridge_command_handler = native_host[
+    native_host.index("let bridge = KeywayChromiumBridgeClient { payload in"):
+    native_host.index("\nbridge.start()")
+]
+expect(bridge_command_handler, "guard let routedPayload = payloadByMatchingConnectionID(payload) else {\n        return\n    }", "native host authenticated IPC handler must stop before forwarding mismatched connection IDs")
+expect(bridge_command_handler, "writeNativeMessage(routedPayload)", "native host authenticated IPC handler must forward only matched payloads")
+if "DistributedNotificationCenter" in native_host:
+    fail("native host must not retain the unauthenticated distributed-notification bridge")
 
 def routed(payload, expected_connection_id):
     root = json.loads(payload)

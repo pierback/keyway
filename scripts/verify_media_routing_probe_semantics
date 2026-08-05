@@ -10,7 +10,10 @@ ast-grep --pattern '@MainActor
 final class MediaRoutingProbeController { $$$ }' "$environment" --lang swift >/dev/null
 ast-grep --pattern 'mediaTransportActionController.route(command: $COMMAND, to: $TARGET)' "$environment" --lang swift >/dev/null
 ast-grep --pattern 'mediaRoutingProbeController.start()' "$app" --lang swift >/dev/null
-ast-grep --pattern 'DistributedNotificationCenter.default().postNotificationName($$$)' "$status" --lang swift >/dev/null
+if ast-grep --pattern 'DistributedNotificationCenter.default()' "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar" --lang swift >/dev/null; then
+  printf 'verify_media_routing_probe_semantics: app sources must not use DistributedNotificationCenter\n' >&2
+  exit 1
+fi
 
 python3 - "$environment" "$status" "$app" <<'PY'
 import sys
@@ -64,13 +67,25 @@ def assert_order(source, needles, message):
 assert_order(
     environment,
     [
-        'private static let environmentFlag = "KEYWAY_MEDIA_ROUTING_PROBE"',
-        'ProcessInfo.processInfo.environment[Self.environmentFlag] == "1"',
-        'DistributedNotificationCenter.default().addObserver(',
-        'forName: .keywayMediaRoutingProbeRequest',
+        'private static let environmentDirectory = "KEYWAY_MEDIA_ROUTING_PROBE_DIRECTORY"',
+        'ProcessInfo.processInfo.environment[Self.environmentDirectory]',
+        ".resolvingSymlinksInPath()",
+        "guard validateProbeDirectory(directoryURL)",
+        "Timer.scheduledTimer(withTimeInterval: 0.02",
     ],
-    "routing probe must be explicitly enabled before it subscribes to requests",
+    "routing probe must be explicitly enabled with a validated private directory before polling",
 )
+
+for needle in [
+    "attributes[.type] as? FileAttributeType == .typeDirectory",
+    "owner.uint32Value == geteuid()",
+    "permissions.intValue & 0o077 == 0",
+    "attributes[.type] as? FileAttributeType == .typeRegular",
+    "fileSize.intValue <= Self.maximumRequestBytes",
+    "request.requestID.uppercased() == requestUUID.uuidString",
+]:
+    if needle not in environment:
+        fail(f"routing probe must reject unsafe or mismatched filesystem requests: {needle}")
 
 assert_order(
     environment,
@@ -89,21 +104,22 @@ assert_order(
     [
         "private func publish(_ response: MediaRoutingProbeResponse)",
         "encoder.encode(response)",
-        ".keywayMediaRoutingProbeResponse",
+        "[.posixPermissions: 0o600]",
+        "FileManager.default.moveItem(at: temporaryURL, to: responseURL)",
     ],
-    "routing probe responses must be structured JSON notifications",
+    "routing probe responses must be structured owner-only JSON files published atomically",
 )
 
-assert_order(
-    status,
-    [
-        "if mediaTransportTrace.count > 240",
-        "JSONSerialization.data(withJSONObject: payload",
-        ".keywayMediaTransportTrace",
-        'userInfo: ["payload": json]',
-    ],
-    "media transport traces must be retained and published for mixed-routing audit",
-)
+for needle in [
+    'payload["processGeneration"] = processGeneration',
+    "JSONSerialization.isValidJSONObject(payload)",
+    "if mediaTransportTrace.count > 240",
+    "scheduleTracePersistence()",
+    '"processGeneration": processGeneration',
+    "try data.write(to: Self.persistenceURL, options: .atomic)",
+]:
+    if needle not in status:
+        fail(f"media transport traces must be generation-bound, bounded, and persisted atomically: {needle}")
 
 assert_order(
     trace_recorder,
@@ -133,18 +149,30 @@ assert_order(
     "mixed routing smoke must be available from the regression gate",
 )
 
+for needle in [
+    'mkdir -m 700 "$probe_dir"',
+    'KEYWAY_MEDIA_ROUTING_PROBE_DIRECTORY="$probe_dir"',
+    'chmod(temporaryURL.path, S_IRUSR | S_IWUSR)',
+    'let runtimeStatusURL = URL(fileURLWithPath: CommandLine.arguments[3]',
+    'object["processGeneration"] as? String',
+]:
+    if needle not in mixed_smoke:
+        fail(f"mixed routing smoke must use the owner-only probe and generation-bound status: {needle}")
+
 assert_order(
     mixed_smoke,
     [
-        "KEYWAY_MEDIA_ROUTING_PROBE=1",
         "mixed_media_routing_total=",
         "mixed_media_routing_wrong_target=",
         "mixed_media_routing_duplicate=",
         "mixed_media_routing_p95_ack_ms=",
         "success < requiredSuccess || wrongTarget > 0 || duplicate > 0 || unsupportedFailure > 0 || p95 > 300",
     ],
-    "mixed routing smoke must drive the probe and enforce the objective metrics",
+    "mixed routing smoke must enforce the objective metrics",
 )
+
+if "DistributedNotificationCenter" in mixed_smoke:
+    fail("mixed routing smoke must use the private filesystem probe, not session-wide notifications")
 
 if "Spotify must have a current playing or paused track before mixed media routing smoke" not in mixed_smoke:
     fail("mixed routing smoke must fail fast when Spotify has no current track")

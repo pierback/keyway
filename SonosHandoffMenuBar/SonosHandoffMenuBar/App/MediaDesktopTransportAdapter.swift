@@ -134,7 +134,7 @@ final class MediaDesktopTransportAdapter {
         guard targetStatus == noErr else {
             return OSStatus(targetStatus)
         }
-        defer { AEDisposeDesc(&target) }
+        defer { _ = AEDisposeDesc(&target) }
 
         var event = AppleEvent()
         let eventStatus = AECreateAppleEvent(
@@ -148,7 +148,7 @@ final class MediaDesktopTransportAdapter {
         guard eventStatus == noErr else {
             return OSStatus(eventStatus)
         }
-        defer { AEDisposeDesc(&event) }
+        defer { _ = AEDisposeDesc(&event) }
 
         return AESendMessage(
             &event,

@@ -9,6 +9,10 @@ let package = Package(
     ],
     products: [
         .library(
+            name: "KeywayChromiumBridgeIPC",
+            targets: ["KeywayChromiumBridgeIPC"]
+        ),
+        .library(
             name: "SonosHandoffCore",
             targets: ["SonosHandoffCore"]
         ),
@@ -27,6 +31,12 @@ let package = Package(
     ],
     targets: [
         .target(
+            name: "KeywayChromiumBridgeIPC",
+            linkerSettings: [
+                .linkedFramework("Security"),
+            ]
+        ),
+        .target(
             name: "SonosHandoffCore"
         ),
         .executableTarget(
@@ -38,7 +48,12 @@ let package = Package(
             dependencies: ["SonosHandoffCore"]
         ),
         .executableTarget(
-            name: "KeywayChromiumNativeHost"
+            name: "KeywayChromiumNativeHost",
+            dependencies: ["KeywayChromiumBridgeIPC"]
+        ),
+        .testTarget(
+            name: "KeywayChromiumBridgeIPCTests",
+            dependencies: ["KeywayChromiumBridgeIPC"]
         ),
         .testTarget(
             name: "SonosHandoffCoreTests",
