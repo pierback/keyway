@@ -7,6 +7,7 @@ import SwiftUI
 @MainActor
 struct PermissionOnboardingFeature: View {
     static let preferredWindowSize = CGSize(width: 620, height: 710)
+    private static let mediaPermissionRefreshInterval: TimeInterval = 0.2
 
     private static let accessibilitySettingsURL = URL(
         string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
@@ -24,7 +25,7 @@ struct PermissionOnboardingFeature: View {
     let hidePermissionCompanion: @MainActor () -> Void
     let startLocalNetworkFeatures: @MainActor () -> Void
     let requireRestart: @MainActor () -> Void
-    let quitForPermissionRestart: @MainActor () -> Void
+    let reopenForPermissionRestart: @MainActor () -> Void
     let finish: @MainActor () -> Void
     let skip: @MainActor () -> Void
 
@@ -47,7 +48,7 @@ struct PermissionOnboardingFeature: View {
         startLocalNetworkFeatures: @escaping @MainActor () -> Void,
         localNetworkAlreadyRequested: Bool,
         requireRestart: @escaping @MainActor () -> Void,
-        quitForPermissionRestart: @escaping @MainActor () -> Void,
+        reopenForPermissionRestart: @escaping @MainActor () -> Void,
         finish: @escaping @MainActor () -> Void,
         skip: @escaping @MainActor () -> Void
     ) {
@@ -56,7 +57,7 @@ struct PermissionOnboardingFeature: View {
         self.hidePermissionCompanion = hidePermissionCompanion
         self.startLocalNetworkFeatures = startLocalNetworkFeatures
         self.requireRestart = requireRestart
-        self.quitForPermissionRestart = quitForPermissionRestart
+        self.reopenForPermissionRestart = reopenForPermissionRestart
         self.finish = finish
         self.skip = skip
         _localNetworkRequested = State(initialValue: localNetworkAlreadyRequested)
@@ -86,7 +87,7 @@ struct PermissionOnboardingFeature: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("Finish setting up Keyway")
                         .font(.system(size: 24, weight: .semibold))
-                    Text("Grant each permission deliberately. Keyway checks the result when you return from System Settings.")
+                    Text("Grant each permission deliberately. Keyway detects Accessibility and Input Monitoring automatically while System Settings is open.")
                         .font(.system(size: 13))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -167,7 +168,7 @@ struct PermissionOnboardingFeature: View {
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(.orange)
 
-                    Button("Quit Keyway", action: quitForPermissionRestart)
+                    Button("Reopen Keyway", action: reopenForPermissionRestart)
                         .buttonStyle(.borderedProminent)
                         .keyboardShortcut(.defaultAction)
                 } else if requiredSetupComplete {
@@ -199,6 +200,9 @@ struct PermissionOnboardingFeature: View {
         .frame(width: Self.preferredWindowSize.width, height: Self.preferredWindowSize.height)
         .task {
             refreshNotificationState()
+        }
+        .onReceive(Timer.publish(every: Self.mediaPermissionRefreshInterval, on: .main, in: .default).autoconnect()) { _ in
+            refreshMediaPermissionState()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             refreshMediaPermissionState()

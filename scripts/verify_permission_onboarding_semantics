@@ -213,13 +213,38 @@ for required in (
     "localNetworkRequested = true",
     "restartRequired = true",
     "requireRestart()",
-    'Button("Quit Keyway", action: quitForPermissionRestart)',
+    "static let mediaPermissionRefreshInterval: TimeInterval = 0.2",
+    "Timer.publish(every: Self.mediaPermissionRefreshInterval, on: .main, in: .default).autoconnect()",
+    'Button("Reopen Keyway", action: reopenForPermissionRestart)',
     "NSApplication.didBecomeActiveNotification",
     '.disabled(!requiredSetupComplete)',
     '"Set Up Later"',
 ):
     if required not in onboarding:
         fail(f"wizard must guide and verify explicit user-driven requests: missing {required}")
+
+for forbidden in (
+    'Button("Quit Keyway", action: quitForPermissionRestart)',
+    "quitForPermissionRestart",
+    "Keyway checks the result when you return from System Settings.",
+):
+    if forbidden in onboarding:
+        fail(f"wizard must detect grants promptly and reopen itself: found {forbidden}")
+
+for required in (
+    "reopenForPermissionRestart: { [weak self] in",
+    "self?.reopenForPermissionRestart()",
+    "private func reopenForPermissionRestart()",
+    "let configuration = NSWorkspace.OpenConfiguration()",
+    "configuration.createsNewApplicationInstance = true",
+    "NSWorkspace.shared.openApplication(",
+    "NSApp.terminate(nil)",
+):
+    if required not in window_controller:
+        fail(f"window lifecycle must reopen Keyway after a permission change: missing {required}")
+
+if "quitForPermissionRestart" in window_controller:
+    fail("window lifecycle must hard-cut over from quit to reopen")
 
 for required in (
     "showPermissionCompanion(.accessibility)",

@@ -101,8 +101,8 @@ final class PermissionOnboardingWindowController: NSObject, NSWindowDelegate {
                 requireRestart: {
                     UserDefaults.standard.set(true, forKey: Self.restartPendingKey)
                 },
-                quitForPermissionRestart: {
-                    NSApp.terminate(nil)
+                reopenForPermissionRestart: { [weak self] in
+                    self?.reopenForPermissionRestart()
                 },
                 finish: { [weak self] in
                     self?.complete()
@@ -127,6 +127,23 @@ final class PermissionOnboardingWindowController: NSObject, NSWindowDelegate {
         UserDefaults.standard.removeObject(forKey: Self.restartPendingKey)
         startLocalNetworkFeatures()
         window?.close()
+    }
+
+    private func reopenForPermissionRestart() {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(
+            at: Bundle.main.bundleURL,
+            configuration: configuration
+        ) { application, error in
+            precondition(
+                application != nil && error == nil,
+                "Failed to reopen Keyway: \(String(describing: error))"
+            )
+            Task { @MainActor in
+                NSApp.terminate(nil)
+            }
+        }
     }
 
     func windowWillClose(_ notification: Notification) {
