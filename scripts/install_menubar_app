@@ -10,19 +10,7 @@ INSTALL_LOCK="$HOME/Applications/.Keyway-install.lock"
 APP_DIR="$HOME/Applications/Keyway.app"
 APP_PROCESS_NAME="Keyway"
 APP_EXECUTABLE="$APP_DIR/Contents/MacOS/$APP_PROCESS_NAME"
-SIGNING_IDENTITY="${KEYWAY_CODESIGN_IDENTITY:-}"
-
-if [[ -z "$SIGNING_IDENTITY" ]]; then
-  SIGNING_IDENTITY="$(
-    security find-identity -v -p codesigning 2>/dev/null \
-      | awk '/"Developer ID Application:/ && !/CSSMERR/ { print $2; exit }'
-  )"
-fi
-
-if [[ -z "$SIGNING_IDENTITY" || "$SIGNING_IDENTITY" == "-" ]]; then
-  echo "error: Keyway requires a valid Developer ID Application certificate" >&2
-  exit 1
-fi
+EXPECTED_TEAM_ID='7Q44SDV7BM'
 
 mkdir -p "$HOME/Applications"
 mkdir "$INSTALL_LOCK"
@@ -35,13 +23,17 @@ xcodebuild \
   -destination 'platform=macOS' \
   -derivedDataPath "$DERIVED_DATA_DIR" \
   -allowProvisioningUpdates \
-  CODE_SIGN_IDENTITY="$SIGNING_IDENTITY" \
   build
 
 rm -rf "$STAGED_APP"
 mkdir -p "$STAGING_DIR"
 ditto "$BUILT_APP" "$STAGED_APP"
 codesign --verify --deep --strict "$STAGED_APP"
+staged_signing_info="$(codesign -dvv "$STAGED_APP" 2>&1)"
+if [[ "$staged_signing_info" != *"TeamIdentifier=$EXPECTED_TEAM_ID"* ]]; then
+  echo "error: Keyway must be signed by Apple development team $EXPECTED_TEAM_ID" >&2
+  exit 1
+fi
 
 if [[ -d "$APP_DIR" ]]; then
   installed_requirement="$(codesign -d -r- "$APP_DIR" 2>&1 | sed -n 's/^designated => //p')"

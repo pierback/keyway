@@ -23,7 +23,7 @@ Keyway supports local development and notarized Developer ID builds for installa
 
 - macOS with Xcode and Swift available.
 - Ruby with the `xcodeproj` gem when regenerating the Xcode project.
-- Xcode signed into the matching paid Apple Developer account with access to cloud-managed Developer ID signing for notarized releases. The local installer still requires a Developer ID Application certificate in the keychain.
+- Xcode signed into the matching paid Apple Developer account. Local builds use automatic Apple Development signing; notarized releases additionally require access to cloud-managed Developer ID signing.
 - Spotify and at least one browser or browser-wrapper Now Playing session for media-target checks.
 - The unpacked Keyway Chromium extension for per-tab browser checks; see [ChromiumExtension/README.md](ChromiumExtension/README.md).
 - Local Sonos network access for real-device Sonos smoke checks.
@@ -49,7 +49,7 @@ Install and launch the local app:
 scripts/install_menubar_app
 ```
 
-The installer uses the stable Developer ID identity and refuses updates with a different designated requirement. This keeps Accessibility and Input Monitoring permissions attached to Keyway across later versions.
+The installer uses Xcode's automatic signing for Apple development team `7Q44SDV7BM`, verifies the built app's Team ID, and refuses updates with a different designated requirement. This keeps Accessibility and Input Monitoring permissions attached to Keyway across later versions.
 
 Build, submit, staple, verify, and package a release for other Macs:
 
