@@ -16,12 +16,9 @@ def configure_base_settings(target, bundle_id:, deployment_target:, info_plist: 
     settings['MACOSX_DEPLOYMENT_TARGET'] = deployment_target
     settings['PRODUCT_BUNDLE_IDENTIFIER'] = bundle_id if bundle_id
     settings['PRODUCT_NAME'] = product_name if product_name
-    if config.name == 'Release'
-      settings['CODE_SIGN_STYLE'] = 'Automatic'
-    else
-      settings['CODE_SIGN_IDENTITY'] = 'Developer ID Application'
-      settings['CODE_SIGN_STYLE'] = 'Manual'
-    end
+    settings['CODE_SIGN_STYLE'] = 'Automatic'
+    settings['CODE_SIGNING_ALLOWED'] = 'YES'
+    settings['CODE_SIGNING_REQUIRED'] = 'YES'
     settings['DEVELOPMENT_TEAM'] = '7Q44SDV7BM'
     settings['ENABLE_HARDENED_RUNTIME'] = 'YES'
     settings['GENERATE_INFOPLIST_FILE'] = info_plist.nil? ? 'YES' : 'NO'

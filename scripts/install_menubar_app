@@ -34,6 +34,7 @@ xcodebuild \
   -configuration Debug \
   -destination 'platform=macOS' \
   -derivedDataPath "$DERIVED_DATA_DIR" \
+  -allowProvisioningUpdates \
   CODE_SIGN_IDENTITY="$SIGNING_IDENTITY" \
   build
 

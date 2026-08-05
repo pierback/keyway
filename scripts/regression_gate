@@ -14,15 +14,22 @@ run() {
 run swift test --disable-sandbox --package-path "$PACKAGE_DIR"
 APP_DERIVED_DATA="$(mktemp -d /tmp/keyway-regression.XXXXXX)"
 trap 'rm -rf "$APP_DERIVED_DATA"' EXIT
+SIGNED_APP="$APP_DERIVED_DATA/Build/Products/Debug/Keyway.app"
 run xcodebuild \
   -quiet \
   -workspace "$ROOT_DIR/Keyway.xcworkspace" \
   -scheme Keyway \
   -destination platform=macOS \
   -derivedDataPath "$APP_DERIVED_DATA" \
-  CODE_SIGNING_ALLOWED=NO \
-  EXPANDED_CODE_SIGN_IDENTITY=- \
+  -allowProvisioningUpdates \
   build
+run codesign --verify --deep --strict "$SIGNED_APP"
+signing_info="$(codesign -dvv "$SIGNED_APP" 2>&1)"
+if [[ "$signing_info" != *'TeamIdentifier=7Q44SDV7BM'* ]]; then
+  echo "error: Keyway regression build is not signed by team 7Q44SDV7BM" >&2
+  exit 1
+fi
+echo "signed_app_team=7Q44SDV7BM"
 for verifier in "$ROOT_DIR"/scripts/verify_*; do
   run "$verifier"
 done

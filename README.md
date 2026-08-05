@@ -40,7 +40,7 @@ scripts/bootstrap
 Build only:
 
 ```bash
-xcodebuild -workspace Keyway.xcworkspace -scheme Keyway -configuration Debug -destination 'platform=macOS' -derivedDataPath .build/xcode-derived-data build
+xcodebuild -workspace Keyway.xcworkspace -scheme Keyway -configuration Debug -destination 'platform=macOS' -derivedDataPath .build/xcode-derived-data -allowProvisioningUpdates build
 ```
 
 Install and launch the local app:
