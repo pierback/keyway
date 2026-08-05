@@ -8,7 +8,7 @@ workdir="$(mktemp -d)"
 trap 'rm -rf "$workdir"' EXIT
 
 cp "$SOURCE" "$workdir/main.swift"
-sed -i '/^import SonosHandoffCore$/d' "$workdir/main.swift"
+sed -i '' '/^import SonosHandoffCore$/d' "$workdir/main.swift"
 
 cat >"$workdir/Stubs.swift" <<'SWIFT'
 import Foundation

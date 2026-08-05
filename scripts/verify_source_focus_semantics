@@ -12,7 +12,7 @@ cp \
 
 perl -0pi -e 's/NSRunningApplication/SourceFocusRunningApplication/g; s/, privacy: \.public//g' \
   "$workdir/SourceFocusActionController.swift"
-sed -i '/^import AppKit$/d; /^import os$/d' "$workdir/SourceFocusActionController.swift"
+sed -i '' '/^import AppKit$/d; /^import os$/d' "$workdir/SourceFocusActionController.swift"
 
 cat >"$workdir/Stubs.swift" <<'SWIFT'
 import Foundation

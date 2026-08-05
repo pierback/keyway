@@ -8,7 +8,7 @@ trap 'rm -rf "$workdir"' EXIT
 cp \
   "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaDesktopTransportAdapter.swift" \
   "$workdir/MediaDesktopTransportAdapter.swift"
-sed -i '/^import AppKit$/d; /^import ApplicationServices$/d' "$workdir/MediaDesktopTransportAdapter.swift"
+sed -i '' '/^import AppKit$/d; /^import ApplicationServices$/d' "$workdir/MediaDesktopTransportAdapter.swift"
 
 cat >"$workdir/Stubs.swift" <<'SWIFT'
 import Foundation

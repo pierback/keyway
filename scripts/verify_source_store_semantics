@@ -6,7 +6,7 @@ workdir="$(mktemp -d)"
 trap 'rm -rf "$workdir"' EXIT
 
 cp "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaSourceStore.swift" "$workdir/MediaSourceStore.swift"
-sed -i '/^import Combine$/d' "$workdir/MediaSourceStore.swift"
+sed -i '' '/^import Combine$/d' "$workdir/MediaSourceStore.swift"
 
 if grep -q 'try!' "$workdir/MediaSourceStore.swift"; then
   echo "verify_source_store_semantics: MediaSourceStore.swift must not use try! (crashes on task cancellation; use try?)" >&2

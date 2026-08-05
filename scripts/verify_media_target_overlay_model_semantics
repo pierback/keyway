@@ -6,7 +6,7 @@ workdir="$(mktemp -d)"
 trap 'rm -rf "$workdir"' EXIT
 
 cp "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTargetOverlayModel.swift" "$workdir/MediaTargetOverlayModel.swift"
-sed -i '/^import Combine$/d' "$workdir/MediaTargetOverlayModel.swift"
+sed -i '' '/^import Combine$/d' "$workdir/MediaTargetOverlayModel.swift"
 
 cat >"$workdir/ModelStubs.swift" <<'SWIFT'
 import Foundation

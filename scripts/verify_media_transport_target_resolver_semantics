@@ -6,7 +6,7 @@ workdir="$(mktemp -d)"
 trap 'rm -rf "$workdir"' EXIT
 
 cp "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportTargetResolver.swift" "$workdir/"
-sed -i '/^import AppKit$/d' "$workdir/MediaTransportTargetResolver.swift"
+sed -i '' '/^import AppKit$/d' "$workdir/MediaTransportTargetResolver.swift"
 
 perl -0pi -e 's/NSWorkspace/ResolverWorkspace/g' "$workdir/MediaTransportTargetResolver.swift"
 perl -0pi -e 's/NSRunningApplication/ResolverRunningApplication/g' "$workdir/MediaTransportTargetResolver.swift"
