@@ -9,9 +9,15 @@ trap 'rm -rf "$workdir"' EXIT
 
 cp "$SOURCE" "$workdir/main.swift"
 sed -i '' '/^import SonosHandoffCore$/d' "$workdir/main.swift"
+sed -i '' 's/fatalError(/testFailure(/g' "$workdir/main.swift"
 
 cat >"$workdir/Stubs.swift" <<'SWIFT'
 import Foundation
+
+func testFailure(_ message: String) -> Never {
+    FileHandle.standardError.write(Data("\(message)\n".utf8))
+    exit(2)
+}
 
 enum SpotifyPlaybackCommand: String {
     case play
@@ -120,8 +126,11 @@ cases = [
 for arguments, expected in cases:
     result = subprocess.run([cli, *arguments], capture_output=True, text=True, timeout=5)
     output = result.stdout + result.stderr
-    if result.returncode == 0:
-        raise SystemExit(f"verify_port_cli_argument_semantics: accepted invalid arguments: {arguments}")
+    if result.returncode != 2:
+        raise SystemExit(
+            "verify_port_cli_argument_semantics: "
+            f"expected deterministic harness exit 2 for {arguments}, got {result.returncode}"
+        )
     if expected not in output:
         raise SystemExit(
             f"verify_port_cli_argument_semantics: expected {expected!r} for {arguments}, got {output!r}"
