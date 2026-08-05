@@ -229,6 +229,7 @@ def build_menu_bar_project
   add_chromium_extension_copy_phase(target)
 
   add_local_package_dependency(project, target, '../packages/SonosHandoffCore', 'SonosHandoffCore')
+  add_local_package_dependency(project, target, '../../PermissionCompanionKit', 'PermissionCompanionKit')
 
   normalize_system_framework_refs(project, 'Cocoa.framework')
   project.root_object.attributes['LastSwiftUpdateCheck'] = '1600'

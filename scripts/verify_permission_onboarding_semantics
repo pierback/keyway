@@ -165,20 +165,45 @@ for required in (
         fail(f"window lifecycle must persist a version and restore menu-bar activation: missing {required}")
 
 for required in (
-    "private var permissionCompanionPanel: NSPanel?",
-    "panel.level = .floating",
-    "panel.hidesOnDeactivate = false",
-    "panel.isFloatingPanel = true",
-    "let appURL = Bundle.main.bundleURL",
-    "NSDraggingItem(pasteboardWriter: appURL as NSURL)",
-    "if operation.contains(.copy)",
-    ".onHover",
-    "collapsedSize",
-    "expandedSize",
-    "setPermissionCompanionExpanded",
+    "import PermissionCompanionKit",
+    "private let permissionCompanion = PermissionCompanionController()",
+    "PermissionCompanionConfiguration(",
+    'applicationName: "Keyway"',
+    "applicationURL: Bundle.main.bundleURL",
+    "permissionName: permission.displayName",
+    "interaction: permission.supportsAppDrop ? .dragApplication : .informational",
+    "permissionCompanion.present(",
+    "beneath: .systemSettings",
+    "permissionCompanion.dismiss()",
 ):
     if required not in window_controller:
-        fail(f"permission companion must float and drag the running app bundle: missing {required}")
+        fail(f"permission companion must use the shared app-bundle helper: missing {required}")
+
+for required in (
+    "styleMask: [.titled, .closable]",
+    "window.contentMinSize = PermissionOnboardingFeature.preferredWindowSize",
+    "window.contentMaxSize = PermissionOnboardingFeature.preferredWindowSize",
+):
+    if required not in window_controller:
+        fail(f"permission onboarding must use stable conventional window geometry: missing {required}")
+
+for forbidden in (
+    ".fullSizeContentView",
+    "window.titleVisibility = .hidden",
+    "window.titlebarAppearsTransparent = true",
+    "window.isMovableByWindowBackground = true",
+):
+    if forbidden in window_controller:
+        fail(f"permission onboarding must not use custom titlebar geometry: found {forbidden}")
+
+for forbidden in (
+    "private var permissionCompanionPanel: NSPanel?",
+    "private struct PermissionOnboardingCompanion: View",
+    "private final class DraggableApplicationIconView",
+    "setPermissionCompanionExpanded",
+):
+    if forbidden in window_controller:
+        fail(f"Keyway must not duplicate shared permission-companion UI: found {forbidden}")
 
 for required in (
     "AccessibilityPermission.requestPrompt()",
