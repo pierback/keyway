@@ -1,12 +1,18 @@
-if (globalThis.__keywayMediaBridgeRevision !== 2) {
-globalThis.__keywayMediaBridgeRevision = 2;
-
-const documentID = crypto.getRandomValues(new Uint32Array(4)).join("-");
-const keywayMedia = new WeakMap();
+globalThis.__keywayMediaBridge?.retire();
+{
+const previousBridge = globalThis.__keywayMediaBridge;
+const bridgeGeneration = (previousBridge?.generation ?? 0) + 1;
+const mediaIdentity = previousBridge?.mediaIdentity ?? {
+  documentID: crypto.getRandomValues(new Uint32Array(4)).join("-"),
+  elementIDs: new WeakMap(),
+  nextIndex: 1,
+};
+const documentID = mediaIdentity.documentID;
+const mediaEventController = new AbortController();
 const observedMedia = new WeakSet();
-let nextMediaIndex = 1;
 let bridgeActive = true;
 let publishTimer = null;
+let runtimeMessageListener = null;
 const baseSupportedCommands = ["play", "pause", "playPause", "mute", "volumeDelta"];
 const playbackControlSelectors = {
   play: [
@@ -91,12 +97,12 @@ const trackControlSelectors = {
 };
 
 function mediaIdFor(element) {
-  const existing = keywayMedia.get(element);
+  const existing = mediaIdentity.elementIDs.get(element);
   if (existing) return existing;
 
-  const id = `media-${nextMediaIndex}`;
-  nextMediaIndex += 1;
-  keywayMedia.set(element, id);
+  const id = `media-${mediaIdentity.nextIndex}`;
+  mediaIdentity.nextIndex += 1;
+  mediaIdentity.elementIDs.set(element, id);
   return id;
 }
 
@@ -196,6 +202,7 @@ function isUsableMedia(element) {
 
 function runtimeAvailable() {
   return bridgeActive
+    && globalThis.__keywayMediaBridge?.generation === bridgeGeneration
     && typeof chrome !== "undefined"
     && Boolean(chrome.runtime?.id)
     && typeof chrome.runtime.sendMessage === "function"
@@ -224,9 +231,14 @@ function retireBridge() {
   if (!bridgeActive) return;
   bridgeActive = false;
   observer.disconnect();
+  mediaEventController.abort();
   if (publishTimer !== null) {
     clearInterval(publishTimer);
     publishTimer = null;
+  }
+  if (runtimeMessageListener !== null) {
+    chrome.runtime.onMessage.removeListener(runtimeMessageListener);
+    runtimeMessageListener = null;
   }
 }
 
@@ -364,7 +376,10 @@ function observeElement(element, commands = null) {
   if (observedMedia.has(element)) return;
   observedMedia.add(element);
   for (const eventName of ["play", "pause", "volumechange", "durationchange", "timeupdate", "loadedmetadata", "emptied", "abort", "ended"]) {
-    element.addEventListener(eventName, () => publishElement(element), { passive: true });
+    element.addEventListener(eventName, () => publishElement(element), {
+      passive: true,
+      signal: mediaEventController.signal,
+    });
   }
   publishElement(element, commands);
 }
@@ -377,10 +392,17 @@ const observer = new MutationObserver(() => {
   });
 });
 
+globalThis.__keywayMediaBridge = {
+  generation: bridgeGeneration,
+  mediaIdentity,
+  retire: retireBridge,
+};
+
 if (!runtimeAvailable()) {
   retireBridge();
 } else {
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  runtimeMessageListener = (message, _sender, sendResponse) => {
+    if (globalThis.__keywayMediaBridge?.generation !== bridgeGeneration) return false;
     if (message.type === "keywayProbeMedia") {
       publishAll();
       sendResponse({ ok: true });
@@ -400,12 +422,17 @@ if (!runtimeAvailable()) {
       });
     });
     return true;
-  });
+  };
+  chrome.runtime.onMessage.addListener(runtimeMessageListener);
 
   observer.observe(document.documentElement, { childList: true, subtree: true });
   publishTimer = setInterval(() => {
     if (bridgeActive) publishAll();
   }, 1000);
-  publishAll();
+  runBridgeTask(() => {
+    const page = scanPage();
+    const commands = supportedCommands(page.roots);
+    for (const element of page.mediaElements) observeElement(element, commands);
+  });
 }
 }

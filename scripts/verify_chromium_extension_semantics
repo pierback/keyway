@@ -1,17 +1,11 @@
-#!/usr/bin/env bash
-set -euo pipefail
-
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-
-bash -n "$repo_root/scripts/setup_chromium_extension" >/dev/null
-bash -n "$repo_root/scripts/smoke_helium_chromium_extension_transport" >/dev/null
-
-python3 - "$repo_root" <<'PY'
+#!/usr/bin/env python3
 import json
 import pathlib
-import sys
+import subprocess
 
-repo_root = pathlib.Path(sys.argv[1])
+repo_root = pathlib.Path(__file__).resolve().parent.parent
+subprocess.run(["bash", "-n", repo_root / "scripts/setup_chromium_extension"], check=True)
+subprocess.run(["bash", "-n", repo_root / "scripts/smoke_helium_chromium_extension_transport"], check=True)
 manifest = json.loads((repo_root / "ChromiumExtension/manifest.json").read_text())
 service_worker = (repo_root / "ChromiumExtension/service_worker.js").read_text()
 content_script = (repo_root / "ChromiumExtension/content_script.js").read_text()
@@ -404,7 +398,7 @@ expect(
 )
 expect(
     content_script,
-    "const documentID = crypto.getRandomValues(new Uint32Array(4))",
+    "documentID: crypto.getRandomValues(new Uint32Array(4))",
     "Chromium extension content script must stamp media routes on plain HTTP pages",
 )
 if "crypto.randomUUID" in content_script:
@@ -418,6 +412,16 @@ expect(
     content_script,
     "function retireBridge()",
     "Chromium extension content script must retire invalidated extension contexts",
+)
+expect(
+    content_script,
+    "mediaEventController.abort()",
+    "Chromium extension content script must detach retired media listeners",
+)
+expect(
+    content_script,
+    "chrome.runtime.onMessage.removeListener(runtimeMessageListener)",
+    "Chromium extension content script must detach retired runtime listeners",
 )
 expect(
     content_script,
@@ -809,4 +813,3 @@ expect(
     "Keyway.app/Contents/Resources/ChromiumExtension",
     "extension README must document the bundled extension resource path",
 )
-PY
