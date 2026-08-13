@@ -1,15 +1,9 @@
-#!/usr/bin/env bash
-set -euo pipefail
-
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-
-node --check "$repo_root/ChromiumExtension/content_script.js" >/dev/null
-
-node - "$repo_root/ChromiumExtension/content_script.js" <<'NODE'
+#!/usr/bin/env node
 const fs = require("fs");
+const path = require("path");
 const vm = require("vm");
 
-const contentScriptPath = process.argv[2];
+const contentScriptPath = path.resolve(__dirname, "../ChromiumExtension/content_script.js");
 const code = fs.readFileSync(contentScriptPath, "utf8");
 
 function makeContext(options = {}) {
@@ -17,14 +11,16 @@ function makeContext(options = {}) {
   const intervals = [];
   const clearedIntervals = [];
   const events = new Map();
-  const eventListenerCounts = new Map();
   let mutationCallback = null;
-  let observerDisconnected = false;
-  let runtimeMessageListener = null;
+  let observerDisconnectCount = 0;
+  const runtimeMessageListeners = [];
   let sendMessageThrows = false;
   let sendMessageCallbackInvalidates = false;
   let domTraversalInvalidated = false;
   let playbackButtonClickCount = 0;
+  let randomFillValue = 0;
+  let mediaListenerAbortCount = 0;
+  let mediaElements = [];
 
   const video = {
     ended: Boolean(options.initiallyEnded),
@@ -46,7 +42,6 @@ function makeContext(options = {}) {
       return { width: 100, height: 100 };
     },
     addEventListener(name, listener) {
-      eventListenerCounts.set(name, (eventListenerCounts.get(name) || 0) + 1);
       events.set(name, listener);
     },
     play() {
@@ -62,6 +57,7 @@ function makeContext(options = {}) {
       }
     },
   };
+  mediaElements = [video];
 
   const playbackButton = {
     disabled: false,
@@ -106,7 +102,7 @@ function makeContext(options = {}) {
       return null;
     },
     querySelectorAll(selector) {
-      if (selector === "video,audio") return [video];
+      if (selector === "video,audio") return mediaElements;
       if (selector === "*" && options.withShadowHost) return [shadowHost];
       if (selector === "*") return [];
       return [];
@@ -135,18 +131,31 @@ function makeContext(options = {}) {
         },
         onMessage: {
           addListener(listener) {
-            runtimeMessageListener = listener;
+            runtimeMessageListeners.push(listener);
+          },
+          removeListener(listener) {
+            const index = runtimeMessageListeners.indexOf(listener);
+            if (index !== -1) runtimeMessageListeners.splice(index, 1);
           },
         },
       };
 
   const context = {
     console,
-    crypto: { getRandomValues: values => values.fill(1) },
+    crypto: { getRandomValues: values => values.fill(++randomFillValue) },
     location: { href: "https://www.magentatv.de/watch" },
     navigator: { mediaSession: { metadata: { title: "Live TV", artist: "Magenta", album: "" } } },
     document,
     chrome: { runtime },
+    AbortController: class AbortController {
+      constructor() {
+        this.signal = {};
+      }
+
+      abort() {
+        mediaListenerAbortCount += 1;
+      }
+    },
     setInterval(callback, delay) {
       intervals.push({ callback, delay });
       return `interval-${intervals.length}`;
@@ -158,7 +167,7 @@ function makeContext(options = {}) {
       mutationCallback = callback;
       this.observe = () => {};
       this.disconnect = () => {
-        observerDisconnected = true;
+        observerDisconnectCount += 1;
       };
     },
   };
@@ -169,17 +178,26 @@ function makeContext(options = {}) {
     intervals,
     clearedIntervals,
     events,
-    eventListenerCounts,
     get mutationCallback() {
       return mutationCallback;
     },
     get observerDisconnected() {
-      return observerDisconnected;
+      return observerDisconnectCount > 0;
+    },
+    get observerDisconnectCount() {
+      return observerDisconnectCount;
+    },
+    get mediaListenerAbortCount() {
+      return mediaListenerAbortCount;
     },
     get runtimeMessageListener() {
-      return runtimeMessageListener;
+      return runtimeMessageListeners.at(-1) || null;
     },
+    runtimeMessageListeners,
     video,
+    setMediaElements(elements) {
+      mediaElements = elements;
+    },
     get playbackButtonClickCount() {
       return playbackButtonClickCount;
     },
@@ -338,8 +356,18 @@ function makeScopedPlaybackContext() {
             addListener(listener) {
               runtimeMessageListener = listener;
             },
+            removeListener(listener) {
+              if (runtimeMessageListener === listener) runtimeMessageListener = null;
+            },
           },
         },
+      },
+      AbortController: class AbortController {
+        constructor() {
+          this.signal = {};
+        }
+
+        abort() {}
       },
       setInterval(callback, delay) {
         intervals.push({ callback, delay });
@@ -395,24 +423,71 @@ async function sendCommand(fixture, command, mediaId = "media-1") {
   vm.runInNewContext(code, live.context, { filename: contentScriptPath });
   assertEqual(live.intervals.length, 1, "content script must publish one heartbeat while the runtime is valid");
   assert(typeof live.runtimeMessageListener === "function", "content script must register runtime message listener when runtime is valid");
+  const retiredEventListener = live.events.get("timeupdate");
+  assert(typeof retiredEventListener === "function", "content script must observe existing media during startup");
+  const retiredRuntimeMessageListener = live.runtimeMessageListener;
   vm.runInNewContext(code, live.context, { filename: contentScriptPath });
-  assertEqual(live.intervals.length, 1, "reinjecting the same content-script revision must not duplicate the bridge");
+  assertEqual(live.intervals.length, 2, "reinjecting the content script must start a replacement heartbeat");
+  assertEqual(live.clearedIntervals.length, 1, "reinjecting the content script must retire the previous heartbeat");
+  assertEqual(live.clearedIntervals[0], "interval-1", "reinjecting the content script must clear the previous heartbeat");
+  assertEqual(live.runtimeMessageListeners.length, 1, "reinjecting the content script must replace the runtime listener");
+  assertEqual(live.context.__keywayMediaBridge.generation, 2, "reinjecting the content script must advance bridge generation");
+  assertEqual(live.context.__keywayMediaBridge.mediaIdentity.documentID, "1-1-1-1", "reinjecting the content script must preserve document authority");
+  assertEqual(live.mediaListenerAbortCount, 1, "reinjecting the content script must detach the previous media listeners");
+  assert(
+    live.events.get("timeupdate") !== retiredEventListener,
+    "the replacement bridge must immediately observe existing media without waiting for a DOM mutation"
+  );
+  const sentMessageCountBeforeStaleCallbacks = live.sentMessages.length;
+  live.intervals[0].callback();
+  retiredEventListener();
+  assertEqual(live.sentMessages.length, sentMessageCountBeforeStaleCallbacks, "retired heartbeat and media listeners must remain inert after reinjection");
+  let staleResponse = null;
+  const staleListenerResult = retiredRuntimeMessageListener(
+    {
+      type: "keywayCommand",
+      documentID: "1-1-1-1",
+      mediaId: "media-1",
+      command: "playPause",
+    },
+    {},
+    value => {
+      staleResponse = value;
+    }
+  );
+  assertEqual(staleListenerResult, false, "the retired content-script listener must decline new commands");
+  assertEqual(staleResponse, null, "the retired content-script listener must not race the current listener response");
   assertEqual(live.sentMessages.at(-1).type, "keywayMediaState", "content script must publish initial media state");
   assertEqual(live.sentMessages.at(-1).documentID, "1-1-1-1", "content script must mint document identity without secure-context-only APIs");
   assert(!("muted" in live.sentMessages.at(-1)), "content script must leave tab-level mute state to the service worker");
-  live.mutationCallback();
   assert(typeof live.events.get("timeupdate") === "function", "content script must observe media events after discovery");
   assertEqual(live.video.dataset.keywayObserved, undefined, "content script must keep extension observation state out of the page DOM");
   live.mutationCallback();
-  assertEqual(live.eventListenerCounts.get("timeupdate"), 1, "content script must not register duplicate media listeners");
+  const sentMessageCountBeforeReplacementEvent = live.sentMessages.length;
+  live.events.get("timeupdate")();
+  assertEqual(
+    live.sentMessages.length,
+    sentMessageCountBeforeReplacementEvent + 1,
+    "the replacement bridge must publish media events after retiring the previous bridge"
+  );
   live.invalidateRuntime();
   live.events.get("timeupdate")();
   const sentMessageCountAfterRetire = live.sentMessages.length;
-  assertEqual(live.clearedIntervals.length, 1, "invalidated extension context must clear the heartbeat interval on retire");
-  assertEqual(live.clearedIntervals[0], "interval-1", "invalidated extension context must clear the active heartbeat interval");
-  live.intervals[0].callback();
+  assertEqual(live.clearedIntervals.length, 2, "invalidated extension context must clear the replacement heartbeat on retire");
+  assertEqual(live.clearedIntervals[1], "interval-2", "invalidated extension context must clear the active heartbeat interval");
+  live.intervals[1].callback();
   assertEqual(live.sentMessages.length, sentMessageCountAfterRetire, "retired extension heartbeat must not keep publishing media state");
-  assert(live.observerDisconnected, "invalidated extension context must disconnect the DOM observer");
+  assertEqual(live.observerDisconnectCount, 2, "reinjection and invalidation must disconnect both retired DOM observers");
+  assertEqual(live.mediaListenerAbortCount, 2, "reinjection and invalidation must detach both generations of media listeners");
+
+  const stableMediaIdentity = makeContext();
+  const survivingVideo = { ...stableMediaIdentity.video, dataset: {} };
+  stableMediaIdentity.setMediaElements([stableMediaIdentity.video, survivingVideo]);
+  vm.runInNewContext(code, stableMediaIdentity.context, { filename: contentScriptPath });
+  assertEqual(stableMediaIdentity.sentMessages.at(-1).mediaId, "media-2", "the second media element must receive its own route identity");
+  stableMediaIdentity.setMediaElements([survivingVideo]);
+  vm.runInNewContext(code, stableMediaIdentity.context, { filename: contentScriptPath });
+  assertEqual(stableMediaIdentity.sentMessages.at(-1).mediaId, "media-2", "a surviving media element must keep its route identity after reinjection");
 
   const callbackInvalidation = makeContext();
   vm.runInNewContext(code, callbackInvalidation.context, { filename: contentScriptPath });
@@ -435,6 +510,9 @@ async function sendCommand(fixture, command, mediaId = "media-1") {
   const sentMessageCountAfterDomRetire = staleDomTraversal.sentMessages.length;
   staleDomTraversal.events.get("timeupdate")();
   assertEqual(staleDomTraversal.sentMessages.length, sentMessageCountAfterDomRetire, "retired DOM traversal bridge must not keep publishing media state");
+  vm.runInNewContext(code, staleDomTraversal.context, { filename: contentScriptPath });
+  assertEqual(staleDomTraversal.clearedIntervals.length, 2, "invalid initial scan must clear the replacement heartbeat immediately");
+  assertEqual(staleDomTraversal.runtimeMessageListeners.length, 0, "invalid initial scan must remove the replacement runtime listener immediately");
 
   const magentaPlaying = makeContext({
     withPlaybackButton: true,
@@ -515,4 +593,3 @@ function assert(condition, message) {
 function assertEqual(actual, expected, message) {
   assert(actual === expected, `${message}: expected ${expected}, got ${actual}`);
 }
-NODE
