@@ -25,6 +25,7 @@ for api_prefix, required_permission in chrome_api_to_permission.items():
         )
 
 app_chromium_sources = [
+    repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserInstallationAdapter.swift",
     repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionTransport.swift",
     repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumNativeMessagingHostInstaller.swift",
     repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionMessages.swift",
@@ -39,6 +40,9 @@ target_resolver = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/Medi
 environment = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/Support/AppEnvironment.swift").read_text()
 sonos_app = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/SonosHandoffApp.swift").read_text()
 settings = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/Features/SettingsFeature.swift").read_text()
+browser_installation_adapter = (
+    repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserInstallationAdapter.swift"
+).read_text()
 project = (repo_root / "SonosHandoffMenuBar/SonosHandoffMenuBar.xcodeproj/project.pbxproj").read_text()
 installer = (repo_root / "scripts/install_chromium_native_host").read_text()
 readme = (repo_root / "ChromiumExtension/README.md").read_text()
@@ -613,7 +617,7 @@ expect(
 expect(
     settings,
     'Button("Reveal Extension")',
-    "Settings must expose the bundled Chromium extension folder",
+    "Settings must expose the managed Chromium extension folder",
 )
 expect(
     settings,
@@ -627,13 +631,23 @@ expect(
 )
 expect(
     settings,
-    'activateFileViewerSelecting([extensionURL])',
-    "Settings must reveal the exact bundled extension directory",
+    'chromiumBrowserInstallationAdapter.prepareUnpackedExtension()',
+    "Settings must refresh the managed Chromium extension before revealing it",
 )
 expect(
     settings,
-    'appendingPathComponent("ChromiumExtension", isDirectory: true)',
-    "Settings must reveal the bundled Chromium extension resource",
+    'chromiumBrowserInstallationAdapter.revealExtension(extensionURL)',
+    "Settings must reveal the exact managed Chromium extension directory",
+)
+expect(
+    browser_installation_adapter,
+    '.appendingPathComponent("Keyway", isDirectory: true)\n            .appendingPathComponent("ChromiumExtension", isDirectory: true)',
+    "Chromium setup must use a stable unpacked-extension directory in Keyway application support",
+)
+expect(
+    browser_installation_adapter,
+    'fileManager.replaceItemAt(managedExtensionURL, withItemAt: stagingURL)',
+    "Chromium setup must atomically refresh an existing managed extension directory",
 )
 expect(
     project,
@@ -810,6 +824,6 @@ expect(
 )
 expect(
     readme,
-    "Keyway.app/Contents/Resources/ChromiumExtension",
-    "extension README must document the bundled extension resource path",
+    "~/Library/Application Support/Keyway/ChromiumExtension",
+    "extension README must document the managed unpacked-extension path",
 )

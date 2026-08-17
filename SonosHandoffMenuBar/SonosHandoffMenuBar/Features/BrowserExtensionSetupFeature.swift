@@ -4,49 +4,40 @@ import SwiftUI
 
 @MainActor
 struct BrowserExtensionSetupFeature: View {
-    static let preferredWindowSize = CGSize(width: 640, height: 620)
+    static let preferredWindowSize = CGSize(width: 600, height: 480)
 
     @ObservedObject var session: BrowserExtensionSetupSession
     let finish: @MainActor () -> Void
     let setUpLater: @MainActor () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            HStack(alignment: .center, spacing: 16) {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 12) {
                 Image(systemName: "puzzlepiece.extension")
-                    .font(.system(size: 30, weight: .medium))
+                    .font(.system(size: 24, weight: .medium))
                     .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(Color.accentColor)
-                    .frame(width: 58, height: 58)
-                    .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 15))
+                    .frame(width: 46, height: 46)
+                    .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
 
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("Connect your browsers")
-                        .font(.system(size: 24, weight: .semibold))
-                    Text("Keyway can show and control media playing in each Chromium browser profile where you add the extension.")
-                        .font(.system(size: 13))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Connect a browser")
+                        .font(.system(size: 22, weight: .semibold))
+                    Text("Choose a browser. Keyway opens Extensions and copies the folder path.")
+                        .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
 
-            VStack(alignment: .leading, spacing: 6) {
-                Label("What Keyway accesses", systemImage: "lock.shield.fill")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.primary)
-                Text(ChromiumBrowserSetupPolicy.dataUseDisclosure)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
-            .overlay {
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(Color.accentColor.opacity(0.18), lineWidth: 0.5)
-            }
-            .accessibilityIdentifier("browserSetup.dataUseDisclosure")
+            Label(ChromiumBrowserSetupPolicy.dataUseDisclosure, systemImage: "lock.shield.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+                .accessibilityIdentifier("browserSetup.dataUseDisclosure")
 
             if session.snapshot.browsers.isEmpty {
                 VStack(spacing: 12) {
@@ -60,11 +51,11 @@ struct BrowserExtensionSetupFeature: View {
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                 }
-                .frame(maxWidth: .infinity, minHeight: 250)
+                .frame(maxWidth: .infinity, minHeight: 180)
                 .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 14))
             } else {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Detected browsers")
+                    Text("Browsers")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.secondary)
 
@@ -76,28 +67,25 @@ struct BrowserExtensionSetupFeature: View {
                             ) { browser in
                                 BrowserExtensionSetupRow(
                                     browser: browser,
-                                    openStore: {
-                                        session.openChromeWebStore(for: browser)
+                                    startSetup: {
+                                        session.startDeveloperModeSetup(for: browser)
                                     }
                                 )
                             }
                         }
                     }
-                    .frame(maxHeight: 280)
+                    .frame(maxHeight: session.developerModeSetup == nil ? 240 : 112)
                 }
             }
 
-            VStack(alignment: .leading, spacing: 8) {
-                Label(
-                    "Your browser will ask you to confirm the installation. Keyway cannot approve that step for you.",
-                    systemImage: "hand.raised.fill"
+            if let developerModeSetup = session.developerModeSetup {
+                BrowserExtensionDeveloperModeInstructions(
+                    setup: developerModeSetup,
+                    copyPath: session.copyExtensionPath,
+                    revealExtension: session.revealExtension,
+                    reopenExtensionsPage: session.reopenExtensionsPage
                 )
-                Text("Extensions are installed per browser profile. To use another profile, switch to it and choose Install Another Profile here.")
-                    .padding(.leading, 22)
             }
-            .font(.system(size: 11))
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
 
             if let actionMessage = session.actionMessage {
                 Text(actionMessage)
@@ -112,7 +100,7 @@ struct BrowserExtensionSetupFeature: View {
             Divider()
 
             HStack {
-                Button("Set Up Later", action: setUpLater)
+                Button("Later", action: setUpLater)
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("browserSetup.later")
@@ -125,9 +113,9 @@ struct BrowserExtensionSetupFeature: View {
                     .accessibilityIdentifier("browserSetup.done")
             }
         }
-        .padding(.horizontal, 30)
-        .padding(.top, 32)
-        .padding(.bottom, 24)
+        .padding(.horizontal, 24)
+        .padding(.top, 24)
+        .padding(.bottom, 20)
         .frame(width: Self.preferredWindowSize.width, height: Self.preferredWindowSize.height)
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             session.refreshInstalledBrowsers()
@@ -137,25 +125,22 @@ struct BrowserExtensionSetupFeature: View {
 
 private struct BrowserExtensionSetupRow: View {
     let browser: ChromiumBrowserSetupBrowser
-    let openStore: () -> Void
+    let startSetup: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
             Image(nsImage: NSWorkspace.shared.icon(forFile: browser.applicationURL.path))
                 .resizable()
-                .frame(width: 34, height: 34)
+                .frame(width: 30, height: 30)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(browser.definition.displayName)
                     .font(.system(size: 13, weight: .semibold))
                 if browser.connectedProfileCount > 0 {
-                    Label(
-                        "Ready · \(browser.connectedProfileCount) active \(browser.connectedProfileCount == 1 ? "profile" : "profiles")",
-                        systemImage: "checkmark.circle.fill"
-                    )
-                    .foregroundStyle(.green)
+                    Label("Ready · \(browser.connectedProfileCount) \(browser.connectedProfileCount == 1 ? "profile" : "profiles")", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
                 } else {
-                    Label("Browser detected · No profile connected", systemImage: "circle")
+                    Label("Not connected", systemImage: "circle")
                         .foregroundStyle(.secondary)
                 }
             }
@@ -164,21 +149,71 @@ private struct BrowserExtensionSetupRow: View {
             Spacer(minLength: 12)
 
             Button(
-                ChromiumBrowserSetupPolicy.consentActionTitle(
-                    browserDisplayName: browser.definition.displayName,
+                ChromiumBrowserSetupPolicy.setupActionTitle(
                     hasConnectedProfile: browser.connectedProfileCount > 0
                 ),
-                action: openStore
+                action: startSetup
             )
             .controlSize(.small)
-            .accessibilityIdentifier("browserSetup.openStore.\(browser.definition.bundleIdentifier)")
+            .accessibilityIdentifier("browserSetup.startSetup.\(browser.definition.bundleIdentifier)")
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
         .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 12))
         .overlay {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(Color.primary.opacity(0.07), lineWidth: 0.5)
+        }
+    }
+}
+
+private struct BrowserExtensionDeveloperModeInstructions: View {
+    let setup: ChromiumBrowserDeveloperModeSetup
+    let copyPath: () -> Void
+    let revealExtension: () -> Void
+    let reopenExtensionsPage: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Label("Finish in \(setup.browser.definition.displayName)", systemImage: "puzzlepiece.extension.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer()
+                ProgressView()
+                    .controlSize(.small)
+                Text("Waiting for connection")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+
+            Text("Developer mode → Load unpacked → ⇧⌘G → Paste → Open")
+                .fontWeight(.medium)
+
+            Text(setup.extensionDirectoryURL.path)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+                .accessibilityIdentifier("browserSetup.extensionPath")
+
+            HStack(spacing: 8) {
+                Button("Copy Path", action: copyPath)
+                    .accessibilityIdentifier("browserSetup.copyPath")
+                Button("Show Folder", action: revealExtension)
+                    .accessibilityIdentifier("browserSetup.revealExtension")
+                Button("Open Extensions", action: reopenExtensionsPage)
+                    .accessibilityIdentifier("browserSetup.reopenExtensions")
+            }
+            .controlSize(.small)
+        }
+        .font(.system(size: 11))
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.accentColor.opacity(0.18), lineWidth: 0.5)
         }
     }
 }

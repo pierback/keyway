@@ -23,6 +23,7 @@ struct SettingsFeature: View {
     private let authCoordinator: SpotifyAuthCoordinating
     private let configImportService: ConfigImportService
     private let chromiumNativeMessagingHostInstaller: ChromiumNativeMessagingHostInstaller
+    private let chromiumBrowserInstallationAdapter: ChromiumBrowserInstallationAdapter
     private let presentBrowserExtensionSetup: @MainActor () -> Void
     @ObservedObject private var mediaRemoteController: MediaRemoteController
     @ObservedObject private var chromiumBrowserExtensionController: ChromiumBrowserExtensionController
@@ -56,6 +57,7 @@ struct SettingsFeature: View {
         authCoordinator: SpotifyAuthCoordinating? = nil,
         configImportService: ConfigImportService = ConfigImportService(),
         chromiumNativeMessagingHostInstaller: ChromiumNativeMessagingHostInstaller = ChromiumNativeMessagingHostInstaller(),
+        chromiumBrowserInstallationAdapter: ChromiumBrowserInstallationAdapter = ChromiumBrowserInstallationAdapter(),
         presentBrowserExtensionSetup: @escaping @MainActor () -> Void,
         initialChromiumBridgeMessage: String? = nil,
         mediaRemoteController: MediaRemoteController,
@@ -66,6 +68,7 @@ struct SettingsFeature: View {
         self.connectTokenStatusStore = connectTokenStatusStore
         self.configImportService = configImportService
         self.chromiumNativeMessagingHostInstaller = chromiumNativeMessagingHostInstaller
+        self.chromiumBrowserInstallationAdapter = chromiumBrowserInstallationAdapter
         self.presentBrowserExtensionSetup = presentBrowserExtensionSetup
         self.authCoordinator = authCoordinator ?? SpotifyAuthCoordinator(
             tokenStore: tokenStore,
@@ -894,19 +897,9 @@ struct SettingsFeature: View {
     }
 
     private func revealChromiumExtension() {
-        guard let resourceURL = Bundle.main.resourceURL else {
-            chromiumBridgeMessage = "Bundled Chromium extension is missing: app bundle has no resource directory."
-            logger.error("Chromium extension reveal failed: Bundle.main.resourceURL is nil")
-            return
-        }
-        let extensionURL = resourceURL.appendingPathComponent("ChromiumExtension", isDirectory: true)
-        guard FileManager.default.fileExists(atPath: extensionURL.appendingPathComponent("manifest.json").path) else {
-            chromiumBridgeMessage = "Bundled Chromium extension is missing at \(extensionURL.path)"
-            logger.error("Chromium extension reveal failed: missing manifest at path=\(extensionURL.path, privacy: .public)")
-            return
-        }
-        NSWorkspace.shared.activateFileViewerSelecting([extensionURL])
-        chromiumBridgeMessage = "Revealed bundled Chromium extension folder."
+        let extensionURL = chromiumBrowserInstallationAdapter.prepareUnpackedExtension()
+        chromiumBrowserInstallationAdapter.revealExtension(extensionURL)
+        chromiumBridgeMessage = "Revealed Keyway's managed Chromium extension folder."
     }
 
     private func openChromiumExtensionsPage() {

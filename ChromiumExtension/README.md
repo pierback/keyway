@@ -91,13 +91,21 @@ Before the first public submission, compare the dashboard Item ID with `extensio
 
 1. Open Keyway once. The app installs or repairs the native host manifest at launch, pointing Chrome-family browsers at the helper bundled in `Keyway.app/Contents/Helpers`.
 
-2. In Keyway Settings -> Transport Routing, use:
+2. In Keyway Settings -> Browser Extension, choose `Set Up Browsers`. Keyway copies the unpacked extension to a stable folder at:
+
+```text
+~/Library/Application Support/Keyway/ChromiumExtension
+```
+
+It then copies that path and opens the selected browser's extension page. Use `Show Folder` in the wizard if you need Finder.
+
+For manual repair, use:
 
 - `Repair Bridge` to reinstall the native host manifests.
-- `Reveal Extension` to show the bundled `Keyway.app/Contents/Resources/ChromiumExtension` folder.
+- `Reveal Extension` to refresh and show the managed extension folder.
 - `Open Extensions` to open `chrome://extensions` (it prefers Helium when Helium is installed; use the script below to target a specific browser deterministically).
 
-3. Enable Developer Mode in the target browser and load the revealed `ChromiumExtension` folder as an unpacked extension.
+3. Enable Developer Mode in the target browser, choose `Load unpacked`, and select the revealed `ChromiumExtension` folder. Keyway completes setup automatically when that browser profile connects.
 
 For local source-tree testing, this script installs or repairs the native host, reveals the source extension folder, and opens the target browser's extension page:
 

@@ -91,9 +91,27 @@ struct ChromiumBrowserDefinition: Equatable {
 
 @MainActor
 struct ChromiumBrowserInstallationAdapter {
-    static let chromeWebStoreListingURL = URL(
-        string: "https://chromewebstore.google.com/detail/\(ChromiumBrowserExtensionTransport.extensionID)"
-    )!
+    static let extensionsPageURL = URL(string: "chrome://extensions")!
+
+    private let fileManager: FileManager
+    private let bundledExtensionURL: URL
+    private let managedExtensionURL: URL
+
+    init(
+        fileManager: FileManager = .default,
+        bundledExtensionURL: URL = Bundle.main.resourceURL!
+            .appendingPathComponent("ChromiumExtension", isDirectory: true),
+        managedExtensionURL: URL = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first!
+            .appendingPathComponent("Keyway", isDirectory: true)
+            .appendingPathComponent("ChromiumExtension", isDirectory: true)
+    ) {
+        self.fileManager = fileManager
+        self.bundledExtensionURL = bundledExtensionURL
+        self.managedExtensionURL = managedExtensionURL
+    }
 
     func installedApplicationURLsByBundleIdentifier() -> [String: URL] {
         ChromiumBrowserDefinition.supported.reduce(into: [String: URL]()) { applications, definition in
@@ -105,9 +123,57 @@ struct ChromiumBrowserInstallationAdapter {
         }
     }
 
-    func openChromeWebStore(for browser: ChromiumBrowserSetupBrowser) {
+    func prepareDeveloperModeSetup(for browser: ChromiumBrowserSetupBrowser) -> URL {
+        let extensionURL = prepareUnpackedExtension()
+        copyExtensionPath(extensionURL)
+        openExtensionsPage(for: browser)
+        return extensionURL
+    }
+
+    func prepareUnpackedExtension() -> URL {
+        let bundledManifestURL = bundledExtensionURL.appendingPathComponent("manifest.json")
+        precondition(
+            fileManager.fileExists(atPath: bundledManifestURL.path),
+            "Bundled Chromium extension is missing at \(bundledExtensionURL.path)"
+        )
+
+        let parentURL = managedExtensionURL.deletingLastPathComponent()
+        try! fileManager.createDirectory(at: parentURL, withIntermediateDirectories: true)
+
+        let stagingURL = parentURL.appendingPathComponent(
+            ".ChromiumExtension-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try! fileManager.copyItem(at: bundledExtensionURL, to: stagingURL)
+        defer {
+            if fileManager.fileExists(atPath: stagingURL.path) {
+                try? fileManager.removeItem(at: stagingURL)
+            }
+        }
+
+        if fileManager.fileExists(atPath: managedExtensionURL.path) {
+            _ = try! fileManager.replaceItemAt(managedExtensionURL, withItemAt: stagingURL)
+        } else {
+            try! fileManager.moveItem(at: stagingURL, to: managedExtensionURL)
+        }
+        return managedExtensionURL
+    }
+
+    func copyExtensionPath(_ extensionURL: URL) {
+        NSPasteboard.general.clearContents()
+        precondition(
+            NSPasteboard.general.setString(extensionURL.path, forType: .string),
+            "Failed to copy the Chromium extension path"
+        )
+    }
+
+    func revealExtension(_ extensionURL: URL) {
+        NSWorkspace.shared.activateFileViewerSelecting([extensionURL])
+    }
+
+    func openExtensionsPage(for browser: ChromiumBrowserSetupBrowser) {
         NSWorkspace.shared.open(
-            [Self.chromeWebStoreListingURL],
+            [Self.extensionsPageURL],
             withApplicationAt: browser.applicationURL,
             configuration: NSWorkspace.OpenConfiguration()
         )

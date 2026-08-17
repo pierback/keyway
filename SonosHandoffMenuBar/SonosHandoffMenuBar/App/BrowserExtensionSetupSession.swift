@@ -30,9 +30,15 @@ struct ChromiumBrowserSetupSnapshot: Equatable {
     }
 }
 
+struct ChromiumBrowserDeveloperModeSetup: Equatable {
+    let browser: ChromiumBrowserSetupBrowser
+    let extensionDirectoryURL: URL
+}
+
 @MainActor
 final class BrowserExtensionSetupSession: ObservableObject {
     @Published private(set) var snapshot: ChromiumBrowserSetupSnapshot
+    @Published private(set) var developerModeSetup: ChromiumBrowserDeveloperModeSetup?
     @Published private(set) var actionMessage: String?
 
     private let installationAdapter: ChromiumBrowserInstallationAdapter
@@ -63,9 +69,26 @@ final class BrowserExtensionSetupSession: ObservableObject {
         refresh(profileConnections: extensionController.profileConnections)
     }
 
-    func openChromeWebStore(for browser: ChromiumBrowserSetupBrowser) {
-        installationAdapter.openChromeWebStore(for: browser)
-        actionMessage = "The Chrome Web Store opened in \(browser.definition.displayName). Choose Add to browser and confirm the permissions. Keep that profile open so Keyway can mark it ready."
+    func startDeveloperModeSetup(for browser: ChromiumBrowserSetupBrowser) {
+        let extensionDirectoryURL = installationAdapter.prepareDeveloperModeSetup(for: browser)
+        developerModeSetup = ChromiumBrowserDeveloperModeSetup(
+            browser: browser,
+            extensionDirectoryURL: extensionDirectoryURL
+        )
+        actionMessage = nil
+    }
+
+    func copyExtensionPath() {
+        installationAdapter.copyExtensionPath(developerModeSetup!.extensionDirectoryURL)
+        actionMessage = "Path copied."
+    }
+
+    func revealExtension() {
+        installationAdapter.revealExtension(developerModeSetup!.extensionDirectoryURL)
+    }
+
+    func reopenExtensionsPage() {
+        installationAdapter.openExtensionsPage(for: developerModeSetup!.browser)
     }
 
     private func refresh(profileConnections: [ChromiumBrowserProfileConnection]) {
@@ -80,7 +103,10 @@ final class BrowserExtensionSetupSession: ObservableObject {
                 }?.connectedProfileCount ?? 0
                 return browser.connectedProfileCount > previousCount
             }) {
-                actionMessage = "\(connectedBrowser.definition.displayName) is ready. Keyway detected the extension in \(connectedBrowser.connectedProfileCount) active \(connectedBrowser.connectedProfileCount == 1 ? "profile" : "profiles")."
+                actionMessage = "\(connectedBrowser.definition.displayName) connected. Ready."
+                if developerModeSetup?.browser.definition.bundleIdentifier == connectedBrowser.definition.bundleIdentifier {
+                    developerModeSetup = nil
+                }
             }
             snapshot = nextSnapshot
         }
