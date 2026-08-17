@@ -39,15 +39,18 @@ final class PermissionOnboardingWindowController: NSObject, NSWindowDelegate {
 
     private let refreshMediaPermissions: @MainActor () -> Void
     private let startLocalNetworkFeatures: @MainActor () -> Void
+    private let didComplete: @MainActor () -> Void
     private let permissionCompanion = PermissionCompanionController()
     private var window: NSWindow?
 
     init(
         refreshMediaPermissions: @escaping @MainActor () -> Void,
-        startLocalNetworkFeatures: @escaping @MainActor () -> Void
+        startLocalNetworkFeatures: @escaping @MainActor () -> Void,
+        didComplete: @escaping @MainActor () -> Void
     ) {
         self.refreshMediaPermissions = refreshMediaPermissions
         self.startLocalNetworkFeatures = startLocalNetworkFeatures
+        self.didComplete = didComplete
         super.init()
     }
 
@@ -127,6 +130,7 @@ final class PermissionOnboardingWindowController: NSObject, NSWindowDelegate {
         UserDefaults.standard.removeObject(forKey: Self.restartPendingKey)
         startLocalNetworkFeatures()
         window?.close()
+        didComplete()
     }
 
     private func reopenForPermissionRestart() {

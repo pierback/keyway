@@ -83,23 +83,8 @@ struct ChromiumNativeMessagingHostInstaller {
 
     private var nativeHostDirectories: [URL] {
         let home = fileManager.homeDirectoryForCurrentUser
-        return [
-            "Library/Application Support/Arc/User Data/NativeMessagingHosts",
-            "Library/Application Support/Google/Chrome/NativeMessagingHosts",
-            "Library/Application Support/Google/Chrome Canary/NativeMessagingHosts",
-            "Library/Application Support/Chromium/NativeMessagingHosts",
-            "Library/Application Support/BraveSoftware/Brave-Browser/NativeMessagingHosts",
-            "Library/Application Support/BraveSoftware/Brave-Browser-Beta/NativeMessagingHosts",
-            "Library/Application Support/BraveSoftware/Brave-Browser-Dev/NativeMessagingHosts",
-            "Library/Application Support/BraveSoftware/Brave-Browser-Nightly/NativeMessagingHosts",
-            "Library/Application Support/Microsoft Edge/NativeMessagingHosts",
-            "Library/Application Support/Microsoft Edge Beta/NativeMessagingHosts",
-            "Library/Application Support/Microsoft Edge Dev/NativeMessagingHosts",
-            "Library/Application Support/Microsoft Edge Canary/NativeMessagingHosts",
-            "Library/Application Support/Vivaldi/NativeMessagingHosts",
-            "Library/Application Support/com.operasoftware.Opera/NativeMessagingHosts",
-            "Library/Application Support/com.operasoftware.OperaGX/NativeMessagingHosts",
-            "Library/Application Support/net.imput.helium/NativeMessagingHosts",
-        ].map { home.appendingPathComponent($0) }
+        return ChromiumBrowserDefinition.supported.map {
+            home.appendingPathComponent($0.nativeMessagingHostDirectory)
+        }
     }
 }

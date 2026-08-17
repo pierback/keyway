@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var runtime: AppRuntime?
     private var statusItemController: KeywayStatusItemController?
     private var permissionOnboardingController: PermissionOnboardingWindowController?
+    private var browserExtensionSetupController: BrowserExtensionSetupWindowController?
     private var refreshHotkeysObserver: NSObjectProtocol?
 
     func configure(
@@ -39,14 +40,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 _ = self?.permissionOnboardingController?.present()
             }
         )
+        browserExtensionSetupController = BrowserExtensionSetupWindowController(
+            extensionController: chromiumBrowserExtensionController
+        )
         permissionOnboardingController = PermissionOnboardingWindowController(
             refreshMediaPermissions: { [weak runtime] in
                 runtime?.refreshMediaPermissions()
             },
             startLocalNetworkFeatures: { [weak self] in
                 self?.runtime?.enableSonos()
+            },
+            didComplete: { [weak self] in
+                _ = self?.browserExtensionSetupController?.presentIfNeeded()
             }
         )
+    }
+
+    func presentBrowserExtensionSetup() {
+        _ = browserExtensionSetupController?.present()
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -72,7 +83,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         ) {
             runtime.enableSonos()
         }
-        _ = permissionOnboardingController!.presentIfNeeded()
+        if !permissionOnboardingController!.presentIfNeeded() {
+            _ = browserExtensionSetupController!.presentIfNeeded()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

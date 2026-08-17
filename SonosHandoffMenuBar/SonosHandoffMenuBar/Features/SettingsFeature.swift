@@ -23,6 +23,7 @@ struct SettingsFeature: View {
     private let authCoordinator: SpotifyAuthCoordinating
     private let configImportService: ConfigImportService
     private let chromiumNativeMessagingHostInstaller: ChromiumNativeMessagingHostInstaller
+    private let presentBrowserExtensionSetup: @MainActor () -> Void
     @ObservedObject private var mediaRemoteController: MediaRemoteController
     @ObservedObject private var chromiumBrowserExtensionController: ChromiumBrowserExtensionController
 
@@ -55,6 +56,7 @@ struct SettingsFeature: View {
         authCoordinator: SpotifyAuthCoordinating? = nil,
         configImportService: ConfigImportService = ConfigImportService(),
         chromiumNativeMessagingHostInstaller: ChromiumNativeMessagingHostInstaller = ChromiumNativeMessagingHostInstaller(),
+        presentBrowserExtensionSetup: @escaping @MainActor () -> Void,
         initialChromiumBridgeMessage: String? = nil,
         mediaRemoteController: MediaRemoteController,
         chromiumBrowserExtensionController: ChromiumBrowserExtensionController
@@ -64,6 +66,7 @@ struct SettingsFeature: View {
         self.connectTokenStatusStore = connectTokenStatusStore
         self.configImportService = configImportService
         self.chromiumNativeMessagingHostInstaller = chromiumNativeMessagingHostInstaller
+        self.presentBrowserExtensionSetup = presentBrowserExtensionSetup
         self.authCoordinator = authCoordinator ?? SpotifyAuthCoordinator(
             tokenStore: tokenStore,
             configStore: configStore,
@@ -234,32 +237,51 @@ struct SettingsFeature: View {
 
     private var browserSetupSection: some View {
         settingsPanel(title: "Browser Extension") {
-            HStack(alignment: .center, spacing: 8) {
-                StatusDot(available: chromiumBrowserExtensionController.connected, size: 7)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Chromium native bridge")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.primary.opacity(0.9))
-                    if let chromiumBridgeMessage {
-                        Text(chromiumBridgeMessage)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .center, spacing: 8) {
+                    StatusDot(available: chromiumBrowserExtensionController.connected, size: 7)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Chromium native bridge")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.primary.opacity(0.9))
+                        Text(
+                            chromiumBrowserExtensionController.profileConnections.isEmpty
+                                ? "No browser profiles connected"
+                                : "\(chromiumBrowserExtensionController.profileConnections.count) browser \(chromiumBrowserExtensionController.profileConnections.count == 1 ? "profile" : "profiles") connected"
+                        )
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        if let chromiumBridgeMessage {
+                            Text(chromiumBridgeMessage)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
                     }
+                    Spacer()
                 }
-                Spacer()
-                Button("Repair Bridge") {
-                    installChromiumNativeBridge()
+
+                HStack(spacing: 8) {
+                    Button("Set Up Browsers", action: presentBrowserExtensionSetup)
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .accessibilityIdentifier("settings.browserExtension.setup")
+
+                    Spacer()
+
+                    Button("Repair Bridge") {
+                        installChromiumNativeBridge()
+                    }
+                    .controlSize(.small)
+                    Button("Reveal Extension") {
+                        revealChromiumExtension()
+                    }
+                    .controlSize(.small)
+                    Button("Open Extensions") {
+                        openChromiumExtensionsPage()
+                    }
+                    .controlSize(.small)
                 }
-                .controlSize(.small)
-                Button("Reveal Extension") {
-                    revealChromiumExtension()
-                }
-                .controlSize(.small)
-                Button("Open Extensions") {
-                    openChromiumExtensionsPage()
-                }
-                .controlSize(.small)
             }
         }
     }

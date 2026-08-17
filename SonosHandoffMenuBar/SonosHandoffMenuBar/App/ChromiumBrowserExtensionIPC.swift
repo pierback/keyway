@@ -4,7 +4,8 @@ import KeywayChromiumBridgeIPC
 @MainActor
 protocol ChromiumBrowserExtensionIPC: AnyObject {
     func start(
-        onEvent: @escaping @Sendable (KeywayChromiumBridgeEvent, String) -> Void
+        onEvent: @escaping @MainActor @Sendable (KeywayChromiumBridgeEvent, String) -> Void,
+        onConnectionClosed: @escaping @MainActor @Sendable (String?) -> Void
     ) throws
     func stop()
     func sendCommand(_ payload: String)
@@ -15,10 +16,22 @@ final class ChromiumBrowserExtensionIPCAdapter: ChromiumBrowserExtensionIPC {
     private var server: KeywayChromiumBridgeServer?
 
     func start(
-        onEvent: @escaping @Sendable (KeywayChromiumBridgeEvent, String) -> Void
+        onEvent: @escaping @MainActor @Sendable (KeywayChromiumBridgeEvent, String) -> Void,
+        onConnectionClosed: @escaping @MainActor @Sendable (String?) -> Void
     ) throws {
         precondition(server == nil, "Chromium browser extension IPC started twice")
-        let server = KeywayChromiumBridgeServer(onEvent: onEvent)
+        let server = KeywayChromiumBridgeServer(
+            onEvent: { event, payload in
+                DispatchQueue.main.async {
+                    onEvent(event, payload)
+                }
+            },
+            onConnectionClosed: { lastSnapshotPayload in
+                DispatchQueue.main.async {
+                    onConnectionClosed(lastSnapshotPayload)
+                }
+            }
+        )
         try server.start()
         self.server = server
     }

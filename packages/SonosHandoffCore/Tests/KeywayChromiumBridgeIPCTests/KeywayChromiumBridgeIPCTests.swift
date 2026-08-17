@@ -26,7 +26,8 @@ final class KeywayChromiumBridgeIPCTests: XCTestCase {
             onEvent: { event, payload in
                 eventCapture.set((event, payload))
                 eventReceived.fulfill()
-            }
+            },
+            onConnectionClosed: { _ in }
         )
         try server.start()
         defer { server.stop() }
@@ -65,6 +66,8 @@ final class KeywayChromiumBridgeIPCTests: XCTestCase {
         let validationAttempted = expectation(description: "server validated peer")
         let eventReceived = expectation(description: "rejected client could not publish")
         eventReceived.isInverted = true
+        let connectionClosed = expectation(description: "rejected client did not become an authenticated connection")
+        connectionClosed.isInverted = true
         let rejectingValidator = ChromiumBridgePeerValidator { _ in
             validationAttempted.fulfill()
             throw TestAuthenticationError.rejected
@@ -74,7 +77,8 @@ final class KeywayChromiumBridgeIPCTests: XCTestCase {
         let server = KeywayChromiumBridgeServer(
             endpointURL: endpointURL,
             peerValidator: rejectingValidator,
-            onEvent: { _, _ in eventReceived.fulfill() }
+            onEvent: { _, _ in eventReceived.fulfill() },
+            onConnectionClosed: { _ in connectionClosed.fulfill() }
         )
         try server.start()
         defer { server.stop() }
@@ -89,7 +93,7 @@ final class KeywayChromiumBridgeIPCTests: XCTestCase {
         client.publish(event: .snapshot, payload: #"{"type":"snapshot"}"#)
 
         wait(for: [validationAttempted], timeout: 2)
-        wait(for: [eventReceived], timeout: 0.2)
+        wait(for: [eventReceived, connectionClosed], timeout: 0.2)
     }
 
     func testStartingServerTwiceDoesNotReplaceLiveEndpoint() throws {
@@ -104,7 +108,8 @@ final class KeywayChromiumBridgeIPCTests: XCTestCase {
         let server = KeywayChromiumBridgeServer(
             endpointURL: endpointURL,
             peerValidator: validator,
-            onEvent: { _, _ in eventReceived.fulfill() }
+            onEvent: { _, _ in eventReceived.fulfill() },
+            onConnectionClosed: { _ in }
         )
         try server.start()
         defer { server.stop() }
@@ -124,6 +129,56 @@ final class KeywayChromiumBridgeIPCTests: XCTestCase {
         defer { client.stop() }
         client.publish(event: .snapshot, payload: #"{"type":"snapshot"}"#)
         wait(for: [eventReceived], timeout: 2)
+    }
+
+    func testServerReportsTheLastSnapshotWhenAnAuthenticatedConnectionCloses() throws {
+        let temporaryDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let endpointURL = temporaryDirectory.appendingPathComponent("bridge.sock")
+        try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+
+        let snapshotPayload = #"{"profileGuid":"profile-a","connectionID":"connection-a","connectionGeneration":7}"#
+        let eventsReceived = expectation(description: "server received snapshot and later result")
+        eventsReceived.expectedFulfillmentCount = 2
+        let connectionClosed = expectation(description: "server reported connection closure")
+        let closedSnapshotCapture = LockedCapture<String>()
+        let snapshotWasDelivered = LockedCapture<Bool>()
+        let closeFollowedSnapshot = LockedCapture<Bool>()
+        let validator = ChromiumBridgePeerValidator { _ in }
+        let server = KeywayChromiumBridgeServer(
+            endpointURL: endpointURL,
+            peerValidator: validator,
+            onEvent: { event, _ in
+                if event == .snapshot {
+                    snapshotWasDelivered.set(true)
+                }
+                eventsReceived.fulfill()
+            },
+            onConnectionClosed: { lastSnapshotPayload in
+                closeFollowedSnapshot.set(snapshotWasDelivered.value == true)
+                if let lastSnapshotPayload {
+                    closedSnapshotCapture.set(lastSnapshotPayload)
+                }
+                connectionClosed.fulfill()
+            }
+        )
+        try server.start()
+        defer { server.stop() }
+
+        let client = KeywayChromiumBridgeClient(
+            endpointURL: endpointURL,
+            peerValidator: validator,
+            onCommand: { _ in }
+        )
+        client.start()
+        client.publish(event: .snapshot, payload: snapshotPayload)
+        client.publish(event: .commandResult, payload: #"{"requestID":"request-a"}"#)
+        client.stop()
+        wait(for: [eventsReceived, connectionClosed], timeout: 2)
+
+        XCTAssertEqual(closedSnapshotCapture.value, snapshotPayload)
+        XCTAssertEqual(closeFollowedSnapshot.value, true)
     }
 }
 

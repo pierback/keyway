@@ -7,6 +7,7 @@ struct ChromiumBrowserExtensionSnapshotEnvelope: Decodable {
     let connectionGeneration: UInt64
     let epoch: Int?
     let resumed: Bool?
+    let browserBundleIdentifier: String
     let browserProcessIdentifier: Int
 }
 

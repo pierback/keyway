@@ -2,34 +2,45 @@ import Darwin
 import Foundation
 
 public final class KeywayChromiumBridgeServer: @unchecked Sendable {
+    private struct Client {
+        let connection: ChromiumBridgeSocketConnection
+        var lastSnapshotPayload: String?
+    }
+
     private let endpointURL: URL
     private let peerValidator: ChromiumBridgePeerValidator
     private let onEvent: @Sendable (KeywayChromiumBridgeEvent, String) -> Void
+    private let onConnectionClosed: @Sendable (String?) -> Void
     private let acceptQueue = DispatchQueue(label: "com.fpieringer.Keyway.chromium-bridge-server.accept")
+    private let callbackQueue = DispatchQueue(label: "com.fpieringer.Keyway.chromium-bridge-server.callbacks")
     private let lock = NSLock()
     private var isStarting = false
     private var listener: Int32?
-    private var clients: [ObjectIdentifier: ChromiumBridgeSocketConnection] = [:]
+    private var clients: [ObjectIdentifier: Client] = [:]
 
     public convenience init(
         endpointURL: URL = KeywayChromiumBridgeEndpoint.url,
-        onEvent: @escaping @Sendable (KeywayChromiumBridgeEvent, String) -> Void
+        onEvent: @escaping @Sendable (KeywayChromiumBridgeEvent, String) -> Void,
+        onConnectionClosed: @escaping @Sendable (String?) -> Void
     ) {
         self.init(
             endpointURL: endpointURL,
             peerValidator: .nativeHost,
-            onEvent: onEvent
+            onEvent: onEvent,
+            onConnectionClosed: onConnectionClosed
         )
     }
 
     init(
         endpointURL: URL,
         peerValidator: ChromiumBridgePeerValidator,
-        onEvent: @escaping @Sendable (KeywayChromiumBridgeEvent, String) -> Void
+        onEvent: @escaping @Sendable (KeywayChromiumBridgeEvent, String) -> Void,
+        onConnectionClosed: @escaping @Sendable (String?) -> Void
     ) {
         self.endpointURL = endpointURL
         self.peerValidator = peerValidator
         self.onEvent = onEvent
+        self.onConnectionClosed = onConnectionClosed
     }
 
     public func start() throws {
@@ -69,7 +80,7 @@ public final class KeywayChromiumBridgeServer: @unchecked Sendable {
         lock.lock()
         let listener = self.listener
         self.listener = nil
-        let connections = Array(clients.values)
+        let connections = clients.values.map(\.connection)
         clients = [:]
         lock.unlock()
 
@@ -82,7 +93,7 @@ public final class KeywayChromiumBridgeServer: @unchecked Sendable {
 
     public func sendCommand(_ payload: String) {
         lock.lock()
-        let connections = Array(clients.values)
+        let connections = clients.values.map(\.connection)
         lock.unlock()
 
         for connection in connections where !connection.send(.command(payload)) {
@@ -113,7 +124,10 @@ public final class KeywayChromiumBridgeServer: @unchecked Sendable {
                 connection.invalidate()
                 continue
             }
-            clients[ObjectIdentifier(connection)] = connection
+            clients[ObjectIdentifier(connection)] = Client(
+                connection: connection,
+                lastSnapshotPayload: nil
+            )
             lock.unlock()
 
             DispatchQueue.global(qos: .userInitiated).async { [self, connection] in
@@ -127,7 +141,19 @@ public final class KeywayChromiumBridgeServer: @unchecked Sendable {
             guard envelope.kind == .event, let event = envelope.event else {
                 break
             }
-            onEvent(event, envelope.payload)
+            let connectionIdentifier = ObjectIdentifier(connection)
+            lock.lock()
+            guard clients[connectionIdentifier] != nil else {
+                lock.unlock()
+                break
+            }
+            if event == .snapshot {
+                clients[connectionIdentifier]?.lastSnapshotPayload = envelope.payload
+            }
+            callbackQueue.async { [self] in
+                onEvent(event, envelope.payload)
+            }
+            lock.unlock()
         }
         remove(connection)
     }
@@ -141,7 +167,12 @@ public final class KeywayChromiumBridgeServer: @unchecked Sendable {
     private func remove(_ connection: ChromiumBridgeSocketConnection) {
         connection.invalidate()
         lock.lock()
-        clients.removeValue(forKey: ObjectIdentifier(connection))
+        let client = clients.removeValue(forKey: ObjectIdentifier(connection))
+        if let client {
+            callbackQueue.async { [self] in
+                onConnectionClosed(client.lastSnapshotPayload)
+            }
+        }
         lock.unlock()
     }
 }

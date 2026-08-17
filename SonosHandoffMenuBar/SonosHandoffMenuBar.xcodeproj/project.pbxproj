@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0A1B2C3D4E5F60718293A4B5 /* BrowserExtensionSetupSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B5C /* BrowserExtensionSetupSession.swift */; };
 		0D0A4FB9F330599D7557F9B00DAAF545 /* ShortcutRuntimeStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1F55876D2F407A0529C7AD917B337BE /* ShortcutRuntimeStatus.swift */; };
 		19E2001EB106C1C20B72B56752F8AB8C /* SonosVolumeMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD6F1E6C900E7BE4D691F31045E3993F /* SonosVolumeMonitor.swift */; };
 		1BF08219F2841C63ACF530CD70AEFF24 /* MediaSourceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23704A2EEBF12608E719BAF41F70B139 /* MediaSourceStore.swift */; };
@@ -14,6 +15,9 @@
 		245219D2EB3B64347B54A0AD66886177 /* ChromiumBrowserExtensionIPC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B277946EDFFC2D549AC87568C912943 /* ChromiumBrowserExtensionIPC.swift */; };
 		27529B7227239886CFD656F93530952F /* ShortcutEventTap.swift in Sources */ = {isa = PBXBuildFile; fileRef = A09C015EEC636F0A6D6745217390D4AB /* ShortcutEventTap.swift */; };
 		2977F04F110FEB766130F0889A0D5928 /* PermissionOnboardingWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07461C6EBCF448980B6A45C9352EC719 /* PermissionOnboardingWindowController.swift */; };
+		1A2B3C4D5E6F708192A3B4C5 /* BrowserExtensionSetupWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C3D4E5F60718293A4B5C6D /* BrowserExtensionSetupWindowController.swift */; };
+		2A3B4C5D6E7F8091A2B3C4D5 /* ChromiumBrowserInstallationAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3D4E5F60718293A4B5C6D7E /* ChromiumBrowserInstallationAdapter.swift */; };
+		3A4B5C6D7E8F9012A3B4C5D6 /* BrowserExtensionSetupFeature.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4E5F60718293A4B5C6D7E8F /* BrowserExtensionSetupFeature.swift */; };
 		2A8CB802F9CA1F8971DB753CCB4B7399 /* KeywayChromiumBridgeIPC in Frameworks */ = {isa = PBXBuildFile; productRef = 5B648C330053AFD9B218F3612D195584 /* KeywayChromiumBridgeIPC */; };
 		2C738EA5F82B60B02E6AA37EBE980195 /* MediaChooserSessionGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = B02617CD4B0D42BA7C43B4CAD35577CB /* MediaChooserSessionGuard.swift */; };
 		3068C9444E3954EFBEFADEAEBF5D8B88 /* PlaybackOperationGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CE9C8FB044A6A35BBF1019FE1A7DC78 /* PlaybackOperationGate.swift */; };
@@ -77,6 +81,10 @@
 
 /* Begin PBXFileReference section */
 		07461C6EBCF448980B6A45C9352EC719 /* PermissionOnboardingWindowController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PermissionOnboardingWindowController.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60718293A4B5C /* BrowserExtensionSetupSession.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BrowserExtensionSetupSession.swift; sourceTree = "<group>"; };
+		B2C3D4E5F60718293A4B5C6D /* BrowserExtensionSetupWindowController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BrowserExtensionSetupWindowController.swift; sourceTree = "<group>"; };
+		C3D4E5F60718293A4B5C6D7E /* ChromiumBrowserInstallationAdapter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ChromiumBrowserInstallationAdapter.swift; sourceTree = "<group>"; };
+		D4E5F60718293A4B5C6D7E8F /* BrowserExtensionSetupFeature.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BrowserExtensionSetupFeature.swift; sourceTree = "<group>"; };
 		0C56C8A9D62190B3F47104BA1463146B /* PlaybackOutputDirectory.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlaybackOutputDirectory.swift; sourceTree = "<group>"; };
 		0CDFE642ED4050EEDF171E84FDD1F5A3 /* MediaTargetOverlayController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaTargetOverlayController.swift; sourceTree = "<group>"; };
 		197315E2D850334879D2E6C428A61E35 /* MediaAudioControlController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaAudioControlController.swift; sourceTree = "<group>"; };
@@ -179,6 +187,7 @@
 		698B6CC4968A5F0BC42AC5CDB14E69F5 /* Features */ = {
 			isa = PBXGroup;
 			children = (
+				D4E5F60718293A4B5C6D7E8F /* BrowserExtensionSetupFeature.swift */,
 				26B14BF8901235993824FCA32C008FB6 /* PermissionOnboardingFeature.swift */,
 				F6981656AB0BD3561BD840A290BF82B3 /* SettingsFeature.swift */,
 			);
@@ -228,7 +237,10 @@
 			isa = PBXGroup;
 			children = (
 				744F48963511BFB02B251F4C053E88C4 /* AppDelegate.swift */,
+				A1B2C3D4E5F60718293A4B5C /* BrowserExtensionSetupSession.swift */,
+				B2C3D4E5F60718293A4B5C6D /* BrowserExtensionSetupWindowController.swift */,
 				64DA77F0EB8FE436C8608CA4CADC3EB4 /* ChromiumBrowserExtensionController.swift */,
+				C3D4E5F60718293A4B5C6D7E /* ChromiumBrowserInstallationAdapter.swift */,
 				7B277946EDFFC2D549AC87568C912943 /* ChromiumBrowserExtensionIPC.swift */,
 				CC93B4EF51020108171FE2B0D3FE8EAC /* ChromiumBrowserExtensionMessages.swift */,
 				81AD57165C770926563C89443728A9D7 /* ChromiumBrowserExtensionTransport.swift */,
@@ -467,7 +479,10 @@
 			buildActionMask = 2147483647;
 			files = (
 				E5D1539E5951DE2913201EC908B920DC /* AppDelegate.swift in Sources */,
+				0A1B2C3D4E5F60718293A4B5 /* BrowserExtensionSetupSession.swift in Sources */,
+				1A2B3C4D5E6F708192A3B4C5 /* BrowserExtensionSetupWindowController.swift in Sources */,
 				3177D86117A7F5A2EF33328AB39261A0 /* ChromiumBrowserExtensionController.swift in Sources */,
+				2A3B4C5D6E7F8091A2B3C4D5 /* ChromiumBrowserInstallationAdapter.swift in Sources */,
 				245219D2EB3B64347B54A0AD66886177 /* ChromiumBrowserExtensionIPC.swift in Sources */,
 				AD5A204FAD406A9157450DD9645515D2 /* ChromiumBrowserExtensionMessages.swift in Sources */,
 				7C2F1EC6E19DF6D6254230D76D842FC8 /* ChromiumBrowserExtensionTransport.swift in Sources */,
@@ -524,6 +539,7 @@
 				E2664E0A0ED406F3C020A8EFFBF484A2 /* SourceFocusActionController.swift in Sources */,
 				99B5A05B54FA6A8259BAE38A01915110 /* StatusHUD.swift in Sources */,
 				BFB81C96F1EC05B3134CE38556018FD6 /* VolumeHotkeyController.swift in Sources */,
+				3A4B5C6D7E8F9012A3B4C5D6 /* BrowserExtensionSetupFeature.swift in Sources */,
 				A715C9C0AF4D05B58EA32FD328654B8B /* PermissionOnboardingFeature.swift in Sources */,
 				BCA0DB2CF31F5D425D906DA0DAF6C5CA /* SettingsFeature.swift in Sources */,
 				39BB2E9D910744DB739F6C9E15322750 /* AppEnvironment.swift in Sources */,
