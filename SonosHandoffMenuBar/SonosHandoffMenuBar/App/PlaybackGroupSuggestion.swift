@@ -198,10 +198,7 @@ final class PlaybackTransferSuggestionPresenter {
 
     func apply(_ refresh: SonosTransferSuggestionRefresh) {
         notifier.cancelSuggestions(ids: store.clear(ids: refresh.staleSuggestionIDs))
-        let refreshedSuggestions = store.refresh(refresh.refreshedSuggestions)
-        for suggestion in refreshedSuggestions {
-            notifier.deliverSuggestion(suggestion)
-        }
+        _ = store.refresh(refresh.refreshedSuggestions)
     }
 
     @discardableResult

@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+presenter="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/PlaybackGroupSuggestion.swift"
+
+fail() {
+  printf 'verify_sonos_transfer_suggestion_notification_semantics: %s\n' "$*" >&2
+  exit 1
+}
+
+refresh_body="$({
+  ast-grep --json=compact --lang swift \
+    --pattern 'func apply(_ refresh: SonosTransferSuggestionRefresh) { $$$BODY }' \
+    "$presenter"
+} | jq -er 'if length == 1 then .[0].text else error("expected one transfer refresh presenter") end')"
+
+[[ "$refresh_body" == *'store.refresh(refresh.refreshedSuggestions)'* ]] \
+  || fail "transfer suggestion refreshes must still update the pending suggestion"
+[[ "$refresh_body" != *'notifier.deliverSuggestion'* ]] \
+  || fail "refreshing an already-known speaker must not deliver another notification"
+
+update_body="$({
+  ast-grep --json=compact --lang swift \
+    --pattern '@discardableResult
+func apply(_ update: SonosTransferSuggestionUpdate, detectedAt: Date = Date()) -> PlaybackTransferSuggestion? { $$$BODY }' \
+    "$presenter"
+} | jq -er 'if length == 1 then .[0].text else error("expected one transfer update presenter") end')"
+
+[[ "$update_body" == *'notifier.deliverSuggestion(suggestion)'* ]] \
+  || fail "a newly detected speaker must still deliver one notification"
+
+printf 'verify_sonos_transfer_suggestion_notification_semantics=ok\n'
