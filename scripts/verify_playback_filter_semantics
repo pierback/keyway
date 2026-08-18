@@ -42,6 +42,21 @@ struct FilterSemantics {
             filter.ignoreReasonForMediaKey(command: .playPause),
             "fresh media-key event must pass through"
         )
+        expectNil(
+            filter.ignoreReasonForMediaKeyDown(
+                command: .playPause,
+                metadata: MediaTransportInputMetadata(
+                    sourceUnixProcessID: 123,
+                    sourceStateID: 0,
+                    sourceUserData: 0,
+                    targetUnixProcessID: 456,
+                    eventTimestamp: 100
+                )
+            ),
+            "fresh generated media-key input from external automation must route"
+        )
+        filter.noteMediaKeyUp(command: .playPause)
+        currentDate.addTimeInterval(0.4)
 
         filter.noteCommandCenterInput(command: .playPause)
         expectEqual(

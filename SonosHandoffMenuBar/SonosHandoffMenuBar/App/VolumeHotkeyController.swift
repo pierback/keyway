@@ -459,9 +459,6 @@ final class VolumeHotkeyController {
             else {
                 return Unmanaged.passUnretained(event)
             }
-            guard acceptTransportInput(command: command, source: source, metadata: metadata, phase: "down") else {
-                return nil
-            }
             if let reason = mediaTransportActions.ignoreReasonForMediaKeyDown(
                 command: command,
                 metadata: metadata
@@ -488,9 +485,6 @@ final class VolumeHotkeyController {
                   activeMediaRemoteGeneration == mediaRemoteController.helperGeneration
             else {
                 return Unmanaged.passUnretained(event)
-            }
-            guard acceptTransportInput(command: command, source: source, metadata: metadata, phase: "up") else {
-                return nil
             }
             logger.info("SonosHandoffHotkeys decision=swallow phase=up action=transport_\(command.rawValue, privacy: .public) source=\(source, privacy: .public) tap=\(self.activeTapName, privacy: .public)")
             traceTransportKey("transport_key_up", command: command, source: source, metadata: metadata)
@@ -590,24 +584,6 @@ final class VolumeHotkeyController {
             activeEventTap: eventTap.activeTapKind?.rawValue,
             fnHotkeysRegistered: carbonRegistrar.plainHotkeysRegistered
         )
-        return true
-    }
-
-    private func acceptTransportInput(
-        command: MediaRemoteTransportCommand,
-        source: String,
-        metadata: MediaTransportInputMetadata,
-        phase: String
-    ) -> Bool {
-        guard metadata.isPhysicalHIDSystemSource || source == "function_key" else {
-            if phase == "down" {
-                mediaTransportActions.noteGeneratedMediaKeyIgnored(command: command, metadata: metadata)
-            }
-            logger.info("SonosHandoffHotkeys transport_generated_input_ignored phase=\(phase, privacy: .public) action=transport_\(command.rawValue, privacy: .public) source=\(source, privacy: .public) tap=\(self.activeTapName, privacy: .public)")
-            traceTransportKey("transport_generated_input_ignored", command: command, source: source, metadata: metadata)
-            return false
-        }
-
         return true
     }
 

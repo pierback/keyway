@@ -42,7 +42,7 @@ print(int(payload.get("mediaTransportTraceSequence", 0)))
 PY
 }
 
-post_generated_play_pause_burst() {
+post_generated_play_pause() {
   swift - <<'SWIFT'
 import AppKit
 import ApplicationServices
@@ -73,55 +73,47 @@ func postMediaKey(state: Int) {
 postMediaKey(state: keyDownState)
 usleep(30_000)
 postMediaKey(state: keyUpState)
-usleep(30_000)
-postMediaKey(state: keyDownState)
-usleep(30_000)
-postMediaKey(state: keyUpState)
 SWIFT
 }
 
-assert_generated_burst_is_swallowed() {
+assert_generated_press_is_routed() {
   local start_sequence="$1"
-  local label="$2"
   local deadline=$((SECONDS + timeout_seconds))
   while (( SECONDS < deadline )); do
     trace_json="$(read_trace_json)"
-    result="$(python3 - "$start_sequence" "$label" "$trace_json" <<'PY'
+    result="$(python3 - "$start_sequence" "$trace_json" <<'PY'
 import json
 import sys
 
 start_sequence = int(sys.argv[1])
-label = sys.argv[2]
 events = [
-    event for event in json.loads(sys.argv[3])
+    event for event in json.loads(sys.argv[2])
     if int(event.get("sequence", 0)) > start_sequence
 ]
-names = [event.get("event") for event in events]
-ignored = [
+key_downs = [
     event for event in events
-    if event.get("event") in {
-        "transport_generated_input_ignored",
-        "generated_media_key_shadow_armed",
-    }
+    if event.get("event") == "transport_key_down"
+    and event.get("eventSourceIsPhysicalHIDSystem") is False
 ]
-if not ignored:
-    print("missing:generated_input_ignored")
+if not key_downs:
+    print("missing:generated_key_down")
     raise SystemExit
-if any(event.get("eventSourceIsPhysicalHIDSystem") is True for event in ignored):
-    print("missing:generated_source_metadata")
+routed = [
+    event for event in events
+    if event.get("event") == "input"
+    and event.get("source") == "event_tap"
+    and event.get("eventSourceIsPhysicalHIDSystem") is False
+]
+if not routed:
+    print("missing:generated_input_route")
     raise SystemExit
-for forbidden in ("transport_key_down", "decision_chooser", "chooser_show"):
-    if forbidden in names:
+for forbidden in ("transport_generated_input_ignored", "generated_media_key_shadow_armed"):
+    if any(event.get("event") == forbidden for event in events):
         print("forbidden:" + forbidden)
         raise SystemExit
-for event in events:
-    if event.get("event") == "input" and event.get("source") != "command_center":
-        print("forbidden:input")
-        raise SystemExit
 print(json.dumps({
-    "event": "probe_generated_media_key_swallowed",
-    "label": label,
-    "ignoredEvents": len(ignored),
+    "event": "probe_generated_media_key_routed",
+    "sourcePID": key_downs[0].get("eventSourceUnixProcessID"),
 }, sort_keys=True))
 PY
 )"
@@ -137,14 +129,16 @@ events = [
     event for event in json.loads(sys.argv[2])
     if int(event.get("sequence", 0)) > start_sequence
 ]
-late_chooser = [
+rejected = [
     event for event in events
-    if event.get("event") in {"decision_chooser", "chooser_show"}
-    or (event.get("event") == "input" and event.get("source") != "command_center")
+    if event.get("event") in {
+        "transport_generated_input_ignored",
+        "generated_media_key_shadow_armed",
+    }
 ]
-if late_chooser:
+if rejected:
     print(json.dumps(events, indent=2, sort_keys=True))
-    raise SystemExit("probe_playback_event_tap: generated media-key callback routed after settle")
+    raise SystemExit("probe_playback_event_tap: external generated media key was rejected")
 PY
       printf '%s\n' "$result"
       return 0
@@ -164,15 +158,12 @@ events = [
 ]
 print(json.dumps(events, indent=2, sort_keys=True))
 PY
-  fail "timed out waiting for $label generated media-key rejection"
+  fail "timed out waiting for external generated media-key routing"
 }
 
+sleep "$settle_seconds"
 start_sequence="$(read_trace_sequence)"
 printf 'probe_playback_event_tap: starting after trace sequence %s\n' "$start_sequence"
-post_generated_play_pause_burst
-assert_generated_burst_is_swallowed "$start_sequence" "first_generated_burst"
-
-second_start_sequence="$(read_trace_sequence)"
-post_generated_play_pause_burst
-assert_generated_burst_is_swallowed "$second_start_sequence" "second_generated_burst"
+post_generated_play_pause
+assert_generated_press_is_routed "$start_sequence"
 printf 'probe_playback_event_tap=ok\n'

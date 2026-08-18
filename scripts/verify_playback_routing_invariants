@@ -16,6 +16,7 @@ command_rules="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTrans
 target_resolver="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportTargetResolver.swift"
 source_store="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaSourceStore.swift"
 desktop_adapter="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaDesktopTransportAdapter.swift"
+chromium_browser_adapter="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserInstallationAdapter.swift"
 source_focus="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/SourceFocusActionController.swift"
 refresh_gate="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaRemoteSnapshotRefreshGate.swift"
 remote_controller="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaRemoteController.swift"
@@ -61,7 +62,7 @@ grep -q 'guard !ChromiumBrowserExtensionTransport.isTarget(target) else' "$deskt
 ! grep -q 'net.imput.helium' "$desktop_adapter" \
   || fail "Helium must not have a desktop JavaScript fallback; it is extension-owned"
 
-grep -q 'Library/Application Support/net.imput.helium/NativeMessagingHosts' "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumNativeMessagingHostInstaller.swift" \
+grep -q 'Library/Application Support/net.imput.helium/NativeMessagingHosts' "$chromium_browser_adapter" \
   || fail "Helium must be installed through the Chromium extension native host path"
 
 ! grep -q 'cachedTargetsGraceInterval\|cachedTargetsUpdatedAt\|canShowCachedTargets' "$menu_bar_media_sources" \
@@ -779,14 +780,9 @@ if shared_route_tail.index('"decision_current_targets"') > shared_route_tail.ind
     raise SystemExit("verify_playback_routing_invariants: Command Center, physical media-key, and UI media routing must trace the current-target gate before cache routing")
 PY
 
-grep -q 'noteGeneratedMediaKeyIgnored(command: command, metadata: metadata)' "$hotkeys" \
-  || fail "generated media-key rejection must arm Command Center shadow state through the central transport router"
-
-grep -q 'func noteGeneratedMediaKeyIgnored(command: MediaRemoteTransportCommand, metadata: MediaTransportInputMetadata)' "$transport" \
-  || fail "transport router must own generated media-key shadow state"
-
-grep -q 'generated_media_key_shadow_armed' "$transport" \
-  || fail "central generated media-key shadow arming must be visible in playback traces"
+if grep -Eq 'noteGeneratedMediaKeyIgnored|generated_media_key_shadow_armed|transport_generated_input_ignored' "$hotkeys" "$transport"; then
+  fail "external automation media keys must enter the central routing filter instead of the removed generated-input rejection path"
+fi
 
 if grep -q 'MediaGeneratedTransportShadow' "$hotkeys" "$transport" "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar.xcodeproj/project.pbxproj"; then
   fail "generated media-key shadow state must not be split between hotkey and transport controllers"
@@ -836,8 +832,8 @@ grep -q 'eventTimestamp' "$hotkeys" \
 grep -q 'routeFromMediaKey(command: command, metadata: metadata)' "$hotkeys" \
   || fail "event-tap media-key routing must pass source metadata to the transport filter"
 
-grep -q 'acceptTransportInput(command: command, source: source, metadata: metadata, phase: "down")' "$hotkeys" \
-  || fail "event-tap media-key routing must accept tapped transport events through an explicit input boundary"
+! grep -q 'acceptTransportInput' "$hotkeys" \
+  || fail "event-tap media-key routing must not pre-filter external automation before the central echo policy"
 
 if grep -q 'guard metadata.isUntargetedPhysicalHIDSystemSource else' "$hotkeys"; then
   fail "event-tap media-key routing must not reject macOS-targeted media-key callbacks before the chooser"
@@ -847,7 +843,7 @@ if grep -q 'private struct GeneratedTransportShadow' "$hotkeys"; then
   fail "hotkey controller must not keep an inline generated transport shadow type"
 fi
 
-grep -q 'noteMediaKey(command: command, metadata: metadata)' "$transport" \
+grep -q 'noteMediaKey(command: command, metadata: metadata)' "$command_filter" \
   || fail "accepted event-tap media-key routing must remember the source event timestamp"
 
 grep -q 'private static let programmaticCommandCenterEchoWindow: TimeInterval = 1.25' "$transport" \
@@ -1050,22 +1046,21 @@ for stale_name in (
 ):
     if stale_name in hotkeys:
         raise SystemExit(f"verify_playback_routing_invariants: transport key routing must not keep timed latch state: {stale_name}")
-input_start = hotkeys.index("private func acceptTransportInput")
-input_end = hotkeys.index("    private func resetInputStateAfterTapInterruption", input_start)
-input_body = hotkeys[input_start:input_end]
-if "metadata.isPhysicalHIDSystemSource || source == \"function_key\"" not in input_body:
-    raise SystemExit("verify_playback_routing_invariants: event-tap transport routing must reject generated media-key callbacks while accepting raw F8 function-key media events")
-if "transport_generated_input_ignored" not in input_body:
-    raise SystemExit("verify_playback_routing_invariants: generated event-tap media-key callbacks must be traceable before routing")
-if "mediaTransportActions.noteGeneratedMediaKeyIgnored(command: command, metadata: metadata)" not in input_body:
-    raise SystemExit("verify_playback_routing_invariants: generated event-tap media-key callbacks must arm central transport shadow state before returning")
-if "return false" not in input_body:
-    raise SystemExit("verify_playback_routing_invariants: generated event-tap media-key callbacks must not reach routeFromMediaKey")
+for forbidden in (
+    "private func acceptTransportInput",
+    "metadata.isPhysicalHIDSystemSource || source == \"function_key\"",
+    "transport_generated_input_ignored",
+    "noteGeneratedMediaKeyIgnored",
+):
+    if forbidden in hotkeys or forbidden in transport:
+        raise SystemExit(f"verify_playback_routing_invariants: external automation media keys must not be rejected before central echo filtering: {forbidden}")
 handle_start = hotkeys.index("case .transportKeyDown")
 handle_end = hotkeys.index("case .transportKeyUp", handle_start)
 handle_body = hotkeys[handle_start:handle_end]
-if handle_body.index('acceptTransportInput(command: command, source: source, metadata: metadata, phase: "down")') > handle_body.index("mediaTransportActions.routeFromMediaKey(command: command, metadata: metadata)"):
-    raise SystemExit("verify_playback_routing_invariants: event-tap input boundary must run before routeFromMediaKey")
+if "mediaTransportActions.ignoreReasonForMediaKeyDown(" not in handle_body:
+    raise SystemExit("verify_playback_routing_invariants: every physical or external generated media key must enter the central echo filter")
+if handle_body.index("mediaTransportActions.ignoreReasonForMediaKeyDown(") > handle_body.index("mediaTransportActions.routeFromMediaKey(command: command, metadata: metadata)"):
+    raise SystemExit("verify_playback_routing_invariants: central echo filtering must run before event-tap routing")
 for required in (
     "ignoreReasonForMediaKeyDown(",
     "lastMediaKeyDown",
@@ -1290,7 +1285,7 @@ for required in (
 if "Task.sleep" in suspend_body or "commandCenterRouteShieldRearmTask" in text:
     raise SystemExit("verify_playback_routing_invariants: route-shield release and rearm must not use correctness timers")
 rearm_start = text.index("    func rearmCommandCenterRouteShield(")
-rearm_end = text.index("    private func acceptTransportInput", rearm_start)
+rearm_end = text.index("    private func resetInputStateAfterTapInterruption", rearm_start)
 rearm_body = text[rearm_start:rearm_end]
 if "commandCenterInterceptor.resumeRouteShield(" not in rearm_body:
     raise SystemExit("verify_playback_routing_invariants: completed dispatch must rearm through the acknowledged state machine")
@@ -1404,9 +1399,6 @@ grep -q 'media_key_duplicate_ignored' "$command_filter" \
 grep -q 'programmatic_media_key_echo_ignored' "$command_filter" \
   || fail "generated media-key callback suppression must be visible in the persisted playback trace"
 
-grep -q '"generated_media_key_shadow_armed"' "$transport" \
-  || fail "event-tap generated-shadow arming must be visible in the persisted playback trace"
-
 grep -q 'recordHelperResult' "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportTraceRecorder.swift" \
   || fail "MediaRemote helper command results must be visible in the persisted playback trace"
 
@@ -1514,17 +1506,17 @@ grep -q 'transportBackend.*chromium_extension' "$repo_root/scripts/hitl_helium_p
 grep -q 'verify_hitl_helium_playback_toggle_check_semantics=ok' "$repo_root/scripts/verify_hitl_helium_playback_toggle_check_semantics" \
   || fail "Helium HITL regression semantics must be covered by replay fixtures"
 
-grep -q 'probe_generated_media_key_swallowed' "$repo_root/scripts/probe_playback_event_tap" \
-  || fail "runtime event-tap probe must prove generated media-key bursts are swallowed before routing"
+grep -q 'probe_generated_media_key_routed' "$repo_root/scripts/probe_playback_event_tap" \
+  || fail "runtime event-tap probe must prove external automation media keys enter routing"
 
-grep -q 'post_generated_play_pause_burst' "$repo_root/scripts/probe_playback_event_tap" \
-  || fail "runtime event-tap probe must send a generated key-down/key-up burst"
+grep -q 'post_generated_play_pause' "$repo_root/scripts/probe_playback_event_tap" \
+  || fail "runtime event-tap probe must send a generated key-down/key-up press"
 
-grep -q 'generated_media_key_shadow_armed' "$repo_root/scripts/probe_playback_event_tap" \
-  || fail "runtime event-tap probe must prove generated key-down arms central Command Center shadow state"
+grep -q 'event.get("event") == "transport_key_down"' "$repo_root/scripts/probe_playback_event_tap" \
+  || fail "runtime event-tap probe must observe the generated key at the central input boundary"
 
-grep -q 'forbidden in ("transport_key_down", "decision_chooser", "chooser_show")' "$repo_root/scripts/probe_playback_event_tap" \
-  || fail "runtime event-tap probe must fail if generated media-key callbacks reach the chooser route"
+grep -q 'event.get("source") == "event_tap"' "$repo_root/scripts/probe_playback_event_tap" \
+  || fail "runtime event-tap probe must require external generated input to reach shared routing"
 
 grep -q 'probe_chooser_selection_stable' "$repo_root/scripts/probe_playback_chooser_selection" \
   || fail "runtime chooser-selection probe must verify selected-row dispatch without late modal re-entry"
@@ -1533,7 +1525,7 @@ grep -q 'chooser reopened after row dispatch' "$repo_root/scripts/probe_playback
   || fail "runtime chooser-selection probe must fail when row dispatch reopens the modal"
 
 grep -q 'run_probe_cleanly scripts/probe_playback_event_tap' "$repo_root/scripts/probe_playback_routing_suite" \
-  || fail "playback routing suite must run the generated media-key rejection probe"
+  || fail "playback routing suite must run the external automation media-key routing probe"
 
 grep -q 'verify_playback_filter_semantics' "$repo_root/scripts/probe_playback_routing_suite" \
   || fail "playback routing suite must run selected-row echo semantics"

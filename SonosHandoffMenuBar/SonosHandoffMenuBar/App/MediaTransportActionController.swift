@@ -115,16 +115,6 @@ final class MediaTransportActionController {
         commandCenterFilter.resetMediaKeyState()
     }
 
-    func noteGeneratedMediaKeyIgnored(command: MediaRemoteTransportCommand, metadata: MediaTransportInputMetadata) {
-        commandCenterFilter.noteMediaKey(command: command, metadata: metadata)
-        trace(
-            "generated_media_key_shadow_armed",
-            command: command,
-            source: .eventTap,
-            metadata: metadata
-        )
-    }
-
     func routeFromCommandCenter(
         command: MediaRemoteTransportCommand,
         metadata: MediaCommandCenterInputMetadata? = nil
