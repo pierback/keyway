@@ -40,7 +40,7 @@ struct MediaRemotePongEvent: Decodable {
     let pid: Int?
 }
 
-struct MediaRemoteCommandResultEvent: Decodable {
+struct MediaRemoteCommandResultEvent: Decodable, Sendable {
     let type: String
     let requestID: String?
     let targetID: String
@@ -99,14 +99,6 @@ struct MediaRemoteClientCacheEvent: Decodable {
     let requestID: String?
     let ok: Bool
     let targetCount: Int
-    let message: String
-}
-
-struct MediaRemoteRouteShieldResultEvent: Decodable {
-    let type: String
-    let requestID: String?
-    let enabled: Bool
-    let ok: Bool
     let message: String
 }
 

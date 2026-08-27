@@ -239,7 +239,7 @@ send_body = text[
     text.index("    private func fallbackMediaRemote(")
 ]
 desktop_block = send_body[
-    send_body.index("if let result = desktopTransport.submit(command: command, target: target) {"):
+    send_body.index("if let backend = desktopTransport.submit(command: command, target: target, onResult:"):
     send_body.index("if let sent = chromiumBrowserExtensionController.submit")
 ]
 for forbidden in (
@@ -279,9 +279,14 @@ for required in (
         raise SystemExit("verify_playback_routing_invariants: automatic routing confirmation is incomplete")
 PY
 
-if grep -q 'cgSessionEventTap\|case session' "$event_tap"; then
-  fail "Play/Pause interception must fail closed instead of falling back to a non-cghid event tap"
-fi
+grep -q 'case session = "session"' "$event_tap" \
+  || fail "external accessory Play/Pause interception must include the session event tap"
+
+grep -q 'guard let hidEventTap, let sessionEventTap' "$event_tap" \
+  || fail "transport input readiness must require both event taps"
+
+grep -q 'ShortcutEventParser.systemDefinedEventMask' "$event_tap" \
+  || fail "session event tap must observe transport system-defined events only"
 
 grep -q 'struct MediaRemoteSnapshotRefreshGate' "$refresh_gate" \
   || fail "MediaRemote snapshot refresh coalescing must be isolated in a testable value type"
@@ -471,8 +476,17 @@ grep -q 'com.spotify.client' "$desktop_adapter" \
 ! grep -q 'heliumActiveTabMediaAvailable' "$desktop_adapter" \
   || fail "Helium visibility must come from the Chromium extension, not AppleScript probing"
 
-grep -q 'sendAppleEvent' "$desktop_adapter" \
-  || fail "Spotify desktop dispatch must use in-process Apple Events instead of spawning osascript"
+! grep -q 'NSAppleScript' "$desktop_adapter" \
+  || fail "Spotify desktop dispatch must not call the main-thread-only NSAppleScript API"
+
+grep -q 'AECreateAppleEvent' "$desktop_adapter" \
+  || fail "Spotify desktop dispatch must create native in-process Apple Events"
+
+grep -q 'AESendMessage' "$desktop_adapter" \
+  || fail "Spotify desktop dispatch must send native Apple Events and inspect their OSStatus"
+
+grep -q 'spotifyCommandQueue.async' "$desktop_adapter" \
+  || fail "Spotify Apple Events must leave the main actor through the ordered command queue"
 
 ! grep -q 'execute active tab of front window javascript' "$desktop_adapter" \
   || fail "Desktop transport must not reach into Helium tabs through AppleScript JavaScript"
@@ -501,7 +515,7 @@ grep -q 'transportBackend: result.backend' "$transport" \
   || fail "desktop helper results must preserve their selected transport backend"
 
 ! grep -q 'selected_row_dispatch_route_shield_kept' "$transport" \
-  || fail "desktop route-shield retention must be structural, not duplicated as chooser-only trace state"
+  || fail "desktop dispatch must not retain obsolete route-shield trace state"
 
 grep -q 'return target.isCurrentlyPlaying ? .pause : .play' "$command_rules" \
   || fail "normal chooser Play/Pause must not send a global toggle when the selected row already tells us play state"
@@ -576,8 +590,8 @@ if '"chooser_closed_for_dispatch"' not in choose_body:
     raise SystemExit("verify_playback_routing_invariants: chooser row selection must trace the overlay close before selected-row dispatch")
 if "dispatchFromChooser(" not in choose_body:
     raise SystemExit("verify_playback_routing_invariants: chooser row selection must dispatch immediately through the adapter-aware transport boundary")
-if "relaxRouteShield" in choose_body or "RouteShieldReleaseDelayNanoseconds" in choose_body or "Task.sleep" in choose_body:
-    raise SystemExit("verify_playback_routing_invariants: chooser selection must not own MediaRemote route-shield release or delay")
+if "Task.sleep" in choose_body:
+    raise SystemExit("verify_playback_routing_invariants: chooser selection must not delay selected-row dispatch")
 if choose_body.index(finish_marker) > choose_body.index("dispatchFromChooser("):
     raise SystemExit("verify_playback_routing_invariants: chooser visible guard must clear before selected-row dispatch")
 if choose_body.index('"chooser_closed_for_dispatch"') > choose_body.index("dispatchFromChooser("):
@@ -587,33 +601,27 @@ fallback_end = text.index("\n    private func sendMediaRemote(", fallback_start)
 fallback_body = text[fallback_start:fallback_end]
 for needle in (
     "let routedCommand = MediaTransportCommandRules.rowScopedCommand(command, for: target)",
-    "let helperGeneration = mediaRemoteController.helperGeneration",
-    "routeShieldDispatchID = dispatchID",
-    "let releaseStarted = releaseRouteShield(",
-    "guard succeeded,",
-    "self.routeShieldDispatchTask = Task",
-    "self.sendMediaRemote(",
+    "guard sendMediaRemote(",
+    "self.mediaRemoteController.probeHelperLiveness()",
+    "mediaRemoteDispatchFailed(",
 ):
     if needle not in fallback_body:
         raise SystemExit(f"verify_playback_routing_invariants: MediaRemote fallback must contain {needle!r}")
 if not (
     fallback_body.index("let routedCommand = MediaTransportCommandRules.rowScopedCommand(command, for: target)")
-    < fallback_body.index("let helperGeneration = mediaRemoteController.helperGeneration")
-    < fallback_body.index("let releaseStarted = releaseRouteShield(")
-    < fallback_body.index("guard succeeded,")
-    < fallback_body.index("self.routeShieldDispatchTask = Task")
-    < fallback_body.index("self.sendMediaRemote(")
+    < fallback_body.index("guard sendMediaRemote(")
+    < fallback_body.index("self.mediaRemoteController.probeHelperLiveness()")
+    < fallback_body.index("mediaRemoteDispatchFailed(")
 ):
-    raise SystemExit("verify_playback_routing_invariants: MediaRemote fallback must await acknowledged release in the same helper generation before submitting")
+    raise SystemExit("verify_playback_routing_invariants: MediaRemote fallback must submit directly before probing and reporting a synchronous failure")
 for forbidden in (
-    "mediaRemoteRouteShieldReleaseDelayNanoseconds",
-    "relaxRouteShield",
+    "routeShield",
+    "RouteShield",
+    "releaseRouteShield",
     "Task.sleep",
 ):
     if forbidden in fallback_body:
-        raise SystemExit(f"verify_playback_routing_invariants: MediaRemote route-shield correctness must not retain {forbidden!r}")
-if text.count('"mediaremote_dispatch"') != 1:
-    raise SystemExit("verify_playback_routing_invariants: MediaRemote route-shield release must have one transport-boundary owner")
+        raise SystemExit(f"verify_playback_routing_invariants: MediaRemote fallback must not retain obsolete release machinery {forbidden!r}")
 if text.count("MediaTransportCommandRules.rowScopedCommand(command, for: target)") != 1:
     raise SystemExit("verify_playback_routing_invariants: MediaRemote fallback must be the single target-state command-scoping owner")
 dispatch_from_chooser = text[text.index("private func dispatchFromChooser"):text.index("private func logDispatch")]
@@ -630,7 +638,7 @@ for name, body in (
     ("chooser dispatch", dispatch_from_chooser),
 ):
     if "Task {" in body or "await " in body or "Task.sleep" in body:
-        raise SystemExit(f"verify_playback_routing_invariants: {name} must stay synchronous; MediaRemote fallback owns acknowledged shield release")
+        raise SystemExit(f"verify_playback_routing_invariants: {name} must stay synchronous")
 if "releaseChooserAfterDispatchEchoWindow" in dispatch_from_chooser:
     raise SystemExit("verify_playback_routing_invariants: chooser dispatch must not wait on a post-send release window")
 if "commandCenterFilter.finishProgrammaticDispatch(command: command)" in dispatch_from_chooser:
@@ -700,7 +708,7 @@ if "programmaticDispatchFallbackTasks.removeValue(forKey: id)?.cancel()" not in 
 if "private var programmaticDispatchFallbackTasks: [UUID: Task<Void, Error>]" not in text:
     raise SystemExit("verify_playback_routing_invariants: dispatch fallback timeouts must have explicit lifecycle ownership")
 if "try? await Task.sleep" in fallback_body:
-    raise SystemExit("verify_playback_routing_invariants: MediaRemote route-shield propagation must not hide cancellation")
+    raise SystemExit("verify_playback_routing_invariants: dispatch fallback must not hide cancellation")
 if "await mediaRemoteController.send" in text:
     raise SystemExit("verify_playback_routing_invariants: UI routing must not await helper command acknowledgement")
 if "mediaRemoteController.submit(command: command, targetID: target.id)" not in text:
@@ -791,8 +799,8 @@ fi
 grep -q 'command_center_input_shadow_ignored' "$command_filter" \
   || fail "duplicate command-center callbacks must not re-open the chooser"
 
-grep -q 'command_center_unpaired_input_ignored' "$command_filter" \
-  || fail "standalone command-center callbacks must not route without paired event-tap input"
+! grep -q 'command_center_unpaired_input_ignored' "$command_filter" \
+  || fail "fresh external command-center callbacks must remain routable"
 
 grep -q 'struct MediaTransportInputMetadata' "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportRouteSource.swift" \
   || fail "event-tap media-key routing must carry event-source metadata"
@@ -818,7 +826,7 @@ grep -q 'eventSourceUnixProcessID' "$hotkeys" \
   || fail "physical media-key traces must include CGEvent source process metadata"
 
 grep -q 'rawActiveMediaTargetID' "$runtime_status" \
-  || fail "runtime status must expose raw active MediaRemote target so the route shield can be proven active"
+  || fail "runtime status must expose the raw active MediaRemote target for playback-routing diagnosis"
 
 grep -q 'eventSourceStateID' "$hotkeys" \
   || fail "physical media-key traces must include CGEvent source state metadata"
@@ -943,10 +951,10 @@ if media_key_body.index("consumeChooserMediaKeyRebound") > media_key_body.index(
     raise SystemExit("verify_playback_routing_invariants: media-key rebound suppression must run before command-center shadow checks")
 if "ignoreChooserMediaKeyEcho" in media_key_body:
     raise SystemExit("verify_playback_routing_invariants: media-key routing must not use broad chooser echo suppression")
-if "case unpairedCommandCenterInput" not in text or "command_center_unpaired_input_ignored" not in text:
-    raise SystemExit("verify_playback_routing_invariants: standalone command-center rejection must be observable in traces")
-if ".unpairedCommandCenterInput" not in command_center_body:
-    raise SystemExit("verify_playback_routing_invariants: command-center routing must reject unpaired callbacks instead of routing them")
+if "unpairedCommandCenterInput" in text or "command_center_unpaired_input_ignored" in text:
+    raise SystemExit("verify_playback_routing_invariants: fresh external command-center input must not be rejected as unpaired")
+if "guard let mediaKeyShadow else" not in command_center_body or "return ignoreCommandCenterInputShadow" not in command_center_body:
+    raise SystemExit("verify_playback_routing_invariants: command-center routing must reject only bounded duplicate shadows")
 if "isFreshPhysicalMediaKey" in text or "lastAcceptedMediaKey" in text:
     raise SystemExit("verify_playback_routing_invariants: chooser media-key echo suppression must not keep stale accepted-key memory")
 if "case mediaKeyRebound" not in text or "media_key_rebound_ignored" not in text:
@@ -1020,10 +1028,10 @@ PY
 ! grep -q 'acceptCommandCallback\|duplicateCallbackInterval\|lastAcceptedCommand' "$command_center" \
   || fail "command-center duplicate state must live in the central transport input policy"
 
-grep -q 'command: .play,' "$command_center" \
+grep -q 'return .play' "$command_center" \
   || fail "command-center play events must preserve the exact play command"
 
-grep -q 'command: .pause,' "$command_center" \
+grep -q 'return .pause' "$command_center" \
   || fail "command-center pause events must preserve the exact pause command"
 
 ! grep -q 'lastTransportKeyDown\|activeTransportKeyDown\|activeTransportKeyDownResetTimer' "$hotkeys" \
@@ -1092,99 +1100,78 @@ if "onInterrupted:" not in hotkeys:
 PY
 
 grep -q 'AVAudioEngine' "$command_center" \
-  || fail "Command Center route shield must keep Keyway's Now Playing session active with silent audio"
+  || fail "hidden command receiver must keep a silent media session eligible for accessory commands"
 
-grep -q 'startRouteShieldAudio()' "$command_center" \
-  || fail "Command Center route shield must start silent audio before publishing Now Playing state"
+grep -q 'audioEngine.mainMixerNode.outputVolume = 0' "$command_center" \
+  || fail "hidden command receiver audio must remain inaudible"
 
 ! grep -q 'routeShieldRefreshTimer' "$command_center" \
-  || fail "Command Center route shield must not republish its own Now Playing session on a timer"
+  || fail "hidden command receiver must not retain the removed route-shield timer"
 
-grep -Fq 'mediaSourceStore.$rows' "$command_center" \
-  || fail "Command Center route shield must observe media playback state changes"
+grep -Fq 'func updatePlaybackState(isPlaying: Bool)' "$command_center" \
+  || fail "hidden command receiver must accept current playback state explicitly"
 
-grep -Fq '.removeDuplicates()' "$command_center" \
-  || fail "Command Center route shield must ignore unchanged playback-state snapshots"
+grep -Fq 'private func publishHiddenSession()' "$command_center" \
+  || fail "hidden command receiver must own its invisible Now Playing publication"
 
-grep -Fq '.sink { [weak self] isPlaying in' "$command_center" \
-  || fail "Command Center route shield must consume the newly emitted playback state"
+grep -Fq 'MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0' "$command_center" \
+  || fail "hidden command receiver must publish only the current playback rate"
 
-grep -Fq 'self.publishNowPlayingRoute(isPlaying: isPlaying)' "$command_center" \
-  || fail "Command Center route shield must publish the emitted state instead of rereading @Published rows during willSet"
+grep -Fq 'nowPlaying.playbackState = isPlaying ? .playing : .paused' "$command_center" \
+  || fail "hidden command receiver must keep macOS playback state aligned with visible targets"
 
-grep -Fq 'private func publishNowPlayingRoute(isPlaying: Bool) -> Bool' "$command_center" \
-  || fail "Command Center route shield publishing must require an explicit playback state"
+grep -Fq 'MRMediaRemoteAddAsyncCommandHandlerBlock' "$command_center" \
+  || fail "accessory commands must enter through the app-owned MediaRemote receiver"
 
-grep -Fq 'mediaSourceStore.rows.contains { $0.target.isCurrentlyPlaying }' "$command_center" \
-  || fail "Command Center route shield must derive playback state from visible media targets"
+grep -Fq 'for rawCommand in [UInt32(0), 1, 2, 4, 5]' "$command_center" \
+  || fail "hidden command receiver must advertise play, pause, toggle, next, and previous"
 
-grep -Fq 'MPNowPlayingInfoPropertyPlaybackRate: playbackRate' "$command_center" \
-  || fail "Command Center route shield must publish the derived playback rate"
-
-grep -Fq 'playbackState = isPlaying ? .playing : .paused' "$command_center" \
-  || fail "Command Center route shield must keep macOS playback state aligned with visible media targets"
+grep -Fq 'Self.setNowPlayingVisibility(Self.getLocalOrigin(), Self.neverVisible)' "$command_center" \
+  || fail "hidden command receiver must never appear as a visible Now Playing source"
 
 python3 - "$command_center" <<'PY'
 import pathlib
 import sys
 
 text = pathlib.Path(sys.argv[1]).read_text()
-publish_start = text.index("    private func publishNowPlayingRoute")
-publish_end = text.index("    private func registerCommandsIfNeeded", publish_start)
-publish = text[publish_start:publish_end]
-for required in (
-    "guard !routeShieldRequestInFlight else",
-    "self.activeHelperGeneration == helperGeneration",
-    "self.mediaRemoteController.helperGeneration == helperGeneration",
-    "self.routeShieldRequestSequence == requestSequence",
-    "guard succeeded else",
-    "self.registerCommandsIfNeeded(helperGeneration: helperGeneration)",
-    "self.setReady(true)",
+publish = text[text.index("    private func publishHiddenSession()") :]
+for forbidden in (
+    "MPMediaItemPropertyTitle",
+    "MPMediaItemPropertyArtist",
+    "MPMediaItemPropertyAlbumTitle",
 ):
-    if required not in publish:
+    if forbidden in publish:
         raise SystemExit(
-            f"verify_playback_routing_invariants: route-shield acknowledgement boundary is missing {required!r}"
+            f"verify_playback_routing_invariants: hidden command receiver must not publish source metadata: {forbidden}"
         )
-if publish.index("guard succeeded else") > publish.index(
-    "self.registerCommandsIfNeeded(helperGeneration: helperGeneration)"
-):
-    raise SystemExit(
-        "verify_playback_routing_invariants: command targets must register only after helper acknowledgement"
-    )
-register_start = text.index("    private func register(")
-register_end = text.index("    func suspendRouteShield", register_start)
-register = text[register_start:register_end]
+handler = text[
+    text.index("    private func registerCommandHandler()") :
+    text.index("    private func publishSupportedCommands()")
+]
 for required in (
-    "self.isReady",
-    "self.activeHelperGeneration == helperGeneration",
-    "self.mediaRemoteController.helperGeneration == helperGeneration",
+    "completion([NSNumber(value: Self.commandHandlerSuccess)] as CFArray)",
+    "self.route(command, metadata)",
+    "self.publishHiddenSession()",
 ):
-    if required not in register:
+    if required not in handler:
         raise SystemExit(
-            f"verify_playback_routing_invariants: command dispatch must be generation-bound by {required!r}"
+            f"verify_playback_routing_invariants: hidden command handler is missing {required!r}"
         )
+if handler.index("completion([NSNumber(value: Self.commandHandlerSuccess)] as CFArray)") > handler.index("self.route(command, metadata)"):
+    raise SystemExit("verify_playback_routing_invariants: hidden command receiver must acknowledge accessory input before asynchronous routing")
 PY
 
 grep -Fq 'mediaSourceStore: environment.mediaSourceStore' "$sonos_app" \
   || fail "AppRuntime must wire the shared media source store into hotkey routing"
 
-grep -q 'commandCenterRoute=enabled' "$hotkeys" \
-  || fail "command-center routing must be logged when it is published"
-
-grep -q 'commandCenterRoute=already_enabled' "$hotkeys" \
-  || fail "command-center transport routing must log duplicate start attempts"
-
-grep -q 'ensureCommandCenterRoute(reason:' "$hotkeys" \
-  || fail "command-center routing must start through the explicit route boundary"
-
-grep -q 'ensureCommandCenterRoute(reason: "mediaremote_generation_ready")' "$hotkeys" \
-  || fail "MediaRemote generation readiness must be the only route-shield activation boundary"
+grep -q 'mediaFallback=enabled input=event_tap_and_hidden_command_center' "$hotkeys" \
+  || fail "transport readiness must log the combined event-tap and hidden-receiver route"
 
 grep -q 'routeFromCommandCenter(command: command, metadata: metadata)' "$hotkeys" \
-  || fail "command-center route-shield callbacks must enter the same transport filter"
+  || fail "hidden command receiver callbacks must enter the same transport filter"
 
-! grep -q 'ensureCommandCenterRoute(reason: "event_tap_' "$hotkeys" \
-  || fail "event-tap state must not independently activate or supersede the MediaRemote route shield"
+! grep -Eq 'ensureCommandCenterRoute|suspendCommandCenterRouteShield|rearmCommandCenterRouteShield' "$hotkeys" \
+  || fail "hotkey routing must not retain the removed route-shield lifecycle"
 
 grep -q 'event_tap_unhandled_system_defined' "$hotkeys" \
   || fail "event-tap parser misses must be traced instead of looking like silent key loss"
@@ -1218,19 +1205,19 @@ import sys
 text = pathlib.Path(sys.argv[1]).read_text()
 closure = text[
     text.index("private lazy var commandCenterInterceptor = MediaCommandCenterInterceptor"):
-    text.index("    private let step =", text.index("private lazy var commandCenterInterceptor = MediaCommandCenterInterceptor"))
+    text.index("\n\n    init(", text.index("private lazy var commandCenterInterceptor = MediaCommandCenterInterceptor"))
 ]
 route = "self.mediaTransportActions.routeFromCommandCenter(command: command, metadata: metadata)"
 if route not in closure:
-    raise SystemExit("verify_playback_routing_invariants: command-center callback must route through the transport filter when fallback routing is running")
+    raise SystemExit("verify_playback_routing_invariants: hidden command callback must route through the transport filter when transport input is ready")
 if "self.isTransportInputReady" not in text:
-    raise SystemExit("verify_playback_routing_invariants: command-center and event-tap transport input must share acknowledged readiness")
+    raise SystemExit("verify_playback_routing_invariants: hidden receiver and event-tap input must share readiness")
 if "generatedTransportShadow" in closure:
     raise SystemExit("verify_playback_routing_invariants: command-center generated-event shadows must be owned by the transport router")
 PY
 
-grep -q 'commandCenterRouteRunning' "$runtime_status" \
-  || fail "runtime status must persist command-center route state separately from event-tap permission state"
+! grep -q 'commandCenterRouteRunning' "$runtime_status" "$runtime_reporter" \
+  || fail "runtime readiness must not retain the removed route-shield status field"
 
 grep -q 'eventTapRunning' "$runtime_status" \
   || fail "runtime status must persist whether the intercepting event tap is actually running"
@@ -1238,17 +1225,17 @@ grep -q 'eventTapRunning' "$runtime_status" \
 grep -q 'activeEventTap' "$runtime_status" \
   || fail "runtime status must persist which event tap is active for playback-key diagnosis"
 
-grep -q 'commandCenterRouteRunning(_ running: Bool)' "$runtime_reporter" \
-  || fail "runtime reporter must expose command-center route state updates"
+grep -q 'func mediaFallbackEnabled' "$runtime_reporter" \
+  || fail "runtime reporter must expose the combined transport readiness transition"
 
-grep -q 'commandCenterRouteRunning: true' "$runtime_reporter" \
-  || fail "only acknowledged command-center route startup may update runtime status"
+grep -q 'mediaFallback: .enabled' "$runtime_reporter" \
+  || fail "combined transport readiness must persist mediaFallback=enabled"
 
 grep -q 'private lazy var commandCenterInterceptor = MediaCommandCenterInterceptor' "$hotkeys" \
   || fail "command-center route must not be represented as optional runtime state"
 
 if grep -Eq 'startCommandCenterFallback|stopCommandCenterFallback' "$hotkeys"; then
-  fail "command-center fallback must use the same registered route, not a second start/stop path"
+  fail "hidden command receiver must use the single transport-input lifecycle"
 fi
 
 python3 - "$hotkeys" <<'PY'
@@ -1257,38 +1244,43 @@ import re
 import sys
 
 text = pathlib.Path(sys.argv[1]).read_text()
-start_match = re.search(r'func start\(\) \{(?P<body>.*?)\n    \}', text, re.S)
-if not start_match:
-    raise SystemExit("verify_playback_routing_invariants: hotkey start() body not found")
-if "ensureCommandCenterRoute(reason: \"startup\")" in start_match.group("body"):
-    raise SystemExit("verify_playback_routing_invariants: command-center must not publish a Now Playing route before event-tap permission probing")
-if "stopCommandCenterRoute(reason: \"permission_denied\")" not in text:
-    raise SystemExit("verify_playback_routing_invariants: denied event-tap permissions must not enable a non-intercepting command-center fallback")
-if "stopCommandCenterRoute(reason: \"event_tap_create_failed\")" not in text:
-    raise SystemExit("verify_playback_routing_invariants: event-tap creation failure must not enable a non-intercepting command-center fallback")
-if "ensureCommandCenterRoute(reason: \"mediaremote_generation_ready\")" not in text:
-    raise SystemExit("verify_playback_routing_invariants: MediaRemote generation readiness must start the Command Center route shield")
-if "ensureCommandCenterRoute(reason: \"event_tap_" in text:
-    raise SystemExit("verify_playback_routing_invariants: event-tap state must not supersede route-shield acknowledgement")
-if "commandCenterInterceptor.stop()" not in text:
-    raise SystemExit("verify_playback_routing_invariants: command-center route must still unregister on controller shutdown")
-suspend_start = text.index("    func suspendCommandCenterRouteShield(")
-suspend_end = text.index("    func rearmCommandCenterRouteShield(", suspend_start)
-suspend_body = text[suspend_start:suspend_end]
+refresh = text[
+    text.index("    func refreshMediaFallback() -> Bool {") :
+    text.index("    private func mediaRemoteHealthChanged")
+]
 for required in (
-    "helperGeneration: UInt",
-    "onResult: @escaping @MainActor (Bool) -> Void",
-    "commandCenterInterceptor.suspendRouteShield(",
+    "guard refreshEventTap() else",
+    "commandCenterInterceptor.start()",
+    "isTransportInputReady = true",
+    "runtimeReporter.mediaFallbackEnabled(",
 ):
-    if required not in suspend_body:
-        raise SystemExit(f"verify_playback_routing_invariants: shield suspension must be acknowledged and generation-bound: {required!r}")
-if "Task.sleep" in suspend_body or "commandCenterRouteShieldRearmTask" in text:
-    raise SystemExit("verify_playback_routing_invariants: route-shield release and rearm must not use correctness timers")
-rearm_start = text.index("    func rearmCommandCenterRouteShield(")
-rearm_end = text.index("    private func resetInputStateAfterTapInterruption", rearm_start)
-rearm_body = text[rearm_start:rearm_end]
-if "commandCenterInterceptor.resumeRouteShield(" not in rearm_body:
-    raise SystemExit("verify_playback_routing_invariants: completed dispatch must rearm through the acknowledged state machine")
+    if required not in refresh:
+        raise SystemExit(f"verify_playback_routing_invariants: transport readiness is missing {required!r}")
+if not (
+    refresh.index("guard refreshEventTap() else")
+    < refresh.index("commandCenterInterceptor.start()")
+    < refresh.index("isTransportInputReady = true")
+    < refresh.index("runtimeReporter.mediaFallbackEnabled(")
+):
+    raise SystemExit("verify_playback_routing_invariants: mediaFallback=enabled must be published only after event taps and the hidden receiver start")
+start = text[text.index("    func start() {") : text.index("    func setSonosVolumeInputEnabled")]
+for required in (
+    "mediaSourceStore.$rows",
+    ".removeDuplicates()",
+    "commandCenterInterceptor.updatePlaybackState(isPlaying: isPlaying)",
+):
+    if required not in start:
+        raise SystemExit(f"verify_playback_routing_invariants: hidden receiver playback-state wiring is missing {required!r}")
+if "commandCenterInterceptor.stop()" not in text:
+    raise SystemExit("verify_playback_routing_invariants: hidden command receiver must unregister on failure and shutdown")
+for forbidden in (
+    "ensureCommandCenterRoute",
+    "stopCommandCenterRoute",
+    "suspendCommandCenterRouteShield",
+    "rearmCommandCenterRouteShield",
+):
+    if forbidden in text:
+        raise SystemExit(f"verify_playback_routing_invariants: removed route-shield lifecycle remains: {forbidden}")
 PY
 
 grep -q 'command_center_media_key_shadow_ignored' "$command_filter" \
@@ -1685,17 +1677,20 @@ if fallback_nanoseconds <= 0 or fallback_nanoseconds > 250_000_000:
     raise SystemExit("verify_playback_routing_invariants: programmatic dispatch fallback must stay below visible cooldown territory")
 PY
 
-grep -q 'MRMediaRemoteSetOverriddenNowPlayingApplication' "$helper" \
-  || fail "the MediaRemote helper must force Keyway as the overridden now-playing application"
+! grep -q 'MRMediaRemoteSetOverriddenNowPlayingApplication' "$helper" \
+  || fail "MediaRemote helper must not own the app-process hidden command receiver"
 
-grep -q 'MRMediaRemoteSetNowPlayingApplicationOverrideEnabled' "$helper" \
-  || fail "the MediaRemote helper must enable the now-playing override outside the app process"
+! grep -q 'MRMediaRemoteSetNowPlayingApplicationOverrideEnabled' "$helper" \
+  || fail "MediaRemote helper must not publish a competing now-playing override"
 
-grep -q 'mediaRemoteController.setRouteShield(info: nil)' "$command_center" \
-  || fail "route shield must ask the MediaRemote helper to disable its override when relaxed for dispatch"
+grep -q 'MRMediaRemoteSetOverriddenNowPlayingApplication' "$command_center" \
+  || fail "hidden command receiver must own the app-process now-playing override"
 
-grep -q '0.0000001' "$command_center" \
-  || fail "route shield audio must use tiny non-zero samples so macOS keeps Keyway eligible as active media route"
+grep -q 'MRMediaRemoteSetNowPlayingApplicationOverrideEnabled' "$command_center" \
+  || fail "hidden command receiver must enable its invisible now-playing override"
+
+! grep -Eq 'setRouteShield|suspendRouteShield|resumeRouteShield' "$command_center" "$helper" \
+  || fail "removed route-shield protocol must not remain in either command boundary"
 
 grep -q 'initWithPlayerPath:playerPath' "$helper" \
   || fail "MediaRemote commands must use a matched MRPlayerPath"

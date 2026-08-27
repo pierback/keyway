@@ -62,11 +62,11 @@ def fail(message: str) -> None:
     raise SystemExit(1)
 
 event_tap_running = payload.get("eventTapRunning") is True
-command_center_running = payload.get("commandCenterRouteRunning") is True
+media_fallback_enabled = payload.get("mediaFallback") == "enabled"
 if not event_tap_running:
     fail("hardware Play/Pause interception requires the cghid event tap to be running")
-if not command_center_running:
-    fail("Command Center route shield is not active; macOS can still route hardware Play/Pause to its primary source")
+if not media_fallback_enabled:
+    fail("dual event-tap interception and the hidden command receiver are not ready")
 
 target_count = int(payload.get("mediaTargetCount") or 0)
 if target_count < 2:
@@ -91,7 +91,7 @@ print(
     "hitl_playback_routing_check: preflight ok "
     f"targets={target_count} "
     f"eventTapRunning={event_tap_running} "
-    f"commandCenterRouteRunning={command_center_running} "
+    f"mediaFallback={payload.get('mediaFallback')!r} "
     f"rawActiveMediaTargetID={payload.get('rawActiveMediaTargetID')!r}"
 )
 PY
@@ -120,7 +120,6 @@ def status_summary() -> str:
         "mediaFallback",
         "eventTapRunning",
         "activeEventTap",
-        "commandCenterRouteRunning",
         "accessibilityGranted",
         "listenEventGranted",
         "plainHotkeysRegistered",

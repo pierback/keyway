@@ -231,9 +231,19 @@ send_body = action_controller[
     action_controller.index("    private func fallbackMediaRemote(")
 ]
 desktop_block = send_body[
-    send_body.index("if let result = desktopTransport.submit(command: command, target: target) {"):
+    send_body.index("if let backend = desktopTransport.submit(command: command, target: target, onResult:"):
     send_body.index("if let sent = chromiumBrowserExtensionController.submit")
 ]
+for required in [
+    "self.mediaSourceStore.recordCommandResult(result)",
+    "self.finishDispatch(id: dispatchID, fallback: false)",
+    "scheduleProgrammaticDispatchFallback(id: dispatchID)",
+    "transport: backend",
+]:
+    if required not in desktop_block:
+        raise SystemExit(
+            f"verify_chromium_extension_semantics: asynchronous desktop transport is missing terminal dispatch bookkeeping: {required}"
+        )
 for forbidden in [
     "shouldFallbackFromUnsupportedDesktopResult(",
     "sendSpotifyWebAPI(",

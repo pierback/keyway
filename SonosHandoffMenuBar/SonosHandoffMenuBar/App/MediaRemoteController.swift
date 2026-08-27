@@ -19,7 +19,6 @@ final class MediaRemoteController: ObservableObject {
     static let helperRecoveryGraceInterval: TimeInterval = 5
     private static let snapshotRefreshTimeoutNanoseconds: UInt64 = 6_000_000_000
     private static let commandResultTimeoutNanoseconds: UInt64 = 350_000_000
-    private static let routeShieldResultTimeoutNanoseconds: UInt64 = 1_000_000_000
     private static let terminationDeadlineNanoseconds: UInt64 = 2_000_000_000
 
     @Published private(set) var health: MediaRemoteHelperHealth = .stopped
@@ -42,7 +41,6 @@ final class MediaRemoteController: ObservableObject {
     private var commandRequestStartedAt: [String: TimeInterval] = [:]
     private var commandResultHandlers: [String: (MediaRemoteCommandResultEvent) -> Void] = [:]
     private var commandRequestTimeouts: [String: Task<Void, Never>] = [:]
-    private var routeShieldResultHandlers: [String: (Bool) -> Void] = [:]
     private var commandCacheRefreshRequestIDs: Set<String> = []
     private var commandCacheRefreshTargetSignatures: [String: String] = [:]
     private var commandCacheTargetSignature = ""
@@ -228,39 +226,6 @@ final class MediaRemoteController: ObservableObject {
         return true
     }
 
-    @discardableResult
-    func setRouteShield(
-        info: [String: Any]?,
-        onResult: @escaping @MainActor (Bool) -> Void
-    ) -> Bool {
-        guard helperPairState.isReady,
-              health.state == .running,
-              commandHelper.isRunning
-        else {
-            return false
-        }
-
-        let requestID = UUID().uuidString
-        var request: [String: Any] = [
-            "type": "setRouteShield",
-            "requestID": requestID,
-            "enabled": info != nil,
-            "bundleIdentifier": AppIdentity.bundleIdentifier,
-        ]
-        if let info {
-            request["info"] = info
-        }
-        routeShieldResultHandlers[requestID] = onResult
-        let sent = commandHelper.send(request)
-        guard sent else {
-            routeShieldResultHandlers.removeValue(forKey: requestID)
-            recoverHelperPair(message: "Could not write route-shield request to MediaRemote command helper.")
-            return false
-        }
-        armRouteShieldResultTimeout(requestID: requestID)
-        return true
-    }
-
     private func helperResources() throws -> (script: URL, dylib: URL) {
         guard let resourceURL = Bundle.main.resourceURL else {
             throw MediaRemoteControllerError.missingBundleResources
@@ -368,25 +333,6 @@ final class MediaRemoteController: ObservableObject {
                     commandCacheTargetSignature = ""
                     logger.info("MediaRemoteHelper command_cache_empty targetCount=\(result.targetCount, privacy: .public) elapsedMs=\(cacheRefresh.elapsedMilliseconds, privacy: .public) message=\(result.message, privacy: .public)")
                 }
-            case "routeShieldResult":
-                guard role == .command else {
-                    recoverHelperPair(message: "MediaRemote snapshot helper emitted a route-shield result.")
-                    return
-                }
-                let result = try decoder.decode(MediaRemoteRouteShieldResultEvent.self, from: line)
-                guard let requestID = result.requestID,
-                      let resultHandler = routeShieldResultHandlers.removeValue(forKey: requestID)
-                else {
-                    logger.info("MediaRemoteHelper stale_route_shield_result_ignored requestID=\(result.requestID ?? "", privacy: .public)")
-                    return
-                }
-                commandRequestTimeouts.removeValue(forKey: requestID)?.cancel()
-                if result.ok {
-                    logger.info("MediaRemoteHelper routeShield=\(result.enabled ? "enabled" : "disabled", privacy: .public) message=\(result.message, privacy: .public)")
-                } else {
-                    logger.error("MediaRemoteHelper routeShield=failed enabled=\(result.enabled, privacy: .public) message=\(result.message, privacy: .public)")
-                }
-                resultHandler(result.ok)
             case "now_playing_changed":
                 debouncedRefresh()
             case "fatal", "error":
@@ -590,9 +536,6 @@ final class MediaRemoteController: ObservableObject {
         commandRequestTimeouts.removeAll()
         commandRequestStartedAt.removeAll()
         commandResultHandlers.removeAll()
-        let routeShieldResultHandlers = self.routeShieldResultHandlers.values
-        self.routeShieldResultHandlers.removeAll()
-        routeShieldResultHandlers.forEach { $0(false) }
         commandCacheRefreshRequestIDs.removeAll()
         commandCacheRefreshTargetSignatures.removeAll()
         commandCacheTargetSignature = ""
@@ -819,23 +762,6 @@ final class MediaRemoteController: ObservableObject {
                 backend: nil
             ))
             self.warmCommandClientCacheIfNeeded(targets: self.targets, reason: "command_timeout")
-        }
-    }
-
-    private func armRouteShieldResultTimeout(requestID: String) {
-        commandRequestTimeouts[requestID]?.cancel()
-        commandRequestTimeouts[requestID] = Task { @MainActor [weak self] in
-            guard (try? await Task.sleep(nanoseconds: Self.routeShieldResultTimeoutNanoseconds)) != nil,
-                  !Task.isCancelled,
-                  let self,
-                  let resultHandler = self.routeShieldResultHandlers.removeValue(forKey: requestID)
-            else {
-                return
-            }
-
-            self.commandRequestTimeouts[requestID] = nil
-            self.logger.error("MediaRemoteHelper route_shield_timeout requestID=\(requestID, privacy: .public)")
-            resultHandler(false)
         }
     }
 

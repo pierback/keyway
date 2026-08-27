@@ -33,31 +33,14 @@ struct FilterSemantics {
             now: { currentDate }
         )
 
-        expectEqual(
+        expectNil(
             filter.ignoreReasonForCommandCenter(command: .playPause),
-            .unpairedCommandCenterInput,
-            "fresh command-center event must not route as standalone input"
+            "fresh accessory command-center input must route without an event-tap pair"
         )
         expectNil(
             filter.ignoreReasonForMediaKey(command: .playPause),
             "fresh media-key event must pass through"
         )
-        expectNil(
-            filter.ignoreReasonForMediaKeyDown(
-                command: .playPause,
-                metadata: MediaTransportInputMetadata(
-                    sourceUnixProcessID: 123,
-                    sourceStateID: 0,
-                    sourceUserData: 0,
-                    targetUnixProcessID: 456,
-                    eventTimestamp: 100
-                )
-            ),
-            "fresh generated media-key input from external automation must route"
-        )
-        filter.noteMediaKeyUp(command: .playPause)
-        currentDate.addTimeInterval(0.4)
-
         filter.noteCommandCenterInput(command: .playPause)
         expectEqual(
             filter.ignoreReasonForCommandCenter(command: .playPause),
@@ -78,21 +61,18 @@ struct FilterSemantics {
                 "media-key shadow must suppress matching command-center callback \(index)"
             )
         }
-        expectEqual(
+        expectNil(
             filter.ignoreReasonForCommandCenter(command: .playPause),
-            .unpairedCommandCenterInput,
-            "media-key shadow expiry must not make command-center input routeable on its own"
+            "fresh accessory input must route after the media-key shadow match budget is exhausted"
         )
-        expectEqual(
+        expectNil(
             filter.ignoreReasonForCommandCenter(command: .next),
-            .unpairedCommandCenterInput,
-            "unrelated command-center input must still be rejected as unpaired"
+            "an unrelated accessory command must not be hidden by a media-key shadow"
         )
         currentDate.addTimeInterval(0.4)
-        expectEqual(
+        expectNil(
             filter.ignoreReasonForCommandCenter(command: .playPause),
-            .unpairedCommandCenterInput,
-            "expired media-key shadow must still leave command-center input unpaired"
+            "fresh accessory input must route after the media-key shadow expires"
         )
 
         filter.beginProgrammaticDispatch(command: .playPause)
@@ -235,10 +215,9 @@ struct FilterSemantics {
             "programmatic Command Center echo suppression must not swallow a fresh physical media key"
         )
         currentDate.addTimeInterval(0.6)
-        expectEqual(
+        expectNil(
             lateEchoFilter.ignoreReasonForCommandCenter(command: .playPause),
-            .unpairedCommandCenterInput,
-            "expired Command Center echo suppression must still reject standalone command-center input"
+            "fresh accessory input must route after programmatic echo suppression expires"
         )
         let delayedOSEchoFilter = MediaTransportCommandCenterFilter(
             mediaKeyShadowInterval: 0.15,
@@ -267,13 +246,12 @@ struct FilterSemantics {
         )
         delayedChooserCommandCenterEchoFilter.beginChooserDispatch(command: .pause)
         currentDate.addTimeInterval(0.3)
-        expectEqual(
+        expectNil(
             delayedChooserCommandCenterEchoFilter.ignoreReasonForCommandCenter(
                 command: .playPause,
                 metadata: MediaCommandCenterInputMetadata(eventTimestamp: 901)
             ),
-            .unpairedCommandCenterInput,
-            "chooser dispatch must reject delayed standalone Command Center input after the cooldown boundary"
+            "chooser dispatch must allow fresh accessory input after the echo boundary"
         )
         delayedOSEchoFilter.beginProgrammaticDispatch(command: .pause)
         currentDate.addTimeInterval(0.1)
@@ -342,10 +320,9 @@ struct FilterSemantics {
             ),
             "chooser dispatch without source metadata must not suppress delayed targeted HID-shaped input"
         )
-        expectEqual(
+        expectNil(
             delayedGeneratedChooserEchoFilter.ignoreReasonForCommandCenter(command: .playPause),
-            .unpairedCommandCenterInput,
-            "chooser dispatch must reject delayed standalone Command Center input after the instant boundary"
+            "chooser dispatch must allow fresh accessory input after the instant boundary"
         )
         let targetedEchoCommandCenterShadowFilter = MediaTransportCommandCenterFilter(
             mediaKeyShadowInterval: 0.15,
@@ -568,6 +545,36 @@ struct FilterSemantics {
             "the policy must suppress duplicate callbacks across the play/pause command family"
         )
         mediaKeySequenceFilter.noteMediaKeyUp(command: .playPause)
+        let betterTouchToolSessionCopy = MediaTransportInputMetadata(
+            sourceUnixProcessID: 7_6671,
+            sourceStateID: 0,
+            sourceUserData: 0,
+            targetUnixProcessID: 0,
+            eventTimestamp: 1_000_000
+        )
+        expectNil(
+            mediaKeySequenceFilter.ignoreReasonForMediaKeyDown(
+                command: .playPause,
+                metadata: betterTouchToolSessionCopy
+            ),
+            "the first downstream automation callback must route"
+        )
+        mediaKeySequenceFilter.noteMediaKeyUp(command: .playPause)
+        expectEqual(
+            mediaKeySequenceFilter.ignoreReasonForMediaKeyDown(
+                command: .pause,
+                metadata: MediaTransportInputMetadata(
+                    sourceUnixProcessID: 7_6671,
+                    sourceStateID: 0,
+                    sourceUserData: 0,
+                    targetUnixProcessID: 456,
+                    eventTimestamp: 1_000_000
+                )
+            ),
+            .duplicateMediaKey,
+            "the same automation event observed at HID and session taps must route only once, even after key-up"
+        )
+        mediaKeySequenceFilter.noteMediaKeyUp(command: .pause)
         expectNil(
             mediaKeySequenceFilter.ignoreReasonForMediaKeyDown(
                 command: .playPause,

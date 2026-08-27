@@ -306,7 +306,7 @@ if "bindRuntimeEvents()" not in background_start:
 refresh = section(
     hotkeys,
     "    func refreshMediaFallback() -> Bool {",
-    "\n    private func ensureCommandCenterRoute",
+    "\n    private func mediaRemoteHealthChanged",
 )
 for forbidden in (
     "AXIsProcessTrustedWithOptions",

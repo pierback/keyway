@@ -47,8 +47,8 @@ if payload.get("eventTapRunning") is not True:
     fail("hardware Play/Pause interception requires the cghid event tap to be running")
 if payload.get("activeEventTap") != "cghid":
     fail(f"event tap route is not cghid: {payload.get('activeEventTap')!r}")
-if payload.get("commandCenterRouteRunning") is not True:
-    fail("Command Center route shield is not active; macOS can still route hardware Play/Pause")
+if payload.get("mediaFallback") != "enabled":
+    fail("dual event-tap interception and the hidden command receiver are not ready")
 
 targets = payload.get("mediaTargets", [])
 helium = [
@@ -214,8 +214,8 @@ if selected_id and dispatch_id and selected_id != dispatch_id:
     fail(f"selected targetID {selected_id} did not match dispatch targetID {dispatch_id}")
 if dispatch.get("transportBackend") != "chromium_extension":
     fail(f"chooser_dispatch transportBackend {dispatch.get('transportBackend')!r}; expected 'chromium_extension'")
-if payload.get("commandCenterRouteRunning") is not True:
-    fail("Command Center route shield was not active after Chromium dispatch")
+if payload.get("mediaFallback") != "enabled":
+    fail("transport input stopped after Chromium dispatch")
 
 helper_results = [
     event for event in events[events.index(dispatch) + 1:]

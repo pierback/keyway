@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+python3 - "$repo_root" <<'PY'
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+app = root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App"
+event_tap = (app / "ShortcutEventTap.swift").read_text()
+hotkeys = (app / "VolumeHotkeyController.swift").read_text()
+parser = (app / "ShortcutEventParser.swift").read_text()
+
+for required in (
+    'case hid = "cghid"',
+    'case session = "session"',
+    '.cghidEventTap',
+    '.cgSessionEventTap',
+    'eventsOfInterest: ShortcutEventParser.eventMask',
+    'eventsOfInterest: ShortcutEventParser.systemDefinedEventMask',
+    'callback: shortcutHIDEventTapCallback',
+    'callback: shortcutSessionEventTapCallback',
+    'private var hidEventTap: CFMachPort?',
+    'private var sessionEventTap: CFMachPort?',
+    'private var hidRunLoopSource: CFRunLoopSource?',
+    'private var sessionRunLoopSource: CFRunLoopSource?',
+    'func handle(tapKind: TapKind, type: CGEventType, event: CGEvent)',
+    'onEvent(tapKind, type, event)',
+):
+    if required not in event_tap:
+        raise SystemExit(
+            f"verify_shortcut_event_tap_semantics: dual interception boundary is missing {required!r}"
+        )
+
+running_start = event_tap.index("    var isRunning: Bool")
+running_end = event_tap.index("\n    }", running_start)
+running = event_tap[running_start:running_end]
+for required in ("hidEventTap", "sessionEventTap", "CGEvent.tapIsEnabled"):
+    if required not in running:
+        raise SystemExit(
+            f"verify_shortcut_event_tap_semantics: readiness must require both enabled taps: {required!r}"
+        )
+
+start_start = event_tap.index("    func start() -> Bool")
+start_end = event_tap.index("\n    func stop()", start_start)
+start = event_tap[start_start:start_end]
+if start.index("self.hidEventTap = hidEventTap") > start.index("self.sessionEventTap = sessionEventTap"):
+    raise SystemExit(
+        "verify_shortcut_event_tap_semantics: startup must retain both taps before enabling the pair"
+    )
+if "guard isRunning else" not in start or "stop()" not in start:
+    raise SystemExit(
+        "verify_shortcut_event_tap_semantics: dual-tap startup must fail atomically"
+    )
+
+stop_start = event_tap.index("    func stop()")
+stop_end = event_tap.index("\n    func handle", stop_start)
+stop = event_tap[stop_start:stop_end]
+for required in (
+    "hidEventTap",
+    "sessionEventTap",
+    "hidRunLoopSource",
+    "sessionRunLoopSource",
+):
+    if required not in stop:
+        raise SystemExit(
+            f"verify_shortcut_event_tap_semantics: stop must tear down the complete tap pair: {required!r}"
+        )
+
+if "static let systemDefinedEventMask" not in parser:
+    raise SystemExit(
+        "verify_shortcut_event_tap_semantics: the downstream tap must subscribe only to system-defined events"
+    )
+
+for required in (
+    "onEvent: { [weak self] tapKind, type, event in",
+    "self?.handle(tapKind: tapKind, type: type, event: event)",
+    "func handle(tapKind: ShortcutEventTap.TapKind, type: CGEventType, event: CGEvent)",
+    "if tapKind == .session",
+    "case .transportKeyDown, .transportKeyUp:",
+):
+    if required not in hotkeys:
+        raise SystemExit(
+            f"verify_shortcut_event_tap_semantics: controller boundary is missing {required!r}"
+        )
+
+if "acceptTransportInput" in hotkeys or "transport_generated_input_ignored" in hotkeys:
+    raise SystemExit(
+        "verify_shortcut_event_tap_semantics: external automation media keys must enter central routing"
+    )
+
+print("verify_shortcut_event_tap_semantics=ok")
+PY

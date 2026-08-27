@@ -133,23 +133,10 @@ struct AppEnvironment {
             volumeService: spotifyConnectService,
             outputSelection: outputSelection,
             activePlaybackObserver: spotifyConnectService,
-            mediaSourceStore: mediaSourceStore,
             mediaRemoteController: mediaRemoteController,
+            mediaSourceStore: mediaSourceStore,
             mediaTransportActions: mediaTransportActionController
         )
-        mediaTransportActionController.releaseRouteShield = { [weak volumeHotkeys] reason, helperGeneration, onResult in
-            volumeHotkeys?.suspendCommandCenterRouteShield(
-                reason: reason,
-                helperGeneration: helperGeneration,
-                onResult: onResult
-            ) ?? false
-        }
-        mediaTransportActionController.rearmRouteShield = { [weak volumeHotkeys] reason, helperGeneration in
-            volumeHotkeys?.rearmCommandCenterRouteShield(
-                reason: reason,
-                helperGeneration: helperGeneration
-            ) ?? false
-        }
 
         return AppEnvironment(
             configImportService: configImportService,

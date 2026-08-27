@@ -349,23 +349,31 @@ for required in (
     "activeMediaRemoteGeneration = nil",
     "guard activeMediaRemoteGeneration != generation else {",
     "activeMediaRemoteGeneration = generation",
-    'stopCommandCenterRoute(reason: "mediaremote_generation_ended")',
+    "commandCenterInterceptor.stop()",
+    "commandCenterInterceptor.start()",
+    "isTransportInputReady = true",
     "guard mediaRemoteController.isHelperPairReady else {",
 ):
     if required not in volume_hotkeys:
         raise SystemExit(f"verify_media_remote_helper_process_semantics: media-key readiness must follow each helper generation: {required}")
 
 interceptor = pathlib.Path(sys.argv[1]).with_name("MediaCommandCenterInterceptor.swift").read_text()
-failure_start = interceptor.index("    private func routeShieldFailed(reason: String) {")
-failure_end = interceptor.index("\n    private func setReady", failure_start)
-failure_body = interceptor[failure_start:failure_end]
 for required in (
-    "let stopWillNotify = isReady",
-    "if !stopWillNotify {",
-    "readinessChanged(false)",
+    "private static let neverVisible: UInt32 = 3",
+    "registerCommandHandler()",
+    "publishSupportedCommands()",
+    "precondition(commandHandler != nil)",
+    "Self.setNowPlayingVisibility(Self.getLocalOrigin(), Self.neverVisible)",
+    "MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0",
 ):
-    if required not in failure_body:
-        raise SystemExit(f"verify_media_remote_helper_process_semantics: asynchronous route-shield failure must always reach the input owner: {required}")
+    if required not in interceptor:
+        raise SystemExit(f"verify_media_remote_helper_process_semantics: the command receiver must stay hidden while owning media input: {required}")
+for forbidden in (
+    "MPMediaItemPropertyTitle",
+    "MPMediaItemPropertyArtist",
+):
+    if forbidden in interceptor:
+        raise SystemExit(f"verify_media_remote_helper_process_semantics: the hidden command receiver must not publish media metadata: {forbidden}")
 
 status_item = pathlib.Path(sys.argv[1]).with_name("KeywayStatusItemController.swift").read_text()
 if "chromiumBrowserExtensionController.hasRoutableTargets" not in status_item:

@@ -241,13 +241,13 @@ struct SourceStoreSemantics {
         let unchangedRowsSubscription = store.$rows.dropFirst().sink { _ in
             unchangedRowPublicationCount += 1
         }
-        var routeShieldPlaybackStates: [Bool] = []
-        let routeShieldPlaybackSubscription = store.$rows
+        var hiddenReceiverPlaybackStates: [Bool] = []
+        let hiddenReceiverPlaybackSubscription = store.$rows
             .map { rows in rows.contains { $0.target.playbackRate == "1" } }
             .removeDuplicates()
             .dropFirst()
             .sink { isPlaying in
-                routeShieldPlaybackStates.append(isPlaying)
+                hiddenReceiverPlaybackStates.append(isPlaying)
             }
         controller.replaceTargets([spotify, legacyChromium])
         drainMainQueue()
@@ -272,7 +272,7 @@ struct SourceStoreSemantics {
         expectEqual(store.rows.map(\.target.title), ["Updated Song", "Video"], "same-ID updates must refresh target fields")
         expectEqual(store.rows[0].target.supportedCommands, [.pause], "commands must refresh from updated targets")
         expectEqual(store.rows[0].target.playbackRate, "0", "playback state must refresh from updated targets")
-        expectEqual(routeShieldPlaybackStates, [false], "playing-to-paused rows must emit the new route-shield state")
+        expectEqual(hiddenReceiverPlaybackStates, [false], "playing-to-paused rows must emit the hidden receiver state")
         expectEqual(store.rows.first { $0.id == chromium.id }?.target.muted, true, "browser targets must preserve tab-level muted state")
         assertAllLive(store.rows, "updated rows")
 
@@ -288,8 +288,8 @@ struct SourceStoreSemantics {
         )
         chromiumController.replaceTargets([updatedSilentChromium])
         drainMainQueue()
-        expectEqual(routeShieldPlaybackStates, [false, true], "paused-to-playing rows must emit the new route-shield state")
-        routeShieldPlaybackSubscription.cancel()
+        expectEqual(hiddenReceiverPlaybackStates, [false, true], "paused-to-playing rows must emit the hidden receiver state")
+        hiddenReceiverPlaybackSubscription.cancel()
         assertSuspect(store.rows.first { $0.id == chromium.id }, reason: "no_recent_snapshot", "target updates must preserve snapshot-silence reachability")
 
         store.recordCommandResult(MediaRemoteCommandResultEvent(targetID: chromium.id, ok: false, unsupported: false))

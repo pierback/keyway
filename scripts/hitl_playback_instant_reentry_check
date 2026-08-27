@@ -57,8 +57,8 @@ if payload.get("eventTapRunning") is not True:
     fail("hardware instant reentry requires the event tap route to be running")
 if payload.get("activeEventTap") != "cghid":
     fail(f"event tap route is not cghid: {payload.get('activeEventTap')!r}")
-if payload.get("commandCenterRouteRunning") is not True:
-    fail("Command Center route shield is not active; macOS can still route hardware Play/Pause to its primary source")
+if payload.get("mediaFallback") != "enabled":
+    fail("dual event-tap interception and the hidden command receiver are not ready")
 target_count = int(payload.get("mediaTargetCount") or 0)
 if target_count < 2:
     fail(f"need at least two visible media targets before HITL; got {target_count}")

@@ -33,7 +33,6 @@ checks = {
     "accessibilityGranted": True,
     "listenEventGranted": True,
     "eventTapRunning": True,
-    "commandCenterRouteRunning": True,
 }
 for key, expected in checks.items():
     actual = payload.get(key)
@@ -42,6 +41,9 @@ for key, expected in checks.items():
 
 if payload.get("activeEventTap") != "cghid":
     raise SystemExit(f"activeEventTap is not cghid: {payload.get('activeEventTap')!r}")
+
+if payload.get("mediaFallback") != "enabled":
+    raise SystemExit(f"mediaFallback is not enabled: {payload.get('mediaFallback')!r}")
 
 if payload.get("appPath") != expected_app_path:
     raise SystemExit(f"appPath expected {expected_app_path!r}, got {payload.get('appPath')!r}")

@@ -138,8 +138,8 @@ for needle in [
 ]:
     if needle not in show_body:
         fail(f"chooser overlay path must preserve re-entry/deferred semantics and contain {needle!r}")
-if "releaseRouteShield" in show_body or "RouteShieldReleaseDelayNanoseconds" in show_body or "Task.sleep" in show_body:
-    fail("chooser row selection must dispatch immediately; MediaRemote fallback owns route-shield release")
+if "Task.sleep" in show_body:
+    fail("chooser row selection must dispatch immediately without a transport delay")
 
 if "private func emptyDiscoveryDiagnostics()" not in text:
     fail("empty discovery must expose transport diagnostics for the confirmed-empty chooser state")

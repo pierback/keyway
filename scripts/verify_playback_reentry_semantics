@@ -127,13 +127,12 @@ struct PlaybackReentrySemantics {
             "transport filter must suppress immediate chooser Command Center rebounds through the bounded programmatic path"
         )
         try! await Task.sleep(nanoseconds: 500_000_000)
-        expectEqual(
+        expectNil(
             commandCenterFilter.ignoreReasonForCommandCenter(
                 command: .playPause,
                 metadata: MediaCommandCenterInputMetadata(eventTimestamp: 31)
             ),
-            .unpairedCommandCenterInput,
-            "chooser Command Center rebound suppression expiry must still reject standalone Command Center input"
+            "fresh external Command Center input must route after the bounded chooser rebound window expires"
         )
 
         print("verify_playback_reentry_semantics=ok")

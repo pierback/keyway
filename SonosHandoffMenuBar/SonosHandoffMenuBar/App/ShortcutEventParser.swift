@@ -23,7 +23,9 @@ struct ShortcutEventParser {
     // macOS reports media-key presses through NX_SYSDEFINED instead of typed key events.
     private static let systemDefinedEventType = CGEventType(rawValue: 14)!
 
-    static let eventMask = CGEventMask(1 << systemDefinedEventType.rawValue)
+    static let systemDefinedEventMask = CGEventMask(1 << systemDefinedEventType.rawValue)
+
+    static let eventMask = systemDefinedEventMask
         | CGEventMask(1 << CGEventType.keyDown.rawValue)
         | CGEventMask(1 << CGEventType.keyUp.rawValue)
 

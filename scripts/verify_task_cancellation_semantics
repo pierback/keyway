@@ -114,7 +114,6 @@ for function_name, marker in (
     ("armSnapshotRefreshTimeout", "self.refreshGate.finish"),
     ("armCommandCacheRefreshTimeout", "self.commandCacheRefreshRequestIDs.remove"),
     ("armCommandResultTimeout", "self.commandRequestStartedAt.removeValue"),
-    ("armRouteShieldResultTimeout", "self.routeShieldResultHandlers.removeValue"),
 ):
     verify_guard(media_remote, function_name, marker)
 

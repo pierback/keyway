@@ -116,7 +116,7 @@ KEYWAY_PHYSICAL_MEDIA_KEYS=1 scripts/smoke_transport_routing_confirmation
 9. Confirm `Helper Status` reports the MediaRemote helper as running.
 10. Approve Accessibility and Input Monitoring for Keyway in System Settings if `Permissions` reports either missing.
 
-After both permissions are granted, quit and reopen Keyway or use Settings to refresh shortcuts. Keyway writes shortcut readiness to `~/Library/Application Support/keyway/shortcut-runtime-status.json`; `mediaFallback=enabled`, `eventTapRunning=true`, and `commandCenterRouteRunning=true` mean the complete route is ready.
+After both permissions are granted, quit and reopen Keyway or use Settings to refresh shortcuts. Keyway writes shortcut readiness to `~/Library/Application Support/keyway/shortcut-runtime-status.json`; `mediaFallback=enabled`, `eventTapRunning=true`, and `activeEventTap=cghid` mean the dual event taps and hidden command receiver are ready.
 
 ## Acceptance
 

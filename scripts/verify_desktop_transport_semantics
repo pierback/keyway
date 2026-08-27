@@ -13,19 +13,52 @@ sed -i '' '/^import AppKit$/d; /^import ApplicationServices$/d' "$workdir/MediaD
 cat >"$workdir/Stubs.swift" <<'SWIFT'
 import Foundation
 
-final class NSAppleEventDescriptor {
-    let stringValue: String?
+enum AppleEventFixture {
+    private static let fixtureLock = NSLock()
+    private static var sendDelays: [TimeInterval] = []
+    private static var sendStatuses: [OSStatus] = []
+    private static var playbackStates: [OSType?] = []
+    private static var eventIDs: [AEEventID] = []
 
-    init(stringValue: String? = nil) {
-        self.stringValue = stringValue
+    static func configure(
+        sendDelays: [TimeInterval] = [],
+        sendStatuses: [OSStatus] = [],
+        playbackStates: [OSType?] = []
+    ) {
+        fixtureLock.lock()
+        self.sendDelays = sendDelays
+        self.sendStatuses = sendStatuses
+        self.playbackStates = playbackStates
+        eventIDs = []
+        fixtureLock.unlock()
     }
-}
 
-final class NSAppleScript {
-    init?(source: String) {}
+    static func playbackState() -> OSType? {
+        fixtureLock.lock()
+        let state = playbackStates.isEmpty ? OSType(0x6B50_5350) : playbackStates.removeFirst()
+        fixtureLock.unlock()
+        return state
+    }
 
-    func executeAndReturnError(_ error: inout NSDictionary?) -> NSAppleEventDescriptor {
-        NSAppleEventDescriptor(stringValue: "stopped")
+    static func send(eventID: AEEventID) -> OSStatus {
+        fixtureLock.lock()
+        let delay = sendDelays.isEmpty ? 0 : sendDelays.removeFirst()
+        let status = sendStatuses.isEmpty ? noErr : sendStatuses.removeFirst()
+        fixtureLock.unlock()
+        if delay > 0 {
+            Thread.sleep(forTimeInterval: delay)
+        }
+        fixtureLock.lock()
+        eventIDs.append(eventID)
+        fixtureLock.unlock()
+        return status
+    }
+
+    static func capturedEventIDs() -> [AEEventID] {
+        fixtureLock.lock()
+        let captured = eventIDs
+        fixtureLock.unlock()
+        return captured
     }
 }
 
@@ -34,21 +67,68 @@ typealias OSType = UInt32
 typealias DescType = UInt32
 typealias AEEventClass = UInt32
 typealias AEEventID = UInt32
+typealias AEKeyword = UInt32
 typealias AEReturnID = Int16
 typealias AETransactionID = Int32
 typealias AESendMode = UInt32
 
-struct AEAddressDesc {}
+struct AEAddressDesc {
+    var eventID: AEEventID = 0
+    var playbackState: OSType?
+}
+typealias AEDesc = AEAddressDesc
+typealias AERecord = AEAddressDesc
 typealias AppleEvent = AEAddressDesc
 
 let noErr: OSStatus = 0
 let typeApplicationBundleID: OSType = 0
+let typeProperty: OSType = 1
+let typeType: OSType = 2
+let typeEnumerated: OSType = 3
+let typeNull: OSType = 4
+let typeObjectSpecifier: OSType = 5
+let formPropertyID: OSType = 6
+let keyAEDesiredClass: OSType = 7
+let keyAEKeyForm: OSType = 8
+let keyAEKeyData: OSType = 9
+let keyAEContainer: OSType = 10
+let keyDirectObject: OSType = 11
+let kAECoreSuite: OSType = 12
+let kAEGetData: OSType = 13
 let kAutoGenerateReturnID: AEReturnID = 0
 let kAnyTransactionID: AETransactionID = 0
 let kAENoReply: UInt32 = 1
-let kAECanInteract: UInt32 = 2
-let kAECanSwitchLayer: UInt32 = 4
+let kAEWaitReply: UInt32 = 2
+let kAECanInteract: UInt32 = 4
+let kAECanSwitchLayer: UInt32 = 8
 let kAEDefaultTimeout: Int32 = 0
+
+func AECreateList(
+    _ factoringPtr: UnsafeRawPointer?,
+    _ factoringSize: Int,
+    _ isRecord: Bool,
+    _ result: inout AERecord
+) -> OSStatus { noErr }
+
+func AEPutParamPtr(
+    _ event: inout AppleEvent,
+    _ keyword: OSType,
+    _ type: DescType,
+    _ dataPtr: UnsafeRawPointer?,
+    _ dataSize: Int
+) -> OSStatus { noErr }
+
+func AECoerceDesc(
+    _ source: inout AEDesc,
+    _ type: DescType,
+    _ result: inout AEDesc
+) -> OSStatus { noErr }
+
+func AEPutParamDesc(
+    _ event: inout AppleEvent,
+    _ keyword: OSType,
+    _ descriptor: inout AEDesc
+) -> OSStatus { noErr }
 
 func AECreateDesc(
     _ descriptorType: DescType,
@@ -64,7 +144,10 @@ func AECreateAppleEvent(
     _ returnID: AEReturnID,
     _ transactionID: AETransactionID,
     _ result: inout AppleEvent
-) -> OSStatus { noErr }
+) -> OSStatus {
+    result.eventID = eventID
+    return noErr
+}
 
 func AEDisposeDesc(_ descriptor: inout AEAddressDesc) -> OSStatus { noErr }
 
@@ -73,9 +156,33 @@ func AESendMessage(
     _ reply: UnsafeMutablePointer<AppleEvent>?,
     _ sendMode: AESendMode,
     _ timeout: Int32
-) -> OSStatus { noErr }
+) -> OSStatus {
+    if event.eventID == kAEGetData {
+        reply?.pointee.playbackState = AppleEventFixture.playbackState()
+        return noErr
+    }
+    return AppleEventFixture.send(eventID: event.eventID)
+}
 
-enum MediaRemoteTransportCommand: String, Equatable {
+func AEGetParamPtr(
+    _ event: inout AppleEvent,
+    _ keyword: OSType,
+    _ desiredType: DescType,
+    _ actualType: UnsafeMutablePointer<DescType>?,
+    _ dataPtr: UnsafeMutableRawPointer?,
+    _ maximumSize: Int,
+    _ actualSize: UnsafeMutablePointer<Int>?
+) -> OSStatus {
+    guard let playbackState = event.playbackState else {
+        return -1700
+    }
+    actualType?.pointee = typeEnumerated
+    dataPtr?.storeBytes(of: playbackState, as: OSType.self)
+    actualSize?.pointee = MemoryLayout<OSType>.size
+    return noErr
+}
+
+enum MediaRemoteTransportCommand: String, Equatable, Sendable {
     case play
     case pause
     case playPause
@@ -119,7 +226,7 @@ struct MediaRemoteTarget: Equatable, Identifiable {
     let browserBundleIdentifier: String?
 }
 
-struct MediaRemoteCommandResultEvent: Equatable {
+struct MediaRemoteCommandResultEvent: Equatable, Sendable {
     let type: String
     let requestID: String?
     let targetID: String
@@ -166,7 +273,7 @@ import Foundation
 @main
 struct Semantics {
     @MainActor
-    static func main() {
+    static func main() async {
         let adapter = MediaDesktopTransportAdapter()
         let helium = target(
             id: "net.imput.helium:123:desktop",
@@ -195,7 +302,11 @@ struct Semantics {
             nil,
             "Helium desktop targets must not be owned by a fallback backend"
         )
-        expectEqual(adapter.submit(command: .playPause, target: helium), nil, "Helium desktop targets must fail closed without fallback commands")
+        expectEqual(
+            adapter.submit(command: .playPause, target: helium) { unexpectedResult($0) },
+            nil,
+            "Helium desktop targets must fail closed without fallback commands"
+        )
 
         expectEqual(
             adapter.backendName(for: heliumExtension),
@@ -203,7 +314,7 @@ struct Semantics {
             "Helium extension rows must not be claimed by the Helium desktop automation backend"
         )
         expectEqual(
-            adapter.submit(command: .playPause, target: heliumExtension),
+            adapter.submit(command: .playPause, target: heliumExtension) { unexpectedResult($0) },
             nil,
             "Helium extension rows must route through the Chromium extension adapter"
         )
@@ -214,9 +325,99 @@ struct Semantics {
             "Spotify targets must be owned by Spotify AppleEvents"
         )
         expectEqual(adapter.backendName(for: other), nil, "Unknown targets must not claim a desktop backend")
-        expectEqual(adapter.submit(command: .next, target: other), nil, "Unknown targets must remain unhandled by the desktop adapter")
+        expectEqual(
+            adapter.submit(command: .next, target: other) { unexpectedResult($0) },
+            nil,
+            "Unknown targets must remain unhandled by the desktop adapter"
+        )
+
+        AppleEventFixture.configure(playbackStates: [fourCharCode("kPSS")])
+        let noTrackResult: MediaRemoteCommandResultEvent = await withCheckedContinuation { continuation in
+            let submitted = adapter.submit(command: .play, target: spotify) { result in
+                continuation.resume(returning: result)
+            }
+            expectEqual(submitted, "spotify_apple_event", "Spotify stopped state must remain owned by the desktop adapter")
+        }
+        expectEqual(noTrackResult.ok, false, "Spotify stopped state must not report a false command success")
+        expectEqual(
+            noTrackResult.message,
+            "Spotify has no current desktop track.",
+            "Spotify stopped state must explain why no command was sent"
+        )
+        expectEqual(
+            AppleEventFixture.capturedEventIDs(),
+            [],
+            "Spotify stopped state must not enqueue a command that cannot execute"
+        )
+
+        AppleEventFixture.configure(sendDelays: [0.2])
+        let delayedResult: MediaRemoteCommandResultEvent = await withCheckedContinuation { continuation in
+            let startedAt = Date()
+            let submitted = adapter.submit(command: .pause, target: spotify) { result in
+                continuation.resume(returning: result)
+            }
+            expectEqual(submitted, "spotify_apple_event", "Spotify targets must be accepted by the desktop adapter")
+            expectLessThan(
+                Date().timeIntervalSince(startedAt),
+                0.1,
+                "Spotify AppleEvents must not block the main actor"
+            )
+        }
+        expectEqual(delayedResult.ok, true, "Spotify delivery must report a successful AppleEvent send")
+        expectEqual(delayedResult.backend, "spotify_apple_event", "Spotify results must retain backend provenance")
+        expectEqual(
+            AppleEventFixture.capturedEventIDs(),
+            [fourCharCode("Paus")],
+            "Spotify pause must use its native AppleEvent command"
+        )
+
+        AppleEventFixture.configure(sendDelays: [0.2, 0])
+        var supersededResult: MediaRemoteCommandResultEvent?
+        expectEqual(
+            adapter.submit(command: .playPause, target: spotify) { result in
+                supersededResult = result
+            },
+            "spotify_apple_event",
+            "the first Spotify command must enter the serial AppleEvent transport"
+        )
+        let latestResult: MediaRemoteCommandResultEvent = await withCheckedContinuation { continuation in
+            let submitted = adapter.submit(command: .playPause, target: spotify) { result in
+                continuation.resume(returning: result)
+            }
+            expectEqual(submitted, "spotify_apple_event", "a newer Spotify command must supersede the pending result")
+        }
+        expectEqual(latestResult.ok, true, "the newest Spotify command must report successful delivery")
+        try! await Task.sleep(nanoseconds: 50_000_000)
+        expectEqual(supersededResult, nil, "superseded Spotify delivery must not report a stale result")
+        expectEqual(
+            AppleEventFixture.capturedEventIDs(),
+            [
+                fourCharCode("PlPs"),
+                fourCharCode("PlPs"),
+            ],
+            "rapid Spotify toggles must remain ordered native toggle commands despite delayed delivery"
+        )
+
+        AppleEventFixture.configure(sendStatuses: [-600])
+        let failedResult: MediaRemoteCommandResultEvent = await withCheckedContinuation { continuation in
+            let submitted = adapter.submit(command: .play, target: spotify) { result in
+                continuation.resume(returning: result)
+            }
+            expectEqual(submitted, "spotify_apple_event", "Spotify delivery failures must still be reported asynchronously")
+        }
+        expectEqual(failedResult.ok, false, "an AppleEvent delivery error must fail the Spotify result")
+        expectEqual(
+            failedResult.message,
+            "Spotify AppleEvent failed status=-600",
+            "Spotify delivery errors must retain their OSStatus"
+        )
 
         print("verify_desktop_transport_semantics=ok")
+    }
+
+    @MainActor
+    private static func unexpectedResult(_ result: MediaRemoteCommandResultEvent) {
+        fail("unowned desktop target unexpectedly produced a result: \(result)")
     }
 
     private static func target(
@@ -247,9 +448,19 @@ struct Semantics {
         )
     }
 
+    private static func fourCharCode(_ value: String) -> OSType {
+        value.utf8.reduce(0) { ($0 << 8) + UInt32($1) }
+    }
+
     private static func expectEqual<T: Equatable>(_ actual: T, _ expected: T, _ message: String) {
         guard actual == expected else {
             fail("\(message): expected \(String(describing: expected)), got \(String(describing: actual))")
+        }
+    }
+
+    private static func expectLessThan(_ actual: Double, _ expected: Double, _ message: String) {
+        guard actual < expected else {
+            fail("\(message): expected less than \(expected), got \(actual)")
         }
     }
 
@@ -291,14 +502,14 @@ def assert_order(needles, message):
 if "MediaDesktopTransportBackend" in source or "backend(for target:" in source:
     fail("single-backend desktop transport must not retain an enum or backend selector")
 
-if 'private static let spotifyAppleEventBackend = "spotify_apple_event"' not in source:
+if 'nonisolated private static let spotifyAppleEventBackend = "spotify_apple_event"' not in source:
     fail("Spotify desktop transport must expose its backend name as a static constant")
 
 if source.count("guard !ChromiumBrowserExtensionTransport.isTarget(target) else") != 1 \
         or source.count("guard Self.isSpotifyTarget(target) else") != 1:
     fail("desktop transport eligibility must have one canonical Spotify target guard")
 
-if "guard backendName(for: target) != nil else" not in source:
+if "guard let backend = backendName(for: target) else" not in source:
     fail("desktop command submission must reuse backend-name eligibility")
 
 if "switch backend" in source:
@@ -306,32 +517,57 @@ if "switch backend" in source:
 
 assert_order(
     [
-        "let beforeStatus = Self.spotifyPlaybackStatus()",
-        "beforeStatus.error == nil",
-        "Spotify has no current desktop track",
-        "Self.sendAppleEvent(",
+        "nonisolated private static let spotifyCommandQueue",
+        "private var spotifySubmissionID: UUID?",
+        "spotifySubmissionID = submissionID",
+        "Self.spotifyCommandQueue.async",
+        'let playbackStopped = Self.spotifyPlaybackState() == Self.fourCharCode("kPSS")',
+        ": Self.sendAppleEvent(",
+        "Task { @MainActor [weak self] in",
+        "self.spotifySubmissionID = nil",
+        "onResult(result)",
     ],
-    "Spotify AppleEvent transport must preflight desktop track state before sending and verify observable state changes",
+    "Spotify AppleEvents must use one ordered background transport and only publish the newest result on the main actor",
 )
 
 for forbidden in [
-    "expectedSpotifyState",
-    "waitForSpotifyState",
+    "NSAppleScript",
+    "spotifyPlaybackStatus",
+    "Task.detached",
     "Thread.sleep",
-    "did not reach",
     "unsupported: true",
 ]:
     if forbidden in source:
-        fail("Spotify AppleEvent transport must return terminal non-polling results without misclassifying desktop availability failures as unsupported")
+        fail("Spotify delivery must use background-safe AppleEvents without state polling or unsupported-result reclassification")
 
 for needle in [
-    'tell application id "com.spotify.client"',
-    'name of current track',
-    'case .play:',
-    'case .pause:',
-    'case .playPause:',
-    'case .next:',
-    'case .previous:',
+    "onResult: @escaping @MainActor @Sendable (MediaRemoteCommandResultEvent) -> Void",
+    "guard let self, self.spotifySubmissionID == submissionID else",
+    "nonisolated private static func spotifyPlaybackState() -> OSType?",
+    "nonisolated private static func sendAppleEvent(",
+    'var keyData = fourCharCode("pPlS")',
+    "AECreateList(",
+    "AEPutParamPtr(",
+    "AECoerceDesc(",
+    "AEPutParamDesc(",
+    "AEGetParamPtr(",
+    "AESendMode(kAEWaitReply | kAECanInteract | kAECanSwitchLayer)",
+    'message: playbackStopped',
+    '"Spotify has no current desktop track."',
+    "AECreateDesc(",
+    "AECreateAppleEvent(",
+    "AESendMessage(",
+    "AESendMode(kAENoReply | kAECanInteract | kAECanSwitchLayer)",
+]:
+    if needle not in source:
+        fail("Spotify AppleEvents must report ordered delivery results without blocking the main actor")
+
+for needle in [
+    'case .play:\n            return "Play"',
+    'case .pause:\n            return "Paus"',
+    'case .playPause:\n            return "PlPs"',
+    'case .next:\n            return "Next"',
+    'case .previous:\n            return "Prev"',
 ]:
     if needle not in source:
         fail("Spotify AppleEvent transport must keep the explicit Spotify command mapping for every routed desktop command")

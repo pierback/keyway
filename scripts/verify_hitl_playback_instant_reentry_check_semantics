@@ -12,8 +12,8 @@ missing_second_status="$workdir/missing-second-status.json"
 cat >"$ok_status" <<'JSON'
 {
   "activeEventTap": "cghid",
-  "commandCenterRouteRunning": true,
   "eventTapRunning": true,
+  "mediaFallback": "enabled",
   "mediaTargetCount": 2,
   "mediaTransportTraceSequence": 10,
   "mediaTransportTrace": [

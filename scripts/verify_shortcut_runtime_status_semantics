@@ -2,283 +2,218 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-status_file="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutRuntimeStatus.swift"
-command_center_file="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaCommandCenterInterceptor.swift"
-hotkey_file="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/VolumeHotkeyController.swift"
-event_tap_file="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ShortcutEventTap.swift"
-remote_controller_file="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaRemoteController.swift"
-runtime_file="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/SonosHandoffApp.swift"
-remote_shim_file="$repo_root/MediaRemoteHelper/KeywayMediaRemoteShim.m"
-remote_host_file="$repo_root/MediaRemoteHelper/keyway-mediaremote-helper.pl"
 
-python3 - "$status_file" "$command_center_file" "$hotkey_file" "$event_tap_file" "$remote_controller_file" "$runtime_file" "$remote_shim_file" "$remote_host_file" <<'PY'
-import pathlib
+python3 - "$repo_root" <<'PY'
+from pathlib import Path
 import sys
 
-text = pathlib.Path(sys.argv[1]).read_text()
-command_center = pathlib.Path(sys.argv[2]).read_text()
-hotkeys = pathlib.Path(sys.argv[3]).read_text()
-event_tap = pathlib.Path(sys.argv[4]).read_text()
-remote_controller = pathlib.Path(sys.argv[5]).read_text()
-runtime = pathlib.Path(sys.argv[6]).read_text()
-remote_shim = pathlib.Path(sys.argv[7]).read_text()
-remote_host = pathlib.Path(sys.argv[8]).read_text()
-start = text.index("    private func persistSnapshot()")
-end = text.index("\n}\n\nextension Notification.Name", start)
-body = text[start:end]
+root = Path(sys.argv[1])
+app = root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App"
+status = (app / "ShortcutRuntimeStatus.swift").read_text()
+reporter = (app / "ShortcutRuntimeReporter.swift").read_text()
+hotkeys = (app / "VolumeHotkeyController.swift").read_text()
+event_tap = (app / "ShortcutEventTap.swift").read_text()
+remote = (app / "MediaRemoteController.swift").read_text()
+transport = (app / "MediaTransportActionController.swift").read_text()
+runtime = (app / "SonosHandoffApp.swift").read_text()
+remote_shim = (root / "MediaRemoteHelper/KeywayMediaRemoteShim.m").read_text()
+remote_host = (root / "MediaRemoteHelper/keyway-mediaremote-helper.pl").read_text()
 
-required = (
+persist_start = status.index("    private func persistSnapshot()")
+persist_end = status.index("\n}\n\nextension Notification.Name", persist_start)
+persist = status[persist_start:persist_end]
+for required in (
     "try FileManager.default.createDirectory(",
     "let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])",
     "try data.write(to: Self.persistenceURL, options: .atomic)",
+    "[.posixPermissions: 0o600]",
     'fputs("ShortcutRuntimeStatus: could not persist snapshot:',
-)
-for needle in required:
-    if needle not in body:
-        raise SystemExit(f"verify_shortcut_runtime_status_semantics: persistSnapshot must log and skip failed runtime-status persistence: {needle}")
+    '"processGeneration": processGeneration',
+):
+    if required not in persist:
+        raise SystemExit(
+            f"verify_shortcut_runtime_status_semantics: runtime status must persist atomically and privately: {required}"
+        )
 
-trace_start = text.index("    func recordMediaTransportEvent(")
-trace_end = text.index("\n    private func scheduleTracePersistence()", trace_start)
-trace_body = text[trace_start:trace_end]
-for needle in (
+trace_start = status.index("    func recordMediaTransportEvent(")
+trace_end = status.index("\n    private func scheduleTracePersistence()", trace_start)
+trace = status[trace_start:trace_end]
+for required in (
     'payload["processGeneration"] = processGeneration',
     "JSONSerialization.isValidJSONObject(payload)",
     'fputs("ShortcutRuntimeStatus: dropping invalid media transport trace',
     "if mediaTransportTrace.count > 240",
     "scheduleTracePersistence()",
 ):
-    if needle not in trace_body:
-        raise SystemExit(f"verify_shortcut_runtime_status_semantics: traces must be validated, bounded, generation-bound, and persisted: {needle}")
+    if required not in trace:
+        raise SystemExit(
+            f"verify_shortcut_runtime_status_semantics: traces must be validated, bounded, generation-bound, and persisted: {required}"
+        )
 
-if "DistributedNotificationCenter" in text:
-    raise SystemExit("verify_shortcut_runtime_status_semantics: runtime status must not publish unauthenticated distributed notifications")
+if "DistributedNotificationCenter" in status:
+    raise SystemExit(
+        "verify_shortcut_runtime_status_semantics: runtime status must not publish unauthenticated distributed notifications"
+    )
 
-for needle in (
-    '"processGeneration": processGeneration',
-    "try data.write(to: Self.persistenceURL, options: .atomic)",
-    "[.posixPermissions: 0o600]",
-):
-    if needle not in body:
-        raise SystemExit(f"verify_shortcut_runtime_status_semantics: persisted runtime status must be generation-bound and owner-only: {needle}")
-
-route_start = command_center.index("    private func startRouteShieldAudio()")
-route_end = command_center.index("\n    private func stopRouteShieldAudio()", route_start)
-route_body = command_center[route_start:route_end]
-for needle in (
-    "private func startRouteShieldAudio() -> Bool",
-    'logger.error("MediaCommandCenter routeShieldAudio=failed error=',
-    "routeShieldEngine.stop()",
-    "routeShieldEngine.detach(sourceNode)",
-    "return false",
-):
-    if needle not in route_body:
-        raise SystemExit(f"verify_shortcut_runtime_status_semantics: route shield audio start failures must degrade cleanly: {needle}")
-
-for label, source in (
-    ("ShortcutRuntimeStatus.swift", text),
-    ("MediaCommandCenterInterceptor.swift", command_center),
-):
-    for forbidden in ("try!", "} catch {}", "preconditionFailure(", "fatalError("):
-        if forbidden in source:
-            raise SystemExit(f"verify_shortcut_runtime_status_semantics: {label} must not force-crash or silently catch diagnostics failures: {forbidden}")
-
-snapshot_start = text.index("struct ShortcutRuntimeSnapshot")
-snapshot_end = text.index("\n}\n\n@MainActor", snapshot_start)
-snapshot_body = text[snapshot_start:snapshot_end]
-for needle in (
+snapshot_start = status.index("struct ShortcutRuntimeSnapshot")
+snapshot_end = status.index("\n}\n\n@MainActor", snapshot_start)
+snapshot = status[snapshot_start:snapshot_end]
+for required in (
     "mediaFallback == .enabled",
     "&& eventTapRunning",
-    "&& commandCenterRouteRunning",
     "if isReady {",
 ):
-    if needle not in snapshot_body:
-        raise SystemExit(f"verify_shortcut_runtime_status_semantics: shortcut readiness must require every active interception layer: {needle}")
+    if required not in snapshot:
+        raise SystemExit(
+            f"verify_shortcut_runtime_status_semantics: shortcut readiness must reflect the enabled event tap: {required}"
+        )
 
 for forbidden in (
-    "MediaRemotePrivateRouteShield",
-    "dlopen(",
-    "dlsym(",
-    "MRMediaRemoteSetCanBeNowPlayingApplication",
-    "MRMediaRemoteSetNowPlayingInfo",
-    "MRMediaRemoteSetNowPlayingApplicationOverrideEnabled",
-    "MRMediaRemoteSetOverriddenNowPlayingApplication",
+    "commandCenterRoute",
+    "command_center_route",
+    "routeShield",
+    "Media key routing",
+    "MPNowPlayingInfoCenter",
+    "MPRemoteCommandCenter",
 ):
-    if forbidden in command_center:
-        raise SystemExit(f"verify_shortcut_runtime_status_semantics: the app process must not load private MediaRemote route symbols: {forbidden}")
+    for label, source in (
+        ("runtime status", status),
+        ("runtime reporter", reporter),
+        ("hotkey controller", hotkeys),
+        ("MediaRemote controller", remote),
+    ):
+        if forbidden in source:
+            raise SystemExit(
+                f"verify_shortcut_runtime_status_semantics: {label} must not depend on a placeholder media session: {forbidden}"
+            )
 
-for needle in (
-    "keyway_mediaremote_set_route_shield",
-    "MRMediaRemoteSetCanBeNowPlayingApplication",
-    "MRMediaRemoteSetNowPlayingInfo",
-    "MRMediaRemoteSetNowPlayingApplicationOverrideEnabled",
-    "MRMediaRemoteSetOverriddenNowPlayingApplication",
-    '"type": @"routeShieldResult"',
-):
-    if needle not in remote_shim:
-        raise SystemExit(f"verify_shortcut_runtime_status_semantics: the existing MediaRemote helper must own route-shield private API calls: {needle}")
-
-for needle in (
-    'DynaLoader::dl_find_symbol($handle, "keyway_mediaremote_set_route_shield")',
-    '$type eq "setRouteShield"',
-    "Keyway::MediaRemote::set_route_shield();",
-):
-    if needle not in remote_host:
-        raise SystemExit(f"verify_shortcut_runtime_status_semantics: the helper protocol must expose route-shield control: {needle}")
-
-for needle in (
-    'case "routeShieldResult":',
-    "routeShieldResultHandlers.removeValue(forKey: requestID)",
-    "armRouteShieldResultTimeout(requestID: requestID)",
-    "routeShieldResultHandlers.forEach { $0(false) }",
-):
-    if needle not in remote_controller:
-        raise SystemExit(f"verify_shortcut_runtime_status_semantics: route-shield readiness must be acknowledged and fail closed with helper lifecycle: {needle}")
-
-for needle in (
-    "eventTap.map { CGEvent.tapIsEnabled(tap: $0) } ?? false",
+for required in (
+    "guard let hidEventTap, let sessionEventTap else",
+    "CGEvent.tapIsEnabled(tap: hidEventTap)",
+    "CGEvent.tapIsEnabled(tap: sessionEventTap)",
     "if isRunning {",
-    "if eventTap != nil {\n            stop()",
-    "guard CGEvent.tapIsEnabled(tap: eventTap) else {",
+    "if hidEventTap != nil || sessionEventTap != nil",
+    "guard isRunning else {",
     "let reenabled = isRunning",
     "if !reenabled {\n                stop()",
     "onInterrupted(type)",
     'logger.error("ShortcutEventTap reenable_failed',
 ):
-    if needle not in event_tap:
-        raise SystemExit(f"verify_shortcut_runtime_status_semantics: event-tap readiness must reflect the enabled Mach port: {needle}")
+    if required not in event_tap:
+        raise SystemExit(
+            f"verify_shortcut_runtime_status_semantics: event-tap readiness must reflect the enabled Mach port: {required}"
+        )
 
 refresh_start = hotkeys.index("    func refreshMediaFallback() -> Bool")
-refresh_end = hotkeys.index("\n    private func ensureCommandCenterRoute", refresh_start)
-refresh_body = hotkeys[refresh_start:refresh_end]
-for needle in (
-    "guard ensureCommandCenterRoute(reason:",
-    "failCommandCenterRoute()",
-    "runtimeReporter.mediaFallbackWaitingForCommandCenter(",
-    "if isTransportInputReady {",
-    "return false",
+refresh_end = hotkeys.index("\n    private func mediaRemoteHealthChanged", refresh_start)
+refresh = hotkeys[refresh_start:refresh_end]
+for required in (
+    "guard mediaRemoteController.isHelperPairReady else",
+    "runtimeReporter.mediaFallbackWaitingForHelper(",
+    "guard refreshEventTap() else {",
+    "commandCenterInterceptor.start()",
+    "isTransportInputReady = true",
+    "runtimeReporter.mediaFallbackEnabled(",
 ):
-    if needle not in refresh_body:
-        raise SystemExit(f"verify_shortcut_runtime_status_semantics: media fallback must not report ready before command-center acknowledgement: {needle}")
+    if required not in refresh:
+        raise SystemExit(
+            f"verify_shortcut_runtime_status_semantics: media fallback must gate the event tap on helper readiness: {required}"
+        )
+event_tap_index = refresh.index("guard refreshEventTap() else {")
+command_center_index = refresh.index("commandCenterInterceptor.start()", event_tap_index)
+ready_index = refresh.index("isTransportInputReady = true", command_center_index)
+if not event_tap_index < command_center_index < ready_index < refresh.index("runtimeReporter.mediaFallbackEnabled("):
+    raise SystemExit(
+        "verify_shortcut_runtime_status_semantics: the event taps and hidden command receiver must start before transport routing reports ready"
+    )
 
-for needle in (
+waiting_start = reporter.index("    func mediaFallbackWaitingForHelper(")
+waiting_end = reporter.index("\n    func eventTapUnavailable(", waiting_start)
+waiting = reporter[waiting_start:waiting_end]
+if "clearActiveEventTap: !eventTapRunning" not in waiting:
+    raise SystemExit(
+        "verify_shortcut_runtime_status_semantics: helper waiting must clear stale active-tap diagnostics when the tap is stopped"
+    )
+
+for required in (
     "private var isSonosVolumeInputEnabled = false",
     "private var isTransportInputReady = false",
-    "&& (isSonosVolumeInputEnabled || isTransportInputReady)",
+    "&& (isSonosVolumeInputEnabled || activeMediaRemoteGeneration != nil)",
     "guard isTransportInputReady,",
     "guard isSonosVolumeInputEnabled else",
     "self.activeMediaRemoteGeneration == helperGeneration",
     "self.mediaRemoteController.helperGeneration == helperGeneration",
 ):
-    if needle not in hotkeys:
+    if required not in hotkeys:
         raise SystemExit(
-            f"verify_shortcut_runtime_status_semantics: input capabilities must remain independently gated through dispatch: {needle}"
+            f"verify_shortcut_runtime_status_semantics: input capabilities must remain independently gated through dispatch: {required}"
         )
 
-handle_start = hotkeys.index("    func handle(type:")
-handle_end = hotkeys.index("\n    func suspendCommandCenterRouteShield(", handle_start)
-if "ensureCommandCenterRoute(" in hotkeys[handle_start:handle_end]:
-    raise SystemExit(
-        "verify_shortcut_runtime_status_semantics: accepted media keys must not supersede the acknowledged route-shield request"
-    )
-
-for needle in (
-    "private var activeHelperGeneration: UInt?",
-    "private var routeShieldRequestInFlight = false",
-    "private var desiredRouteShieldEnabled = false",
-    "private var acknowledgedRouteShieldEnabled: Bool?",
-    "private var desiredRouteShieldPlayback = false",
-    "private var routeShieldSuspensionResult: (@MainActor (Bool) -> Void)?",
-    "func start(helperGeneration: UInt) -> Bool",
-    "guard !routeShieldRequestInFlight else",
-    "self.activeHelperGeneration == helperGeneration",
-    "self.mediaRemoteController.helperGeneration == helperGeneration",
-    "self.acknowledgedRouteShieldEnabled = requestedEnabled",
-    "self.acknowledgedRouteShieldPlayback = requestedEnabled ? requestedPlayback : nil",
-    "self.registerCommandsIfNeeded(helperGeneration: helperGeneration)",
+interruption_start = hotkeys.index("    private func resetInputStateAfterTapInterruption")
+interruption_end = hotkeys.index("\n    private func traceTransportKey", interruption_start)
+interruption = hotkeys[interruption_start:interruption_end]
+for required in (
+    "guard eventTap.isRunning else {",
+    "isTransportInputReady = false",
+    "runtimeReporter.eventTapUnavailable(",
+    "schedulePermissionRetry()",
 ):
-    if needle not in command_center:
+    if required not in interruption:
         raise SystemExit(
-            f"verify_shortcut_runtime_status_semantics: route-shield acknowledgement must be single-flight and helper-generation bound: {needle}"
+            f"verify_shortcut_runtime_status_semantics: a disabled event tap must revoke transport readiness and retry: {required}"
         )
 
-register_index = command_center.index(
-    "self.registerCommandsIfNeeded(helperGeneration: helperGeneration)"
-)
-success_index = command_center.rfind("guard succeeded else", 0, register_index)
-if success_index < 0:
-    raise SystemExit(
-        "verify_shortcut_runtime_status_semantics: command targets must not register before route-shield acknowledgement"
-    )
-
-suspend_start = command_center.index("    func suspendRouteShield(")
-suspend_end = command_center.index("\n    @discardableResult\n    func resumeRouteShield", suspend_start)
-suspend_body = command_center[suspend_start:suspend_end]
-for needle in (
-    "routeShieldSuspensionResult == nil",
-    "activeHelperGeneration == helperGeneration",
-    "desiredRouteShieldEnabled = false",
-    "routeShieldSuspensionResult = onResult",
-    "setReady(false)",
-    "guard driveRouteShieldState() else",
-):
-    if needle not in suspend_body:
-        raise SystemExit(
-            f"verify_shortcut_runtime_status_semantics: shield release must be a single-flight acknowledged generation transition: {needle}"
-        )
-
-drive_start = command_center.index("    private func driveRouteShieldState()")
-drive_end = command_center.index("\n    private func registerCommandsIfNeeded", drive_start)
-drive_body = command_center[drive_start:drive_end]
-if drive_body.index("let requestedEnabled = desiredRouteShieldEnabled") > drive_body.index(
-    "mediaRemoteController.setRouteShield(info: info)"
-):
-    raise SystemExit(
-        "verify_shortcut_runtime_status_semantics: route-shield requests must capture desired state before helper submission"
-    )
-if drive_body.index("guard succeeded else") > drive_body.index(
-    "self.acknowledgedRouteShieldEnabled = requestedEnabled"
-):
-    raise SystemExit(
-        "verify_shortcut_runtime_status_semantics: route-shield state must change only after helper acknowledgement"
-    )
-
-for needle in (
+for required in (
     "volumeHotkeys.setSonosVolumeInputEnabled(true)",
     "volumeHotkeys.setSonosVolumeInputEnabled(false)",
 ):
-    if needle not in runtime:
+    if required not in runtime:
         raise SystemExit(
-            f"verify_shortcut_runtime_status_semantics: AppRuntime must own Sonos volume-input activation: {needle}"
+            f"verify_shortcut_runtime_status_semantics: AppRuntime must own Sonos volume-input activation: {required}"
         )
 
 retry_start = hotkeys.index("    private func schedulePermissionRetry()")
 retry_end = hotkeys.index("\n    private func stopPermissionRetry()", retry_start)
-retry_body = hotkeys[retry_start:retry_end]
-refresh_start = hotkeys.index("    func refreshMediaFallback() -> Bool")
-refresh_guard = hotkeys.index("        guard accessibilityGranted, listenEventGranted else {", refresh_start)
-refresh_prefix = hotkeys[refresh_start:refresh_guard]
-if "lastReportedPermissionState = (accessibilityGranted, listenEventGranted)" not in refresh_prefix:
-    raise SystemExit("verify_shortcut_runtime_status_semantics: every full permission refresh must synchronize retry deduplication state")
-refresh_event_tap_start = hotkeys.index("    private func refreshEventTap() -> Bool")
-refresh_event_tap_end = hotkeys.index("\n    private func reportEventTapFailure", refresh_event_tap_start)
-refresh_event_tap_body = hotkeys[refresh_event_tap_start:refresh_event_tap_end]
-if "guard shouldRun else {\n            eventTap.stop()" not in refresh_event_tap_body:
-    raise SystemExit(
-        "verify_shortcut_runtime_status_semantics: capability shutdown must retire disabled event-tap objects"
-    )
-denied_start = retry_body.index("            guard accessibilityGranted, listenEventGranted else {")
-denied_end = retry_body.index("\n                return", denied_start)
-denied_body = retry_body[denied_start:denied_end]
-for needle in (
+retry = hotkeys[retry_start:retry_end]
+for required in (
     "self.lastReportedPermissionState?.accessibilityGranted != accessibilityGranted",
     "self.lastReportedPermissionState?.listenEventGranted != listenEventGranted",
     "self.lastReportedPermissionState = (accessibilityGranted, listenEventGranted)",
     "self.runtimeReporter.mediaFallbackPermissionDenied(",
-    "accessibilityGranted: accessibilityGranted",
-    "listenEventGranted: listenEventGranted",
+    "_ = self.refreshMediaFallback()",
 ):
-    if needle not in denied_body:
-        raise SystemExit(f"verify_shortcut_runtime_status_semantics: permission retries must report changed partial permission state once: {needle}")
+    if required not in retry:
+        raise SystemExit(
+            f"verify_shortcut_runtime_status_semantics: permission retries must deduplicate failures and retry readiness: {required}"
+        )
+
+for required in (
+    'DynaLoader::dl_find_symbol($handle, "keyway_mediaremote_snapshot")',
+    'DynaLoader::dl_find_symbol($handle, "keyway_mediaremote_send_command")',
+    'DynaLoader::dl_find_symbol($handle, "keyway_mediaremote_refresh_client_cache")',
+):
+    if required not in remote_host:
+        raise SystemExit(
+            f"verify_shortcut_runtime_status_semantics: the invisible Perl helper must retain media read/control support: {required}"
+        )
+
+for forbidden in (
+    "keyway_mediaremote_set_route_shield",
+    "MRMediaRemoteSetCanBeNowPlayingApplication",
+    "MRMediaRemoteSetNowPlayingInfo",
+    "MRMediaRemoteSetNowPlayingApplicationOverrideEnabled",
+    "MRMediaRemoteSetOverriddenNowPlayingApplication",
+    "routeShieldResult",
+):
+    if forbidden in remote_shim or forbidden in remote_host:
+        raise SystemExit(
+            f"verify_shortcut_runtime_status_semantics: helper processes must not register as media players: {forbidden}"
+        )
+
+if "mediaRemoteController.submit(command: command, targetID: target.id)" not in transport:
+    raise SystemExit(
+        "verify_shortcut_runtime_status_semantics: selected MediaRemote targets must retain direct command submission"
+    )
 PY
 
 printf 'verify_shortcut_runtime_status_semantics=ok\n'

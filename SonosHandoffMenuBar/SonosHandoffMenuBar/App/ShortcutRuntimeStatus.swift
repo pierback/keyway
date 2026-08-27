@@ -10,7 +10,6 @@ enum ShortcutMediaFallbackState: String {
     case permissionDenied = "permission_denied"
     case eventTapCreateFailed = "event_tap_create_failed"
     case eventTapUnavailable = "event_tap_unavailable"
-    case commandCenterRouteFailed = "command_center_route_failed"
 }
 
 struct ShortcutRuntimeSnapshot {
@@ -19,7 +18,6 @@ struct ShortcutRuntimeSnapshot {
     let mediaFallback: ShortcutMediaFallbackState
     let eventTapRunning: Bool
     let activeEventTap: String?
-    let commandCenterRouteRunning: Bool
     let plainHotkeysRegistered: Bool
     let fnHotkeysRegistered: Bool
     let lastFailureReason: String?
@@ -29,9 +27,7 @@ struct ShortcutRuntimeSnapshot {
     var isReady: Bool {
         mediaFallback == .enabled
             && eventTapRunning
-            && commandCenterRouteRunning
     }
-
     var title: String {
         if isReady {
             return "Shortcuts Ready"
@@ -50,15 +46,11 @@ struct ShortcutRuntimeSnapshot {
         }
 
         if mediaFallback == .starting, eventTapRunning {
-            return "Finishing the media-key route"
+            return "Waiting for media playback access"
         }
 
         if mediaFallback == .enabled {
-            return "Media-key route paused; Keyway will resume it"
-        }
-
-        if mediaFallback == .commandCenterRouteFailed {
-            return "Media-key routing is unavailable; Keyway will retry"
+            return "Media-key listener paused; Keyway will resume it"
         }
 
         if mediaFallback == .eventTapUnavailable {
@@ -102,7 +94,6 @@ final class ShortcutRuntimeStatus {
     private var mediaFallback: ShortcutMediaFallbackState = .unknown
     private var eventTapRunning = false
     private var activeEventTap: String?
-    private var commandCenterRouteRunning = false
     private var plainHotkeysRegistered = false
     private var fnHotkeysRegistered = false
     private var lastFailureReason: String?
@@ -127,7 +118,6 @@ final class ShortcutRuntimeStatus {
         eventTapRunning: Bool? = nil,
         activeEventTap: String? = nil,
         clearActiveEventTap: Bool = false,
-        commandCenterRouteRunning: Bool? = nil,
         plainHotkeysRegistered: Bool? = nil,
         fnHotkeysRegistered: Bool? = nil,
         lastFailureReason: String? = nil,
@@ -149,9 +139,6 @@ final class ShortcutRuntimeStatus {
             self.activeEventTap = activeEventTap
         } else if clearActiveEventTap {
             self.activeEventTap = nil
-        }
-        if let commandCenterRouteRunning {
-            self.commandCenterRouteRunning = commandCenterRouteRunning
         }
         if let plainHotkeysRegistered {
             self.plainHotkeysRegistered = plainHotkeysRegistered
@@ -222,7 +209,6 @@ final class ShortcutRuntimeStatus {
             mediaFallback: mediaFallback,
             eventTapRunning: eventTapRunning,
             activeEventTap: activeEventTap,
-            commandCenterRouteRunning: commandCenterRouteRunning,
             plainHotkeysRegistered: plainHotkeysRegistered,
             fnHotkeysRegistered: fnHotkeysRegistered,
             lastFailureReason: lastFailureReason,
@@ -274,7 +260,6 @@ final class ShortcutRuntimeStatus {
             "listenEventGranted": snapshot.listenEventGranted,
             "mediaFallback": snapshot.mediaFallback.rawValue,
             "eventTapRunning": snapshot.eventTapRunning,
-            "commandCenterRouteRunning": snapshot.commandCenterRouteRunning,
             "plainHotkeysRegistered": snapshot.plainHotkeysRegistered,
             "fnHotkeysRegistered": snapshot.fnHotkeysRegistered,
             "appPath": snapshot.appPath,

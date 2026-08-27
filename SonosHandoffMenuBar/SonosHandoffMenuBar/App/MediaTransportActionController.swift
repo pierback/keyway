@@ -26,16 +26,6 @@ final class MediaTransportActionController {
     private let traceRecorder = MediaTransportTraceRecorder()
     private let chooserSession = MediaChooserSessionGuard()
     private let targetResolver = MediaTransportTargetResolver()
-    var releaseRouteShield: ((
-        _ reason: String,
-        _ helperGeneration: UInt,
-        _ onResult: @escaping @MainActor (Bool) -> Void
-    ) -> Bool)?
-    var rearmRouteShield: ((_ reason: String, _ helperGeneration: UInt) -> Bool)?
-    private var mediaRemoteHealthCancellable: AnyCancellable?
-    private var routeShieldDispatchID: UUID?
-    private var routeShieldDispatchGeneration: UInt?
-    private var routeShieldDispatchTask: Task<Void, Never>?
     private var programmaticDispatches: [UUID: MediaTransportPendingDispatchEcho] = [:]
     private var programmaticDispatchFallbackTasks: [UUID: Task<Void, Error>] = [:]
 
@@ -62,19 +52,10 @@ final class MediaTransportActionController {
             physicalMediaKeyReboundWindow: Self.physicalMediaKeyReboundWindow,
             chooserTargetedMediaKeyEchoWindow: Self.chooserTargetedMediaKeyEchoWindow
         )
-        self.mediaRemoteHealthCancellable = Publishers.CombineLatest(
-            mediaRemoteController.$health,
-            mediaRemoteController.$helperGeneration
-        )
-        .sink { [weak self] health, generation in
-            self?.mediaRemoteAvailabilityChanged(health, generation: generation)
-        }
     }
 
     deinit {
         MainActor.assumeIsolated {
-            mediaRemoteHealthCancellable?.cancel()
-            routeShieldDispatchTask?.cancel()
             for task in programmaticDispatchFallbackTasks.values {
                 task.cancel()
             }
@@ -527,18 +508,21 @@ final class MediaTransportActionController {
         dispatchID: UUID,
         context: MediaTransportDispatchContext
     ) {
-        if let result = desktopTransport.submit(command: command, target: target) {
-            mediaSourceStore.recordCommandResult(result)
-            trace(result: result, transportBackend: result.backend)
-            finishDispatch(id: dispatchID, fallback: false)
-            mediaRemoteController.refreshSnapshot()
-            showCommandResult(
+        if let backend = desktopTransport.submit(command: command, target: target, onResult: { [weak self] result in
+            guard let self else { return }
+            self.mediaSourceStore.recordCommandResult(result)
+            self.trace(result: result, transportBackend: result.backend)
+            self.finishDispatch(id: dispatchID, fallback: false)
+            self.mediaRemoteController.refreshSnapshot()
+            self.showCommandResult(
                 result: result,
                 command: command,
                 target: target,
                 context: context
             )
-            logDispatch(command: command, target: target, context: context, transport: result.backend ?? "desktop")
+        }) {
+            scheduleProgrammaticDispatchFallback(id: dispatchID)
+            logDispatch(command: command, target: target, context: context, transport: backend)
             return
         }
         if let sent = chromiumBrowserExtensionController.submit(command: command, target: target, onResult: { [weak self] result in
@@ -577,89 +561,13 @@ final class MediaTransportActionController {
         context: MediaTransportDispatchContext
     ) {
         let routedCommand = MediaTransportCommandRules.rowScopedCommand(command, for: target)
-        guard routeShieldDispatchID == nil,
-              let releaseRouteShield
-        else {
-            mediaRemoteDispatchFailed(
-                command: command,
-                target: target,
-                dispatchID: dispatchID,
-                context: context
-            )
-            return
-        }
-
-        let helperGeneration = mediaRemoteController.helperGeneration
-        routeShieldDispatchID = dispatchID
-        routeShieldDispatchGeneration = helperGeneration
-        let releaseStarted = releaseRouteShield(
-            "mediaremote_dispatch",
-            helperGeneration
-        ) { [weak self] succeeded in
-            guard let self,
-                  self.routeShieldDispatchID == dispatchID,
-                  self.routeShieldDispatchGeneration == helperGeneration
-            else {
-                return
-            }
-            guard succeeded,
-                  self.mediaRemoteController.isHelperPairReady,
-                  self.mediaRemoteController.helperGeneration == helperGeneration
-            else {
-                self.finishRouteShieldDispatch(
-                    id: dispatchID,
-                    helperGeneration: helperGeneration,
-                    rearm: false
-                )
-                self.mediaRemoteDispatchFailed(
-                    command: command,
-                    target: target,
-                    dispatchID: dispatchID,
-                    context: context
-                )
-                return
-            }
-
-            self.routeShieldDispatchTask = Task { @MainActor [weak self] in
-                await Task.yield()
-                guard !Task.isCancelled,
-                      let self,
-                      self.routeShieldDispatchID == dispatchID,
-                      self.routeShieldDispatchGeneration == helperGeneration,
-                      self.mediaRemoteController.isHelperPairReady,
-                      self.mediaRemoteController.helperGeneration == helperGeneration
-                else {
-                    return
-                }
-                self.routeShieldDispatchTask = nil
-                guard self.sendMediaRemote(
-                    command: routedCommand,
-                    to: target,
-                    dispatchID: dispatchID,
-                    context: context
-                ) else {
-                    self.finishRouteShieldDispatch(
-                        id: dispatchID,
-                        helperGeneration: helperGeneration,
-                        rearm: true
-                    )
-                    self.mediaRemoteController.probeHelperLiveness()
-                    self.mediaRemoteDispatchFailed(
-                        command: command,
-                        target: target,
-                        dispatchID: dispatchID,
-                        context: context
-                    )
-                    return
-                }
-            }
-        }
-        guard releaseStarted else {
-            finishRouteShieldDispatch(
-                id: dispatchID,
-                helperGeneration: helperGeneration,
-                rearm: false
-            )
+        guard sendMediaRemote(
+            command: routedCommand,
+            to: target,
+            dispatchID: dispatchID,
+            context: context
+        ) else {
+            self.mediaRemoteController.probeHelperLiveness()
             mediaRemoteDispatchFailed(
                 command: command,
                 target: target,
@@ -686,62 +594,15 @@ final class MediaTransportActionController {
         )
     }
 
-    private func finishRouteShieldDispatch(
-        id: UUID,
-        helperGeneration: UInt,
-        rearm: Bool
-    ) {
-        guard routeShieldDispatchID == id,
-              routeShieldDispatchGeneration == helperGeneration
-        else {
-            return
-        }
-        routeShieldDispatchTask?.cancel()
-        routeShieldDispatchTask = nil
-        routeShieldDispatchID = nil
-        routeShieldDispatchGeneration = nil
-        if rearm,
-           mediaRemoteController.isHelperPairReady,
-           mediaRemoteController.helperGeneration == helperGeneration {
-            _ = rearmRouteShield?("mediaremote_dispatch_finished", helperGeneration)
-        }
-    }
-
-    private func mediaRemoteAvailabilityChanged(
-        _ health: MediaRemoteHelperHealth,
-        generation: UInt
-    ) {
-        guard let dispatchID = routeShieldDispatchID,
-              let dispatchGeneration = routeShieldDispatchGeneration,
-              health.state != .running || generation != dispatchGeneration
-        else {
-            return
-        }
-        finishRouteShieldDispatch(
-            id: dispatchID,
-            helperGeneration: dispatchGeneration,
-            rearm: false
-        )
-        finishDispatch(id: dispatchID, fallback: true)
-    }
-
     private func sendMediaRemote(
         command: MediaRemoteTransportCommand,
         to target: MediaRemoteTarget,
         dispatchID: UUID,
         context: MediaTransportDispatchContext
     ) -> Bool {
-        let helperGeneration = routeShieldDispatchGeneration
         let sent = mediaRemoteController.submit(command: command, targetID: target.id) { [weak self] result in
             guard let self else {
                 return
-            }
-            if let helperGeneration {
-                self.finishRouteShieldDispatch(
-                    id: dispatchID,
-                    helperGeneration: helperGeneration,
-                    rearm: true
-                )
             }
             if !result.ok {
                 self.mediaRemoteController.probeHelperLiveness()

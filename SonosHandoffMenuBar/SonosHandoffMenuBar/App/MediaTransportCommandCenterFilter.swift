@@ -44,7 +44,6 @@ final class MediaTransportCommandCenterFilter {
         case mediaKeyShadow = "command_center_media_key_shadow_ignored"
         case commandCenterInputShadow = "command_center_input_shadow_ignored"
         case commandCenterShadow = "media_key_command_center_shadow_ignored"
-        case unpairedCommandCenterInput = "command_center_unpaired_input_ignored"
         case duplicateMediaKey = "media_key_duplicate_ignored"
     }
 
@@ -264,18 +263,15 @@ final class MediaTransportCommandCenterFilter {
         let now = now()
         guard let mediaKeyShadow else {
             return ignoreCommandCenterInputShadow(command: command, metadata: metadata, now: now)
-                ?? .unpairedCommandCenterInput
         }
 
         guard now <= mediaKeyShadow.expiresAt else {
             self.mediaKeyShadow = nil
             return ignoreCommandCenterInputShadow(command: command, metadata: metadata, now: now)
-                ?? .unpairedCommandCenterInput
         }
 
         guard timedCommandMatches(mediaKeyShadow, command) else {
             return ignoreCommandCenterInputShadow(command: command, metadata: metadata, now: now)
-                ?? .unpairedCommandCenterInput
         }
         consumeCurrentTimedCommand(value: &self.mediaKeyShadow)
         return .mediaKeyShadow

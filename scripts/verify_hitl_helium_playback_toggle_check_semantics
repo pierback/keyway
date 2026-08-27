@@ -14,7 +14,6 @@ cat >"$ok_status" <<'JSON'
   "accessibilityGranted": true,
   "activeEventTap": "cghid",
   "appPath": "/Applications/Keyway.app",
-  "commandCenterRouteRunning": true,
   "eventTapRunning": true,
   "listenEventGranted": true,
   "mediaFallback": "enabled",

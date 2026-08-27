@@ -1,4 +1,3 @@
-import ApplicationServices
 import Foundation
 
 @MainActor
@@ -9,19 +8,6 @@ final class ShortcutRuntimeReporter {
         self.status = status
     }
 
-    func mediaFallbackAlreadyRunning(fnHotkeysRegistered: Bool, activeEventTap: String?) {
-        status.update(
-            accessibilityGranted: AXIsProcessTrusted(),
-            listenEventGranted: CGPreflightListenEventAccess(),
-            mediaFallback: .enabled,
-            eventTapRunning: true,
-            activeEventTap: activeEventTap,
-            commandCenterRouteRunning: true,
-            fnHotkeysRegistered: fnHotkeysRegistered,
-            clearFailureReason: true
-        )
-    }
-
     func mediaFallbackStarting(accessibilityGranted: Bool, listenEventGranted: Bool) {
         status.update(
             accessibilityGranted: accessibilityGranted,
@@ -29,7 +15,6 @@ final class ShortcutRuntimeReporter {
             mediaFallback: .starting,
             eventTapRunning: false,
             clearActiveEventTap: true,
-            commandCenterRouteRunning: false,
             clearFailureReason: true
         )
     }
@@ -41,7 +26,6 @@ final class ShortcutRuntimeReporter {
             mediaFallback: .permissionDenied,
             eventTapRunning: false,
             clearActiveEventTap: true,
-            commandCenterRouteRunning: false,
             fnHotkeysRegistered: false,
             lastFailureReason: "permission_denied"
         )
@@ -54,7 +38,6 @@ final class ShortcutRuntimeReporter {
             mediaFallback: .eventTapCreateFailed,
             eventTapRunning: false,
             clearActiveEventTap: true,
-            commandCenterRouteRunning: false,
             fnHotkeysRegistered: false,
             lastFailureReason: "event_tap_create_failed"
         )
@@ -67,13 +50,12 @@ final class ShortcutRuntimeReporter {
             mediaFallback: .enabled,
             eventTapRunning: true,
             activeEventTap: activeEventTap,
-            commandCenterRouteRunning: true,
             fnHotkeysRegistered: fnHotkeysRegistered,
             clearFailureReason: true
         )
     }
 
-    func mediaFallbackWaitingForCommandCenter(
+    func mediaFallbackWaitingForHelper(
         accessibilityGranted: Bool,
         listenEventGranted: Bool,
         eventTapRunning: Bool,
@@ -86,29 +68,9 @@ final class ShortcutRuntimeReporter {
             mediaFallback: .starting,
             eventTapRunning: eventTapRunning,
             activeEventTap: activeEventTap,
-            commandCenterRouteRunning: false,
+            clearActiveEventTap: !eventTapRunning,
             fnHotkeysRegistered: fnHotkeysRegistered,
             clearFailureReason: true
-        )
-    }
-
-    func commandCenterRouteFailed(
-        accessibilityGranted: Bool,
-        listenEventGranted: Bool,
-        eventTapRunning: Bool,
-        activeEventTap: String?,
-        fnHotkeysRegistered: Bool
-    ) {
-        status.update(
-            accessibilityGranted: accessibilityGranted,
-            listenEventGranted: listenEventGranted,
-            mediaFallback: .commandCenterRouteFailed,
-            eventTapRunning: eventTapRunning,
-            activeEventTap: activeEventTap,
-            clearActiveEventTap: !eventTapRunning,
-            commandCenterRouteRunning: false,
-            fnHotkeysRegistered: fnHotkeysRegistered,
-            lastFailureReason: "command_center_route_failed"
         )
     }
 
@@ -122,7 +84,6 @@ final class ShortcutRuntimeReporter {
             mediaFallback: .eventTapUnavailable,
             eventTapRunning: false,
             clearActiveEventTap: true,
-            commandCenterRouteRunning: false,
             fnHotkeysRegistered: false,
             lastFailureReason: "event_tap_unavailable"
         )
@@ -130,10 +91,6 @@ final class ShortcutRuntimeReporter {
 
     func plainHotkeysRegistered(_ registered: Bool) {
         status.update(plainHotkeysRegistered: registered)
-    }
-
-    func commandCenterRouteRunning(_ running: Bool) {
-        status.update(commandCenterRouteRunning: running)
     }
 
     func fnHotkeysRegistered(_ registered: Bool) {

@@ -226,7 +226,6 @@ shortcut_accessibility=""
 shortcut_listen_event=""
 shortcut_event_tap_running=""
 shortcut_active_event_tap=""
-shortcut_command_center_route=""
 shortcut_app_path=""
 if [[ -f "$shortcut_status_file" ]]; then
   shortcut_status="$(python3 - "$shortcut_status_file" <<'PY'
@@ -241,13 +240,12 @@ values = [
     status["listenEventGranted"],
     status["eventTapRunning"],
     status.get("activeEventTap", ""),
-    status["commandCenterRouteRunning"],
     status["appPath"],
 ]
 print("\x1f".join(str(value).lower() if isinstance(value, bool) else str(value) for value in values))
 PY
 )"
-  IFS=$'\x1f' read -r shortcut_media_fallback shortcut_accessibility shortcut_listen_event shortcut_event_tap_running shortcut_active_event_tap shortcut_command_center_route shortcut_app_path <<<"$shortcut_status"
+  IFS=$'\x1f' read -r shortcut_media_fallback shortcut_accessibility shortcut_listen_event shortcut_event_tap_running shortcut_active_event_tap shortcut_app_path <<<"$shortcut_status"
 fi
 
 hotkey_logs="$(/usr/bin/log show --last 30m --info --debug --style compact --predicate 'subsystem == "com.fpieringer.Keyway" && category == "Hotkeys"' 2>/dev/null || true)"
@@ -256,15 +254,12 @@ if [[ "$shortcut_media_fallback" == "enabled" \
     && "$shortcut_accessibility" == "true" \
     && "$shortcut_listen_event" == "true" \
     && "$shortcut_event_tap_running" == "true" \
-    && "$shortcut_active_event_tap" == "cghid" \
-    && "$shortcut_command_center_route" == "true" ]]; then
-  pass "Keyway persisted shortcut runtime status is cghid event-tap interception enabled with Command Center route shield"
-elif grep -q 'mediaFallback=enabled tap=cghid' <<<"$hotkey_logs"; then
-  pass "Keyway cghid event tap has reached mediaFallback=enabled"
+    && "$shortcut_active_event_tap" == "cghid" ]]; then
+  pass "Keyway persisted shortcut runtime status has dual event-tap interception and the hidden command receiver enabled"
+elif grep -q 'mediaFallback=enabled input=event_tap_and_hidden_command_center' <<<"$hotkey_logs"; then
+  pass "Keyway event taps and hidden command receiver have reached mediaFallback=enabled"
 elif [[ "$shortcut_app_path" != "" && "$shortcut_app_path" != "$APP_DIR" ]]; then
   block "Keyway shortcut status belongs to $shortcut_app_path, not installed app $APP_DIR"
-elif [[ "$shortcut_event_tap_running" == "true" && "$shortcut_active_event_tap" == "cghid" && "$shortcut_command_center_route" != "true" ]]; then
-  block "Command Center route shield is not active; macOS can still route hardware media keys to its primary source"
 elif [[ "$shortcut_active_event_tap" != "" && "$shortcut_active_event_tap" != "cghid" ]]; then
   block "active media-key event tap is $shortcut_active_event_tap, not cghid"
 elif [[ "$shortcut_media_fallback" == "event_tap_create_failed" && "$shortcut_accessibility" != "true" ]]; then

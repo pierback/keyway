@@ -189,26 +189,29 @@ send = function_body("send(\n        command: MediaRemoteTransportCommand,\n    
 assert_order(
     send,
     [
-        "desktopTransport.submit(command: command, target: target)",
+        "desktopTransport.submit(command: command, target: target, onResult:",
         "chromiumBrowserExtensionController.submit(command: command, target: target",
         "fallbackMediaRemote(command: command, to: target, dispatchID: dispatchID, context: context)",
     ],
     "shared dispatch must prefer desktop adapters, then use Chromium extension exactly before MediaRemote fallback"
 )
 desktop_dispatch = send[
-    send.index("if let result = desktopTransport.submit(command: command, target: target) {"):
+    send.index("if let backend = desktopTransport.submit("):
     send.index("if let sent = chromiumBrowserExtensionController.submit")
 ]
 assert_order(
     desktop_dispatch,
     [
-        "trace(result: result, transportBackend: result.backend)",
-        "finishDispatch(id: dispatchID, fallback: false)",
-        "mediaRemoteController.refreshSnapshot()",
-        "showCommandResult(",
-        'logDispatch(command: command, target: target, context: context, transport: result.backend ?? "desktop")',
+        "desktopTransport.submit(command: command, target: target, onResult:",
+        "self.mediaSourceStore.recordCommandResult(result)",
+        "self.trace(result: result, transportBackend: result.backend)",
+        "self.finishDispatch(id: dispatchID, fallback: false)",
+        "self.mediaRemoteController.refreshSnapshot()",
+        "self.showCommandResult(",
+        "scheduleProgrammaticDispatchFallback(id: dispatchID)",
+        "logDispatch(command: command, target: target, context: context, transport: backend)",
     ],
-    "desktop transport results must be terminal and keep the shared dispatch bookkeeping"
+    "asynchronous desktop transport results must be terminal and keep the shared dispatch bookkeeping"
 )
 for forbidden in (
     "shouldFallbackFromUnsupportedDesktopResult(",
@@ -229,32 +232,31 @@ assert_order(
     mediaremote_fallback,
     [
         "let routedCommand = MediaTransportCommandRules.rowScopedCommand(command, for: target)",
-        "let helperGeneration = mediaRemoteController.helperGeneration",
-        "routeShieldDispatchID = dispatchID",
-        "let releaseStarted = releaseRouteShield(",
-        "guard succeeded,",
-        "self.routeShieldDispatchTask = Task",
-        "guard self.sendMediaRemote(",
+        "guard sendMediaRemote(",
+        "self.mediaRemoteController.probeHelperLiveness()",
+        "mediaRemoteDispatchFailed(",
     ],
-    "MediaRemote fallback must scope Play/Pause and await an owned, acknowledged route-shield release before using the player path"
+    "MediaRemote fallback must scope Play/Pause and submit directly through the selected player path"
 )
 for forbidden in (
-    "mediaRemoteRouteShieldReleaseDelayNanoseconds",
+    "routeShield",
+    "RouteShield",
     "Task.sleep",
-    "relaxRouteShield",
 ):
     if forbidden in mediaremote_fallback:
-        fail(f"MediaRemote route-shield correctness must not rely on timers or fire-and-forget release: {forbidden}")
+        fail(f"MediaRemote fallback must not retain route-shield release machinery: {forbidden}")
 
 mediaremote = function_body("sendMediaRemote")
 assert_order(
     mediaremote,
     [
         "mediaRemoteController.submit(command: command, targetID: target.id)",
-        "finishRouteShieldDispatch(",
+        "self.trace(result: result, transportBackend: Self.mediaRemotePlayerPathBackend)",
         "Self.mediaRemotePlayerPathBackend",
-        "finishDispatch(id: dispatchID, fallback: false)",
-        "showCommandResult(",
+        "self.finishDispatch(id: dispatchID, fallback: false)",
+        "self.showCommandResult(",
+        "scheduleProgrammaticDispatchFallback(id: dispatchID)",
+        "logDispatch(command: command, target: target, context: context, transport: Self.mediaRemotePlayerPathBackend)",
     ],
     "MediaRemote fallback must use the player path and preserve async result handling"
 )
