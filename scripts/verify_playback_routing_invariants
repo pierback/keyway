@@ -173,14 +173,16 @@ show_chooser_overlay = text[
     text.index("    private func sortedTargets(")
 ]
 for required in (
-    "overlayController.isVisible || chooserSession.isActive",
+    "overlayController.isAwaitingSelection || chooserSession.isActive",
     '"chooser_reentry_ignored"',
     "reason: chooserState",
     "commandCenterMetadata: commandCenterMetadata",
-    'overlayController.isVisible ? "visible" : chooserSession.stateName',
+    'overlayController.isAwaitingSelection ? "visible" : chooserSession.stateName',
 ):
     if required not in chooser_reentry_helper:
         raise SystemExit(f"verify_playback_routing_invariants: chooser reentry helper is missing required behavior: {required}")
+if "overlayController.isVisible || chooserSession.isActive" in chooser_reentry_helper:
+    raise SystemExit("verify_playback_routing_invariants: passive automatic-route confirmation must not block the next media command")
 if "chooserReentryBlocked(" not in show_chooser_immediately:
     raise SystemExit("verify_playback_routing_invariants: direct chooser entry must check reentry before refreshing cached targets")
 if show_chooser_immediately.index("chooserReentryBlocked(") > show_chooser_immediately.index("let cached = sortedTargets(mediaSourceStore.rows.map(\\.target))"):
@@ -225,10 +227,10 @@ targets_route = text[
 ]
 for required in (
     "if targets.count == 1",
-    "send(command: command, to: targets[0], reason: .single)",
+    "send(\n                command: command,\n                to: targets[0],\n                rows: sourceRows(for: targets),\n                reason: .single\n            )",
     "if MediaTransportCommandRules.isPlayFamily(command)",
     "targetResolver.automaticTarget(",
-    "send(command: command, to: decision.target, reason: decision.reason)",
+    "send(\n                command: command,\n                to: decision.target,\n                rows: sourceRows(for: targets),\n                reason: decision.reason\n            )",
     "showChooserOverlay(",
     ):
         if required not in targets_route:
@@ -271,12 +273,18 @@ if unsupported_check not in result_body:
 if result_body.index(automation_check) > result_body.index(unsupported_check):
     raise SystemExit("verify_playback_routing_invariants: Automation denial hint must be checked before the generic unsupported branch")
 for required in (
-    "if result.ok",
-    "guard case .programmatic = context",
-    'title: "\\(command.displayName) → \\(target.appName)"',
+    "if result.ok {",
+    "return",
 ):
     if required not in result_body:
-        raise SystemExit("verify_playback_routing_invariants: automatic routing confirmation is incomplete")
+        raise SystemExit("verify_playback_routing_invariants: successful dispatches must return without a notification")
+for forbidden in (
+    "guard case .programmatic = context",
+    'title: "\\(command.displayName) → \\(target.appName)"',
+    'message: "Routed automatically"',
+):
+    if forbidden in result_body:
+        raise SystemExit(f"verify_playback_routing_invariants: successful dispatches must not retain the old notification: {forbidden}")
 PY
 
 grep -q 'case session = "session"' "$event_tap" \
@@ -464,7 +472,7 @@ PY
 grep -q 'decision_current_targets' "$transport" \
   || fail "play, pause, play/pause, previous, and next must share current-target ambiguity routing"
 
-grep -q 'MediaTransportCommandRules.rowScopedCommand(command, for: target)' "$transport" \
+grep -q 'MediaTransportCommandRules.rowScopedCommand(command, for: target, after: nil)' "$transport" \
   || fail "MediaRemote Play/Pause must resolve from the target's visible playback state"
 
 grep -q 'com.spotify.client' "$desktop_adapter" \
@@ -600,7 +608,7 @@ fallback_start = text.index("    private func fallbackMediaRemote(")
 fallback_end = text.index("\n    private func sendMediaRemote(", fallback_start)
 fallback_body = text[fallback_start:fallback_end]
 for needle in (
-    "let routedCommand = MediaTransportCommandRules.rowScopedCommand(command, for: target)",
+    "let routedCommand = MediaTransportCommandRules.rowScopedCommand(command, for: target, after: nil)",
     "guard sendMediaRemote(",
     "self.mediaRemoteController.probeHelperLiveness()",
     "mediaRemoteDispatchFailed(",
@@ -608,7 +616,7 @@ for needle in (
     if needle not in fallback_body:
         raise SystemExit(f"verify_playback_routing_invariants: MediaRemote fallback must contain {needle!r}")
 if not (
-    fallback_body.index("let routedCommand = MediaTransportCommandRules.rowScopedCommand(command, for: target)")
+    fallback_body.index("let routedCommand = MediaTransportCommandRules.rowScopedCommand(command, for: target, after: nil)")
     < fallback_body.index("guard sendMediaRemote(")
     < fallback_body.index("self.mediaRemoteController.probeHelperLiveness()")
     < fallback_body.index("mediaRemoteDispatchFailed(")
@@ -622,7 +630,7 @@ for forbidden in (
 ):
     if forbidden in fallback_body:
         raise SystemExit(f"verify_playback_routing_invariants: MediaRemote fallback must not retain obsolete release machinery {forbidden!r}")
-if text.count("MediaTransportCommandRules.rowScopedCommand(command, for: target)") != 1:
+if text.count("MediaTransportCommandRules.rowScopedCommand(command, for: target, after: nil)") != 1:
     raise SystemExit("verify_playback_routing_invariants: MediaRemote fallback must be the single target-state command-scoping owner")
 dispatch_from_chooser = text[text.index("private func dispatchFromChooser"):text.index("private func logDispatch")]
 if "send(command: command, to: target, dispatchID: dispatchID, context: .chooser)" not in dispatch_from_chooser:
@@ -717,13 +725,20 @@ if "send(command: command, to: target, dispatchID: dispatchID, context: .chooser
     raise SystemExit("verify_playback_routing_invariants: chooser routing must submit through the adapter-aware selected-row path without request/response latency")
 if "Routed by chooser" in dispatch_from_chooser:
     raise SystemExit("verify_playback_routing_invariants: chooser success must not leave a 1.35s HUD after row selection")
-send_body = text[text.index("private func send(command:"):text.index("private func dispatchFromChooser")]
+send_body = text[
+    text.index("private func send(\n        command: MediaRemoteTransportCommand,"):
+    text.index("private func dispatchFromChooser")
+]
 if "Routed by " in send_body:
     raise SystemExit("verify_playback_routing_invariants: automatic playback success must not leave a 1.35s HUD")
 if "defer" in send_body or "commandCenterFilter.finishProgrammaticDispatch(command: command)" in send_body:
     raise SystemExit("verify_playback_routing_invariants: automatic dispatch must not tie echo cleanup to helper completion")
-if "beginBoundedProgrammaticDispatch(command: command)" not in send_body:
-    raise SystemExit("verify_playback_routing_invariants: automatic dispatch must use bounded programmatic echo handling")
+if "beginBoundedProgrammaticDispatch(command: spotlightCommand)" not in send_body:
+    raise SystemExit("verify_playback_routing_invariants: automatic dispatch must use bounded echo handling for the presented explicit command")
+if "send(command: spotlightCommand, to: target, dispatchID: dispatchID" not in send_body:
+    raise SystemExit("verify_playback_routing_invariants: automatic dispatch must send the presented explicit command")
+if "command: confirmationCommand" not in choose_body:
+    raise SystemExit("verify_playback_routing_invariants: chooser dispatch must send the presented explicit command")
 route_body = text[text.index("private func route("):text.index("    func showTargetChooser(")]
 if "chooserSession.isDispatching" in route_body or "chooser_dispatch_input_ignored" in route_body:
     raise SystemExit("verify_playback_routing_invariants: route boundary must not block a real next key press during chooser dispatch")
@@ -1021,8 +1036,12 @@ text = pathlib.Path(sys.argv[1]).read_text()
 start = text.index("    private func choose(_ target: MediaRemoteTarget)")
 end = text.index("    private func adjustSelectedExpandedVolume", start)
 body = text[start:end]
-if body.index("close(notifyDismiss: false)") > body.index("choose?(target, command)"):
-    raise SystemExit("verify_playback_routing_invariants: chooser row clicks must close the modal before MediaRemote dispatch")
+for required in (
+    "guard let confirmationCommand = choose?(target, command) else",
+    "presentRouteConfirmation(command: confirmationCommand, target: target, rows: rows)",
+):
+    if required not in body:
+        raise SystemExit(f"verify_playback_routing_invariants: chooser row clicks must retain the modal for confirmation: {required}")
 PY
 
 ! grep -q 'acceptCommandCallback\|duplicateCallbackInterval\|lastAcceptedCommand' "$command_center" \
@@ -1588,10 +1607,8 @@ import sys
 
 text = pathlib.Path(sys.argv[1]).read_text()
 model = pathlib.Path(sys.argv[2]).read_text()
-choose = text.index("choose?(target, command)")
-close = text.index("close(notifyDismiss: false)")
-if close > choose:
-    raise SystemExit("verify_playback_routing_invariants: chooser must close the panel before selected-row dispatch")
+if "presentRouteConfirmation(command: confirmationCommand, target: target, rows: rows)" not in text:
+    raise SystemExit("verify_playback_routing_invariants: chooser must reuse the panel for selected-row confirmation")
 if "rowUpdates: AnyPublisher<[SourceRow], Never>? = nil" not in text:
     raise SystemExit("verify_playback_routing_invariants: chooser must accept live row updates while visible")
 if "updateRowsPreservingSelection" not in model:

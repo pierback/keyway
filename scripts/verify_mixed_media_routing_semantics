@@ -100,7 +100,7 @@ assert_order(
     route_targets,
     [
         "if targets.count == 1",
-        "send(command: command, to: targets[0], reason: .single)",
+        "send(\n                command: command,\n                to: targets[0],\n                rows: sourceRows(for: targets),\n                reason: .single\n            )",
     ],
     "non-row media input must still direct-route a single visible source"
 )
@@ -116,7 +116,7 @@ assert_contains(
 )
 assert_contains(
     route_targets,
-    "send(command: command, to: decision.target, reason: decision.reason)",
+    "send(\n                command: command,\n                to: decision.target,\n                rows: sourceRows(for: targets),\n                reason: decision.reason\n            )",
     "automatic target selection must dispatch through the shared send path"
 )
 play_family_index = route_targets.index("if MediaTransportCommandRules.isPlayFamily(command)")
@@ -231,7 +231,7 @@ if "desktopTransport.submit(command: command, target: target)" in mediaremote_fa
 assert_order(
     mediaremote_fallback,
     [
-        "let routedCommand = MediaTransportCommandRules.rowScopedCommand(command, for: target)",
+        "let routedCommand = MediaTransportCommandRules.rowScopedCommand(command, for: target, after: nil)",
         "guard sendMediaRemote(",
         "self.mediaRemoteController.probeHelperLiveness()",
         "mediaRemoteDispatchFailed(",
@@ -313,17 +313,18 @@ if result_presentation.index(automation_check) > result_presentation.index(unsup
 if result_presentation.index(unsupported_check) > result_presentation.index(generic_failure):
     fail("unsupported command results must be shown as unsupported rather than generic failures")
 
-for required in (
-    "if result.ok",
+assert_contains(
+    result_presentation,
+    "if result.ok {\n            return\n        }",
+    "successful transport results must leave confirmation to the passive target overlay",
+)
+for forbidden in (
     "guard case .programmatic = context",
     'title: "\\(command.displayName) → \\(target.appName)"',
     'message: "Routed automatically"',
 ):
-    assert_contains(
-        result_presentation,
-        required,
-        "successful automatic routing must post a native confirmation naming the command and target",
-    )
+    if forbidden in result_presentation:
+        fail(f"successful automatic routing must not retain the old notification: {forbidden}")
 if source.count("showCommandResult(") != 4:
     fail("all three terminal transport result paths must share one command-result presenter")
 if "showCommandFailureIfNeeded" in source or "showAutomaticRoutingConfirmationIfNeeded" in source:
@@ -357,7 +358,7 @@ assert_order(
     "desktop backend names must follow the same native/Chromium priority as dispatch"
 )
 
-if source.count("MediaTransportCommandRules.rowScopedCommand(command, for: target)") != 1:
+if source.count("MediaTransportCommandRules.rowScopedCommand(command, for: target, after: nil)") != 1:
     fail("MediaRemote fallback must be the single target-state command-scoping owner")
 
 print("verify_mixed_media_routing_semantics=ok")

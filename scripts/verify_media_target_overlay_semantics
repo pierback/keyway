@@ -1,0 +1,359 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+overlay="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTargetOverlayView.swift"
+model="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTargetOverlayModel.swift"
+controller="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTargetOverlayController.swift"
+transport="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportActionController.swift"
+
+python3 - "$overlay" "$model" "$controller" "$transport" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+view = Path(sys.argv[1]).read_text()
+model = Path(sys.argv[2]).read_text()
+controller = Path(sys.argv[3]).read_text()
+transport = Path(sys.argv[4]).read_text()
+row_start = view.index("    private func targetRow(")
+row_end = view.index("\n    private var expandedControls", row_start)
+row = view[row_start:row_end]
+
+transition_start = row.index("if let transition = playbackTransition {")
+transition_condition_end = row.index("{", transition_start)
+transition_condition = row[transition_start:transition_condition_end]
+for required in (
+    'target.isCurrentlyPlaying ? "Playing" : "Paused"',
+    'target.isCurrentlyPlaying ? "play.fill" : "pause.fill"',
+    'mediaTargetOverlay.playbackState.',
+    'let playbackTransition:',
+    '''if confirming && model.command == .play {
+            playbackTransition = ("Paused", "pause.fill", "Playing", "play.fill")
+        }''',
+    '''else if confirming && model.command == .pause {
+            playbackTransition = ("Playing", "play.fill", "Paused", "pause.fill")
+        }''',
+    'let routeConfirmationAnimated = model.routeConfirmationSequence == animatedRouteConfirmationSequence',
+    'VStack(alignment: .trailing, spacing: 1)',
+    'Label(transition.toTitle, systemImage: transition.toSymbol)',
+    'Text("was \\(transition.fromTitle)")',
+    '.accessibilityElement(children: .ignore)',
+    '.accessibilityLabel("\\(transition.toTitle), was \\(transition.fromTitle)")',
+    'mediaTargetOverlay.playbackTransition.',
+    '.frame(minWidth: 92, alignment: .trailing)',
+    '.scaleEffect(\n                        routeConfirmationAnimated || accessibilityReduceMotion ? 1 : 0.72,',
+    '.offset(x: routeConfirmationAnimated || accessibilityReduceMotion ? 0 : 12)',
+    '.opacity(routeConfirmationAnimated || accessibilityReduceMotion ? 1 : 0)',
+    'Color.accentColor.opacity(0.24)',
+    '.stroke(Color.accentColor.opacity(0.86), lineWidth: 1.5)',
+    '.shadow(color: Color.accentColor.opacity(0.34), radius: 10)',
+    '.scaleEffect(confirming && !accessibilityReduceMotion && !routeConfirmationAnimated ? 0.96 : 1)',
+    '.offset(y: confirming && !accessibilityReduceMotion && !routeConfirmationAnimated ? 4 : 0)',
+    'let routeConfirmation = model.routeConfirmationSequence != nil',
+    '.disabled(routeConfirmation)',
+    '.allowsHitTesting(!routeConfirmation)',
+    'if !accessibilityReduceMotion {',
+    'Color.accentColor.opacity(0.78)',
+    '.frame(width: 180)',
+    '.rotationEffect(.degrees(-10))',
+    '.offset(x: routeConfirmationAnimated ? 430 : -430)',
+    '.blendMode(.screen)',
+    '.easeInOut(duration: 0.52)',
+    '.clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))',
+    '.id(target.id)',
+):
+    if required not in row:
+        raise SystemExit(
+            f"verify_media_target_overlay_semantics: target rows must expose current playback state: {required!r}"
+        )
+if "automaticRouteResolved" in transition_condition or "accessibilityReduceMotion" in transition_condition:
+    raise SystemExit(
+        "verify_media_target_overlay_semantics: playback transition must remain visible until the confirmation closes"
+    )
+if ".transition(.opacity)" in row:
+    raise SystemExit(
+        "verify_media_target_overlay_semantics: route feedback must not crossfade overlapping trailing layouts"
+    )
+for forbidden in (
+    'Image(systemName: "chevron.right.2")',
+    '.background(Color.primary.opacity(0.08), in: Capsule())',
+    'GeometryReader { geometry in',
+):
+    if forbidden in row:
+        raise SystemExit(
+            f"verify_media_target_overlay_semantics: row confirmation must replace the old handoff treatment: {forbidden!r}"
+        )
+
+if 'if !automatic {\n                    Text("\\(index + 1)")' in row:
+    raise SystemExit(
+        "verify_media_target_overlay_semantics: automatic spotlight must retain the normal numbered source row"
+    )
+
+header_start = view.index("    private var commandHeader: some View {")
+header_end = view.index("\n    private var expandedSectionDivider", header_start)
+header = view[header_start:header_end]
+for required in (
+    'Image(systemName: "music.note.list")',
+    'Text("Media Targets")',
+    'ScrollViewReader { proxy in',
+    'proxy.scrollTo(targetID, anchor: .center)',
+):
+    if required not in view:
+        raise SystemExit(
+            f"verify_media_target_overlay_semantics: native automatic-route spotlight is missing {required!r}"
+        )
+if header.count("Text(") != 1 or header.count("Image(systemName:") != 1 or "model.command" in header:
+    raise SystemExit(
+        "verify_media_target_overlay_semantics: command header must be the exact normal Media Targets header"
+    )
+
+visible_literals = re.findall(r'\b(?:Text|Label)\("([^"]*)"', view)
+if any("automatic" in literal.casefold() for literal in visible_literals):
+    raise SystemExit(
+        "verify_media_target_overlay_semantics: automatic routing must not add alternate visible wording"
+    )
+
+for forbidden in (
+    'Text("Automatic")',
+    'mediaTargetOverlay.automaticBadge',
+    'mediaTargetOverlay.automaticCheck',
+    'mediaTargetOverlay.automaticMessage',
+    'selected automatically',
+):
+    if forbidden.casefold() in view.casefold():
+        raise SystemExit(
+            f"verify_media_target_overlay_semantics: automatic routing must keep the normal modal shell: {forbidden!r}"
+        )
+
+task_start = view.index("        .task(id: model.routeConfirmationSequence) {")
+task_end = view.index("\n    private var commandHeader", task_start)
+task = view[task_start:task_end]
+if "@State private var animatedRouteConfirmationSequence: Int?" not in view:
+    raise SystemExit(
+        "verify_media_target_overlay_semantics: route animation state must be keyed to the route sequence"
+    )
+if "resolvedAutomaticRouteSequence" in view or "@State private var automaticRouteResolved" in view:
+    raise SystemExit(
+        "verify_media_target_overlay_semantics: automatic route feedback must not resolve into a different trailing layout"
+    )
+for required in (
+    "DispatchQueue.main.async {",
+    "guard !accessibilityReduceMotion else",
+    "animatedRouteConfirmationSequence = nil",
+    "withAnimation(.spring(response: 0.46, dampingFraction: 0.68))",
+):
+    if required not in task:
+        raise SystemExit(
+            f"verify_media_target_overlay_semantics: repeat animation task is missing {required!r}"
+        )
+reduce_motion_branch = """guard !accessibilityReduceMotion else {
+                animatedRouteConfirmationSequence = sequence
+                return
+            }"""
+if reduce_motion_branch not in task:
+    raise SystemExit(
+        "verify_media_target_overlay_semantics: Reduce Motion must settle the current sequence immediately"
+    )
+if task.count("animatedRouteConfirmationSequence = sequence") != 2:
+    raise SystemExit(
+        "verify_media_target_overlay_semantics: normal and Reduce Motion paths must activate the current sequence"
+    )
+animation_start = task.index("DispatchQueue.main.async")
+sequence_guard = task.find("guard model.routeConfirmationSequence == sequence else", animation_start)
+activation = task.find("animatedRouteConfirmationSequence = sequence", animation_start)
+if sequence_guard == -1 or activation == -1 or sequence_guard > activation:
+    raise SystemExit(
+        "verify_media_target_overlay_semantics: queued route animation must be protected by the route sequence"
+    )
+if "asyncAfter" in task:
+    raise SystemExit(
+        "verify_media_target_overlay_semantics: playback transition lifetime must not use an independent timer"
+    )
+
+footer_start = view.index("    private var footer: some View {")
+footer_end = view.index("\n    private func footerHint(", footer_start)
+footer = view[footer_start:footer_end]
+for required in (
+    'footerHint("↑↓", "Select")',
+    'footerHint("Enter", "Route")',
+    'footerHint("⌘click / ⌘↵", "Open")',
+    'footerHint("Esc", "Close")',
+):
+    if required not in footer:
+        raise SystemExit(
+            f"verify_media_target_overlay_semantics: automatic routing must retain the normal footer: {required!r}"
+        )
+if "model.routeConfirmationSequence" in footer:
+    raise SystemExit(
+        "verify_media_target_overlay_semantics: the footer must not branch for automatic routing"
+    )
+
+confirmation_update_start = model.index("    func updateRouteConfirmation(")
+confirmation_update_end = model.index("\n    func updateRowsPreservingSelection(", confirmation_update_start)
+confirmation_update = model[confirmation_update_start:confirmation_update_end]
+for required in (
+    '@Published private(set) var routeConfirmationSequence: Int?',
+    'func updateRouteConfirmation(',
+    'rows: [SourceRow]',
+    'self.rows = rows',
+    'rows.firstIndex(where: { $0.id == target.id })!',
+):
+    if required not in model:
+        raise SystemExit(
+            f"verify_media_target_overlay_semantics: existing overlay model must own route confirmation state: {required!r}"
+        )
+if "routeConfirmationSequence = (routeConfirmationSequence ?? 0) + 1" not in confirmation_update:
+    raise SystemExit(
+        "verify_media_target_overlay_semantics: every route confirmation must advance its sequence"
+    )
+
+for required in (
+    'private static let routeConfirmationDismissInterval: TimeInterval = 0.8',
+    'var isAwaitingSelection: Bool',
+    'func showAutomaticRoute(',
+    'panel.hidesOnDeactivate = false',
+    'panel.ignoresMouseEvents = true',
+    'panel.orderFrontRegardless()',
+):
+    if required not in controller:
+        raise SystemExit(
+            f"verify_media_target_overlay_semantics: passive overlay controller path is missing {required!r}"
+        )
+
+automatic_route_start = controller.index("    func showAutomaticRoute(")
+automatic_route_end = controller.index("\n    func close()", automatic_route_start)
+automatic_route = controller[automatic_route_start:automatic_route_end]
+for required in (
+    'rows: [SourceRow]',
+    'presentRouteConfirmation(command: command, target: target, rows: rows)',
+    "NSAccessibility.post(",
+    "element: NSApplication.shared",
+    "notification: .announcementRequested",
+    '.announcement: "\\(target.appName) selected automatically for \\(command.displayName)"',
+):
+    if required not in automatic_route:
+        raise SystemExit(
+            f"verify_media_target_overlay_semantics: automatic route announcement is missing {required!r}"
+        )
+
+confirmation_start = controller.index("    private func presentRouteConfirmation(")
+confirmation_end = controller.index("\n    func close()", confirmation_start)
+confirmation = controller[confirmation_start:confirmation_end]
+for required in (
+    'model.updateRouteConfirmation(command: command, target: target, rows: rows)',
+    'panel.hidesOnDeactivate = false',
+    'panel.ignoresMouseEvents = true',
+    'deadline: .now() + Self.routeConfirmationDismissInterval',
+):
+    if required not in confirmation:
+        raise SystemExit(
+            f"verify_media_target_overlay_semantics: shared route confirmation lifecycle is missing {required!r}"
+        )
+
+choose_start = controller.index("    private func choose(")
+choose_end = controller.index("\n    private func focus(", choose_start)
+choose = controller[choose_start:choose_end]
+for required in (
+    'guard let confirmationCommand = choose?(target, command) else',
+    'let application = applicationToRestoreAfterSelection',
+    'let keyWindow = keyWindowToRestoreAfterSelection',
+    'NSApp.yieldActivation(to: application)',
+    '_ = application.activate(options: [])',
+    'keyWindow.makeKey()',
+    'NSApp.deactivate()',
+    'let rows = model.rows',
+    'presentRouteConfirmation(command: confirmationCommand, target: target, rows: rows)',
+):
+    if required not in choose:
+        raise SystemExit(
+            f"verify_media_target_overlay_semantics: manual routing must reuse row confirmation: {required!r}"
+        )
+if "panel.resignKey()" in controller:
+    raise SystemExit(
+        "verify_media_target_overlay_semantics: AppKit must relinquish focus through public activation APIs"
+    )
+
+chooser_show_start = transport.index("        let chooserID = chooserSession.begin(command: command)")
+chooser_show_end = transport.index("\n    private func sortedTargets(", chooser_show_start)
+chooser_show = transport[chooser_show_start:chooser_show_end]
+for required in (
+    "let previousRouteConfirmation = routeConfirmationPresentation.flatMap",
+    "after: previousRouteConfirmation?.targetID == target.id",
+    "self.routeConfirmationPresentation = (target.id, confirmationCommand)",
+    "return confirmationCommand",
+):
+    if required not in chooser_show:
+        raise SystemExit(
+            f"verify_media_target_overlay_semantics: manual confirmation must preserve rapid Play/Pause direction: {required!r}"
+        )
+
+focus_loss_start = controller.index("    private func closeFromFocusLoss()")
+focus_loss_end = controller.index("\n    private func close(notifyDismiss:", focus_loss_start)
+if "guard isAwaitingSelection else" not in controller[focus_loss_start:focus_loss_end]:
+    raise SystemExit(
+        "verify_media_target_overlay_semantics: focus loss must close only the interactive chooser"
+    )
+
+guard_start = transport.index("    private func chooserReentryBlocked(")
+guard_end = transport.index("\n    private func showChooserImmediately(", guard_start)
+guard_body = transport[guard_start:guard_end]
+if "overlayController.isAwaitingSelection" not in guard_body:
+    raise SystemExit(
+        "verify_media_target_overlay_semantics: automatic confirmation must not block a subsequent media command"
+    )
+if "overlayController.isVisible || chooserSession.isActive" in guard_body:
+    raise SystemExit(
+        "verify_media_target_overlay_semantics: generic overlay visibility must not be treated as an active chooser"
+    )
+
+send_start = transport.index("    private func send(\n")
+send_end = transport.index("\n    private func dispatchFromChooser(", send_start)
+send_body = transport[send_start:send_end]
+if "private var routeConfirmationPresentation: (targetID: String, command: MediaRemoteTransportCommand)?" not in transport:
+    raise SystemExit(
+        "verify_media_target_overlay_semantics: route confirmation must retain pending Play/Pause state"
+    )
+if "automaticRoutePresentation" in transport:
+    raise SystemExit(
+        "verify_media_target_overlay_semantics: route presentation state must use the generic hard-cutover name"
+    )
+for required in (
+    "after: previousConfirmationCommand",
+    "routeConfirmationPresentation = (target.id, spotlightCommand)",
+    "overlayController.showAutomaticRoute(command: spotlightCommand, target: target, rows: rows)",
+):
+    if required not in send_body:
+        raise SystemExit(
+            f"verify_media_target_overlay_semantics: automatic route action presentation is missing {required!r}"
+        )
+if transport.count("rows: sourceRows(for: targets)") < 2:
+    raise SystemExit(
+        "verify_media_target_overlay_semantics: automatic spotlight must receive the normal chooser rows"
+    )
+spotlight = send_body.find("overlayController.showAutomaticRoute(command: spotlightCommand, target: target, rows: rows)")
+dispatch = send_body.find("let dispatchID = beginBoundedProgrammaticDispatch(command: spotlightCommand)")
+if spotlight == -1 or dispatch == -1 or spotlight > dispatch:
+    raise SystemExit(
+        "verify_media_target_overlay_semantics: automatic target must be shown before dispatch starts"
+    )
+if "send(command: spotlightCommand, to: target, dispatchID: dispatchID" not in send_body:
+    raise SystemExit(
+        "verify_media_target_overlay_semantics: automatic target must dispatch the same explicit command that the confirmation presents"
+    )
+
+chooser_start = transport.index("onChoose: {")
+chooser_end = transport.index("onFocus:", chooser_start)
+chooser_body = transport[chooser_start:chooser_end]
+if "command: confirmationCommand" not in chooser_body:
+    raise SystemExit(
+        "verify_media_target_overlay_semantics: manually selected target must dispatch the same explicit command that the confirmation presents"
+    )
+
+if 'message: "Routed automatically"' in transport:
+    raise SystemExit(
+        "verify_media_target_overlay_semantics: automatic routing must not also emit the old success notification"
+    )
+
+print("verify_media_target_overlay_semantics=ok")
+PY

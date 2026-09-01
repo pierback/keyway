@@ -23,6 +23,8 @@ struct Published<Value> {
 }
 
 enum MediaRemoteTransportCommand: String {
+    case play
+    case pause
     case playPause
 }
 
@@ -69,6 +71,7 @@ struct OverlayModelSemantics {
         liveUpdatePreservesSelectionByID()
         goneRowStepsToSameListPosition()
         midSessionEmptyKeepsSessionState()
+        routeConfirmationReusesTheOverlaySession()
         print("verify_media_target_overlay_model_semantics=ok")
     }
 
@@ -175,6 +178,40 @@ struct OverlayModelSemantics {
         expectEqual(model.command, .playPause, "mid-session empty update must keep the pending command")
         expectEqual(model.expanded, true, "mid-session empty update must not reset the session")
         expectEqual(model.emptyState, .discovering, "mid-session empty update must keep the chooser in discovery/empty mode")
+    }
+
+    @MainActor
+    private static func routeConfirmationReusesTheOverlaySession() {
+        let model = MediaTargetOverlayModel()
+        let spotify = target(
+            id: "spotify:auto",
+            pid: 20,
+            identity: "com.spotify.client",
+            appName: "Spotify"
+        )
+        let rows = [
+            row(id: "arc:auto", pid: 10, identity: "company.thebrowser.Browser", appName: "Arc"),
+            SourceRow(target: spotify),
+        ]
+
+        model.updateRouteConfirmation(command: .pause, target: spotify, rows: rows)
+        let firstSequence = model.routeConfirmationSequence
+
+        expectEqual(model.rows.map(\.id), ["arc:auto", "spotify:auto"], "automatic feedback must retain the normal chooser rows")
+        expectEqual(model.selectedIndex, 1, "automatic feedback must select the routed source in the normal list")
+        expectEqual(model.selectedTarget?.id, "spotify:auto", "automatic feedback must select the routed source")
+        expectEqual(model.command, .pause, "automatic feedback must display the resolved playback action")
+        expectEqual(model.expanded, false, "automatic feedback must remain in the compact overlay")
+
+        model.updateRouteConfirmation(command: .pause, target: spotify, rows: rows)
+        expectEqual(
+            model.routeConfirmationSequence,
+            firstSequence.map { $0 + 1 },
+            "repeated routes to the same source must replay the spotlight"
+        )
+
+        model.update(command: .playPause, rows: [SourceRow(target: spotify)])
+        expectEqual(model.routeConfirmationSequence, nil, "an interactive chooser must clear route confirmation state")
     }
 
     private static func target(

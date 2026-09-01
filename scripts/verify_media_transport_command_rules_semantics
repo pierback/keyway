@@ -45,19 +45,29 @@ import Foundation
 struct CommandRuleSemantics {
     static func main() {
         expectEqual(
-            MediaTransportCommandRules.rowScopedCommand(.playPause, for: target(id: "playing", playing: true)),
+            MediaTransportCommandRules.rowScopedCommand(.playPause, for: target(id: "playing", playing: true), after: nil),
             .pause,
             "Play/Pause row dispatch must pause a playing row"
         )
         expectEqual(
-            MediaTransportCommandRules.rowScopedCommand(.playPause, for: target(id: "paused", playing: false)),
+            MediaTransportCommandRules.rowScopedCommand(.playPause, for: target(id: "paused", playing: false), after: nil),
             .play,
             "Play/Pause row dispatch must play a paused row"
         )
         expectEqual(
-            MediaTransportCommandRules.rowScopedCommand(.next, for: target(id: "playing", playing: true)),
+            MediaTransportCommandRules.rowScopedCommand(.next, for: target(id: "playing", playing: true), after: .pause),
             .next,
             "Non-Play/Pause row dispatch must keep the requested command"
+        )
+        expectEqual(
+            MediaTransportCommandRules.rowScopedCommand(.playPause, for: target(id: "stale-playing", playing: true), after: .pause),
+            .play,
+            "A rapid repeat must follow a pending Pause with Play even before playback metadata refreshes"
+        )
+        expectEqual(
+            MediaTransportCommandRules.rowScopedCommand(.playPause, for: target(id: "stale-paused", playing: false), after: .play),
+            .pause,
+            "A rapid repeat must follow a pending Play with Pause even before playback metadata refreshes"
         )
         expectFalse(
             MediaTransportCommandRules.shouldOpenChooserForAutomaticRoute(reachability: .live),
@@ -72,7 +82,7 @@ struct CommandRuleSemantics {
             "Absent rows must defensively divert automatic routing to the chooser"
         )
         expectEqual(
-            MediaTransportCommandRules.rowScopedCommand(.playPause, for: target(id: "suspect", playing: false)),
+            MediaTransportCommandRules.rowScopedCommand(.playPause, for: target(id: "suspect", playing: false), after: nil),
             .play,
             "Explicit suspect-row dispatch remains allowed and row scoped"
         )

@@ -4,10 +4,11 @@ import SwiftUI
 
 @MainActor
 final class MediaTargetOverlayController {
+    private static let routeConfirmationDismissInterval: TimeInterval = 0.8
     private let model = MediaTargetOverlayModel()
     private let audioController: MediaAudioControlController
     private var panel: MediaTargetOverlayPanel?
-    private var onChoose: ((MediaRemoteTarget, MediaRemoteTransportCommand?) -> Void)?
+    private var onChoose: ((MediaRemoteTarget, MediaRemoteTransportCommand?) -> MediaRemoteTransportCommand?)?
     private var onFocus: ((MediaRemoteTarget) -> Void)?
     private var onDismiss: (() -> Void)?
     private var isClosing = false
@@ -15,6 +16,9 @@ final class MediaTargetOverlayController {
     private var rowUpdatesSubscription: AnyCancellable?
     private var emptyConfirmationTask: Task<Void, Never>?
     private var emptyConfirmationGeneration = 0
+    private var routeConfirmationDismissWorkItem: DispatchWorkItem?
+    private var applicationToRestoreAfterSelection: NSRunningApplication?
+    private weak var keyWindowToRestoreAfterSelection: NSWindow?
     private var emptyDiagnostics: () -> String = { "Helper running / bridge connected" }
     private var resignActiveObserver: NSObjectProtocol?
     private var workspaceActivationObserver: NSObjectProtocol?
@@ -58,19 +62,31 @@ final class MediaTargetOverlayController {
         panel?.isVisible == true
     }
 
+    var isAwaitingSelection: Bool {
+        isVisible && model.routeConfirmationSequence == nil
+    }
+
     func show(
         command: MediaRemoteTransportCommand?,
         rows: [SourceRow],
         rowUpdates: AnyPublisher<[SourceRow], Never>? = nil,
         emptyDiagnostics: @escaping () -> String = { "Helper running / bridge connected" },
-        onChoose: @escaping (MediaRemoteTarget, MediaRemoteTransportCommand?) -> Void,
+        onChoose: @escaping (MediaRemoteTarget, MediaRemoteTransportCommand?) -> MediaRemoteTransportCommand?,
         onFocus: @escaping (MediaRemoteTarget) -> Void,
         onDismiss: @escaping () -> Void = {}
     ) {
+        routeConfirmationDismissWorkItem?.cancel()
+        routeConfirmationDismissWorkItem = nil
         self.onChoose = onChoose
         self.onFocus = onFocus
         self.onDismiss = onDismiss
         self.emptyDiagnostics = emptyDiagnostics
+        let keyWindow = NSApp.keyWindow
+        keyWindowToRestoreAfterSelection = keyWindow === panel ? nil : keyWindow
+        let frontmostApplication = NSWorkspace.shared.frontmostApplication
+        applicationToRestoreAfterSelection = frontmostApplication?.bundleIdentifier == Bundle.main.bundleIdentifier
+            ? nil
+            : frontmostApplication
         isClosing = false
         model.update(command: command, rows: rows)
         subscribeToRows(rowUpdates)
@@ -78,11 +94,73 @@ final class MediaTargetOverlayController {
         refreshAudioSnapshot()
 
         let panel = ensurePanel()
+        panel.hidesOnDeactivate = true
+        panel.ignoresMouseEvents = false
         resizeAndPosition(panel)
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
         panel.orderFrontRegardless()
         resizeAndPosition(panel)
+    }
+
+    func showAutomaticRoute(
+        command: MediaRemoteTransportCommand,
+        target: MediaRemoteTarget,
+        rows: [SourceRow]
+    ) {
+        applicationToRestoreAfterSelection = nil
+        keyWindowToRestoreAfterSelection = nil
+        onChoose = nil
+        onFocus = nil
+        onDismiss = nil
+        presentRouteConfirmation(command: command, target: target, rows: rows)
+        if panel?.isKeyWindow == true {
+            NSApp.deactivate()
+        }
+        NSAccessibility.post(
+            element: NSApplication.shared,
+            notification: .announcementRequested,
+            userInfo: [
+                .announcement: "\(target.appName) selected automatically for \(command.displayName)",
+                .priority: NSAccessibilityPriorityLevel.medium.rawValue,
+            ]
+        )
+    }
+
+    private func presentRouteConfirmation(
+        command: MediaRemoteTransportCommand,
+        target: MediaRemoteTarget,
+        rows: [SourceRow]
+    ) {
+        routeConfirmationDismissWorkItem?.cancel()
+        rowUpdatesSubscription = nil
+        emptyConfirmationTask = nil
+        emptyConfirmationGeneration += 1
+        isClosing = false
+        model.updateRouteConfirmation(command: command, target: target, rows: rows)
+
+        let panel = ensurePanel()
+        panel.hidesOnDeactivate = false
+        panel.ignoresMouseEvents = true
+        resizeAndPosition(panel)
+        panel.orderFrontRegardless()
+
+        let sequence = model.routeConfirmationSequence
+        let workItem = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self,
+                      self.model.routeConfirmationSequence == sequence
+                else {
+                    return
+                }
+                self.close(notifyDismiss: false)
+            }
+        }
+        routeConfirmationDismissWorkItem = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.routeConfirmationDismissInterval,
+            execute: workItem
+        )
     }
 
     func close() {
@@ -102,7 +180,7 @@ final class MediaTargetOverlayController {
     }
 
     private func closeFromFocusLoss() {
-        guard isVisible else {
+        guard isAwaitingSelection else {
             return
         }
         close(notifyDismiss: true)
@@ -115,6 +193,8 @@ final class MediaTargetOverlayController {
 
         isClosing = true
         let dismiss = onDismiss
+        routeConfirmationDismissWorkItem?.cancel()
+        routeConfirmationDismissWorkItem = nil
         panel?.orderOut(nil)
         onChoose = nil
         onFocus = nil
@@ -122,6 +202,8 @@ final class MediaTargetOverlayController {
         rowUpdatesSubscription = nil
         emptyConfirmationTask = nil
         emptyConfirmationGeneration += 1
+        applicationToRestoreAfterSelection = nil
+        keyWindowToRestoreAfterSelection = nil
         isClosing = false
 
         if notifyDismiss {
@@ -204,6 +286,13 @@ final class MediaTargetOverlayController {
     }
 
     private func handleKeyDown(_ event: NSEvent) -> Bool {
+        guard model.routeConfirmationSequence == nil else {
+            if event.keyCode == 53 {
+                close(notifyDismiss: false)
+            }
+            return true
+        }
+
         let keyCode = event.keyCode
         let characters = event.charactersIgnoringModifiers?.lowercased() ?? ""
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
@@ -256,10 +345,27 @@ final class MediaTargetOverlayController {
     private func choose(_ target: MediaRemoteTarget) {
         let choose = onChoose
         let command = model.command
+        let rows = model.rows
         onChoose = nil
+        onFocus = nil
         onDismiss = nil
-        close(notifyDismiss: false)
-        choose?(target, command)
+        guard let confirmationCommand = choose?(target, command) else {
+            close(notifyDismiss: false)
+            return
+        }
+        presentRouteConfirmation(command: confirmationCommand, target: target, rows: rows)
+        let application = applicationToRestoreAfterSelection
+        let keyWindow = keyWindowToRestoreAfterSelection
+        applicationToRestoreAfterSelection = nil
+        keyWindowToRestoreAfterSelection = nil
+        if let application {
+            NSApp.yieldActivation(to: application)
+            _ = application.activate(options: [])
+        } else if let keyWindow {
+            keyWindow.makeKey()
+        } else {
+            NSApp.deactivate()
+        }
     }
 
     private func focus(_ target: MediaRemoteTarget) {

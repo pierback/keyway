@@ -2,7 +2,9 @@ import AppKit
 import SwiftUI
 
 struct MediaTargetOverlayView: View {
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @ObservedObject var model: MediaTargetOverlayModel
+    @State private var animatedRouteConfirmationSequence: Int?
     let onChoose: (MediaRemoteTarget) -> Void
     let onFocus: (MediaRemoteTarget) -> Void
     let onSelect: (Int) -> Void
@@ -35,13 +37,32 @@ struct MediaTargetOverlayView: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .frame(width: 680)
+        .task(id: model.routeConfirmationSequence) {
+            guard let sequence = model.routeConfirmationSequence else {
+                animatedRouteConfirmationSequence = nil
+                return
+            }
+            animatedRouteConfirmationSequence = nil
+            guard !accessibilityReduceMotion else {
+                animatedRouteConfirmationSequence = sequence
+                return
+            }
+            DispatchQueue.main.async {
+                guard model.routeConfirmationSequence == sequence else {
+                    return
+                }
+                withAnimation(.spring(response: 0.46, dampingFraction: 0.68)) {
+                    animatedRouteConfirmationSequence = sequence
+                }
+            }
+        }
     }
 
     private var commandHeader: some View {
         HStack(spacing: 10) {
-            Image(systemName: model.command?.symbolName ?? "music.note.list")
+            Image(systemName: "music.note.list")
                 .foregroundStyle(.secondary)
-            Text(model.command?.displayName ?? "Media Targets")
+            Text("Media Targets")
                 .font(.system(size: 16, weight: .semibold))
             Spacer()
         }
@@ -64,11 +85,27 @@ struct MediaTargetOverlayView: View {
     private var targetList: some View {
         Group {
             if model.rows.count > 6 {
-                ScrollView {
-                    targetRows
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        targetRows
+                    }
+                    .scrollIndicators(.hidden)
+                    .frame(height: targetListHeight)
+                    .task(id: model.routeConfirmationSequence) {
+                        guard
+                            let sequence = model.routeConfirmationSequence,
+                            let targetID = model.selectedTarget?.id
+                        else {
+                            return
+                        }
+                        DispatchQueue.main.async {
+                            guard model.routeConfirmationSequence == sequence else {
+                                return
+                            }
+                            proxy.scrollTo(targetID, anchor: .center)
+                        }
+                    }
                 }
-                .scrollIndicators(.hidden)
-                .frame(height: targetListHeight)
             } else {
                 targetRows
             }
@@ -148,7 +185,27 @@ struct MediaTargetOverlayView: View {
     private func targetRow(index: Int, row: SourceRow) -> some View {
         let target = row.target
         let selected = index == model.selectedIndex
+        let routeConfirmation = model.routeConfirmationSequence != nil
+        let confirming = routeConfirmation && selected
+        let routeConfirmationAnimated = model.routeConfirmationSequence == animatedRouteConfirmationSequence
         let suspect = row.reachability.isSuspect
+        let playbackTransition: (
+            fromTitle: String,
+            fromSymbol: String,
+            toTitle: String,
+            toSymbol: String
+        )?
+        if confirming && model.command == .play {
+            playbackTransition = ("Paused", "pause.fill", "Playing", "play.fill")
+        } else if confirming && model.command == .pause {
+            playbackTransition = ("Playing", "play.fill", "Paused", "pause.fill")
+        } else {
+            playbackTransition = nil
+        }
+        let playbackTitle = playbackTransition?.toTitle
+            ?? (target.isCurrentlyPlaying ? "Playing" : "Paused")
+        let playbackSymbol = playbackTransition?.toSymbol
+            ?? (target.isCurrentlyPlaying ? "play.fill" : "pause.fill")
 
         return Button {
             let modifiers = (NSApp.currentEvent?.modifierFlags.intersection(.deviceIndependentFlagsMask) ?? [])
@@ -164,10 +221,14 @@ struct MediaTargetOverlayView: View {
             HStack(spacing: 12) {
                 Text("\(index + 1)")
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(confirming ? Color.white : Color.primary.opacity(0.64))
                     .frame(width: 23, height: 23)
                     .background(
-                        Color.primary.opacity(selected ? 0.14 : 0.08),
+                        confirming
+                            ? Color.accentColor.opacity(
+                                routeConfirmationAnimated || accessibilityReduceMotion ? 0.88 : 0.22
+                            )
+                            : Color.primary.opacity(selected ? 0.14 : 0.08),
                         in: RoundedRectangle(cornerRadius: 6, style: .continuous)
                     )
 
@@ -212,6 +273,39 @@ struct MediaTargetOverlayView: View {
 
                 Spacer()
 
+                if let transition = playbackTransition {
+                    VStack(alignment: .trailing, spacing: 1) {
+                        Label(transition.toTitle, systemImage: transition.toSymbol)
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(Color.accentColor)
+
+                        Text("was \(transition.fromTitle)")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .fixedSize(horizontal: true, vertical: false)
+                    .frame(minWidth: 92, alignment: .trailing)
+                    .scaleEffect(
+                        routeConfirmationAnimated || accessibilityReduceMotion ? 1 : 0.72,
+                        anchor: .trailing
+                    )
+                    .offset(x: routeConfirmationAnimated || accessibilityReduceMotion ? 0 : 12)
+                    .opacity(routeConfirmationAnimated || accessibilityReduceMotion ? 1 : 0)
+                    .animation(
+                        .spring(response: 0.38, dampingFraction: 0.62)
+                            .delay(accessibilityReduceMotion ? 0 : 0.04),
+                        value: routeConfirmationAnimated
+                    )
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("\(transition.toTitle), was \(transition.fromTitle)")
+                    .accessibilityIdentifier("mediaTargetOverlay.playbackTransition.\(target.id)")
+                } else {
+                    Label(playbackTitle, systemImage: playbackSymbol)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(playbackTitle == "Playing" ? Color.primary : Color.secondary)
+                        .accessibilityIdentifier("mediaTargetOverlay.playbackState.\(target.id)")
+                }
+
                 if target.id == model.selectedTarget?.id {
                     Image(systemName: "return")
                         .font(.system(size: 14, weight: .semibold))
@@ -222,12 +316,70 @@ struct MediaTargetOverlayView: View {
             .frame(height: 52)
             .contentShape(Rectangle())
             .background {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(selected ? Color.primary.opacity(0.12) : Color.clear)
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(selected ? Color.primary.opacity(0.12) : Color.clear)
+
+                    if confirming {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        Color.accentColor.opacity(0.24),
+                                        Color.accentColor.opacity(0.08),
+                                    ],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+                            .opacity(routeConfirmationAnimated || accessibilityReduceMotion ? 1 : 0)
+
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(Color.accentColor.opacity(0.86), lineWidth: 1.5)
+                            .shadow(color: Color.accentColor.opacity(0.34), radius: 10)
+                            .opacity(routeConfirmationAnimated || accessibilityReduceMotion ? 1 : 0)
+
+                        if !accessibilityReduceMotion {
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(Color.clear)
+                                .overlay {
+                                    LinearGradient(
+                                        colors: [
+                                            Color.clear,
+                                            Color.white.opacity(0.22),
+                                            Color.accentColor.opacity(0.78),
+                                            Color.white.opacity(0.58),
+                                            Color.clear,
+                                        ],
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
+                                    .frame(width: 180)
+                                    .rotationEffect(.degrees(-10))
+                                    .offset(x: routeConfirmationAnimated ? 430 : -430)
+                                    .blendMode(.screen)
+                                    .animation(
+                                        .easeInOut(duration: 0.52),
+                                        value: routeConfirmationAnimated
+                                    )
+                                }
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
+                    }
+                }
             }
         }
         .buttonStyle(.plain)
         .focusable(false)
+        .scaleEffect(confirming && !accessibilityReduceMotion && !routeConfirmationAnimated ? 0.96 : 1)
+        .offset(y: confirming && !accessibilityReduceMotion && !routeConfirmationAnimated ? 4 : 0)
+        .animation(
+            .spring(response: 0.46, dampingFraction: 0.68),
+            value: routeConfirmationAnimated
+        )
+        .disabled(routeConfirmation)
+        .allowsHitTesting(!routeConfirmation)
+        .id(target.id)
         .accessibilityIdentifier("mediaTargetOverlay.target.\(target.id)")
     }
 

@@ -294,7 +294,6 @@ if [[ "$PHYSICAL_MEDIA_KEYS" == "1" ]]; then
   hide_media_windows_for_chooser
   open -a Finder
   sleep 0.6
-  expected_header="Play/Pause"
 else
   : >"$VISIBLE_STATE_FILE"
 fi

@@ -28,6 +28,7 @@ final class MediaTransportActionController {
     private let targetResolver = MediaTransportTargetResolver()
     private var programmaticDispatches: [UUID: MediaTransportPendingDispatchEcho] = [:]
     private var programmaticDispatchFallbackTasks: [UUID: Task<Void, Error>] = [:]
+    private var routeConfirmationPresentation: (targetID: String, command: MediaRemoteTransportCommand)?
 
     init(
         mediaRemoteController: MediaRemoteController,
@@ -186,6 +187,7 @@ final class MediaTransportActionController {
     }
 
     func route(command: MediaRemoteTransportCommand, to target: MediaRemoteTarget) {
+        routeConfirmationPresentation = nil
         rememberTarget(target)
         let dispatchID = beginBoundedProgrammaticDispatch(command: command)
         send(command: command, to: target, dispatchID: dispatchID, context: .direct)
@@ -206,12 +208,12 @@ final class MediaTransportActionController {
         metadata: MediaTransportInputMetadata?,
         commandCenterMetadata: MediaCommandCenterInputMetadata?
     ) -> Bool {
-        guard overlayController.isVisible || chooserSession.isActive else {
+        guard overlayController.isAwaitingSelection || chooserSession.isActive else {
             return false
         }
 
         let commandName = command?.rawValue ?? "none"
-        let chooserState = overlayController.isVisible ? "visible" : chooserSession.stateName
+        let chooserState = overlayController.isAwaitingSelection ? "visible" : chooserSession.stateName
         logger.info("MediaTransport chooser_reentry_ignored command=\(commandName, privacy: .public) source=\(source.rawValue, privacy: .public) state=\(chooserState, privacy: .public)")
         trace(
             "chooser_reentry_ignored",
@@ -310,7 +312,12 @@ final class MediaTransportActionController {
                 )
                 return
             }
-            send(command: command, to: targets[0], reason: .single)
+            send(
+                command: command,
+                to: targets[0],
+                rows: sourceRows(for: targets),
+                reason: .single
+            )
             return
         }
 
@@ -340,7 +347,12 @@ final class MediaTransportActionController {
                 )
                 return
             }
-            send(command: command, to: decision.target, reason: decision.reason)
+            send(
+                command: command,
+                to: decision.target,
+                rows: sourceRows(for: targets),
+                reason: decision.reason
+            )
             return
         }
 
@@ -370,6 +382,11 @@ final class MediaTransportActionController {
         }
 
         let chooserID = chooserSession.begin(command: command)
+        let previousRouteConfirmation = routeConfirmationPresentation.flatMap { presentation in
+            overlayController.isVisible && !overlayController.isAwaitingSelection
+                ? presentation
+                : nil
+        }
 
         overlayController.show(
             command: command,
@@ -379,7 +396,7 @@ final class MediaTransportActionController {
                 self?.emptyDiscoveryDiagnostics() ?? "Helper unavailable / bridge disconnected"
             },
             onChoose: { [weak self] target, command in
-                guard let self else { return }
+                guard let self else { return nil }
                 self.logger.info("MediaTransport chooser_select requestedCommand=\(command?.rawValue ?? "none", privacy: .public) target=\(target.appName, privacy: .public) targetID=\(target.id, privacy: .public) playing=\(target.isCurrentlyPlaying, privacy: .public)")
                 self.trace(
                     "chooser_select",
@@ -402,8 +419,17 @@ final class MediaTransportActionController {
                         message: "No transport command was pending.",
                         dismissAfter: 1.35
                     )
-                    return
+                    return nil
                 }
+
+                let confirmationCommand = MediaTransportCommandRules.rowScopedCommand(
+                    command,
+                    for: target,
+                    after: previousRouteConfirmation?.targetID == target.id
+                        ? previousRouteConfirmation?.command
+                        : nil
+                )
+                self.routeConfirmationPresentation = (target.id, confirmationCommand)
 
                 self.chooserSession.finish(id: chooserID)
                 self.trace(
@@ -413,10 +439,11 @@ final class MediaTransportActionController {
                     targetCount: self.mediaSourceStore.rows.count
                 )
                 self.dispatchFromChooser(
-                    command: command,
+                    command: confirmationCommand,
                     to: target,
                     metadata: metadata
                 )
+                return confirmationCommand
             },
             onFocus: { [weak self] target in
                 guard let self else { return }
@@ -495,11 +522,30 @@ final class MediaTransportActionController {
         case chooser
     }
 
-    private func send(command: MediaRemoteTransportCommand, to target: MediaRemoteTarget, reason: MediaTransportRoutingReason) {
+    private func send(
+        command: MediaRemoteTransportCommand,
+        to target: MediaRemoteTarget,
+        rows: [SourceRow],
+        reason: MediaTransportRoutingReason
+    ) {
         logger.info("MediaTransport dispatch command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) targetID=\(target.id, privacy: .public) reason=\(reason.rawValue, privacy: .public)")
         rememberTarget(target)
-        let dispatchID = beginBoundedProgrammaticDispatch(command: command)
-        send(command: command, to: target, dispatchID: dispatchID, context: .programmatic(reason: reason))
+        let previousConfirmationCommand = routeConfirmationPresentation.flatMap { presentation in
+            overlayController.isVisible
+                && !overlayController.isAwaitingSelection
+                && presentation.targetID == target.id
+                ? presentation.command
+                : nil
+        }
+        let spotlightCommand = MediaTransportCommandRules.rowScopedCommand(
+            command,
+            for: target,
+            after: previousConfirmationCommand
+        )
+        routeConfirmationPresentation = (target.id, spotlightCommand)
+        overlayController.showAutomaticRoute(command: spotlightCommand, target: target, rows: rows)
+        let dispatchID = beginBoundedProgrammaticDispatch(command: spotlightCommand)
+        send(command: spotlightCommand, to: target, dispatchID: dispatchID, context: .programmatic(reason: reason))
     }
 
     private func send(
@@ -516,9 +562,7 @@ final class MediaTransportActionController {
             self.mediaRemoteController.refreshSnapshot()
             self.showCommandResult(
                 result: result,
-                command: command,
-                target: target,
-                context: context
+                target: target
             )
         }) {
             scheduleProgrammaticDispatchFallback(id: dispatchID)
@@ -532,9 +576,7 @@ final class MediaTransportActionController {
             self.finishDispatch(id: dispatchID, fallback: false)
             self.showCommandResult(
                 result: result,
-                command: command,
-                target: target,
-                context: context
+                target: target
             )
         }) {
             guard sent else {
@@ -560,7 +602,7 @@ final class MediaTransportActionController {
         dispatchID: UUID,
         context: MediaTransportDispatchContext
     ) {
-        let routedCommand = MediaTransportCommandRules.rowScopedCommand(command, for: target)
+        let routedCommand = MediaTransportCommandRules.rowScopedCommand(command, for: target, after: nil)
         guard sendMediaRemote(
             command: routedCommand,
             to: target,
@@ -612,9 +654,7 @@ final class MediaTransportActionController {
             self.finishDispatch(id: dispatchID, fallback: false)
             self.showCommandResult(
                 result: result,
-                command: command,
-                target: target,
-                context: context
+                target: target
             )
         }
         if sent {
@@ -791,19 +831,9 @@ final class MediaTransportActionController {
 
     private func showCommandResult(
         result: MediaRemoteCommandResultEvent,
-        command: MediaRemoteTransportCommand,
-        target: MediaRemoteTarget,
-        context: MediaTransportDispatchContext
+        target: MediaRemoteTarget
     ) {
         if result.ok {
-            guard case .programmatic = context else {
-                return
-            }
-            StatusHUD.shared.finish(
-                title: "\(command.displayName) → \(target.appName)",
-                message: "Routed automatically",
-                dismissAfter: 2.2
-            )
             return
         }
 

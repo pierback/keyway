@@ -22,10 +22,17 @@ enum MediaTransportCommandRules {
 
     static func rowScopedCommand(
         _ command: MediaRemoteTransportCommand,
-        for target: MediaRemoteTarget
+        for target: MediaRemoteTarget,
+        after previousCommand: MediaRemoteTransportCommand?
     ) -> MediaRemoteTransportCommand {
         guard command == .playPause else {
             return command
+        }
+        if previousCommand == .play {
+            return .pause
+        }
+        if previousCommand == .pause {
+            return .play
         }
         return target.isCurrentlyPlaying ? .pause : .play
     }

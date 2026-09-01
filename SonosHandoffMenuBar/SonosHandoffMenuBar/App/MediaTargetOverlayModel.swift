@@ -12,6 +12,7 @@ final class MediaTargetOverlayModel: ObservableObject {
     @Published private(set) var rows: [SourceRow] = []
     @Published var selectedIndex = 0
     @Published var expanded = false
+    @Published private(set) var routeConfirmationSequence: Int?
     @Published var emptyState: MediaTargetOverlayEmptyState = .discovering
     @Published var audioSnapshot = MediaAudioControlSnapshot(
         sonos: .disabled(title: "Sonos", detail: "Checking output"),
@@ -34,6 +35,20 @@ final class MediaTargetOverlayModel: ObservableObject {
         self.rows = rows
         selectedIndex = 0
         expanded = false
+        routeConfirmationSequence = nil
+        emptyState = .discovering
+    }
+
+    func updateRouteConfirmation(
+        command: MediaRemoteTransportCommand,
+        target: MediaRemoteTarget,
+        rows: [SourceRow]
+    ) {
+        self.command = command
+        self.rows = rows
+        selectedIndex = rows.firstIndex(where: { $0.id == target.id })!
+        expanded = false
+        routeConfirmationSequence = (routeConfirmationSequence ?? 0) + 1
         emptyState = .discovering
     }
 

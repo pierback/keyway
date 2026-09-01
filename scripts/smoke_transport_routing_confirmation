@@ -11,6 +11,7 @@ VISIBLE_STATE_FILE="$(mktemp -t keyway-routing-visible-apps.XXXXXX)"
 CREATED_TARGET_FILE=""
 SMOKE_START="$(date '+%Y-%m-%d %H:%M:%S')"
 INITIAL_TARGET_RATE=""
+LATEST_ROUTE_CONFIRMATION_TEXT=""
 
 if [[ ! -d "$APP_DIR" ]]; then
   echo "smoke_transport_routing_confirmation: missing app bundle: $APP_DIR" >&2
@@ -519,13 +520,17 @@ recent_keyway_logs_since() {
 prompt_physical_transport_key() {
   local command="$1"
   local start_time="$2"
-  local display_name logs
+  local display_name logs window_text
   display_name="$(command_display_name "$command")"
 
   printf '\nPress the physical %s media key now. Waiting up to 20 seconds...\n' "$display_name" >/dev/tty
   logs=""
   for _ in {1..40}; do
     sleep 0.5
+    window_text="$(keyway_window_text || true)"
+    if grep -Fqx "Media Targets" <<<"$window_text"; then
+      LATEST_ROUTE_CONFIRMATION_TEXT="$window_text"
+    fi
     logs="$(recent_keyway_logs_since "$start_time")"
     if grep -Fq "action=transport_${command} source=media_key" <<<"$logs"; then
       return 0
@@ -547,59 +552,83 @@ trigger_media_key() {
   fi
 }
 
-assert_no_custom_keyway_popup() {
+route_log_matches() {
   local command="$1"
-  local expected_title="$2"
-  local window_text
-  window_text="$(keyway_window_text || true)"
+  local logs="$2"
+  if [[ "$command" == "playPause" ]]; then
+    grep -Eq 'MediaTransport route command=(play|pause) target=' <<<"$logs"
+  else
+    grep -Fq "MediaTransport route command=${command} target=" <<<"$logs"
+  fi
+}
 
-  if grep -Fqx "Media Targets" <<<"$window_text"; then
+assert_route_confirmation_window() {
+  local command="$1"
+  local window_text="$2"
+
+  if ! grep -Fqx "Media Targets" <<<"$window_text"; then
     printf '%s\n' "$window_text"
-    echo "smoke_transport_routing_confirmation: chooser opened instead of automatic focused routing for $command" >&2
+    echo "smoke_transport_routing_confirmation: normal Media Targets confirmation did not appear for $command" >&2
     exit 1
   fi
-  if grep -Fqx "$expected_title" <<<"$window_text"; then
+  if ! grep -Fqx "$target_app" <<<"$window_text"; then
     printf '%s\n' "$window_text"
-    echo "smoke_transport_routing_confirmation: old custom Keyway popup is still visible for $command" >&2
+    echo "smoke_transport_routing_confirmation: routed target was missing from confirmation for $command" >&2
     exit 1
+  fi
+  if [[ "$command" == "playPause" ]]; then
+    if ! grep -Eq '^(Playing|Paused)$' <<<"$window_text" \
+      || ! grep -Eq '^was (Playing|Paused)$' <<<"$window_text"; then
+      printf '%s\n' "$window_text"
+      echo "smoke_transport_routing_confirmation: Play/Pause transition was missing from the routed row" >&2
+      exit 1
+    fi
   fi
 }
 
 assert_routing_confirmation() {
   local command="$1"
-  local display_name expected_title logs command_start
+  local display_name expected_title logs command_start window_text confirmation_text
   ensure_target_ready_for_command
   display_name="$(command_display_name "$command")"
   expected_title="$display_name → $target_app"
 
   sleep 5.5
   command_start="$(date '+%Y-%m-%d %H:%M:%S')"
+  LATEST_ROUTE_CONFIRMATION_TEXT=""
   trigger_media_key "$command" "$command_start"
 
   logs=""
+  confirmation_text="$LATEST_ROUTE_CONFIRMATION_TEXT"
   for _ in {1..20}; do
-    sleep 0.35
+    sleep 0.1
+    window_text="$(keyway_window_text || true)"
+    if grep -Fqx "Media Targets" <<<"$window_text"; then
+      confirmation_text="$window_text"
+    fi
     logs="$(recent_keyway_logs_since "$command_start")"
     if grep -Fq "action=transport_${command} source=media_key" <<<"$logs" \
-      && grep -Fq "MediaTransport route command=${command} target=" <<<"$logs" \
+      && route_log_matches "$command" "$logs" \
       && grep -Fq "reason=focused target" <<<"$logs" \
-      && grep -Fq "KeywayNotification delivered title=${expected_title}" <<<"$logs"; then
+      && [[ -n "$confirmation_text" ]]; then
       break
     fi
   done
 
-  assert_no_custom_keyway_popup "$command" "$expected_title"
+  assert_route_confirmation_window "$command" "$confirmation_text"
 
   if ! grep -Fq "action=transport_${command} source=media_key" <<<"$logs"; then
     printf '%s\n' "$logs"
     echo "smoke_transport_routing_confirmation: missing media-key hotkey log for $command" >&2
     exit 1
   fi
-  if ! grep -Fq "MediaTransport route command=${command} target=" <<<"$logs" || ! grep -Fq "reason=focused target" <<<"$logs"; then
+  if ! route_log_matches "$command" "$logs" || ! grep -Fq "reason=focused target" <<<"$logs"; then
     printf '%s\n' "$logs"
     echo "smoke_transport_routing_confirmation: missing focused transport route log for $command" >&2
     exit 1
   fi
+  sleep 1.0
+  logs="$(recent_keyway_logs_since "$command_start")"
   if grep -Fq "MediaRemoteHelper parse_error" <<<"$logs"; then
     printf '%s\n' "$logs"
     echo "smoke_transport_routing_confirmation: MediaRemote command result was not parsed cleanly" >&2
@@ -610,9 +639,15 @@ assert_routing_confirmation() {
     echo "smoke_transport_routing_confirmation: focused transport route failed for $command" >&2
     exit 1
   fi
-  if ! grep -Fq "KeywayNotification delivered title=${expected_title}" <<<"$logs"; then
+  if grep -Fq "KeywayNotification delivered title=${expected_title}" <<<"$logs"; then
     printf '%s\n' "$logs"
-    echo "smoke_transport_routing_confirmation: native routing confirmation was not delivered for $command" >&2
+    echo "smoke_transport_routing_confirmation: retired success notification was delivered for $command" >&2
+    exit 1
+  fi
+  window_text="$(keyway_window_text || true)"
+  if grep -Fqx "Media Targets" <<<"$window_text"; then
+    printf '%s\n' "$window_text"
+    echo "smoke_transport_routing_confirmation: route confirmation stayed open after its animation for $command" >&2
     exit 1
   fi
 
