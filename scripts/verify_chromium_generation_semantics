@@ -170,8 +170,29 @@ for text, needle, message in (
 start = transport[
     transport.index("    func start() {") : transport.index("\n    func stop() {")
 ]
-if start.count("runGeneration == generation") != 3:
+callback_blocks = (
+    (
+        "IPC event",
+        start[start.index("onEvent:") : start.index("onConnectionClosed:")],
+    ),
+    (
+        "IPC connection close",
+        start[start.index("onConnectionClosed:") : start.index("profileRetentionTimer =")],
+    ),
+    (
+        "profile retention timer",
+        start[start.index("profileRetentionTimer =") : start.index("workspaceTerminationObserver =")],
+    ),
+    (
+        "workspace termination",
+        start[start.index("workspaceTerminationObserver =") :],
+    ),
+)
+if start.count("runGeneration == generation") != len(callback_blocks):
     fail("not_every_controller_callback_is_run_generation_bound")
+for callback_name, callback_block in callback_blocks:
+    if callback_block.count("runGeneration == generation") != 1:
+        fail(f"controller_{callback_name.replace(' ', '_')}_not_run_generation_bound")
 
 stop = transport[
     transport.index("    func stop() {") : transport.index("\n    func markConnected(")

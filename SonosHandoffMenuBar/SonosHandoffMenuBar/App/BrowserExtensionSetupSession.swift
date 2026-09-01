@@ -70,12 +70,17 @@ final class BrowserExtensionSetupSession: ObservableObject {
     }
 
     func startDeveloperModeSetup(for browser: ChromiumBrowserSetupBrowser) {
-        let extensionDirectoryURL = installationAdapter.prepareDeveloperModeSetup(for: browser)
-        developerModeSetup = ChromiumBrowserDeveloperModeSetup(
-            browser: browser,
-            extensionDirectoryURL: extensionDirectoryURL
-        )
-        actionMessage = nil
+        do {
+            let extensionDirectoryURL = try installationAdapter.prepareDeveloperModeSetup(for: browser)
+            developerModeSetup = ChromiumBrowserDeveloperModeSetup(
+                browser: browser,
+                extensionDirectoryURL: extensionDirectoryURL
+            )
+            actionMessage = nil
+        } catch {
+            developerModeSetup = nil
+            actionMessage = "Could not prepare the Chromium extension: \(error.localizedDescription)"
+        }
     }
 
     func copyExtensionPath() {

@@ -8,8 +8,10 @@ transport="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumNative
 settings="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/Features/SettingsFeature.swift"
 app_delegate="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/AppDelegate.swift"
 status_item="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/KeywayStatusItemController.swift"
+browser_installation_adapter="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserInstallationAdapter.swift"
+browser_setup_session="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/BrowserExtensionSetupSession.swift"
 
-python3 - "$environment" "$sonos_app" "$transport" "$settings" "$app_delegate" "$status_item" <<'PY'
+python3 - "$environment" "$sonos_app" "$transport" "$settings" "$app_delegate" "$status_item" "$browser_installation_adapter" "$browser_setup_session" <<'PY'
 import pathlib
 import sys
 
@@ -19,6 +21,8 @@ transport = pathlib.Path(sys.argv[3]).read_text()
 settings = pathlib.Path(sys.argv[4]).read_text()
 app_delegate = pathlib.Path(sys.argv[5]).read_text()
 status_item = pathlib.Path(sys.argv[6]).read_text()
+browser_installation_adapter = pathlib.Path(sys.argv[7]).read_text()
+browser_setup_session = pathlib.Path(sys.argv[8]).read_text()
 
 def fail(message):
     raise SystemExit(f"verify_app_environment_external_input_semantics: {message}")
@@ -196,14 +200,54 @@ reveal = section(
     "    private func revealChromiumExtension() {",
     "\n    }\n\n    private func openChromiumExtensionsPage",
 )
-if "Bundle.main.resourceURL!" in reveal or "precondition(" in reveal:
-    fail("Settings Reveal Extension action must not crash on a missing app bundle or extension folder")
 for required in (
-    "guard let resourceURL = Bundle.main.resourceURL else {",
-    "guard FileManager.default.fileExists(atPath: extensionURL.appendingPathComponent(\"manifest.json\").path) else {",
+    "do {",
+    "let extensionURL = try chromiumBrowserInstallationAdapter.prepareUnpackedExtension()",
+    "catch {",
+    'chromiumBridgeMessage = "Could not prepare the Chromium extension: \\(error.localizedDescription)"',
 ):
     if required not in reveal:
-        fail(f"Settings Reveal Extension action must degrade gracefully: missing {required}")
+        fail(f"Settings Reveal Extension action must surface preparation failure: missing {required}")
+
+prepare_extension = section(
+    browser_installation_adapter,
+    "    func prepareUnpackedExtension() throws -> URL {",
+    "\n    func copyExtensionPath",
+)
+for forbidden in (
+    "precondition(",
+    "try!",
+):
+    if forbidden in prepare_extension:
+        fail(f"Chromium extension preparation must throw filesystem failures: found {forbidden}")
+for required in (
+    "guard let bundledExtensionURL else {",
+    "guard fileManager.fileExists(atPath: bundledManifestURL.path) else {",
+    "throw CocoaError(",
+    "try fileManager.createDirectory(",
+    "try fileManager.copyItem(",
+):
+    if required not in prepare_extension:
+        fail(f"Chromium extension preparation must expose missing resources and filesystem failures: missing {required}")
+if "Bundle.main.resourceURL!" in browser_installation_adapter:
+    fail("Chromium extension installation must not force a missing app resource directory")
+
+start_developer_setup = section(
+    browser_setup_session,
+    "    func startDeveloperModeSetup(for browser: ChromiumBrowserSetupBrowser) {",
+    "\n    }\n\n    func copyExtensionPath",
+)
+if "try!" in start_developer_setup:
+    fail("Chromium setup session must not force extension preparation")
+for required in (
+    "do {",
+    "let extensionDirectoryURL = try installationAdapter.prepareDeveloperModeSetup(for: browser)",
+    "catch {",
+    "developerModeSetup = nil",
+    'actionMessage = "Could not prepare the Chromium extension: \\(error.localizedDescription)"',
+):
+    if required not in start_developer_setup:
+        fail(f"Chromium setup session must clear stale setup and surface preparation failure: missing {required}")
 
 probe = section(
     environment,

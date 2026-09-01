@@ -2,7 +2,7 @@
 
 Keyway is a local macOS menu bar app for choosing which Now Playing app receives Play/Pause, Next, and Previous. It keeps the existing Sonos handoff and volume workflows, adds MediaRemote target discovery through a bundled `/usr/bin/perl` helper, and shows a centered Raycast-like chooser when routing is ambiguous. A Chromium extension adds exact per-tab targeting, focus, mute, and volume.
 
-Automatic routes use native macOS notifications for brief confirmation feedback. Keyway does not show custom top-of-screen status popups.
+Automatic routes briefly reuse the Media Targets chooser to highlight the selected source and the Play/Pause, Next, or Previous action. Keyway does not show a separate custom status popup for this confirmation.
 
 Keyway supports local development and notarized Developer ID builds for installation on other Macs. App Store and commercial publishing work remain out of scope.
 

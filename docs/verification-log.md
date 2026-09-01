@@ -15,7 +15,7 @@ This file records the current macOS worktree first, then retains earlier refacto
 - The Xcode extension copy phase now declares the README as an explicit input and output, closing the final incremental-build hole where the folder-copy script could package stale documentation. A focused verifier covers both the generated project and its generator; the final signed reinstall contains byte-identical README and service-worker files.
 - The service worker now consumes `chrome.runtime.lastError` on disconnect and uses generation-bound exponential reconnect backoff from one to 30 seconds, resetting only after five seconds of stability.
 - Production Swift and JavaScript contain no `DistributedNotificationCenter` bridge and no extension-runtime reload command. App/native-host traffic uses the one mutually authenticated, audit-token-bound Unix socket; test-only probes use explicit owner-only filesystem capabilities.
-- `/Users/f.pieringer/Applications/Keyway.app` and its embedded Chromium native host are signed with Apple Development identity `Fabian Pieringer (BF6838D7AM)`, team `7Q44SDV7BM`. Strict signature checks pass, the installed app is running, and the live bridge socket is owner-only mode `0600` under its owner-only cache directory. After the signed extension-fix replacement, Helium showed Keyway enabled with an active service worker and an empty Errors page.
+- `~/Applications/Keyway.app` and its embedded Chromium native host are signed with Apple Development identity `Fabian Pieringer (BF6838D7AM)`, team `7Q44SDV7BM`. Strict signature checks pass, the installed app is running, and the live bridge socket is owner-only mode `0600` under its owner-only cache directory. After the signed extension-fix replacement, Helium showed Keyway enabled with an active service worker and an empty Errors page.
 
 ## Current refactored worktree — Linux evidence (2026-07-31)
 
@@ -66,9 +66,9 @@ This file records the current macOS worktree first, then retains earlier refacto
 
 ## Release pipeline evidence
 
-- The final universal app and both embedded helpers were signed inside-out with `Developer ID Application: Fabian Pieringer (7Q44SDV7BM)`, notarized by Apple, stapled, and installed at `/Users/fabian/Applications/Keyway.app`.
+- The final universal app and both embedded helpers were signed inside-out with `Developer ID Application: Fabian Pieringer (7Q44SDV7BM)`, notarized by Apple, stapled, and installed at `~/Applications/Keyway.app`.
 - The installed app contains both `x86_64` and `arm64` slices. Strict code-signature verification and staple validation passed, and Gatekeeper accepted it as `Notarized Developer ID`.
-- The distributable ZIP is `/Users/fabian/projects/keyway/.build/distribution/Keyway-0.1.0.zip`; its SHA-256 is `b4b9e285c3484c41a7823b269b8c1c1fe86d1c3d19d9da35fc7660c47eba4e96`.
+- The distributable ZIP is `.build/distribution/Keyway-0.1.0.zip`; its SHA-256 is `b4b9e285c3484c41a7823b269b8c1c1fe86d1c3d19d9da35fc7660c47eba4e96`.
 - The previous and final apps have the same bundle identifier, team identifier, and designated requirement. Accessibility and Input Monitoring remained granted after replacement.
 - Installed-app replacement rotates only exact native-host helper processes. The extension reconnects through its normal bounded lifecycle path without reloading the extension runtime or any browser tab.
 - The exact-Suno overlay transport/state-restoration smoke passed immediately before this lifecycle-only reconnect change. The final installed build's reconnect was verified without commanding or focusing a user browser tab.

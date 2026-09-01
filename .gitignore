@@ -15,3 +15,5 @@ xcuserdata/
 .env.local
 vendor/
 .antigravitycli/
+.codex-fable5/
+keyway-gpt-pro-*.zip

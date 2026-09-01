@@ -94,12 +94,12 @@ struct ChromiumBrowserInstallationAdapter {
     static let extensionsPageURL = URL(string: "chrome://extensions")!
 
     private let fileManager: FileManager
-    private let bundledExtensionURL: URL
+    private let bundledExtensionURL: URL?
     private let managedExtensionURL: URL
 
     init(
         fileManager: FileManager = .default,
-        bundledExtensionURL: URL = Bundle.main.resourceURL!
+        bundledExtensionURL: URL? = Bundle.main.resourceURL?
             .appendingPathComponent("ChromiumExtension", isDirectory: true),
         managedExtensionURL: URL = FileManager.default.urls(
             for: .applicationSupportDirectory,
@@ -123,28 +123,36 @@ struct ChromiumBrowserInstallationAdapter {
         }
     }
 
-    func prepareDeveloperModeSetup(for browser: ChromiumBrowserSetupBrowser) -> URL {
-        let extensionURL = prepareUnpackedExtension()
+    func prepareDeveloperModeSetup(for browser: ChromiumBrowserSetupBrowser) throws -> URL {
+        let extensionURL = try prepareUnpackedExtension()
         copyExtensionPath(extensionURL)
         openExtensionsPage(for: browser)
         return extensionURL
     }
 
-    func prepareUnpackedExtension() -> URL {
+    func prepareUnpackedExtension() throws -> URL {
+        guard let bundledExtensionURL else {
+            throw CocoaError(
+                .fileNoSuchFile,
+                userInfo: [NSFilePathErrorKey: "ChromiumExtension/manifest.json"]
+            )
+        }
         let bundledManifestURL = bundledExtensionURL.appendingPathComponent("manifest.json")
-        precondition(
-            fileManager.fileExists(atPath: bundledManifestURL.path),
-            "Bundled Chromium extension is missing at \(bundledExtensionURL.path)"
-        )
+        guard fileManager.fileExists(atPath: bundledManifestURL.path) else {
+            throw CocoaError(
+                .fileNoSuchFile,
+                userInfo: [NSFilePathErrorKey: bundledManifestURL.path]
+            )
+        }
 
         let parentURL = managedExtensionURL.deletingLastPathComponent()
-        try! fileManager.createDirectory(at: parentURL, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: parentURL, withIntermediateDirectories: true)
 
         let stagingURL = parentURL.appendingPathComponent(
             ".ChromiumExtension-\(UUID().uuidString)",
             isDirectory: true
         )
-        try! fileManager.copyItem(at: bundledExtensionURL, to: stagingURL)
+        try fileManager.copyItem(at: bundledExtensionURL, to: stagingURL)
         defer {
             if fileManager.fileExists(atPath: stagingURL.path) {
                 try? fileManager.removeItem(at: stagingURL)
@@ -152,9 +160,9 @@ struct ChromiumBrowserInstallationAdapter {
         }
 
         if fileManager.fileExists(atPath: managedExtensionURL.path) {
-            _ = try! fileManager.replaceItemAt(managedExtensionURL, withItemAt: stagingURL)
+            _ = try fileManager.replaceItemAt(managedExtensionURL, withItemAt: stagingURL)
         } else {
-            try! fileManager.moveItem(at: stagingURL, to: managedExtensionURL)
+            try fileManager.moveItem(at: stagingURL, to: managedExtensionURL)
         }
         return managedExtensionURL
     }

@@ -897,9 +897,14 @@ struct SettingsFeature: View {
     }
 
     private func revealChromiumExtension() {
-        let extensionURL = chromiumBrowserInstallationAdapter.prepareUnpackedExtension()
-        chromiumBrowserInstallationAdapter.revealExtension(extensionURL)
-        chromiumBridgeMessage = "Revealed Keyway's managed Chromium extension folder."
+        do {
+            let extensionURL = try chromiumBrowserInstallationAdapter.prepareUnpackedExtension()
+            chromiumBrowserInstallationAdapter.revealExtension(extensionURL)
+            chromiumBridgeMessage = "Revealed Keyway's managed Chromium extension folder."
+        } catch {
+            chromiumBridgeMessage = "Could not prepare the Chromium extension: \(error.localizedDescription)"
+            logger.error("Chromium extension reveal failed error=\(error.localizedDescription, privacy: .public)")
+        }
     }
 
     private func openChromiumExtensionsPage() {
