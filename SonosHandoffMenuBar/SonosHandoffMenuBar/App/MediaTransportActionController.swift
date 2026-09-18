@@ -271,6 +271,35 @@ final class MediaTransportActionController {
         commandCenterMetadata: MediaCommandCenterInputMetadata?
     ) {
         let targets = sortedTargets(mediaSourceStore.rows.map(\.target))
+        if source == .commandCenter, command == .pause {
+            guard !chooserReentryBlocked(
+                command: command,
+                source: source,
+                metadata: metadata,
+                commandCenterMetadata: commandCenterMetadata
+            ) else {
+                return
+            }
+
+            routeConfirmationPresentation = nil
+            // Dictation apps send Pause without a media-key press. It must not open UI.
+            // Pause is idempotent, so stale playback flags must not exclude known targets.
+            trace(
+                "background_pause",
+                command: command,
+                source: source,
+                targets: targets,
+                targetCount: targets.count,
+                commandCenterMetadata: commandCenterMetadata
+            )
+            for target in targets {
+                let dispatchID = beginBoundedProgrammaticDispatch(command: command)
+                send(command: command, to: target, dispatchID: dispatchID, context: .backgroundPause)
+            }
+            mediaRemoteController.refreshSnapshot()
+            return
+        }
+
         guard !targets.isEmpty else {
             mediaRemoteController.refreshSnapshot()
             showChooserOverlay(
@@ -520,6 +549,7 @@ final class MediaTransportActionController {
         case programmatic(reason: MediaTransportRoutingReason)
         case direct
         case chooser
+        case backgroundPause
     }
 
     private func send(
@@ -562,7 +592,8 @@ final class MediaTransportActionController {
             self.mediaRemoteController.refreshSnapshot()
             self.showCommandResult(
                 result: result,
-                target: target
+                target: target,
+                context: context
             )
         }) {
             scheduleProgrammaticDispatchFallback(id: dispatchID)
@@ -576,12 +607,15 @@ final class MediaTransportActionController {
             self.finishDispatch(id: dispatchID, fallback: false)
             self.showCommandResult(
                 result: result,
-                target: target
+                target: target,
+                context: context
             )
         }) {
             guard sent else {
                 mediaSourceStore.markCommandFailed(targetID: target.id)
                 finishDispatch(id: dispatchID, fallback: true)
+                logDispatchFailure(command: command, target: target, context: context)
+                if case .backgroundPause = context { return }
                 StatusHUD.shared.finish(
                     title: "Media Command Failed",
                     message: "Keyway could not reach \(target.appName).",
@@ -629,6 +663,7 @@ final class MediaTransportActionController {
         mediaSourceStore.markCommandFailed(targetID: target.id)
         finishDispatch(id: dispatchID, fallback: true)
         logDispatchFailure(command: command, target: target, context: context)
+        if case .backgroundPause = context { return }
         StatusHUD.shared.finish(
             title: "Media Command Failed",
             message: "Keyway could not reach \(target.appName).",
@@ -654,7 +689,8 @@ final class MediaTransportActionController {
             self.finishDispatch(id: dispatchID, fallback: false)
             self.showCommandResult(
                 result: result,
-                target: target
+                target: target,
+                context: context
             )
         }
         if sent {
@@ -694,6 +730,8 @@ final class MediaTransportActionController {
             logger.info("MediaTransport route command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) reason=\(reason.rawValue, privacy: .public) transport=\(transport, privacy: .public)")
         case .direct:
             logger.info("MediaTransport direct command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) transport=\(transport, privacy: .public)")
+        case .backgroundPause:
+            logger.info("MediaTransport background_pause command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) transport=\(transport, privacy: .public)")
         case .chooser:
             logger.info("MediaTransport chooser command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) transport=\(transport, privacy: .public)")
         }
@@ -709,6 +747,8 @@ final class MediaTransportActionController {
             logger.error("MediaTransport route_failed command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) reason=\(reason.rawValue, privacy: .public)")
         case .direct:
             logger.error("MediaTransport direct_failed command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public)")
+        case .backgroundPause:
+            logger.error("MediaTransport background_pause_failed command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public)")
         case .chooser:
             logger.error("MediaTransport chooser_failed command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public)")
         }
@@ -831,13 +871,15 @@ final class MediaTransportActionController {
 
     private func showCommandResult(
         result: MediaRemoteCommandResultEvent,
-        target: MediaRemoteTarget
+        target: MediaRemoteTarget,
+        context: MediaTransportDispatchContext
     ) {
         if result.ok {
             return
         }
 
         logger.error("MediaTransport async_route_failed command=\(result.command, privacy: .public) target=\(target.appName, privacy: .public) targetID=\(result.targetID, privacy: .public) message=\(result.message, privacy: .public)")
+        if case .backgroundPause = context { return }
         if result.message.contains("-1743") {
             StatusHUD.shared.finish(
                 title: "Media Command Failed",

@@ -1,0 +1,243 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+workdir="$(mktemp -d)"
+trap 'rm -rf "$workdir"' EXIT
+
+python3 - "$repo_root" "$workdir" <<'PYTHON'
+from pathlib import Path
+import sys
+
+root, work = map(Path, sys.argv[1:])
+source = (root / "SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportActionController.swift").read_text()
+start = source.index("    private func routeFromCache(")
+end = source.index("    private func route(\n", start)
+method = source[start:end].replace("private func routeFromCache", "func routeFromCache", 1)
+start = source.index("    private func send(\n        command: MediaRemoteTransportCommand,\n        to target: MediaRemoteTarget,\n        dispatchID:")
+end = source.index("    private func dispatchFromChooser(", start)
+dispatch = source[start:end].replace("private func ", "func ")
+start = source.index("    private func showCommandResult(")
+presenter = source[start:source.rindex("\n}")].replace("private func ", "func ")
+start = source.index("    private enum MediaTransportDispatchContext")
+end = source.index("    private func send(", start)
+context = source[start:end].replace("private enum ", "enum ")
+(work / "Routing.swift").write_text('''import Foundation
+import OSLog
+
+enum MediaRemoteTransportCommand: String { case play, pause, playPause, next, previous }
+enum MediaTransportRouteSource { case commandCenter, eventTap, userInterface }
+enum MediaTransportRoutingReason: String { case single }
+struct MediaTransportInputMetadata {}
+struct MediaCommandCenterInputMetadata {}
+struct MediaRemoteTarget {
+    let id: String
+    let isCurrentlyPlaying: Bool
+    let appName = "Player"
+}
+struct SourceRow { let target: MediaRemoteTarget }
+struct MediaRemoteCommandResultEvent {
+    let ok: Bool
+    let unsupported: Bool
+    let message: String
+    let backend: String
+    let command = "pause"
+    let targetID = "playing"
+}
+final class MediaSourceStore {
+    var rows: [SourceRow] = []
+    var failures: [String] = []
+    var results: [MediaRemoteCommandResultEvent] = []
+    func markCommandFailed(targetID: String) { failures.append(targetID) }
+    func recordCommandResult(_ result: MediaRemoteCommandResultEvent) { results.append(result) }
+}
+final class MediaRemoteController {
+    var refreshes = 0
+    var probes = 0
+    var accepted = true
+    var completion: ((MediaRemoteCommandResultEvent) -> Void)?
+    func refreshSnapshot() { refreshes += 1 }
+    func probeHelperLiveness() { probes += 1 }
+    func submit(command: MediaRemoteTransportCommand, targetID: String,
+        onResult: @escaping (MediaRemoteCommandResultEvent) -> Void) -> Bool {
+        if accepted { completion = onResult }
+        return accepted
+    }
+}
+final class DesktopTransport {
+    var backend: String? = "desktop"
+    var completion: ((MediaRemoteCommandResultEvent) -> Void)?
+    func submit(command: MediaRemoteTransportCommand, target: MediaRemoteTarget,
+        onResult: @escaping (MediaRemoteCommandResultEvent) -> Void) -> String? {
+        if backend != nil { completion = onResult }
+        return backend
+    }
+}
+final class ChromiumBrowserExtensionController {
+    var accepted: Bool?
+    var completion: ((MediaRemoteCommandResultEvent) -> Void)?
+    func submit(command: MediaRemoteTransportCommand, target: MediaRemoteTarget,
+        onResult: @escaping (MediaRemoteCommandResultEvent) -> Void) -> Bool? {
+        if accepted == true { completion = onResult }
+        return accepted
+    }
+}
+enum ChromiumBrowserExtensionTransport {
+    static let backendName = "chromium_extension"
+}
+enum MediaTransportCommandRules {
+    static func rowScopedCommand(_ command: MediaRemoteTransportCommand, for target: MediaRemoteTarget,
+        after previous: MediaRemoteTransportCommand?) -> MediaRemoteTransportCommand { command }
+}
+final class StatusHUD {
+    static let shared = StatusHUD()
+    var presentations = 0
+    func finish(title: String, message: String, dismissAfter: Double) { presentations += 1 }
+}
+
+final class RoutingHarness {
+    let mediaSourceStore = MediaSourceStore()
+    let mediaRemoteController = MediaRemoteController()
+    var chooserActive = false
+    var chooserShows = 0
+    var ordinaryRoutes = 0
+    var dispatchGuards = 0
+    let desktopTransport = DesktopTransport()
+    let chromiumBrowserExtensionController = ChromiumBrowserExtensionController()
+    let logger = Logger(subsystem: "keyway.background-pause-tests", category: "transport")
+    static let mediaRemotePlayerPathBackend = "mediaremote_player_path"
+    var routeConfirmationPresentation: (String, MediaRemoteTransportCommand)? = ("playing", .play)
+    var sent: [(MediaRemoteTransportCommand, String, MediaTransportDispatchContext)] = []
+    var finished = 0
+    var resultTraces = 0
+    var failureLogs = 0
+
+    func sortedTargets(_ targets: [MediaRemoteTarget]) -> [MediaRemoteTarget] { targets }
+    func chooserReentryBlocked(command: MediaRemoteTransportCommand?, source: MediaTransportRouteSource,
+        metadata: MediaTransportInputMetadata?, commandCenterMetadata: MediaCommandCenterInputMetadata?) -> Bool {
+        chooserActive
+    }
+    func showChooserOverlay(command: MediaRemoteTransportCommand?, targets: [MediaRemoteTarget],
+        source: MediaTransportRouteSource, metadata: MediaTransportInputMetadata?,
+        commandCenterMetadata: MediaCommandCenterInputMetadata?) { chooserShows += 1 }
+    func route(command: MediaRemoteTransportCommand, targets: [MediaRemoteTarget],
+        source: MediaTransportRouteSource, metadata: MediaTransportInputMetadata?,
+        commandCenterMetadata: MediaCommandCenterInputMetadata?) { ordinaryRoutes += 1 }
+    func beginBoundedProgrammaticDispatch(command: MediaRemoteTransportCommand) -> UUID {
+        dispatchGuards += 1
+        return UUID()
+    }
+    func finishDispatch(id: UUID, fallback: Bool) { finished += 1 }
+    func scheduleProgrammaticDispatchFallback(id: UUID) {}
+    func logDispatch(command: MediaRemoteTransportCommand, target: MediaRemoteTarget,
+        context: MediaTransportDispatchContext, transport: String) { sent.append((command, target.id, context)) }
+    func logDispatchFailure(command: MediaRemoteTransportCommand, target: MediaRemoteTarget,
+        context: MediaTransportDispatchContext) { failureLogs += 1 }
+    func trace(result: MediaRemoteCommandResultEvent, transportBackend: String?) { resultTraces += 1 }
+    func trace(_ event: String, command: MediaRemoteTransportCommand?, source: MediaTransportRouteSource,
+        targets: [MediaRemoteTarget], targetCount: Int, commandCenterMetadata: MediaCommandCenterInputMetadata?) {}
+''' + method + dispatch + presenter + "}\n" + context)
+PYTHON
+
+cat >"$workdir/main.swift" <<'SWIFT'
+import Foundation
+
+func expect(_ condition: Bool, _ message: String) {
+    guard condition else {
+        FileHandle.standardError.write(Data("verify_background_pause_semantics: \(message)\n".utf8))
+        exit(1)
+    }
+}
+
+let playing = MediaRemoteTarget(id: "playing", isCurrentlyPlaying: true)
+let paused = MediaRemoteTarget(id: "cached-paused", isCurrentlyPlaying: false)
+
+// Superwhisper sends an unscoped Pause when its recording shortcut is pressed.
+// Exercise the real routing method, including its empty-cache branch.
+for targets in [[], [playing], [paused], [playing, paused]] {
+    let harness = RoutingHarness()
+    harness.mediaSourceStore.rows = targets.map { SourceRow(target: $0) }
+    harness.routeFromCache(command: .pause, source: .commandCenter, metadata: nil, commandCenterMetadata: nil)
+    expect(harness.chooserShows == 0, "system Pause must not open a chooser with \(targets.count) cached targets")
+    expect(harness.ordinaryRoutes == 0, "system Pause must not show automatic-route confirmation")
+    expect(harness.sent.map { $0.1 } == targets.map(\.id), "Pause must reach every known target, including stale paused rows")
+    expect(harness.sent.allSatisfy { $0.0 == .pause }, "background Pause must never toggle playback or resume a source")
+    expect(harness.dispatchGuards == targets.count, "each Pause dispatch must retain programmatic echo suppression")
+    expect(harness.mediaRemoteController.refreshes == 1, "background Pause must refresh discovery without opening UI")
+    expect(harness.routeConfirmationPresentation == nil, "background Pause must clear stale playback confirmation")
+    expect(harness.sent.allSatisfy { if case .backgroundPause = $0.2 { return true }; return false },
+        "background Pause must retain its silent context through dispatch")
+}
+
+let activeChooser = RoutingHarness()
+activeChooser.chooserActive = true
+activeChooser.mediaSourceStore.rows = [SourceRow(target: playing)]
+activeChooser.routeFromCache(command: .pause, source: .commandCenter, metadata: nil, commandCenterMetadata: nil)
+expect(activeChooser.sent.isEmpty, "system Pause must respect an active user choice")
+expect(activeChooser.chooserShows == 0, "system Pause must not reopen an active chooser")
+
+for source in [MediaTransportRouteSource.commandCenter, .eventTap, .userInterface] {
+    for command in [MediaRemoteTransportCommand.play, .pause, .playPause, .next, .previous] {
+        if source == .commandCenter && command == .pause { continue }
+        for targets in [[], [playing], [playing, paused]] {
+            let harness = RoutingHarness()
+            harness.mediaSourceStore.rows = targets.map { SourceRow(target: $0) }
+            harness.routeFromCache(command: command, source: source, metadata: nil, commandCenterMetadata: nil)
+            expect(harness.sent.isEmpty, "other input must retain ordinary target selection")
+            expect(harness.chooserShows == (targets.isEmpty ? 1 : 0), "empty-cache chooser must remain available for intentional media commands")
+            expect(harness.ordinaryRoutes == (targets.isEmpty ? 0 : 1), "normal media routing must remain available")
+        }
+    }
+}
+
+// Inject terminal results after submission to exercise the real async callbacks
+// and presenter. Explicit row, chooser, and automatic actions must retain errors.
+for context in [MediaTransportDispatchContext.backgroundPause, .direct, .chooser, .programmatic(reason: .single)] {
+    let isBackground: Bool
+    if case .backgroundPause = context { isBackground = true } else { isBackground = false }
+    for backend in ["desktop", "chromium_extension", "mediaremote_player_path"] {
+        for result in [
+            MediaRemoteCommandResultEvent(ok: true, unsupported: false, message: "", backend: backend),
+            MediaRemoteCommandResultEvent(ok: false, unsupported: false, message: "Denied -1743", backend: backend),
+            MediaRemoteCommandResultEvent(ok: false, unsupported: true, message: "Unsupported", backend: backend),
+            MediaRemoteCommandResultEvent(ok: false, unsupported: false, message: "Unreachable", backend: backend),
+        ] {
+            let harness = RoutingHarness()
+            harness.desktopTransport.backend = backend == "desktop" ? backend : nil
+            harness.chromiumBrowserExtensionController.accepted = backend == "chromium_extension" ? true : nil
+            StatusHUD.shared.presentations = 0
+            harness.send(command: .pause, to: playing, dispatchID: UUID(), context: context)
+            let completion = harness.desktopTransport.completion
+                ?? harness.chromiumBrowserExtensionController.completion
+                ?? harness.mediaRemoteController.completion
+            expect(completion != nil, "selected backend must accept the command")
+            completion!(result)
+            expect(StatusHUD.shared.presentations == (isBackground || result.ok ? 0 : 1),
+                "background results must stay silent and explicit actions must retain error notifications")
+            expect(harness.mediaSourceStore.results.count == 1, "every async result must still be recorded")
+            expect(harness.resultTraces == 1, "every async result must still be traced")
+            expect(harness.finished == 1, "async results must close dispatch bookkeeping")
+            expect(harness.mediaRemoteController.probes == (backend == "mediaremote_player_path" && !result.ok ? 1 : 0),
+                "failed MediaRemote results must retain helper recovery")
+        }
+    }
+    for backend in ["chromium_extension", "mediaremote_player_path"] {
+        let harness = RoutingHarness()
+        harness.desktopTransport.backend = nil
+        harness.chromiumBrowserExtensionController.accepted = backend == "chromium_extension" ? false : nil
+        harness.mediaRemoteController.accepted = false
+        StatusHUD.shared.presentations = 0
+        harness.send(command: .pause, to: playing, dispatchID: UUID(), context: context)
+        expect(StatusHUD.shared.presentations == (isBackground ? 0 : 1),
+            "rejected submissions must notify only for explicit media actions")
+        expect(harness.mediaSourceStore.failures == [playing.id], "rejected submissions must still mark the target failed")
+        expect(harness.failureLogs == 1, "rejected submissions must still be logged")
+        expect(harness.finished == 1, "rejected submissions must close dispatch bookkeeping")
+    }
+}
+
+print("verify_background_pause_semantics=ok")
+SWIFT
+
+swiftc "$workdir/Routing.swift" "$workdir/main.swift" -o "$workdir/verify"
+"$workdir/verify"

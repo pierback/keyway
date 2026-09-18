@@ -145,6 +145,16 @@ assert_order(
     route_cache,
     [
         "let targets = sortedTargets(mediaSourceStore.rows.map(\\.target))",
+        "if source == .commandCenter, command == .pause",
+        "context: .backgroundPause",
+        "guard !targets.isEmpty else",
+    ],
+    "background Pause must be handled silently before ordinary target selection"
+)
+ordinary_route_cache = route_cache[route_cache.index("guard !targets.isEmpty else"):]
+assert_order(
+    ordinary_route_cache,
+    [
         "guard !targets.isEmpty else",
         "mediaRemoteController.refreshSnapshot()",
         "showChooserOverlay(",
