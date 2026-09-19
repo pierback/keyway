@@ -34,9 +34,6 @@ struct ShortcutEventParser {
     private let keyUpEventType = CGEventType.keyUp
     private let keyDownState = 0x0A
     private let keyUpState = 0x0B
-    private let soundMuteKeyCode = 7
-    private let soundUpKeyCode = 0
-    private let soundDownKeyCode = 1
     private let playPauseKeyCode = 16
     private let nextKeyCode = 17
     private let previousKeyCode = 18
@@ -74,25 +71,7 @@ struct ShortcutEventParser {
             }
         }
 
-        if keyState == keyUpState,
-           keyCode == soundDownKeyCode || keyCode == soundUpKeyCode {
-            return .volumeHoldStop(source: "media_key")
-        }
-
-        if keyState == keyDownState {
-            if keyCode == soundDownKeyCode {
-                return .volumeHoldStart(direction: .down, source: "media_key")
-            }
-
-            if keyCode == soundUpKeyCode {
-                return .volumeHoldStart(direction: .up, source: "media_key")
-            }
-
-            if keyCode == soundMuteKeyCode {
-                return .muteToggle(source: "media_key")
-            }
-        }
-
+        // System volume and mute keys belong to macOS, including modified presses.
         return .passThrough
     }
 

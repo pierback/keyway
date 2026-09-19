@@ -323,13 +323,61 @@ default:
     expect(false, "NX_KEYTYPE_REWIND key-up did not route Previous")
 }
 
-switch parser.outcome(type: systemDefined, event: mediaKeyEvent(keyCode: 0, state: 0x0A, shift: true), isRepeating: false) {
-case .volumeHoldStart(let direction, let source):
-    expect(direction == .up, "Shift+sound-up must start volume-up hold")
-    expect(source == "media_key", "Shift+sound-up source should be media_key")
-default:
-    expect(false, "Shift+sound-up did not start volume-up hold")
+for keyCode in [0, 1, 7] {
+    for state in [0x0A, 0x0B] {
+        for shift in [false, true] {
+            for isRepeating in [false, true] {
+                expect(
+                    parser.outcome(
+                        type: systemDefined,
+                        event: mediaKeyEvent(keyCode: keyCode, state: state, shift: shift),
+                        isRepeating: isRepeating
+                    ) == .passThrough,
+                    "system volume/mute key \(keyCode), state \(state), shift \(shift), repeating \(isRepeating) must remain owned by macOS"
+                )
+            }
+        }
+    }
 }
+
+for (keyCode, direction, source) in [
+    (CGKeyCode(103), VolumeDirection.down, "shift_fn_f11"),
+    (CGKeyCode(111), VolumeDirection.up, "shift_fn_f12"),
+] {
+    expect(
+        parser.outcome(type: .keyDown, event: functionKeyEvent(keyCode: keyCode, keyDown: true), isRepeating: false) == .passThrough,
+        "plain F11/F12 key-down must pass through"
+    )
+    expect(
+        parser.outcome(type: .keyUp, event: functionKeyEvent(keyCode: keyCode, keyDown: false), isRepeating: false) == .passThrough,
+        "plain F11/F12 key-up must pass through when no Keyway volume hold is active"
+    )
+    expect(
+        parser.outcome(type: .keyDown, event: functionKeyEvent(keyCode: keyCode, keyDown: true, shiftFunctionChord: true), isRepeating: false)
+            == .volumeHoldStart(direction: direction, source: source),
+        "Shift+Fn+F11/F12 must start the explicit Keyway volume shortcut"
+    )
+    expect(
+        parser.outcome(type: .keyUp, event: functionKeyEvent(keyCode: keyCode, keyDown: false, shiftFunctionChord: true), isRepeating: true)
+            == .volumeHoldStop(source: "function_key"),
+        "Shift+Fn+F11/F12 release must stop the explicit Keyway volume shortcut"
+    )
+    expect(
+        parser.outcome(type: .keyUp, event: functionKeyEvent(keyCode: keyCode, keyDown: false), isRepeating: true)
+            == .volumeHoldStop(source: "function_key"),
+        "releasing F11/F12 after the modifiers must stop an active Keyway volume hold"
+    )
+}
+
+expect(
+    parser.outcome(type: .keyDown, event: functionKeyEvent(keyCode: 109, keyDown: true), isRepeating: false) == .passThrough,
+    "plain F10 must pass through"
+)
+expect(
+    parser.outcome(type: .keyDown, event: functionKeyEvent(keyCode: 109, keyDown: true, shiftFunctionChord: true), isRepeating: false)
+        == .muteToggle(source: "shift_fn_f10"),
+    "Shift+Fn+F10 must retain the explicit Keyway mute shortcut"
+)
 
 print("verify_shortcut_event_parser_semantics=ok")
 SWIFT
