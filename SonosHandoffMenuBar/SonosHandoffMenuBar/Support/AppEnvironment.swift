@@ -127,7 +127,8 @@ struct AppEnvironment {
             groupingEditor: spotifyConnectService,
             groupSuggestionStore: groupSuggestionStore,
             groupSuggestionPresenter: groupSuggestionPresenter,
-            operationGate: playbackOperationGate
+            operationGate: playbackOperationGate,
+            macAudioOutputMonitor: macAudioOutputMonitor
         )
         let volumeHotkeys = VolumeHotkeyController(
             volumeService: spotifyConnectService,

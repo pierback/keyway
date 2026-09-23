@@ -13,6 +13,11 @@ final class PlaybackSyncController: ObservableObject {
     @Published private(set) var selectedRoomName: String?
     @Published private(set) var loadingRoomName: String?
     @Published private(set) var groupLoadingRoomName: String?
+    /// The Mac's current output when it is headphones, offered as a Spotify destination.
+    @Published private(set) var headphoneOutput: MacAudioOutputDevice?
+    /// Audio output whose Spotify-to-this-Mac transfer is in flight.
+    @Published private(set) var macTransferOutputID: UInt32?
+    @Published private(set) var isSpotifyPlayingOnMac = false
     @Published private(set) var volumeState = SpeakerVolumeControlState()
     @Published private(set) var isRefreshingOutputs = false
     @Published private(set) var menuMessage: String?
@@ -34,6 +39,7 @@ final class PlaybackSyncController: ObservableObject {
     private var outputSelectionCancellable: AnyCancellable?
     private var outputRefreshCancellable: AnyCancellable?
     private var cachedOutputRefreshCancellable: AnyCancellable?
+    private var headphoneOutputCancellable: AnyCancellable?
     private var appearTask: Task<Void, Never>?
     private var notificationTasks: [UUID: Task<Void, Never>] = [:]
     private var appearGeneration = 0
@@ -56,6 +62,7 @@ final class PlaybackSyncController: ObservableObject {
         groupSuggestionStore: PlaybackGroupSuggestionStore,
         groupSuggestionPresenter: PlaybackGroupSuggestionPresenter,
         operationGate: PlaybackOperationGate,
+        macAudioOutputMonitor: MacAudioOutputMonitor,
         volumeMonitor: SonosVolumeMonitor = .shared,
         volumeActions: PlaybackVolumeActionController? = nil,
         transferActions: PlaybackTransferActionController? = nil
@@ -108,6 +115,12 @@ final class PlaybackSyncController: ObservableObject {
                 self?.runAppearanceTask { controller in
                     await controller.refreshOutputs(showLoading: false, currentRoomName: currentRoomName)
                 }
+            }
+        self.headphoneOutputCancellable = macAudioOutputMonitor.$output
+            .map { $0?.isHeadphones == true ? $0 : nil }
+            .removeDuplicates()
+            .sink { [weak self] output in
+                self?.headphoneOutput = output
             }
         self.cachedOutputRefreshCancellable = NotificationCenter.default
             .publisher(for: .sonosHandoffApplyCachedOutputs)
@@ -379,6 +392,9 @@ final class PlaybackSyncController: ObservableObject {
             else {
                 return
             }
+            isSpotifyPlayingOnMac = status.map {
+                $0.isPlaying && PlaybackTransferActionController.isLocalSpotifyComputer(name: $0.deviceName, type: $0.type)
+            } ?? false
             guard let status,
                   let roomName = SonosRoomName.normalized(status.deviceName)
             else {
@@ -536,6 +552,61 @@ final class PlaybackSyncController: ObservableObject {
         transfer(to: row.coordinator)
     }
 
+    func transferSpotifyPlaybackToMac(output: MacAudioOutputDevice) {
+        precondition(output.isHeadphones, "Spotify only moves to headphone outputs from the menu")
+        guard operationGate.runTransaction(roomName: output.name, operation: { [weak self] ticket in
+            guard let self else {
+                return
+            }
+            defer {
+                if macTransferOutputID == output.id {
+                    macTransferOutputID = nil
+                }
+            }
+
+            do {
+                guard let deviceName = try await PlaybackTransferActionController.localSpotifyComputerPlaybackDeviceName(
+                    using: activePlaybackObserver
+                ) else {
+                    guard operationGate.isCurrentTransaction(ticket) else {
+                        return
+                    }
+                    menuMessage = "Open Spotify on this Mac to play through \(output.name)."
+                    return
+                }
+                try await activePlaybackObserver.transferActivePlayback(
+                    deviceName: deviceName,
+                    deviceType: "Computer",
+                    play: true
+                )
+                guard operationGate.isCurrentTransaction(ticket) else {
+                    return
+                }
+                activeSpotifyRoomName = nil
+                isSpotifyPlayingOnMac = true
+                outputSelection.update(roomName: nil, group: nil, source: .reset)
+                clearSpotifyAuthRequired()
+                NotificationCenter.default.post(name: .sonosHandoffRefreshOutputs, object: nil)
+                shortcutLogger.info("SonosHandoffTransfer state=succeeded target=mac output=\(output.name, privacy: .public) spotifyDeviceName=\(deviceName, privacy: .public)")
+            } catch {
+                guard operationGate.isCurrentTransaction(ticket) else {
+                    return
+                }
+                if SpotifyAuthRecovery.isAuthRequired(error) {
+                    requireSpotifyAuth(error)
+                    return
+                }
+                menuMessage = "Could not move Spotify playback to this Mac."
+                shortcutLogger.error("SonosHandoffTransfer state=failed target=mac output=\(output.name, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+            }
+        }) else {
+            return
+        }
+
+        macTransferOutputID = output.id
+        menuMessage = nil
+    }
+
     func connectSpotify(to row: PlaybackOutputRow) {
         guard groupLoadingRoomName == nil else {
             return
@@ -633,6 +704,7 @@ final class PlaybackSyncController: ObservableObject {
             switch outcome.result {
             case .success:
                 activeSpotifyRoomName = outcome.roomName
+                isSpotifyPlayingOnMac = false
                 selectRoomName(outcome.roomName, source: .playbackTransaction)
                 clearSpotifyAuthRequired()
                 refreshVolumeStatus(roomName: outcome.roomName)

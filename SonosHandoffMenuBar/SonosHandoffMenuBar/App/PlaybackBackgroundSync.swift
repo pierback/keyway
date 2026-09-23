@@ -449,7 +449,7 @@ final class PlaybackBackgroundSync {
         }
         pendingHeadphoneConnectionOutputID = nil
 
-        guard let spotifyDeviceName = try await localSpotifyComputerPlaybackDeviceName() else {
+        guard let spotifyDeviceName = try await PlaybackTransferActionController.localSpotifyComputerPlaybackDeviceName(using: activePlaybackObserver) else {
             guard isCurrentObservation(ticket) else {
                 return
             }
@@ -468,50 +468,6 @@ final class PlaybackBackgroundSync {
         if headphoneTransferSuggestionPresenter.presentIfNeeded(suggestion) {
             logger.info("SonosHandoffHeadphoneTransferSuggestion state=prompted output=\(output.name, privacy: .public) spotifyDeviceName=\(spotifyDeviceName, privacy: .public) room=\(activeRoomName, privacy: .public)")
         }
-    }
-
-    private func localSpotifyComputerPlaybackDeviceName() async throws -> String? {
-        let localNames = Self.localSpotifyComputerDeviceNames()
-        guard !localNames.isEmpty else {
-            return nil
-        }
-
-        let devices = try await activePlaybackObserver.availablePlaybackDevices()
-        return devices.first { device in
-            !device.isRestricted
-                && device.type.caseInsensitiveCompare("Computer") == .orderedSame
-                && localNames.contains { Self.normalizedSpotifyDeviceName($0) == Self.normalizedSpotifyDeviceName(device.name) }
-        }?.name
-    }
-
-    private static func localSpotifyComputerDeviceNames() -> [String] {
-        let host = Host.current()
-        let hostName = ProcessInfo.processInfo.hostName
-        let rawCandidates = [
-            host.localizedName,
-            host.name,
-            hostName,
-            hostName.split(separator: ".").first.map(String.init),
-        ]
-        var seenNames = Set<String>()
-        return rawCandidates.compactMap { candidate in
-            guard let name = SonosRoomName.normalized(candidate) else {
-
-                return nil
-            }
-            guard seenNames.insert(normalizedSpotifyDeviceName(name)).inserted else {
-
-                return nil
-            }
-
-            return name
-        }
-    }
-
-    private static func normalizedSpotifyDeviceName(_ name: String) -> String {
-        name.trimmingCharacters(in: .whitespacesAndNewlines)
-            .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil)
-            .lowercased()
     }
 
     private func cachedTransferSuggestionBaselineSpeakerIDs() async -> Set<String>? {
@@ -852,7 +808,7 @@ final class PlaybackBackgroundSync {
 
         headphoneTransferSuggestionPresenter.suppress(id: suggestion.id)
         do {
-            guard let deviceName = try await localSpotifyComputerPlaybackDeviceName() else {
+            guard let deviceName = try await PlaybackTransferActionController.localSpotifyComputerPlaybackDeviceName(using: activePlaybackObserver) else {
                 guard operationGate.isCurrentTransaction(ticket) else {
                     return
                 }

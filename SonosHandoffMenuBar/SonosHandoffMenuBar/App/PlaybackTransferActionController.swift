@@ -41,4 +41,47 @@ final class PlaybackTransferActionController {
 
         return PlaybackTransferOutcome(roomName: roomName, result: result)
     }
+
+    /// The Spotify Connect device name of this Mac's Spotify app, if Spotify currently lists it.
+    static func localSpotifyComputerPlaybackDeviceName(
+        using activePlaybackObserver: any SpotifyActivePlaybackObserving
+    ) async throws -> String? {
+        try await activePlaybackObserver.availablePlaybackDevices().first { device in
+            !device.isRestricted && isLocalSpotifyComputer(name: device.name, type: device.type)
+        }?.name
+    }
+
+    static func isLocalSpotifyComputer(name: String, type: String) -> Bool {
+        type.caseInsensitiveCompare("Computer") == .orderedSame
+            && localSpotifyComputerDeviceNames().contains {
+                normalizedSpotifyDeviceName($0) == normalizedSpotifyDeviceName(name)
+            }
+    }
+
+    private static func localSpotifyComputerDeviceNames() -> [String] {
+        let host = Host.current()
+        let hostName = ProcessInfo.processInfo.hostName
+        let rawCandidates = [
+            host.localizedName,
+            host.name,
+            hostName,
+            hostName.split(separator: ".").first.map(String.init),
+        ]
+        var seenNames = Set<String>()
+        return rawCandidates.compactMap { candidate in
+            guard let name = SonosRoomName.normalized(candidate) else {
+                return nil
+            }
+            guard seenNames.insert(normalizedSpotifyDeviceName(name)).inserted else {
+                return nil
+            }
+            return name
+        }
+    }
+
+    private static func normalizedSpotifyDeviceName(_ name: String) -> String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil)
+            .lowercased()
+    }
 }

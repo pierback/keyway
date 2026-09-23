@@ -180,9 +180,12 @@ struct MenuBarMediaSourceSection: View {
                     .foregroundStyle(.white.opacity(0.48))
             }
 
-            if !playback.outputRows.isEmpty {
+            if !playback.outputRows.isEmpty || playback.headphoneOutput != nil {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
+                        if let output = playback.headphoneOutput {
+                            spotifyHeadphoneRouteButton(output)
+                        }
                         ForEach(playback.outputRows) { row in
                             idleSpotifyConnectButton(row)
                         }
@@ -326,13 +329,16 @@ struct MenuBarMediaSourceSection: View {
 
     private func spotifyRouteRow(for target: MediaRemoteTarget) -> some View {
         Group {
-            if playback.outputRows.isEmpty {
+            if playback.outputRows.isEmpty, playback.headphoneOutput == nil {
                 Text(playback.isRefreshingOutputs ? "Searching for speakers" : "No Spotify Connect speakers")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.white.opacity(0.42))
             } else {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
+                        if let output = playback.headphoneOutput {
+                            spotifyHeadphoneRouteButton(output)
+                        }
                         ForEach(playback.outputRows) { row in
                             spotifyRouteButton(row, source: target)
                         }
@@ -341,6 +347,42 @@ struct MenuBarMediaSourceSection: View {
             }
         }
         .accessibilityIdentifier("source-\(target.id)-spotify-routes")
+    }
+
+    private func spotifyHeadphoneRouteButton(_ output: MacAudioOutputDevice) -> some View {
+        let selected = playback.isSpotifyPlayingOnMac
+        let loading = playback.macTransferOutputID == output.id
+        let disabled = playback.loadingRoomName != nil
+            || playback.groupLoadingRoomName != nil
+            || playback.volumeState.isBusy
+            || playback.macTransferOutputID != nil
+
+        return Button {
+            playback.transferSpotifyPlaybackToMac(output: output)
+        } label: {
+            HStack(spacing: 4) {
+                if loading {
+                    ProgressView()
+                        .controlSize(.small)
+                        .scaleEffect(0.50)
+                } else {
+                    Image(systemName: selected ? "checkmark.circle.fill" : output.name.localizedCaseInsensitiveContains("airpods") ? "airpods" : "headphones")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                Text(selected ? "\(output.name) connected" : "Send to \(output.name)")
+                    .lineLimit(1)
+            }
+            .font(.system(size: 10, weight: .semibold))
+            .padding(.horizontal, 7)
+            .frame(height: Self.routeButtonHeight)
+            .background(selected ? Self.accentColor.opacity(0.28) : .white.opacity(0.08), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.white.opacity(disabled ? 0.34 : 0.78))
+        .disabled(disabled)
+        .help("Play Spotify on this Mac through \(output.name)")
+        .accessibilityIdentifier("spotify-output-mac-\(output.id)")
+        .accessibilityLabel(selected ? "\(output.name), selected Spotify output" : "Send Spotify to \(output.name)")
     }
 
     private func spotifyRouteButton(_ row: PlaybackOutputRow, source: MediaRemoteTarget) -> some View {
