@@ -29,6 +29,8 @@ final class MediaTransportActionController {
     private var programmaticDispatches: [UUID: MediaTransportPendingDispatchEcho] = [:]
     private var programmaticDispatchFallbackTasks: [UUID: Task<Void, Error>] = [:]
     private var routeConfirmationPresentation: (targetID: String, command: MediaRemoteTransportCommand)?
+    /// Targets paused for an app (e.g. Superwhisper) that its next Play resumes; nil when no app pause is pending.
+    private var appPausedTargetIDs: Set<String>?
 
     init(
         mediaRemoteController: MediaRemoteController,
@@ -63,20 +65,16 @@ final class MediaTransportActionController {
         }
     }
 
-    func route(command: MediaRemoteTransportCommand) {
-        route(command: command, source: .userInterface)
-    }
-
     func routeFromMediaKey(command: MediaRemoteTransportCommand, metadata: MediaTransportInputMetadata? = nil) {
         logInput(
             command: command,
-            source: .eventTap,
+            trigger: .mediaKey,
             metadata: metadata,
             commandCenterMetadata: nil
         )
         routeAccepted(
             command: command,
-            source: .eventTap,
+            trigger: .mediaKey,
             metadata: metadata,
             commandCenterMetadata: nil
         )
@@ -99,58 +97,45 @@ final class MediaTransportActionController {
 
     func routeFromCommandCenter(
         command: MediaRemoteTransportCommand,
+        trigger: MediaTransportTrigger,
         metadata: MediaCommandCenterInputMetadata? = nil
     ) {
-        route(command: command, source: .commandCenter, commandCenterMetadata: metadata)
-    }
-
-    private func route(
-        command: MediaRemoteTransportCommand,
-        source: MediaTransportRouteSource,
-        metadata: MediaTransportInputMetadata? = nil,
-        commandCenterMetadata: MediaCommandCenterInputMetadata? = nil
-    ) {
+        precondition(trigger == .systemRemote || trigger == .appAutomation)
         logInput(
             command: command,
-            source: source,
-            metadata: metadata,
-            commandCenterMetadata: commandCenterMetadata
+            trigger: trigger,
+            metadata: nil,
+            commandCenterMetadata: metadata
         )
-        switch source {
-        case .eventTap:
-            preconditionFailure("Media-key input must pass through the media-key state policy.")
-        case .commandCenter:
-            if let reason = commandCenterFilter.ignoreReasonForCommandCenter(command: command, metadata: commandCenterMetadata) {
-                logger.info("MediaTransport \(reason.rawValue, privacy: .public) command=\(command.rawValue, privacy: .public)")
-                trace(
-                    "input_ignored",
-                    command: command,
-                    source: source,
-                    reason: reason.rawValue,
-                    commandCenterMetadata: commandCenterMetadata
-                )
-                return
-            }
-            commandCenterFilter.noteCommandCenterInput(command: command, metadata: commandCenterMetadata)
-        case .userInterface:
-            break
+        if let reason = commandCenterFilter.ignoreReasonForCommandCenter(command: command, metadata: metadata) {
+            logger.info("MediaTransport \(reason.rawValue, privacy: .public) command=\(command.rawValue, privacy: .public)")
+            trace(
+                "input_ignored",
+                command: command,
+                source: trigger.source,
+                reason: reason.rawValue,
+                commandCenterMetadata: metadata
+            )
+            return
         }
+        commandCenterFilter.noteCommandCenterInput(command: command, metadata: metadata)
 
         routeAccepted(
             command: command,
-            source: source,
-            metadata: metadata,
-            commandCenterMetadata: commandCenterMetadata
+            trigger: trigger,
+            metadata: nil,
+            commandCenterMetadata: metadata
         )
     }
 
     private func logInput(
         command: MediaRemoteTransportCommand,
-        source: MediaTransportRouteSource,
+        trigger: MediaTransportTrigger,
         metadata: MediaTransportInputMetadata?,
         commandCenterMetadata: MediaCommandCenterInputMetadata?
     ) {
-        logger.info("MediaTransport input command=\(command.rawValue, privacy: .public) source=\(source.rawValue, privacy: .public) overlayVisible=\(self.overlayController.isVisible, privacy: .public) chooserActive=\(self.chooserSession.isActive, privacy: .public) canRoute=\(self.canRouteAnyCommands, privacy: .public) targetCount=\(self.mediaSourceStore.rows.count, privacy: .public)")
+        let source = trigger.source
+        logger.info("MediaTransport input command=\(command.rawValue, privacy: .public) trigger=\(trigger.rawValue, privacy: .public) source=\(source.rawValue, privacy: .public) overlayVisible=\(self.overlayController.isVisible, privacy: .public) chooserActive=\(self.chooserSession.isActive, privacy: .public) canRoute=\(self.canRouteAnyCommands, privacy: .public) targetCount=\(self.mediaSourceStore.rows.count, privacy: .public)")
         trace(
             "input",
             command: command,
@@ -162,11 +147,12 @@ final class MediaTransportActionController {
 
     private func routeAccepted(
         command: MediaRemoteTransportCommand,
-        source: MediaTransportRouteSource,
+        trigger: MediaTransportTrigger,
         metadata: MediaTransportInputMetadata?,
         commandCenterMetadata: MediaCommandCenterInputMetadata?
     ) {
-        logger.info("MediaTransport decision=current_targets command=\(command.rawValue, privacy: .public) source=\(source.rawValue, privacy: .public)")
+        let source = trigger.source
+        logger.info("MediaTransport decision=current_targets command=\(command.rawValue, privacy: .public) trigger=\(trigger.rawValue, privacy: .public) source=\(source.rawValue, privacy: .public)")
         trace(
             "decision_current_targets",
             command: command,
@@ -176,7 +162,7 @@ final class MediaTransportActionController {
         )
         routeFromCache(
             command: command,
-            source: source,
+            trigger: trigger,
             metadata: metadata,
             commandCenterMetadata: commandCenterMetadata
         )
@@ -266,38 +252,45 @@ final class MediaTransportActionController {
 
     private func routeFromCache(
         command: MediaRemoteTransportCommand,
-        source: MediaTransportRouteSource,
+        trigger: MediaTransportTrigger,
         metadata: MediaTransportInputMetadata?,
         commandCenterMetadata: MediaCommandCenterInputMetadata?
     ) {
+        let source = trigger.source
         let targets = sortedTargets(mediaSourceStore.rows.map(\.target))
-        if source == .commandCenter, command == .pause {
-            guard !chooserReentryBlocked(
-                command: command,
-                source: source,
-                metadata: metadata,
-                commandCenterMetadata: commandCenterMetadata
-            ) else {
+        // The one place each trigger's special handling lives; everything else routes ordinarily below.
+        switch trigger {
+        case .mediaKey:
+            break
+        case .systemRemote:
+            if command == .pause {
+                // A user or system pause (AirPods, Control Center, headphone unplug) cancels a pending app resume.
+                appPausedTargetIDs = appPausedTargetIDs.map { _ in [] }
+                sendInBackground(command, to: targets, source: source, commandCenterMetadata: commandCenterMetadata)
                 return
             }
-
-            routeConfirmationPresentation = nil
-            // Dictation apps send Pause without a media-key press. It must not open UI.
-            // Pause is idempotent, so stale playback flags must not exclude known targets.
-            trace(
-                "background_pause",
-                command: command,
-                source: source,
-                targets: targets,
-                targetCount: targets.count,
-                commandCenterMetadata: commandCenterMetadata
-            )
-            for target in targets {
-                let dispatchID = beginBoundedProgrammaticDispatch(command: command)
-                send(command: command, to: target, dispatchID: dispatchID, context: .backgroundPause)
+        case .appAutomation:
+            switch command {
+            case .pause:
+                let playingTargetIDs = Set(targets.filter(\.isCurrentlyPlaying).map(\.id))
+                if sendInBackground(command, to: targets, source: source, commandCenterMetadata: commandCenterMetadata) {
+                    appPausedTargetIDs = playingTargetIDs
+                }
+                return
+            case .play:
+                // Resume only what the app's pause stopped; with no pending app pause
+                // (e.g. a BetterTouchTool Play action) route like any other command.
+                if let appPausedTargetIDs {
+                    self.appPausedTargetIDs = nil
+                    let pausedTargets = targets.filter { appPausedTargetIDs.contains($0.id) && !$0.isCurrentlyPlaying }
+                    sendInBackground(command, to: pausedTargets, source: source, commandCenterMetadata: commandCenterMetadata)
+                    return
+                }
+            case .playPause, .next, .previous:
+                break
             }
-            mediaRemoteController.refreshSnapshot()
-            return
+        case .explicitChooser:
+            preconditionFailure("The explicit chooser opens through showTargetChooser, not command routing")
         }
 
         guard !targets.isEmpty else {
@@ -320,6 +313,42 @@ final class MediaTransportActionController {
             metadata: metadata,
             commandCenterMetadata: commandCenterMetadata
         )
+    }
+
+    /// Dispatches without UI or failure notifications: background system and app requests must never open the chooser.
+    /// Returns false when an active chooser owns input.
+    @discardableResult
+    private func sendInBackground(
+        _ command: MediaRemoteTransportCommand,
+        to targets: [MediaRemoteTarget],
+        source: MediaTransportRouteSource,
+        commandCenterMetadata: MediaCommandCenterInputMetadata?
+    ) -> Bool {
+        guard !chooserReentryBlocked(
+            command: command,
+            source: source,
+            metadata: nil,
+            commandCenterMetadata: commandCenterMetadata
+        ) else {
+            return false
+        }
+
+        routeConfirmationPresentation = nil
+        // Pause is idempotent, so stale playback flags must not exclude known targets.
+        trace(
+            "background_\(command.rawValue)",
+            command: command,
+            source: source,
+            targets: targets,
+            targetCount: targets.count,
+            commandCenterMetadata: commandCenterMetadata
+        )
+        for target in targets {
+            let dispatchID = beginBoundedProgrammaticDispatch(command: command)
+            send(command: command, to: target, dispatchID: dispatchID, context: .background)
+        }
+        mediaRemoteController.refreshSnapshot()
+        return true
     }
 
     private func route(
@@ -549,7 +578,7 @@ final class MediaTransportActionController {
         case programmatic(reason: MediaTransportRoutingReason)
         case direct
         case chooser
-        case backgroundPause
+        case background
     }
 
     private func send(
@@ -615,7 +644,7 @@ final class MediaTransportActionController {
                 mediaSourceStore.markCommandFailed(targetID: target.id)
                 finishDispatch(id: dispatchID, fallback: true)
                 logDispatchFailure(command: command, target: target, context: context)
-                if case .backgroundPause = context { return }
+                if case .background = context { return }
                 StatusHUD.shared.finish(
                     title: "Media Command Failed",
                     message: "Keyway could not reach \(target.appName).",
@@ -663,7 +692,7 @@ final class MediaTransportActionController {
         mediaSourceStore.markCommandFailed(targetID: target.id)
         finishDispatch(id: dispatchID, fallback: true)
         logDispatchFailure(command: command, target: target, context: context)
-        if case .backgroundPause = context { return }
+        if case .background = context { return }
         StatusHUD.shared.finish(
             title: "Media Command Failed",
             message: "Keyway could not reach \(target.appName).",
@@ -730,8 +759,8 @@ final class MediaTransportActionController {
             logger.info("MediaTransport route command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) reason=\(reason.rawValue, privacy: .public) transport=\(transport, privacy: .public)")
         case .direct:
             logger.info("MediaTransport direct command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) transport=\(transport, privacy: .public)")
-        case .backgroundPause:
-            logger.info("MediaTransport background_pause command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) transport=\(transport, privacy: .public)")
+        case .background:
+            logger.info("MediaTransport background command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) transport=\(transport, privacy: .public)")
         case .chooser:
             logger.info("MediaTransport chooser command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) transport=\(transport, privacy: .public)")
         }
@@ -747,8 +776,8 @@ final class MediaTransportActionController {
             logger.error("MediaTransport route_failed command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public) reason=\(reason.rawValue, privacy: .public)")
         case .direct:
             logger.error("MediaTransport direct_failed command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public)")
-        case .backgroundPause:
-            logger.error("MediaTransport background_pause_failed command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public)")
+        case .background:
+            logger.error("MediaTransport background_failed command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public)")
         case .chooser:
             logger.error("MediaTransport chooser_failed command=\(command.rawValue, privacy: .public) target=\(target.appName, privacy: .public)")
         }
@@ -879,7 +908,7 @@ final class MediaTransportActionController {
         }
 
         logger.error("MediaTransport async_route_failed command=\(result.command, privacy: .public) target=\(target.appName, privacy: .public) targetID=\(result.targetID, privacy: .public) message=\(result.message, privacy: .public)")
-        if case .backgroundPause = context { return }
+        if case .background = context { return }
         if result.message.contains("-1743") {
             StatusHUD.shared.finish(
                 title: "Media Command Failed",

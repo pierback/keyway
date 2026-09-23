@@ -145,14 +145,14 @@ import sys
 text = pathlib.Path(sys.argv[1]).read_text()
 target_resolver = pathlib.Path(sys.argv[2]).read_text()
 route_body = text[
-    text.index("    private func route("):
-    text.index("    func showTargetChooser(", text.index("    private func route("))
+    text.index("    private func routeAccepted("):
+    text.index("    func showTargetChooser(")
 ]
-if "routeFromCache(\n            command: command,\n            source: source,\n            metadata: metadata,\n            commandCenterMetadata: commandCenterMetadata\n        )" not in route_body:
+if "routeFromCache(\n            command: command,\n            trigger: trigger,\n            metadata: metadata,\n            commandCenterMetadata: commandCenterMetadata\n        )" not in route_body:
     raise SystemExit("verify_playback_routing_invariants: cache routing must preserve source metadata for ambiguous target chooser dispatch")
 cache_body = text[text.index("private func routeFromCache"):text.index("    private func route(\n        command: MediaRemoteTransportCommand,\n        targets:")]
 for required in (
-    "source: MediaTransportRouteSource",
+    "trigger: MediaTransportTrigger",
     "metadata: MediaTransportInputMetadata?",
     "commandCenterMetadata: MediaCommandCenterInputMetadata?",
     "metadata: metadata",
@@ -784,13 +784,13 @@ import pathlib
 import sys
 
 text = pathlib.Path(sys.argv[1]).read_text()
-route_start = text.index("    private func route(")
-route_end = text.index("    func showTargetChooser", route_start)
-route_body = text[route_start:route_end]
-command_center_start = route_body.index("        case .commandCenter:")
-command_center_end = route_body.index("        case .userInterface:", command_center_start)
-command_center_body = route_body[command_center_start:command_center_end]
-if "commandCenterFilter.noteCommandCenterInput(command: command, metadata: commandCenterMetadata)" not in command_center_body:
+route_body = text[
+    text.index("    func routeFromCommandCenter("):
+    text.index("    func showTargetChooser")
+]
+command_center_end = route_body.index("    private func logInput(")
+command_center_body = route_body[:command_center_end]
+if "commandCenterFilter.noteCommandCenterInput(command: command, metadata: metadata)" not in command_center_body:
     raise SystemExit("verify_playback_routing_invariants: routed Command Center inputs must arm duplicate shadow state")
 if "routePlayFamilyWithoutChooser(" in command_center_body:
     raise SystemExit("verify_playback_routing_invariants: Command Center media input must not bypass the chooser")
@@ -1169,14 +1169,14 @@ handler = text[
 ]
 for required in (
     "completion([NSNumber(value: Self.commandHandlerSuccess)] as CFArray)",
-    "self.route(command, metadata)",
+    "self.route(command, trigger, metadata)",
     "self.publishHiddenSession()",
 ):
     if required not in handler:
         raise SystemExit(
             f"verify_playback_routing_invariants: hidden command handler is missing {required!r}"
         )
-if handler.index("completion([NSNumber(value: Self.commandHandlerSuccess)] as CFArray)") > handler.index("self.route(command, metadata)"):
+if handler.index("completion([NSNumber(value: Self.commandHandlerSuccess)] as CFArray)") > handler.index("self.route(command, trigger, metadata)"):
     raise SystemExit("verify_playback_routing_invariants: hidden command receiver must acknowledge accessory input before asynchronous routing")
 PY
 
@@ -1186,7 +1186,7 @@ grep -Fq 'mediaSourceStore: environment.mediaSourceStore' "$sonos_app" \
 grep -q 'mediaFallback=enabled input=event_tap_and_hidden_command_center' "$hotkeys" \
   || fail "transport readiness must log the combined event-tap and hidden-receiver route"
 
-grep -q 'routeFromCommandCenter(command: command, metadata: metadata)' "$hotkeys" \
+grep -q 'routeFromCommandCenter(command: command, trigger: trigger, metadata: metadata)' "$hotkeys" \
   || fail "hidden command receiver callbacks must enter the same transport filter"
 
 ! grep -Eq 'ensureCommandCenterRoute|suspendCommandCenterRouteShield|rearmCommandCenterRouteShield' "$hotkeys" \
@@ -1226,7 +1226,7 @@ closure = text[
     text.index("private lazy var commandCenterInterceptor = MediaCommandCenterInterceptor"):
     text.index("\n\n    init(", text.index("private lazy var commandCenterInterceptor = MediaCommandCenterInterceptor"))
 ]
-route = "self.mediaTransportActions.routeFromCommandCenter(command: command, metadata: metadata)"
+route = "self.mediaTransportActions.routeFromCommandCenter(command: command, trigger: trigger, metadata: metadata)"
 if route not in closure:
     raise SystemExit("verify_playback_routing_invariants: hidden command callback must route through the transport filter when transport input is ready")
 if "self.isTransportInputReady" not in text:

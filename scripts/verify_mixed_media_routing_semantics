@@ -66,22 +66,18 @@ def assert_order(haystack, needles, message):
     if positions != sorted(positions):
         fail(message)
 
-route_input = function_body("route(\n        command:")
+route_input = function_body("routeFromCommandCenter")
 assert_order(
     route_input,
     [
-        "case .commandCenter:",
-        "commandCenterFilter.noteCommandCenterInput(command: command, metadata: commandCenterMetadata)",
-        "case .userInterface:",
+        "precondition(trigger == .systemRemote || trigger == .appAutomation)",
+        "commandCenterFilter.ignoreReasonForCommandCenter(command: command, metadata: metadata)",
+        "commandCenterFilter.noteCommandCenterInput(command: command, metadata: metadata)",
         "routeAccepted(",
     ],
     "command-center input must enter the shared current-target gate after duplicate filtering"
 )
-command_center_branch = route_input[
-    route_input.index("case .commandCenter:"):
-    route_input.index("case .userInterface:")
-]
-if "routePlayFamilyWithoutChooser(" in command_center_branch:
+if "routePlayFamilyWithoutChooser(" in route_input:
     fail("command-center play-family input must not bypass the chooser through direct routing")
 if "shouldRoutePlayFamilyWithoutChooser" in route_input or "routePlayFamilyWithoutChooser(" in route_input:
     fail("non-UI media input must not bypass the chooser through a targeted HID/PID route")
@@ -145,11 +141,19 @@ assert_order(
     route_cache,
     [
         "let targets = sortedTargets(mediaSourceStore.rows.map(\\.target))",
-        "if source == .commandCenter, command == .pause",
-        "context: .backgroundPause",
+        "switch trigger",
+        "case .systemRemote:",
+        "if command == .pause",
+        "sendInBackground(command, to: targets",
+        "case .appAutomation:",
         "guard !targets.isEmpty else",
     ],
     "background Pause must be handled silently before ordinary target selection"
+)
+assert_contains(
+    function_body("sendInBackground"),
+    "context: .background)",
+    "background dispatch must keep its silent context"
 )
 ordinary_route_cache = route_cache[route_cache.index("guard !targets.isEmpty else"):]
 assert_order(

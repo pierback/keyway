@@ -1,4 +1,52 @@
-import Foundation
+import AppKit
+
+/// Every real-world way a transport command reaches Keyway. To find or change how one behaves:
+/// its entry point is documented here, it is classified only by `init(mediaRemoteSenderID:)`, and
+/// `MediaTransportActionController.routeFromCache` switches over it once.
+enum MediaTransportTrigger: String {
+    /// Keyboard media keys and Shift+fn+F7–F9, including synthetic keys posted by BetterTouchTool or Karabiner.
+    /// Enters: `ShortcutEventTap` → `VolumeHotkeyController.handle` → `MediaTransportActionController.routeFromMediaKey`.
+    case mediaKey = "media_key"
+    /// MediaRemote commands from Apple senders: AirPods/headset buttons, Control Center, Touch Bar, and the
+    /// pause macOS sends when headphones disconnect.
+    /// Enters: `MediaCommandCenterInterceptor` → `MediaTransportActionController.routeFromCommandCenter`.
+    case systemRemote = "system_remote"
+    /// MediaRemote commands from third-party apps, e.g. Superwhisper pausing media while it records.
+    /// Enters like `systemRemote`.
+    case appAutomation = "app_automation"
+    /// The menu bar's choose-source action.
+    /// Enters: `KeywayStatusItemController` → `MediaTransportActionController.showTargetChooser`.
+    case explicitChooser = "explicit_chooser"
+
+    /// `senderID` is MediaRemote's kMRMediaRemoteOptionSenderID description string:
+    /// "SenderDevice = <Mac>, SenderBundleIdentifier = <...>, SenderPID = <123>".
+    /// Classify inside the MediaRemote handler; short-lived senders exit right after sending.
+    init(mediaRemoteSenderID senderID: String?) {
+        let senderName = senderID?.components(separatedBy: "SenderBundleIdentifier = <").dropFirst().first
+            .map { String($0.prefix { $0 != ">" }) }
+        let senderPID = senderID?.components(separatedBy: "SenderPID = <").dropFirst().first
+            .flatMap { pid_t($0.prefix(while: \.isNumber)) }
+        // Since macOS 15.4 third-party apps such as Superwhisper reach MediaRemote through Apple's
+        // /usr/bin/perl (mediaremote-adapter), which exits before its parent app can be resolved.
+        let bundleIdentifier = senderName == "perl"
+            ? senderName
+            : senderPID.flatMap { NSRunningApplication(processIdentifier: $0)?.bundleIdentifier }
+        self = bundleIdentifier.map { !$0.hasPrefix("com.apple.") && $0 != Bundle.main.bundleIdentifier } == true
+            ? .appAutomation
+            : .systemRemote
+    }
+
+    var source: MediaTransportRouteSource {
+        switch self {
+        case .mediaKey:
+            return .eventTap
+        case .systemRemote, .appAutomation:
+            return .commandCenter
+        case .explicitChooser:
+            return .userInterface
+        }
+    }
+}
 
 enum MediaTransportRouteSource: String {
     case eventTap = "event_tap"

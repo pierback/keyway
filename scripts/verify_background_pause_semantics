@@ -27,6 +27,16 @@ import OSLog
 
 enum MediaRemoteTransportCommand: String { case play, pause, playPause, next, previous }
 enum MediaTransportRouteSource { case commandCenter, eventTap, userInterface }
+enum MediaTransportTrigger {
+    case mediaKey, systemRemote, appAutomation, explicitChooser
+    var source: MediaTransportRouteSource {
+        switch self {
+        case .mediaKey: return .eventTap
+        case .systemRemote, .appAutomation: return .commandCenter
+        case .explicitChooser: return .userInterface
+        }
+    }
+}
 enum MediaTransportRoutingReason: String { case single }
 struct MediaTransportInputMetadata {}
 struct MediaCommandCenterInputMetadata {}
@@ -107,6 +117,7 @@ final class RoutingHarness {
     let logger = Logger(subsystem: "keyway.background-pause-tests", category: "transport")
     static let mediaRemotePlayerPathBackend = "mediaremote_player_path"
     var routeConfirmationPresentation: (String, MediaRemoteTransportCommand)? = ("playing", .play)
+    var appPausedTargetIDs: Set<String>?
     var sent: [(MediaRemoteTransportCommand, String, MediaTransportDispatchContext)] = []
     var finished = 0
     var resultTraces = 0
@@ -157,7 +168,7 @@ let paused = MediaRemoteTarget(id: "cached-paused", isCurrentlyPlaying: false)
 for targets in [[], [playing], [paused], [playing, paused]] {
     let harness = RoutingHarness()
     harness.mediaSourceStore.rows = targets.map { SourceRow(target: $0) }
-    harness.routeFromCache(command: .pause, source: .commandCenter, metadata: nil, commandCenterMetadata: nil)
+    harness.routeFromCache(command: .pause, trigger: .systemRemote, metadata: nil, commandCenterMetadata: nil)
     expect(harness.chooserShows == 0, "system Pause must not open a chooser with \(targets.count) cached targets")
     expect(harness.ordinaryRoutes == 0, "system Pause must not show automatic-route confirmation")
     expect(harness.sent.map { $0.1 } == targets.map(\.id), "Pause must reach every known target, including stale paused rows")
@@ -165,24 +176,24 @@ for targets in [[], [playing], [paused], [playing, paused]] {
     expect(harness.dispatchGuards == targets.count, "each Pause dispatch must retain programmatic echo suppression")
     expect(harness.mediaRemoteController.refreshes == 1, "background Pause must refresh discovery without opening UI")
     expect(harness.routeConfirmationPresentation == nil, "background Pause must clear stale playback confirmation")
-    expect(harness.sent.allSatisfy { if case .backgroundPause = $0.2 { return true }; return false },
+    expect(harness.sent.allSatisfy { if case .background = $0.2 { return true }; return false },
         "background Pause must retain its silent context through dispatch")
 }
 
 let activeChooser = RoutingHarness()
 activeChooser.chooserActive = true
 activeChooser.mediaSourceStore.rows = [SourceRow(target: playing)]
-activeChooser.routeFromCache(command: .pause, source: .commandCenter, metadata: nil, commandCenterMetadata: nil)
+activeChooser.routeFromCache(command: .pause, trigger: .systemRemote, metadata: nil, commandCenterMetadata: nil)
 expect(activeChooser.sent.isEmpty, "system Pause must respect an active user choice")
 expect(activeChooser.chooserShows == 0, "system Pause must not reopen an active chooser")
 
-for source in [MediaTransportRouteSource.commandCenter, .eventTap, .userInterface] {
+for trigger in [MediaTransportTrigger.systemRemote, .appAutomation, .mediaKey] {
     for command in [MediaRemoteTransportCommand.play, .pause, .playPause, .next, .previous] {
-        if source == .commandCenter && command == .pause { continue }
+        if trigger != .mediaKey && command == .pause { continue }
         for targets in [[], [playing], [playing, paused]] {
             let harness = RoutingHarness()
             harness.mediaSourceStore.rows = targets.map { SourceRow(target: $0) }
-            harness.routeFromCache(command: command, source: source, metadata: nil, commandCenterMetadata: nil)
+            harness.routeFromCache(command: command, trigger: trigger, metadata: nil, commandCenterMetadata: nil)
             expect(harness.sent.isEmpty, "other input must retain ordinary target selection")
             expect(harness.chooserShows == (targets.isEmpty ? 1 : 0), "empty-cache chooser must remain available for intentional media commands")
             expect(harness.ordinaryRoutes == (targets.isEmpty ? 0 : 1), "normal media routing must remain available")
@@ -190,11 +201,45 @@ for source in [MediaTransportRouteSource.commandCenter, .eventTap, .userInterfac
     }
 }
 
+// Superwhisper pauses through Apple's perl adapter, then sends Play when recording ends.
+// Only what its pause stopped may resume, silently.
+let appPause = RoutingHarness()
+appPause.mediaSourceStore.rows = [SourceRow(target: playing), SourceRow(target: paused)]
+appPause.routeFromCache(command: .pause, trigger: .appAutomation, metadata: nil, commandCenterMetadata: nil)
+expect(appPause.sent.map { $0.1 } == [playing.id, paused.id], "app Pause must silently pause every known target")
+expect(appPause.appPausedTargetIDs == [playing.id], "app Pause must remember only targets that were playing")
+expect(appPause.chooserShows == 0 && appPause.ordinaryRoutes == 0, "app Pause must not open UI")
+let pausedByApp = MediaRemoteTarget(id: playing.id, isCurrentlyPlaying: false)
+appPause.mediaSourceStore.rows = [SourceRow(target: pausedByApp), SourceRow(target: paused)]
+appPause.sent = []
+appPause.routeFromCache(command: .play, trigger: .appAutomation, metadata: nil, commandCenterMetadata: nil)
+expect(appPause.sent.map { $0.0 } == [.play] && appPause.sent.map { $0.1 } == [playing.id],
+    "app Play must resume only the target its pause stopped")
+expect(appPause.sent.allSatisfy { if case .background = $0.2 { return true }; return false }, "app resume must stay silent")
+expect(appPause.appPausedTargetIDs == nil, "app resume must consume the pending pause")
+expect(appPause.chooserShows == 0 && appPause.ordinaryRoutes == 0, "app Play after its pause must not open UI")
+
+let cancelled = RoutingHarness()
+cancelled.mediaSourceStore.rows = [SourceRow(target: playing)]
+cancelled.routeFromCache(command: .pause, trigger: .appAutomation, metadata: nil, commandCenterMetadata: nil)
+cancelled.routeFromCache(command: .pause, trigger: .systemRemote, metadata: nil, commandCenterMetadata: nil)
+cancelled.mediaSourceStore.rows = [SourceRow(target: pausedByApp)]
+cancelled.sent = []
+cancelled.routeFromCache(command: .play, trigger: .appAutomation, metadata: nil, commandCenterMetadata: nil)
+expect(cancelled.sent.isEmpty, "a system Pause (AirPods, headphone unplug) must cancel a pending app resume")
+expect(cancelled.chooserShows == 0 && cancelled.ordinaryRoutes == 0, "a cancelled app resume must stay silent")
+
+let appChooser = RoutingHarness()
+appChooser.chooserActive = true
+appChooser.mediaSourceStore.rows = [SourceRow(target: playing)]
+appChooser.routeFromCache(command: .pause, trigger: .appAutomation, metadata: nil, commandCenterMetadata: nil)
+expect(appChooser.sent.isEmpty && appChooser.appPausedTargetIDs == nil, "app Pause must respect an active user choice")
+
 // Inject terminal results after submission to exercise the real async callbacks
 // and presenter. Explicit row, chooser, and automatic actions must retain errors.
-for context in [MediaTransportDispatchContext.backgroundPause, .direct, .chooser, .programmatic(reason: .single)] {
+for context in [MediaTransportDispatchContext.background, .direct, .chooser, .programmatic(reason: .single)] {
     let isBackground: Bool
-    if case .backgroundPause = context { isBackground = true } else { isBackground = false }
+    if case .background = context { isBackground = true } else { isBackground = false }
     for backend in ["desktop", "chromium_extension", "mediaremote_player_path"] {
         for result in [
             MediaRemoteCommandResultEvent(ok: true, unsupported: false, message: "", backend: backend),

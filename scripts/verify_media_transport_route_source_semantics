@@ -8,7 +8,7 @@ trap 'rm -rf "$workdir"' EXIT
 cp "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/MediaTransportRouteSource.swift" "$workdir/MediaTransportRouteSource.swift"
 
 cat >"$workdir/RouteSourceSemantics.swift" <<'SWIFT'
-import Foundation
+import AppKit
 
 @main
 struct RouteSourceSemantics {
@@ -67,6 +67,23 @@ struct RouteSourceSemantics {
         expectFalse(
             physical.matchesSameGeneratedMediaKey(as: nextPress),
             "fresh physical key presses must not match old generated-event identity"
+        )
+        func trigger(_ senderID: String?) -> MediaTransportTrigger {
+            MediaTransportTrigger(mediaRemoteSenderID: senderID)
+        }
+        expectTrue(trigger(nil) == .systemRemote, "MediaRemote commands without a sender must keep system-remote routing")
+        expectTrue(
+            trigger("SenderDevice = <Mac>, SenderBundleIdentifier = <perl>, SenderPID = <999999>") == .appAutomation,
+            "perl mediaremote-adapter senders such as Superwhisper must classify as app automation even after exiting"
+        )
+        expectTrue(
+            trigger("SenderDevice = <Mac>, SenderBundleIdentifier = <com.apple.bluetoothd>, SenderPID = <999999>") == .systemRemote,
+            "headset buttons relayed by bluetoothd must classify as system remote"
+        )
+        let dockPID = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock")[0].processIdentifier
+        expectTrue(
+            trigger("SenderDevice = <Mac>, SenderBundleIdentifier = <com.apple.dock>, SenderPID = <\(dockPID)>") == .systemRemote,
+            "Apple apps such as Control Center must classify as system remote"
         )
         print("verify_media_transport_route_source_semantics=ok")
     }

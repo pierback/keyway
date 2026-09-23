@@ -95,7 +95,7 @@ final class MediaCommandCenterInterceptor {
     }
 
     private let logger = Logger(subsystem: AppIdentity.loggerSubsystem, category: "MediaCommandCenter")
-    private let route: @MainActor (MediaRemoteTransportCommand, MediaCommandCenterInputMetadata) -> Void
+    private let route: @MainActor (MediaRemoteTransportCommand, MediaTransportTrigger, MediaCommandCenterInputMetadata) -> Void
     private let audioEngine = AVAudioEngine()
     private var audioSourceNode: AVAudioSourceNode?
     private var audioEngineConfigurationObserver: NSObjectProtocol?
@@ -105,7 +105,7 @@ final class MediaCommandCenterInterceptor {
     private(set) var running = false
 
     init(
-        route: @escaping @MainActor (MediaRemoteTransportCommand, MediaCommandCenterInputMetadata) -> Void
+        route: @escaping @MainActor (MediaRemoteTransportCommand, MediaTransportTrigger, MediaCommandCenterInputMetadata) -> Void
     ) {
         self.route = route
     }
@@ -181,11 +181,13 @@ final class MediaCommandCenterInterceptor {
     }
 
     private func registerCommandHandler() {
-        let block: AsyncCommandHandler = { [weak self] rawCommand, _, completion in
+        let block: AsyncCommandHandler = { [weak self] rawCommand, options, completion in
             guard let command = Self.transportCommand(rawCommand) else {
                 completion([NSNumber(value: Self.commandHandlerFailed)] as CFArray)
                 return
             }
+            let senderID = (options as NSDictionary?)?["kMRMediaRemoteOptionSenderID"] as? String
+            let trigger = MediaTransportTrigger(mediaRemoteSenderID: senderID)
             completion([NSNumber(value: Self.commandHandlerSuccess)] as CFArray)
             let metadata = MediaCommandCenterInputMetadata(
                 eventTimestamp: ProcessInfo.processInfo.systemUptime
@@ -194,8 +196,8 @@ final class MediaCommandCenterInterceptor {
                 guard let self, self.running else {
                     return
                 }
-                self.logger.info("MediaCommandCenter event command=\(command.rawValue, privacy: .public) timestamp=\(metadata.eventTimestamp, privacy: .public)")
-                self.route(command, metadata)
+                self.logger.info("MediaCommandCenter event command=\(command.rawValue, privacy: .public) timestamp=\(metadata.eventTimestamp, privacy: .public) trigger=\(trigger.rawValue, privacy: .public) sender=\(senderID ?? "none", privacy: .public)")
+                self.route(command, trigger, metadata)
                 self.publishHiddenSession()
             }
         }

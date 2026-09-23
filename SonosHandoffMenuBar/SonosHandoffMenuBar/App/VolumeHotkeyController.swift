@@ -43,7 +43,7 @@ final class VolumeHotkeyController {
             self?.handle(tapKind: tapKind, type: type, event: event) ?? Unmanaged.passUnretained(event)
         }
     )
-    private lazy var commandCenterInterceptor = MediaCommandCenterInterceptor { [weak self] command, metadata in
+    private lazy var commandCenterInterceptor = MediaCommandCenterInterceptor { [weak self] command, trigger, metadata in
         guard let self,
               self.isTransportInputReady,
               let activeMediaRemoteGeneration = self.activeMediaRemoteGeneration,
@@ -51,7 +51,7 @@ final class VolumeHotkeyController {
         else {
             return
         }
-        self.mediaTransportActions.routeFromCommandCenter(command: command, metadata: metadata)
+        self.mediaTransportActions.routeFromCommandCenter(command: command, trigger: trigger, metadata: metadata)
     }
 
     init(
