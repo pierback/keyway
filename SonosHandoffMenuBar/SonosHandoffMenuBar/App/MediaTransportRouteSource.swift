@@ -14,8 +14,8 @@ enum MediaTransportTrigger: String {
     /// MediaRemote commands from third-party apps, e.g. Superwhisper pausing media while it records.
     /// Enters like `systemRemote`.
     case appAutomation = "app_automation"
-    /// The menu bar's choose-source action.
-    /// Enters: `KeywayStatusItemController` → `MediaTransportActionController.showTargetChooser`.
+    /// The menu bar's choose-source action or its Settings → Shortcuts binding.
+    /// Enters: `KeywayStatusItemController` or `GlobalShortcutController` → `MediaTransportActionController.showTargetChooser`.
     case explicitChooser = "explicit_chooser"
 
     /// `senderID` is MediaRemote's kMRMediaRemoteOptionSenderID description string:

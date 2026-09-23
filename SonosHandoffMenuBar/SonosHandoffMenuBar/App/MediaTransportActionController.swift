@@ -179,6 +179,20 @@ final class MediaTransportActionController {
         send(command: command, to: target, dispatchID: dispatchID, context: .direct)
     }
 
+    /// Brings the playing source to the front, else the most recent one.
+    func focusPlayingSource() {
+        let targets = sortedTargets(mediaSourceStore.rows.map(\.target))
+        guard let target = targets.first(where: \.isCurrentlyPlaying) ?? targets.first else {
+            StatusHUD.shared.finish(
+                title: "No Media Source",
+                message: "Start playback in Spotify, a browser, or QuickTime.",
+                dismissAfter: 1.6
+            )
+            return
+        }
+        focus(target: target)
+    }
+
     func focus(target: MediaRemoteTarget) {
         rememberTarget(target)
         sourceFocusActionController.focus(target: target)

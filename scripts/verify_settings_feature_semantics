@@ -142,8 +142,8 @@ schedule_relaunch = controller[controller.index("    private func scheduleRelaun
 if "relaunchDelayNanoseconds" not in schedule_relaunch:
     raise SystemExit("verify_settings_feature_semantics: helper recovery must use the capped relaunch schedule")
 
-if 'private var sidebarSections: [String] {\n        ["Playback", "Spotify", "Permissions", "Support"]\n    }' not in text:
-    raise SystemExit("verify_settings_feature_semantics: Settings must keep the simplified four-section navigation")
+if 'private var sidebarSections: [String] {\n        ["Playback", "Shortcuts", "Spotify", "Permissions", "Support"]\n    }' not in text:
+    raise SystemExit("verify_settings_feature_semantics: Settings must keep the simplified five-section navigation")
 if 'Command-click or Command-Enter opens the selected app or browser tab.' not in text:
     raise SystemExit("verify_settings_feature_semantics: Source Chooser guidance must explain both direct open gestures")
 PY

@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "Hotkeys")
     private var runtime: AppRuntime?
     private var statusItemController: KeywayStatusItemController?
+    private var globalShortcutController: GlobalShortcutController?
     private var permissionOnboardingController: PermissionOnboardingWindowController?
     private var browserExtensionSetupController: BrowserExtensionSetupWindowController?
     private var refreshHotkeysObserver: NSObjectProtocol?
@@ -40,6 +41,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 _ = self?.permissionOnboardingController?.present()
             }
         )
+        globalShortcutController = GlobalShortcutController { [weak self] action in
+            switch action {
+            case .openPlayingSource:
+                mediaTransportActionController.focusPlayingSource()
+            case .showSourceChooser:
+                mediaTransportActionController.showTargetChooser()
+            case .sendSpotifyToHeadphones:
+                guard let output = playback.headphoneOutput else {
+                    StatusHUD.shared.finish(
+                        title: "No Headphones",
+                        message: "Connect headphones to send Spotify to them.",
+                        dismissAfter: 1.6
+                    )
+                    return
+                }
+                playback.transferSpotifyPlaybackToMac(output: output)
+            case .openKeywayMenu:
+                self?.statusItemController?.togglePopoverFromShortcut()
+            }
+        }
+        globalShortcutController?.start()
         browserExtensionSetupController = BrowserExtensionSetupWindowController(
             extensionController: chromiumBrowserExtensionController
         )

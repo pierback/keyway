@@ -134,7 +134,7 @@ final class ShortcutCarbonHotKeyRegistrar {
         }
     }
 
-    private static let hotKeySignature = OSType(
+    fileprivate nonisolated static let hotKeySignature = OSType(
         UInt32(Character("S").asciiValue!) << 24 |
             UInt32(Character("O").asciiValue!) << 16 |
             UInt32(Character("N").asciiValue!) << 8 |
@@ -163,6 +163,10 @@ private func shortcutCarbonHotKeyCallback(
     )
     guard status == noErr else {
         return status
+    }
+    // Hotkeys registered elsewhere (Settings → Shortcuts) share the application target; pass them on.
+    guard hotKeyID.signature == ShortcutCarbonHotKeyRegistrar.hotKeySignature else {
+        return OSStatus(eventNotHandledErr)
     }
 
     let registrar = Unmanaged<ShortcutCarbonHotKeyRegistrar>.fromOpaque(userData).takeUnretainedValue()

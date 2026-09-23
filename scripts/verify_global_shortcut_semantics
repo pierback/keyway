@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+workdir="$(mktemp -d)"
+trap 'rm -rf "$workdir"' EXIT
+
+app="$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App"
+cp "$app/GlobalShortcutController.swift" "$workdir/"
+
+cat >"$workdir/main.swift" <<'SWIFT'
+import AppKit
+import Carbon.HIToolbox
+
+func expect(_ condition: Bool, _ message: String) {
+    guard condition else {
+        FileHandle.standardError.write(Data("verify_global_shortcut_semantics: \(message)\n".utf8))
+        exit(1)
+    }
+}
+
+func press(_ keyCode: Int, _ characters: String, _ flags: NSEvent.ModifierFlags) -> GlobalShortcut? {
+    GlobalShortcut(event: NSEvent.keyEvent(
+        with: .keyDown,
+        location: .zero,
+        modifierFlags: flags,
+        timestamp: 0,
+        windowNumber: 0,
+        context: nil,
+        characters: characters,
+        charactersIgnoringModifiers: characters,
+        isARepeat: false,
+        keyCode: UInt16(keyCode)
+    )!)
+}
+
+let optionCommandSpace = press(kVK_Space, " ", [.option, .command])!
+expect(optionCommandSpace.label == "⌥⌘Space", "modifier symbols must render in macOS order: \(optionCommandSpace.label)")
+expect(optionCommandSpace.keyCode == UInt32(kVK_Space), "the key code must be kept for Carbon registration")
+expect(optionCommandSpace.carbonModifiers == UInt32(optionKey | cmdKey), "Cocoa modifiers must map to Carbon modifiers")
+expect(GlobalShortcut(storage: optionCommandSpace.storage) == optionCommandSpace, "storage must round-trip")
+
+let controlShiftP = press(kVK_ANSI_P, "p", [.control, .shift])!
+expect(controlShiftP.label == "⌃⇧P", "letters must render uppercased: \(controlShiftP.label)")
+expect(press(kVK_F5, "", [])?.label == "F5", "function keys must be bindable without modifiers")
+expect(press(kVK_ANSI_A, "a", []) == nil, "plain letters must not become global shortcuts")
+expect(press(kVK_ANSI_A, "A", [.shift]) == nil, "Shift alone must not make a letter a global shortcut")
+
+expect(GlobalShortcut(storage: nil) == nil, "an unset action must have no shortcut")
+expect(GlobalShortcut(storage: "") == nil, "a cleared action must have no shortcut")
+expect(GlobalShortcut(storage: "49:2304:⌥⌘:") != nil, "labels containing a colon must survive storage")
+expect(Set(GlobalShortcutAction.allCases.map(\.defaultsKey)).count == GlobalShortcutAction.allCases.count,
+    "every action must persist under its own key")
+
+print("verify_global_shortcut_semantics=ok")
+SWIFT
+
+swiftc -module-cache-path "$workdir/module-cache" "$workdir/GlobalShortcutController.swift" "$workdir/main.swift" -o "$workdir/verify"
+"$workdir/verify"
+
+python3 - "$app/ShortcutCarbonHotKeyRegistrar.swift" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+if "guard hotKeyID.signature == ShortcutCarbonHotKeyRegistrar.hotKeySignature else" not in text:
+    raise SystemExit("verify_global_shortcut_semantics: the volume hotkey handler must pass on hotkeys it did not register")
+PY

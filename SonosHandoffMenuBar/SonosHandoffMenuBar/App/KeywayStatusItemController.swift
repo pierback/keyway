@@ -103,6 +103,16 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
         togglePopover(relativeTo: sender)
     }
 
+    /// Settings → Shortcuts "Open Keyway menu": behaves like a left click on the status item.
+    func togglePopoverFromShortcut() {
+        guard isRuntimeStarted() else {
+            presentPermissionOnboarding()
+            return
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        togglePopover(relativeTo: statusItem.button!)
+    }
+
     private func togglePopover(relativeTo button: NSStatusBarButton) {
         if popover.isShown {
             closePopover()

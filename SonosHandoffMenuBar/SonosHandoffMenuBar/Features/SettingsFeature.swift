@@ -1,6 +1,7 @@
 import AppKit
 import os
 import SonosHandoffCore
+import Carbon.HIToolbox
 import SwiftUI
 @preconcurrency import UserNotifications
 
@@ -143,13 +144,15 @@ struct SettingsFeature: View {
     }
 
     private var sidebarSections: [String] {
-        ["Playback", "Spotify", "Permissions", "Support"]
+        ["Playback", "Shortcuts", "Spotify", "Permissions", "Support"]
     }
 
     private func sidebarIcon(for section: String) -> String {
         switch section {
         case "Playback":
             return "play.rectangle.on.rectangle"
+        case "Shortcuts":
+            return "command"
         case "Spotify":
             return "music.note"
         case "Permissions":
@@ -171,6 +174,7 @@ struct SettingsFeature: View {
                 audioControlsSection
                 sonosSection
             }
+        case "Shortcuts": shortcutsSection
         case "Spotify": spotifySection
         case "Permissions": permissionsSection
         case "Support":
@@ -264,6 +268,28 @@ struct SettingsFeature: View {
                     Spacer()
                 }
 
+                let installedBrowsers = chromiumBrowserInstallationAdapter.installedApplicationURLsByBundleIdentifier()
+                ForEach(ChromiumBrowserDefinition.supported.filter { installedBrowsers[$0.bundleIdentifier] != nil }, id: \.bundleIdentifier) { browser in
+                    let profileCount = chromiumBrowserExtensionController.profileConnections
+                        .filter { $0.browserBundleIdentifier == browser.bundleIdentifier }
+                        .count
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(profileCount > 0 ? Color.green : Color.secondary.opacity(0.4))
+                            .frame(width: 7, height: 7)
+                            .accessibilityHidden(true)
+                        Text(browser.displayName)
+                            .font(.system(size: 12))
+                        Spacer()
+                        Text(profileCount == 0 ? "Not connected" : "\(profileCount) \(profileCount == 1 ? "profile" : "profiles") connected")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.leading, 15)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("settings.browserExtension.browser.\(browser.bundleIdentifier)")
+                }
+
                 HStack(spacing: 8) {
                     Button("Set Up Browsers", action: presentBrowserExtensionSetup)
                         .buttonStyle(.borderedProminent)
@@ -284,6 +310,28 @@ struct SettingsFeature: View {
                         openChromiumExtensionsPage()
                     }
                     .controlSize(.small)
+                }
+            }
+        }
+    }
+
+    private var shortcutsSection: some View {
+        settingsPanel(title: "Shortcuts") {
+            Text("Global shortcuts work from any app. Click a field and press the keys; Esc cancels, Delete clears.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+            ForEach(GlobalShortcutAction.allCases) { action in
+                HStack(alignment: .center, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(action.title)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.primary.opacity(0.9))
+                        Text(action.detail)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    ShortcutRecorderField(action: action)
                 }
             }
         }
@@ -1101,6 +1149,80 @@ private enum NotificationPermissionViewState {
     case notAsked
     case off
     case unknown
+}
+
+/// Click, then press a key combination to bind it; Esc cancels, Delete clears.
+private struct ShortcutRecorderField: View {
+    let action: GlobalShortcutAction
+    @AppStorage private var storage: String
+    @State private var keyMonitor: Any?
+
+    init(action: GlobalShortcutAction) {
+        self.action = action
+        _storage = AppStorage(wrappedValue: "", action.defaultsKey)
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Button {
+                keyMonitor == nil ? startRecording() : stopRecording()
+            } label: {
+                Text(keyMonitor != nil ? "Press shortcut…" : GlobalShortcut(storage: storage)?.label ?? "Record Shortcut")
+                    .font(.system(size: 12, design: storage.isEmpty || keyMonitor != nil ? .default : .monospaced))
+                    .foregroundStyle(storage.isEmpty && keyMonitor == nil ? .secondary : .primary)
+                    .frame(minWidth: 120)
+            }
+            .controlSize(.small)
+            .accessibilityIdentifier("settings.shortcuts.\(action.rawValue)")
+
+            if !storage.isEmpty, keyMonitor == nil {
+                Button {
+                    storage = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Clear shortcut")
+                .accessibilityLabel("Clear \(action.title) shortcut")
+            }
+        }
+        .onDisappear(perform: stopRecording)
+    }
+
+    private func startRecording() {
+        NotificationCenter.default.post(name: .keywayShortcutRecordingChanged, object: true)
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            if Int(event.keyCode) == kVK_Escape {
+                stopRecording()
+            } else if flags.isDisjoint(with: [.command, .option, .control, .shift]),
+                      [kVK_Delete, kVK_ForwardDelete].contains(Int(event.keyCode)) {
+                storage = ""
+                stopRecording()
+            } else if let shortcut = GlobalShortcut(event: event) {
+                // One combination drives one action: take it away from any other action.
+                for other in GlobalShortcutAction.allCases where other != action
+                    && GlobalShortcut(storage: UserDefaults.standard.string(forKey: other.defaultsKey)) == shortcut {
+                    UserDefaults.standard.removeObject(forKey: other.defaultsKey)
+                }
+                storage = shortcut.storage
+                stopRecording()
+            } else {
+                NSSound.beep()
+            }
+            return nil
+        }
+    }
+
+    private func stopRecording() {
+        guard let keyMonitor else {
+            return
+        }
+        NSEvent.removeMonitor(keyMonitor)
+        self.keyMonitor = nil
+        NotificationCenter.default.post(name: .keywayShortcutRecordingChanged, object: false)
+    }
 }
 
 private struct StatusDot: View {

@@ -50,6 +50,7 @@
 		A7F73D1F3C6BF96C9CEFF5512F928EDA /* MenuBarMediaSourceSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6259B77E37BB1F3B87916EC3A6916D5 /* MenuBarMediaSourceSection.swift */; };
 		AD5A204FAD406A9157450DD9645515D2 /* ChromiumBrowserExtensionMessages.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC93B4EF51020108171FE2B0D3FE8EAC /* ChromiumBrowserExtensionMessages.swift */; };
 		B00C404F93E1E17A522CA8A427134516 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8DD20B105F5F098DB683EF5B688753F7 /* Cocoa.framework */; };
+		4B0D98BD3FC9303E7C195C21 /* GlobalShortcutController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F789E05E95132B49E0724953 /* GlobalShortcutController.swift */; };
 		B1C336773EF70F8EE4F38D1355EF102D /* HeadphoneTransferSuggestion.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4DFFC59788910F4A9D2F31036981A4C /* HeadphoneTransferSuggestion.swift */; };
 		B1EA168E45702AF2B8854D254291EBFC /* SonosHandoffCore in Frameworks */ = {isa = PBXBuildFile; productRef = A21ED45C9C014DD3576F20F9593E50C0 /* SonosHandoffCore */; };
 		BAB84D8E3DC7BBE6B8EBB29DF3D5821F /* MenuBarMotion.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4928204B21E21B446C93617E6570518E /* MenuBarMotion.swift */; };
@@ -144,6 +145,7 @@
 		D858EA25E44377D1D510CA2E53A7F630 /* MediaTransportTargetResolver.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MediaTransportTargetResolver.swift; sourceTree = "<group>"; };
 		E57B5379B44D726DFA9A55D2B26E7CF7 /* MenuBarOutputSection.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MenuBarOutputSection.swift; sourceTree = "<group>"; };
 		EE178A956166F07B6AF12279F22DF2CD /* Keyway.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Keyway.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F789E05E95132B49E0724953 /* GlobalShortcutController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GlobalShortcutController.swift; sourceTree = "<group>"; };
 		F4DFFC59788910F4A9D2F31036981A4C /* HeadphoneTransferSuggestion.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HeadphoneTransferSuggestion.swift; sourceTree = "<group>"; };
 		F6981656AB0BD3561BD840A290BF82B3 /* SettingsFeature.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SettingsFeature.swift; sourceTree = "<group>"; };
 		F6BD1E8E3E32B19887DC8110B89C3777 /* SonosHandoffApp.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SonosHandoffApp.swift; sourceTree = "<group>"; };
@@ -245,6 +247,7 @@
 				CC93B4EF51020108171FE2B0D3FE8EAC /* ChromiumBrowserExtensionMessages.swift */,
 				81AD57165C770926563C89443728A9D7 /* ChromiumBrowserExtensionTransport.swift */,
 				9A491395559EEE840D46EA24FDBDB8BA /* ChromiumNativeMessagingHostInstaller.swift */,
+				F789E05E95132B49E0724953 /* GlobalShortcutController.swift */,
 				F4DFFC59788910F4A9D2F31036981A4C /* HeadphoneTransferSuggestion.swift */,
 				5476BBC53A95E2142B2448CFDCDCFEBF /* KeywayStatusItemController.swift */,
 				D2CEF5DCDDCEFB34DC3571FE6F89E218 /* MacAudioOutputMonitor.swift */,
@@ -487,6 +490,7 @@
 				AD5A204FAD406A9157450DD9645515D2 /* ChromiumBrowserExtensionMessages.swift in Sources */,
 				7C2F1EC6E19DF6D6254230D76D842FC8 /* ChromiumBrowserExtensionTransport.swift in Sources */,
 				5F1E7AE3595F76649164286065EB8353 /* ChromiumNativeMessagingHostInstaller.swift in Sources */,
+				4B0D98BD3FC9303E7C195C21 /* GlobalShortcutController.swift in Sources */,
 				B1C336773EF70F8EE4F38D1355EF102D /* HeadphoneTransferSuggestion.swift in Sources */,
 				58162CFE1FD450830E0432A70B94645E /* KeywayStatusItemController.swift in Sources */,
 				7DC22AEE69DEA0673C393F3A0AB50E67 /* MacAudioOutputMonitor.swift in Sources */,
