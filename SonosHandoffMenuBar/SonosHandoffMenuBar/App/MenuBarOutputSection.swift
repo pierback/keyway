@@ -4,8 +4,8 @@ import SwiftUI
 @MainActor
 struct MenuBarOutputSection: View {
     private static let accentColor = Color(nsColor: .controlAccentColor)
-    private static let rowHeight: CGFloat = 28
-    private static let iconSize: CGFloat = 20
+    private static let rowHeight: CGFloat = 36
+    private static let iconSize: CGFloat = 28
     private static let trailingControlSize: CGFloat = 22
 
     @ObservedObject var playback: PlaybackSyncController
@@ -163,8 +163,9 @@ struct MenuBarOutputSection: View {
 
             if selected {
                 MenuBarVolumeControl(playback: playback)
-                    .padding(.leading, 33)
-                    .padding(.top, 4)
+                    .padding(.leading, Self.iconSize + 11)
+                    .padding(.trailing, 4)
+                    .padding(.bottom, 6)
             }
 
             if mixerExpanded {
@@ -194,7 +195,7 @@ struct MenuBarOutputSection: View {
                             .fill(outputIconBackground(selected: selected))
 
                         Image(systemName: outputIconName(for: row))
-                            .font(.system(size: 12, weight: .regular))
+                            .font(.system(size: 13, weight: .medium))
                             .symbolRenderingMode(.monochrome)
                             .foregroundStyle(outputIconForeground(selected: selected))
                     }
@@ -205,7 +206,6 @@ struct MenuBarOutputSection: View {
                     Spacer(minLength: 0)
                 }
                 .frame(maxWidth: .infinity, minHeight: Self.rowHeight, alignment: .leading)
-                .padding(.leading, 10)
             }
             .buttonStyle(.plain)
             .disabled(playback.loadingRoomName != nil || playback.groupLoadingRoomName != nil || playback.volumeState.isBusy)
@@ -244,16 +244,11 @@ struct MenuBarOutputSection: View {
             }
             .frame(width: Self.trailingControlSize * 2, height: Self.rowHeight)
         }
-        .padding(.trailing, 4)
-        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .background {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(selected ? Self.accentColor.opacity(0.11) : Color.clear)
-        }
+        .contentShape(Rectangle())
         .animation(MenuBarMotion.selection, value: selected)
         .animation(MenuBarMotion.selection, value: loading)
         .animation(MenuBarMotion.selection, value: grouping)
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 4)
     }
 
     private func trailingControlPlaceholder() -> some View {
@@ -273,8 +268,8 @@ struct MenuBarOutputSection: View {
                         .transition(MenuBarMotion.statusTransition)
                 } else {
                     Image(systemName: "plus")
-                        .font(.system(size: 10.5, weight: .medium))
-                        .foregroundStyle(Color.primary.opacity(0.46))
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
                         .transition(MenuBarMotion.statusTransition)
                 }
             }
@@ -328,7 +323,7 @@ struct MenuBarOutputSection: View {
             }
         }
         .frame(height: 28)
-        .padding(.leading, 43)
+        .padding(.leading, Self.iconSize + 15)
         .padding(.trailing, 4)
     }
 
@@ -366,13 +361,13 @@ struct MenuBarOutputSection: View {
         return Button {
             playback.toggleGroupMembership(row)
         } label: {
-            HStack(spacing: 13) {
+            HStack(spacing: 11) {
                 ZStack {
                     Circle()
                         .fill(row.isInGroup ? Self.accentColor : Color.primary.opacity(0.08))
 
                     Image(systemName: groupIconName(for: row))
-                        .font(.system(size: 12, weight: .regular))
+                        .font(.system(size: 13, weight: .medium))
                         .symbolRenderingMode(.monochrome)
                         .foregroundStyle(groupIconForeground(for: row))
                 }
@@ -385,18 +380,13 @@ struct MenuBarOutputSection: View {
                 groupRowStatus(for: row, loading: loading)
             }
             .frame(maxWidth: .infinity, minHeight: Self.rowHeight, alignment: .leading)
-            .padding(.horizontal, 12)
-            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .background {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(row.isInGroup ? Self.accentColor.opacity(0.11) : Color.clear)
-            }
+            .contentShape(Rectangle())
             .animation(MenuBarMotion.selection, value: row.isInGroup)
             .animation(MenuBarMotion.selection, value: loading)
         }
         .buttonStyle(.plain)
         .disabled(disabled)
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 4)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("group-toggle-\(row.displayName)")
         .accessibilityLabel(groupAccessibilityLabel(for: row))
@@ -441,8 +431,8 @@ struct MenuBarOutputSection: View {
     private func rowTitle(_ title: String, subtitle: String?, dimmed: Bool) -> some View {
         VStack(alignment: .leading, spacing: -1) {
             Text(title)
-                .font(.system(size: 13, weight: .regular))
-                .foregroundStyle(Color.primary.opacity(dimmed ? 0.72 : 0.9))
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(Color.primary.opacity(dimmed ? 0.6 : 1))
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .contentTransition(.opacity)
