@@ -12,7 +12,7 @@ struct SettingsFeature: View {
     private static let callbackURLText = SpotifyAuthCoordinator.callbackPorts
         .map { "http://\(SpotifyAuthCoordinator.callbackHost):\($0)\(SpotifyAuthCoordinator.callbackPath)" }
         .joined(separator: "\n")
-    private static let panelCornerRadius: CGFloat = 12
+    private static let panelCornerRadius: CGFloat = 9
     private let accessibilitySettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
     private let inputMonitoringSettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!
     private let notificationSettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.notifications")!
@@ -89,21 +89,18 @@ struct SettingsFeature: View {
         _chromiumBrowserExtensionController = ObservedObject(wrappedValue: chromiumBrowserExtensionController)
     }
 
-    @State private var selectedSection: String = "Playback"
-
     var body: some View {
-        HStack(spacing: 0) {
-            sidebarList
-                .frame(width: 180)
-                .background(Color.primary.opacity(0.02))
-
-            Divider()
-
-            ScrollView {
-                sidebarDetailContent
-                    .padding(20)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-            }
+        TabView {
+            settingsTab { generalSection; transportRoutingSection; overlaySection }
+                .tabItem { Label("General", systemImage: "gearshape") }
+            settingsTab { shortcutsSection }
+                .tabItem { Label("Shortcuts", systemImage: "keyboard") }
+            settingsTab { spotifySection; sonosSection; audioControlsSection; browserSetupSection }
+                .tabItem { Label("Sources", systemImage: "dot.radiowaves.left.and.right") }
+            settingsTab { permissionsSection }
+                .tabItem { Label("Permissions", systemImage: "lock.shield") }
+            settingsTab { helperStatusSection; browserMaintenanceSection; diagnosticsSection; migrationSection }
+                .tabItem { Label("Advanced", systemImage: "wrench.and.screwdriver") }
         }
         .frame(width: Self.preferredWindowSize.width, height: Self.preferredWindowSize.height)
         .task {
@@ -122,79 +119,13 @@ struct SettingsFeature: View {
         }
     }
 
-    private var sidebarList: some View {
+    private func settingsTab<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         ScrollView {
-            VStack(spacing: 3) {
-                ForEach(sidebarSections, id: \.self) { name in
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.15)) {
-                            selectedSection = name
-                        }
-                    } label: {
-                        Label(name, systemImage: sidebarIcon(for: name))
-                            .font(.system(size: 13))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 10)
-                        .frame(height: 32)
-                        .background(
-                            selectedSection == name
-                                ? Color.accentColor.opacity(0.12)
-                                : Color.clear,
-                            in: RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        )
-                        .foregroundStyle(selectedSection == name ? .primary : .secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("settings.sidebar.\(name.lowercased())")
-                }
+            VStack(spacing: 18) {
+                content()
             }
-            .padding(10)
-        }
-    }
-
-    private var sidebarSections: [String] {
-        ["Playback", "Shortcuts", "Spotify", "Permissions", "Support"]
-    }
-
-    private func sidebarIcon(for section: String) -> String {
-        switch section {
-        case "Playback":
-            return "play.rectangle.on.rectangle"
-        case "Shortcuts":
-            return "command"
-        case "Spotify":
-            return "music.note"
-        case "Permissions":
-            return "lock.shield"
-        case "Support":
-            return "wrench.and.screwdriver"
-        default:
-            return "questionmark"
-        }
-    }
-
-    @ViewBuilder
-    private var sidebarDetailContent: some View {
-        switch selectedSection {
-        case "Playback":
-            VStack(spacing: 12) {
-                generalSection
-                transportRoutingSection
-                overlaySection
-                audioControlsSection
-                sonosSection
-            }
-        case "Shortcuts": shortcutsSection
-        case "Spotify": spotifySection
-        case "Permissions": permissionsSection
-        case "Support":
-            VStack(spacing: 12) {
-                browserSetupSection
-                migrationSection
-                helperStatusSection
-                diagnosticsSection
-            }
-        default: transportRoutingSection
+            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
     }
 
@@ -317,7 +248,7 @@ struct SettingsFeature: View {
     }
 
     private var browserSetupSection: some View {
-        settingsPanel(title: "Browser Extension") {
+        settingsPanel(title: "Browsers") {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .center, spacing: 8) {
                     StatusDot(available: chromiumBrowserExtensionController.connected, size: 7)
@@ -355,36 +286,47 @@ struct SettingsFeature: View {
                         Text(browser.displayName)
                             .font(.system(size: 12))
                         Spacer()
-                        Text(profileCount == 0 ? "Not connected" : "\(profileCount) \(profileCount == 1 ? "profile" : "profiles") connected")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
+                        if profileCount == 0 {
+                            Button("Connect…", action: presentBrowserExtensionSetup)
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.small)
+                        } else {
+                            Text("\(profileCount) \(profileCount == 1 ? "profile" : "profiles") connected")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
                     }
                     .padding(.leading, 15)
-                    .accessibilityElement(children: .combine)
+                    .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("settings.browserExtension.browser.\(browser.bundleIdentifier)")
                 }
 
-                HStack(spacing: 8) {
-                    Button("Set Up Browsers", action: presentBrowserExtensionSetup)
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-                        .accessibilityIdentifier("settings.browserExtension.setup")
+                Button("Set Up Browsers…", action: presentBrowserExtensionSetup)
+                    .controlSize(.small)
+                    .accessibilityIdentifier("settings.browserExtension.setup")
+            }
+        }
+    }
 
-                    Spacer()
-
-                    Button("Repair Bridge") {
-                        installChromiumNativeBridge()
-                    }
-                    .controlSize(.small)
-                    Button("Reveal Extension") {
-                        revealChromiumExtension()
-                    }
-                    .controlSize(.small)
-                    Button("Open Extensions") {
-                        openChromiumExtensionsPage()
-                    }
-                    .controlSize(.small)
+    private var browserMaintenanceSection: some View {
+        settingsPanel(title: "Browser Bridge") {
+            HStack(spacing: 8) {
+                Text("Reinstall the native bridge or locate the unpacked extension.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Repair Bridge") {
+                    installChromiumNativeBridge()
                 }
+                .controlSize(.small)
+                Button("Reveal Extension") {
+                    revealChromiumExtension()
+                }
+                .controlSize(.small)
+                Button("Open Extensions") {
+                    openChromiumExtensionsPage()
+                }
+                .controlSize(.small)
             }
         }
     }
@@ -413,7 +355,7 @@ struct SettingsFeature: View {
 
     private var overlaySection: some View {
         settingsPanel(title: "Source Chooser") {
-            Text("Click or press Enter to route; with volume controls open, click selects instead. Command-click or Command-Enter opens the selected app or browser tab. Tab shows volume controls.")
+            Text("Click or press Enter to send the command; 1–9 picks a row directly. Command-click or Command-Enter opens the selected app or browser tab. Tab shows volume controls: ←→ adjusts, M mutes.")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -438,7 +380,7 @@ struct SettingsFeature: View {
         settingsPanel(title: "Sonos") {
             VStack(alignment: .leading, spacing: 7) {
                 serviceStatusRow(
-                    title: "Handoff",
+                    title: "Send to speakers",
                     available: spotifyAuthCheckError == nil && desktopTokenAvailable && webAPITokenAvailable,
                     availableText: "Ready",
                     missingText: spotifyAuthCheckError == nil ? "Spotify sign-in required" : "Status check failed"
@@ -795,21 +737,22 @@ struct SettingsFeature: View {
         title: String,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 6) {
             Text(title)
-                .font(.system(size: 15, weight: .semibold))
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .padding(.leading, 2)
 
-            content()
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background {
-            RoundedRectangle(cornerRadius: Self.panelCornerRadius, style: .continuous)
-                .fill(Color.primary.opacity(0.045))
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: Self.panelCornerRadius, style: .continuous)
-                .stroke(Color.primary.opacity(0.07), lineWidth: 1)
+            VStack(alignment: .leading, spacing: 12) {
+                content()
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: Self.panelCornerRadius, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: Self.panelCornerRadius, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+            }
         }
     }
 
