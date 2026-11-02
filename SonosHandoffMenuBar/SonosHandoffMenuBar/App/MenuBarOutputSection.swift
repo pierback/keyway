@@ -9,6 +9,7 @@ struct MenuBarOutputSection: View {
     private static let trailingControlSize: CGFloat = 22
 
     @ObservedObject var playback: PlaybackSyncController
+    let spotifySource: MediaRemoteTarget?
     let groupEditing: Bool
 
     @State private var forceGroupEditing = false
@@ -188,6 +189,9 @@ struct MenuBarOutputSection: View {
         return HStack(spacing: 0) {
             Button {
                 playback.selectSpeaker(row: row)
+                if let spotifySource, !playback.hasActiveSpotifyConnection(to: row) {
+                    playback.transferSpotifyPlayback(source: spotifySource, to: row)
+                }
             } label: {
                 HStack(spacing: 11) {
                     ZStack {
@@ -213,7 +217,7 @@ struct MenuBarOutputSection: View {
             .accessibilityIdentifier("select-speaker-\(row.coordinator.roomName)")
             .accessibilityLabel("Select speaker \(row.displayName)")
             .accessibilityValue(selected ? "Selected" : "")
-            .accessibilityHint("Shows volume and grouping controls for \(row.displayName)")
+            .accessibilityHint(spotifySource == nil ? "Shows volume and grouping controls for \(row.displayName)" : "Plays Spotify on \(row.displayName)")
 
             HStack(spacing: 0) {
                 if loading || selected {

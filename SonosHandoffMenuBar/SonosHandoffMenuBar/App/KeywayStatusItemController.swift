@@ -602,6 +602,7 @@ private struct KeywayControlCenterPopoverView: View {
     private var sonosTile: some View {
         MenuBarOutputSection(
             playback: playback,
+            spotifySource: mediaSourceStore.rows.first { $0.target.isSpotify }?.target,
             groupEditing: optionKeyPressed
         )
     }
