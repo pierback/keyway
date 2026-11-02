@@ -13,11 +13,13 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
     private let isRuntimeStarted: @MainActor () -> Bool
     private let isSonosEnabled: @MainActor () -> Bool
     private let presentPermissionOnboarding: @MainActor () -> Void
+    private let checkForUpdates: @MainActor () -> Void
     private lazy var statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private lazy var popover: NSPopover = makePopover()
     private var popoverLocalDismissMonitor: Any?
     private var popoverGlobalDismissMonitor: Any?
     private var appDeactivationObserver: NSObjectProtocol?
+    private var mediaKeysPausedObserver: NSObjectProtocol?
     private var postPopoverCloseAction: (@MainActor () -> Void)?
     private var isStarted = false
 
@@ -30,7 +32,8 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
         mediaTransportActionController: MediaTransportActionController,
         isRuntimeStarted: @escaping @MainActor () -> Bool,
         isSonosEnabled: @escaping @MainActor () -> Bool,
-        presentPermissionOnboarding: @escaping @MainActor () -> Void
+        presentPermissionOnboarding: @escaping @MainActor () -> Void,
+        checkForUpdates: @escaping @MainActor () -> Void
     ) {
         self.playback = playback
         self.mediaRemoteController = mediaRemoteController
@@ -41,6 +44,7 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
         self.isRuntimeStarted = isRuntimeStarted
         self.isSonosEnabled = isSonosEnabled
         self.presentPermissionOnboarding = presentPermissionOnboarding
+        self.checkForUpdates = checkForUpdates
         super.init()
     }
 
@@ -61,7 +65,14 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
         button.target = self
         button.action = #selector(handleStatusItemClick(_:))
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-        button.toolTip = "Keyway"
+        applyMediaKeysPausedAppearance()
+        mediaKeysPausedObserver = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.applyMediaKeysPausedAppearance() }
+        }
         StatusHUD.shared.setVolumeAnchorProvider { [weak self] in
             self?.statusItemButtonScreenFrame()
         }
@@ -81,6 +92,10 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
             NotificationCenter.default.removeObserver(appDeactivationObserver)
         }
         appDeactivationObserver = nil
+        if let mediaKeysPausedObserver {
+            NotificationCenter.default.removeObserver(mediaKeysPausedObserver)
+        }
+        mediaKeysPausedObserver = nil
         NSStatusBar.system.removeStatusItem(statusItem)
     }
 
@@ -179,6 +194,24 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
         openSettings()
     }
 
+    @objc private func checkForUpdatesFromMenu(_ sender: Any?) {
+        checkForUpdates()
+    }
+
+    @objc private func toggleMediaKeysPaused(_ sender: Any?) {
+        UserDefaults.standard.set(
+            !UserDefaults.standard.bool(forKey: AppRuntime.mediaKeysPausedKey),
+            forKey: AppRuntime.mediaKeysPausedKey
+        )
+        NotificationCenter.default.post(name: .sonosHandoffRefreshHotkeys, object: nil)
+    }
+
+    private func applyMediaKeysPausedAppearance() {
+        let paused = UserDefaults.standard.bool(forKey: AppRuntime.mediaKeysPausedKey)
+        statusItem.button?.appearsDisabled = paused
+        statusItem.button?.toolTip = paused ? "Keyway — media keys paused" : "Keyway"
+    }
+
     @objc private func restartMediaRemoteHelper(_ sender: Any?) {
         mediaRemoteController.restart()
     }
@@ -190,7 +223,11 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
     private func showUtilityMenu(from button: NSStatusBarButton, event: NSEvent?) {
         let menu = NSMenu()
         menu.addItem(menuItem("Settings...", action: #selector(openSettingsFromMenu(_:)), keyEquivalent: ","))
+        menu.addItem(menuItem("Check for Updates...", action: #selector(checkForUpdatesFromMenu(_:))))
         if isRuntimeStarted() {
+            let pauseItem = menuItem("Pause Media Keys", action: #selector(toggleMediaKeysPaused(_:)))
+            pauseItem.state = UserDefaults.standard.bool(forKey: AppRuntime.mediaKeysPausedKey) ? .on : .off
+            menu.addItem(pauseItem)
             menu.addItem(menuItem("Restart MediaRemote Helper", action: #selector(restartMediaRemoteHelper(_:))))
         }
         menu.addItem(.separator())

@@ -14,6 +14,8 @@ enum SpotifyAuthCallbackServer {
 
     static func completeAuthorization(
         expectedState: String,
+        ports: [UInt16] = SpotifyAuthCallbackServer.ports,
+        path: String = SpotifyAuthCallbackServer.path,
         completion: @escaping @Sendable (String, URL) async throws -> Void,
         openAuthorizationURL: @escaping @Sendable (URL) -> Bool
     ) async throws {
@@ -24,6 +26,8 @@ enum SpotifyAuthCallbackServer {
             let queue = DispatchQueue(label: "keyway.spotify-auth")
             let session = SpotifyAuthCallbackListenerSession(
                 expectedState: expectedState,
+                ports: ports,
+                path: path,
                 params: params,
                 queue: queue,
                 continuation: continuation,
@@ -37,6 +41,8 @@ enum SpotifyAuthCallbackServer {
 
 private final class SpotifyAuthCallbackListenerSession: @unchecked Sendable {
     private let expectedState: String
+    private let ports: [UInt16]
+    private let path: String
     private let params: NWParameters
     private let queue: DispatchQueue
     private let continuation: CheckedContinuation<Void, Error>
@@ -50,6 +56,8 @@ private final class SpotifyAuthCallbackListenerSession: @unchecked Sendable {
 
     init(
         expectedState: String,
+        ports: [UInt16],
+        path: String,
         params: NWParameters,
         queue: DispatchQueue,
         continuation: CheckedContinuation<Void, Error>,
@@ -57,6 +65,8 @@ private final class SpotifyAuthCallbackListenerSession: @unchecked Sendable {
         openAuthorizationURL: @escaping @Sendable (URL) -> Bool
     ) {
         self.expectedState = expectedState
+        self.ports = ports
+        self.path = path
         self.params = params
         self.queue = queue
         self.continuation = continuation
@@ -72,16 +82,16 @@ private final class SpotifyAuthCallbackListenerSession: @unchecked Sendable {
     }
 
     private func startNextListener() {
-        guard nextPortIndex < SpotifyAuthCallbackServer.ports.count else {
+        guard nextPortIndex < ports.count else {
             finish(with: .failure(SpotifyAuthError.callbackListenerFailed))
             return
         }
 
-        let candidatePort = SpotifyAuthCallbackServer.ports[nextPortIndex]
+        let candidatePort = ports[nextPortIndex]
         nextPortIndex += 1
         let nwPort = NWEndpoint.Port(rawValue: candidatePort)!
         let redirectURI = URL(
-            string: "http://\(SpotifyAuthCallbackServer.host):\(candidatePort)\(SpotifyAuthCallbackServer.path)"
+            string: "http://\(SpotifyAuthCallbackServer.host):\(candidatePort)\(path)"
         )!
 
         let listener: NWListener
@@ -94,6 +104,7 @@ private final class SpotifyAuthCallbackListenerSession: @unchecked Sendable {
 
         let resolver = SpotifyAuthCallbackResolver(
             expectedState: expectedState,
+            path: path,
             redirectURI: redirectURI,
             continuation: continuation,
             completion: completion
@@ -180,6 +191,7 @@ private final class SpotifyAuthCallbackListenerSession: @unchecked Sendable {
 
 private final class SpotifyAuthCallbackResolver: @unchecked Sendable {
     private let expectedState: String
+    private let path: String
     private let redirectURI: URL
     private let completion: @Sendable (String, URL) async throws -> Void
     private var continuation: CheckedContinuation<Void, Error>?
@@ -187,11 +199,13 @@ private final class SpotifyAuthCallbackResolver: @unchecked Sendable {
 
     init(
         expectedState: String,
+        path: String,
         redirectURI: URL,
         continuation: CheckedContinuation<Void, Error>,
         completion: @escaping @Sendable (String, URL) async throws -> Void
     ) {
         self.expectedState = expectedState
+        self.path = path
         self.redirectURI = redirectURI
         self.continuation = continuation
         self.completion = completion
@@ -228,7 +242,8 @@ private final class SpotifyAuthCallbackResolver: @unchecked Sendable {
             do {
                 code = try SpotifyAuthCallbackRequest.authorizationCode(
                     from: data,
-                    expectedState: expectedState
+                    expectedState: expectedState,
+                    path: path
                 )
             } catch SpotifyAuthError.invalidCallbackState {
                 self.sendResponse(

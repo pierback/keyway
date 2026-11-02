@@ -6,7 +6,7 @@ struct SpotifyDesktopCredentialProvider: Sendable {
     private let tokenClient: SpotifyConnectTokenClient
     private let tokenRefreshLeewaySeconds: Int
 
-    private static let missingDesktopTokenMessage = "Spotify Desktop Connect token is missing. Open Keyway Settings to check token status before handoff."
+    private static let missingDesktopTokenMessage = "Sonos handoff needs a Spotify sign-in. Open Keyway Settings → Spotify and sign in for Sonos handoff."
     private static let malformedDesktopTokenMessage = "Spotify Desktop Connect token is unreadable. Open Keyway Settings to refresh token status before handoff."
 
     init(

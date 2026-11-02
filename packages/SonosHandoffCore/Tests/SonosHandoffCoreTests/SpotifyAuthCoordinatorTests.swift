@@ -59,7 +59,7 @@ struct SpotifyAuthCoordinatorTests {
             SuccessfulSpotifyTokenURLProtocol.reset()
         }
 
-        SuccessfulSpotifyTokenURLProtocol.setAccountResponse(#"{"type":"user"}"#)
+        SuccessfulSpotifyTokenURLProtocol.setAccountResponse(#"{"id":"listener","type":"user"}"#)
         let tokenStore = RecordingTokenStore()
         let callbackCapture = CallbackCapture()
         let sessionConfiguration = URLSessionConfiguration.ephemeral
@@ -225,13 +225,13 @@ private final class SuccessfulSpotifyTokenURLProtocol: URLProtocol, @unchecked S
 private final class SpotifyAuthRequestRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var requests: [URLRequest] = []
-    private var accountResponseBody = #"{"product":"premium","type":"user"}"#
+    private var accountResponseBody = #"{"id":"listener","product":"premium","type":"user"}"#
     private var accountResponseStatusCode = 200
 
     func reset() {
         lock.lock()
         requests = []
-        accountResponseBody = #"{"product":"premium","type":"user"}"#
+        accountResponseBody = #"{"id":"listener","product":"premium","type":"user"}"#
         accountResponseStatusCode = 200
         lock.unlock()
     }

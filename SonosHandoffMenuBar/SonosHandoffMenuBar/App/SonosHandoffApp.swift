@@ -47,6 +47,9 @@ struct KeywayApp: App {
                 presentBrowserExtensionSetup: {
                     appDelegate.presentBrowserExtensionSetup()
                 },
+                checkForUpdates: {
+                    appDelegate.checkForUpdates()
+                },
                 mediaRemoteController: environment.mediaRemoteController,
                 chromiumBrowserExtensionController: environment.chromiumBrowserExtensionController
             )
@@ -56,6 +59,8 @@ struct KeywayApp: App {
 
 @MainActor
 final class AppRuntime {
+    static let mediaKeysPausedKey = "mediaKeys.paused"
+
     private let chromiumNativeMessagingHostInstaller: ChromiumNativeMessagingHostInstaller
     private let chromiumBrowserExtensionController: ChromiumBrowserExtensionController
     private let mediaRemoteController: MediaRemoteController
@@ -135,7 +140,10 @@ final class AppRuntime {
             return
         }
 
-        guard AccessibilityPermission.isGranted(), CGPreflightListenEventAccess() else {
+        guard !UserDefaults.standard.bool(forKey: Self.mediaKeysPausedKey),
+              AccessibilityPermission.isGranted(),
+              CGPreflightListenEventAccess()
+        else {
             if isMediaInputEnabled {
                 isMediaInputEnabled = false
                 volumeHotkeys.stop()

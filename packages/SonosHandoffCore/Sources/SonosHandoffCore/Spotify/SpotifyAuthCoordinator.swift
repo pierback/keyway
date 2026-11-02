@@ -2,6 +2,7 @@ import Foundation
 
 public protocol SpotifyAuthCoordinating: Sendable {
     func login() async throws
+    func loginDesktop() async throws
 }
 
 public enum SpotifyAuthError: LocalizedError, Equatable {
@@ -40,6 +41,9 @@ public final class SpotifyAuthCoordinator: SpotifyAuthCoordinating, @unchecked S
     public static let callbackHost = SpotifyAuthCallbackServer.host
     public static let callbackPorts = SpotifyAuthCallbackServer.ports
     public static let callbackPath = SpotifyAuthCallbackServer.path
+    private static let desktopCallbackPorts: [UInt16] = [8898]
+    private static let desktopCallbackPath = "/login"
+    private static let desktopScopes = ["streaming", SpotifyScopes.userReadPrivate]
 
     private let tokenStore: TokenStoring
     private let configStore: ConfigStoring
@@ -47,6 +51,7 @@ public final class SpotifyAuthCoordinator: SpotifyAuthCoordinating, @unchecked S
     private let urlSession: URLSession
     private let browserOpener: @Sendable (URL) -> Bool
     private let projectTokenStore: ProjectWebAPITokenStore
+    private let desktopTokenURL: URL
 
     public init(
         tokenStore: TokenStoring,
@@ -61,6 +66,7 @@ public final class SpotifyAuthCoordinator: SpotifyAuthCoordinating, @unchecked S
         self.logger = logger
         self.urlSession = urlSession
         self.projectTokenStore = ProjectWebAPITokenStore(applicationSupportDirectory: applicationSupportDirectory)
+        self.desktopTokenURL = applicationSupportDirectory.appendingPathComponent("spotify-desktop-connect-tokens.json")
         self.browserOpener = browserOpener
     }
 
@@ -81,7 +87,10 @@ public final class SpotifyAuthCoordinator: SpotifyAuthCoordinating, @unchecked S
                 codeVerifier: authorizationRequest.codeVerifier
             )
 
-            try await self.validateAccountProduct(accessToken: tokenResponse.accessToken)
+            let profile = try await self.accountProfile(accessToken: tokenResponse.accessToken)
+            guard profile.product?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+                throw SpotifyAuthError.tokenExchangeFailed("Spotify account product is unavailable. Sign in again to approve the required account scope.")
+            }
 
             do {
                 try self.tokenStore.saveRefreshToken(tokenResponse.refreshToken)
@@ -106,6 +115,48 @@ public final class SpotifyAuthCoordinator: SpotifyAuthCoordinating, @unchecked S
             return browserOpener(authorizationURL)
         })
         logger.log(.info, "Spotify authentication completed.")
+    }
+
+    /// Signs in through the Spotify desktop client so Keyway can mint the Connect tokens Sonos handoff needs.
+    public func loginDesktop() async throws {
+        let clientID = SpotifyConnectTokenClient.desktopClientID
+        let authorizationRequest = SpotifyAuthorizationRequest(clientID: clientID)
+        let desktopTokenURL = desktopTokenURL
+        let browserOpener = browserOpener
+        try await SpotifyAuthCallbackServer.completeAuthorization(
+            expectedState: authorizationRequest.state,
+            ports: Self.desktopCallbackPorts,
+            path: Self.desktopCallbackPath,
+            completion: { authorizationCode, redirectURI in
+                let tokenResponse = try await self.exchangeCode(
+                    authorizationCode,
+                    clientID: clientID,
+                    redirectURI: redirectURI.absoluteString,
+                    codeVerifier: authorizationRequest.codeVerifier
+                )
+                let profile = try await self.accountProfile(accessToken: tokenResponse.accessToken)
+                let tokens = [
+                    "SpotifyWebApiAuthCodePkce/\(clientID)/\(profile.id)": ConnectDesktopToken(
+                        accessToken: tokenResponse.accessToken,
+                        refreshToken: tokenResponse.refreshToken,
+                        expiresAt: tokenResponse.expiresAt
+                    ),
+                ]
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                try ProjectWebAPITokenStore.writeSensitiveFileData(encoder.encode(tokens), to: desktopTokenURL)
+            },
+            openAuthorizationURL: { redirectURI in
+                browserOpener(SpotifyAuthorizationRequest.authorizationURL(
+                    clientID: clientID,
+                    redirectURI: redirectURI.absoluteString,
+                    state: authorizationRequest.state,
+                    codeVerifier: authorizationRequest.codeVerifier,
+                    scopes: Self.desktopScopes
+                ))
+            }
+        )
+        logger.log(.info, "Spotify desktop authentication completed.")
     }
 
     private func exchangeCode(
@@ -152,7 +203,7 @@ public final class SpotifyAuthCoordinator: SpotifyAuthCoordinating, @unchecked S
         )
     }
 
-    private func validateAccountProduct(accessToken: String) async throws {
+    private func accountProfile(accessToken: String) async throws -> SpotifyAccountProfile {
         var request = URLRequest(url: URL(string: "https://api.spotify.com/v1/me")!)
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         let (data, response) = try await urlSession.data(for: request)
@@ -163,10 +214,7 @@ public final class SpotifyAuthCoordinator: SpotifyAuthCoordinating, @unchecked S
             throw SpotifyAuthError.tokenExchangeFailed("Spotify account check returned HTTP \(httpResponse.statusCode).")
         }
 
-        let profile = try JSONDecoder().decode(SpotifyAccountProfile.self, from: data)
-        guard profile.product?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
-            throw SpotifyAuthError.tokenExchangeFailed("Spotify account product is unavailable. Sign in again to approve the required account scope.")
-        }
+        return try JSONDecoder().decode(SpotifyAccountProfile.self, from: data)
     }
 
     private static func formEncodedBody(_ parameters: [String: String]) -> Data {
@@ -185,6 +233,7 @@ public final class SpotifyAuthCoordinator: SpotifyAuthCoordinating, @unchecked S
 }
 
 private struct SpotifyAccountProfile: Decodable {
+    let id: String
     let product: String?
 }
 

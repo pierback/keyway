@@ -2,6 +2,7 @@ import AppKit
 import os
 import SonosHandoffCore
 import Carbon.HIToolbox
+import ServiceManagement
 import SwiftUI
 @preconcurrency import UserNotifications
 
@@ -26,6 +27,7 @@ struct SettingsFeature: View {
     private let chromiumNativeMessagingHostInstaller: ChromiumNativeMessagingHostInstaller
     private let chromiumBrowserInstallationAdapter: ChromiumBrowserInstallationAdapter
     private let presentBrowserExtensionSetup: @MainActor () -> Void
+    private let checkForUpdates: @MainActor () -> Void
     @ObservedObject private var mediaRemoteController: MediaRemoteController
     @ObservedObject private var chromiumBrowserExtensionController: ChromiumBrowserExtensionController
 
@@ -50,6 +52,10 @@ struct SettingsFeature: View {
     @State private var notificationMessage: String?
     @State private var configImportReport: ConfigImportReport?
     @State private var chromiumBridgeMessage: String?
+    @State private var launchAtLoginStatus = SMAppService.mainApp.status
+    @State private var isCopyingDiagnostics = false
+    @State private var diagnosticsCopied = false
+    @AppStorage(AppRuntime.mediaKeysPausedKey) private var mediaKeysPaused = false
 
     init(
         configStore: ConfigStoring = ConfigStore(),
@@ -60,6 +66,7 @@ struct SettingsFeature: View {
         chromiumNativeMessagingHostInstaller: ChromiumNativeMessagingHostInstaller = ChromiumNativeMessagingHostInstaller(),
         chromiumBrowserInstallationAdapter: ChromiumBrowserInstallationAdapter = ChromiumBrowserInstallationAdapter(),
         presentBrowserExtensionSetup: @escaping @MainActor () -> Void,
+        checkForUpdates: @escaping @MainActor () -> Void,
         initialChromiumBridgeMessage: String? = nil,
         mediaRemoteController: MediaRemoteController,
         chromiumBrowserExtensionController: ChromiumBrowserExtensionController
@@ -71,6 +78,7 @@ struct SettingsFeature: View {
         self.chromiumNativeMessagingHostInstaller = chromiumNativeMessagingHostInstaller
         self.chromiumBrowserInstallationAdapter = chromiumBrowserInstallationAdapter
         self.presentBrowserExtensionSetup = presentBrowserExtensionSetup
+        self.checkForUpdates = checkForUpdates
         self.authCoordinator = authCoordinator ?? SpotifyAuthCoordinator(
             tokenStore: tokenStore,
             configStore: configStore,
@@ -104,6 +112,7 @@ struct SettingsFeature: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             refreshShortcutState()
             refreshNotificationState()
+            launchAtLoginStatus = SMAppService.mainApp.status
         }
         .onAppear {
             _ = NSApp.setActivationPolicy(.regular)
@@ -169,6 +178,7 @@ struct SettingsFeature: View {
         switch selectedSection {
         case "Playback":
             VStack(spacing: 12) {
+                generalSection
                 transportRoutingSection
                 overlaySection
                 audioControlsSection
@@ -225,13 +235,77 @@ struct SettingsFeature: View {
         }
     }
 
+    private var generalSection: some View {
+        settingsPanel(title: "General") {
+            Toggle(isOn: Binding(
+                get: { launchAtLoginStatus == .enabled || launchAtLoginStatus == .requiresApproval },
+                set: { enabled in
+                    if enabled {
+                        try! SMAppService.mainApp.register()
+                    } else {
+                        try! SMAppService.mainApp.unregister()
+                    }
+                    launchAtLoginStatus = SMAppService.mainApp.status
+                }
+            )) {
+                settingsToggleLabel(
+                    title: "Launch at login",
+                    detail: launchAtLoginStatus == .requiresApproval
+                        ? "Approve Keyway in System Settings → General → Login Items."
+                        : "Start Keyway when you log in."
+                )
+            }
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .accessibilityIdentifier("settings.general.launchAtLogin")
+            Toggle(isOn: Binding(
+                get: { !mediaKeysPaused },
+                set: { enabled in
+                    mediaKeysPaused = !enabled
+                    NotificationCenter.default.post(name: .sonosHandoffRefreshHotkeys, object: nil)
+                }
+            )) {
+                settingsToggleLabel(
+                    title: "Route media keys",
+                    detail: "Turn off to leave Play/Pause, Next and Previous to macOS, e.g. for games or presentations."
+                )
+            }
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .accessibilityIdentifier("settings.general.routeMediaKeys")
+            HStack {
+                settingsToggleLabel(
+                    title: "Updates",
+                    detail: "Keyway \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as! String) checks for updates daily."
+                )
+                Button("Check for Updates…", action: checkForUpdates)
+                    .controlSize(.small)
+                    .accessibilityIdentifier("settings.general.checkForUpdates")
+            }
+        }
+    }
+
+    private func settingsToggleLabel(title: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.primary.opacity(0.9))
+            Text(detail)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private var transportRoutingSection: some View {
         settingsPanel(title: "Media Control") {
             serviceStatusRow(
                 title: "Media keys",
-                available: accessibilityGranted && listenEventGranted,
+                available: !mediaKeysPaused && accessibilityGranted && listenEventGranted,
                 availableText: "Play/Pause, Next, Previous",
-                missingText: accessibilityGranted ? "Input Monitoring required" : "Accessibility required"
+                missingText: mediaKeysPaused
+                    ? "Paused"
+                    : accessibilityGranted ? "Input Monitoring required" : "Accessibility required"
             )
             serviceStatusRow(
                 title: "Chromium extension",
@@ -367,7 +441,7 @@ struct SettingsFeature: View {
                     title: "Handoff",
                     available: spotifyAuthCheckError == nil && desktopTokenAvailable && webAPITokenAvailable,
                     availableText: "Ready",
-                    missingText: spotifyAuthCheckError == nil ? "Token files required" : "Status check failed"
+                    missingText: spotifyAuthCheckError == nil ? "Spotify sign-in required" : "Status check failed"
                 )
                 Text("Discovery, volume, and mute become available when Keyway finds a speaker on your local network.")
                     .font(.system(size: 11))
@@ -456,12 +530,21 @@ struct SettingsFeature: View {
                 }
 
                 VStack(alignment: .leading, spacing: 7) {
-                    serviceStatusRow(
-                        title: "Desktop Connect",
-                        available: spotifyAuthCheckError == nil && desktopTokenAvailable,
-                        availableText: "Token present",
-                        missingText: spotifyAuthCheckError == nil ? "Token missing" : "Check failed"
-                    )
+                    HStack(spacing: 8) {
+                        serviceStatusRow(
+                            title: "Sonos handoff",
+                            available: spotifyAuthCheckError == nil && desktopTokenAvailable,
+                            availableText: "Signed in",
+                            missingText: spotifyAuthCheckError == nil ? "Sign-in required" : "Check failed"
+                        )
+                        Button(desktopTokenAvailable ? "Sign In Again" : "Sign In") {
+                            startSpotifyDesktopSignIn()
+                        }
+                        .controlSize(.small)
+                        .disabled(isSigningIn)
+                        .help("Signs in through the Spotify desktop client, which Sonos handoff requires. Not an official Spotify integration.")
+                        .accessibilityIdentifier("settings.spotify.desktopSignIn")
+                    }
                     serviceStatusRow(
                         title: "Web API",
                         available: spotifyAuthCheckError == nil && webAPITokenAvailable,
@@ -634,8 +717,61 @@ struct SettingsFeature: View {
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
+                HStack {
+                    Text("Copies app state and the last 15 minutes of Keyway logs for a bug report.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button(isCopyingDiagnostics ? "Copying…" : diagnosticsCopied ? "Copied" : "Copy Diagnostics") {
+                        Task { await copyDiagnostics() }
+                    }
+                    .controlSize(.small)
+                    .disabled(isCopyingDiagnostics)
+                    .accessibilityIdentifier("settings.diagnostics.copy")
+                }
             }
         }
+    }
+
+    private func copyDiagnostics() async {
+        isCopyingDiagnostics = true
+        defer { isCopyingDiagnostics = false }
+        let bundle = Bundle.main
+        let health = mediaRemoteController.health
+        let runtimeStatusURL = ShortcutRuntimeStatus.persistenceURL
+        let runtimeStatus = FileManager.default.fileExists(atPath: runtimeStatusURL.path)
+            ? try! String(contentsOf: runtimeStatusURL, encoding: .utf8)
+            : "missing"
+        let logProcess = Process()
+        let logPipe = Pipe()
+        logProcess.executableURL = URL(fileURLWithPath: "/usr/bin/log")
+        logProcess.arguments = [
+            "show", "--last", "15m", "--info", "--style", "compact",
+            "--predicate", "subsystem == \"\(AppIdentity.loggerSubsystem)\" AND NOT eventMessage CONTAINS \"pong\"",
+        ]
+        logProcess.standardOutput = logPipe
+        try! logProcess.run()
+        let logData = await Task.detached { logPipe.fileHandleForReading.readDataToEndOfFile() }.value
+        let logLines = String(decoding: logData, as: UTF8.self).split(separator: "\n").suffix(600)
+        let report = """
+        Keyway \(bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as! String) (\(bundle.object(forInfoDictionaryKey: "CFBundleVersion") as! String))
+        macOS \(ProcessInfo.processInfo.operatingSystemVersionString)
+        accessibility=\(accessibilityGranted) inputMonitoring=\(listenEventGranted) notifications=\(notificationAuthorizationStatus.rawValue)
+        mediaKeysPaused=\(mediaKeysPaused) launchAtLogin=\(launchAtLoginStatus.rawValue)
+        spotifyWebAPI=\(webAPITokenAvailable) spotifyDesktop=\(desktopTokenAvailable)
+        helper=\(health.badgeTitle) pid=\(health.pid.map(String.init) ?? "none") message=\(health.message)
+        mediaTargets=\(mediaRemoteController.targets.map(\.appName).joined(separator: ","))
+        chromiumProfiles=\(chromiumBrowserExtensionController.profileConnections.map(\.browserBundleIdentifier).joined(separator: ",")) chromiumTargets=\(chromiumBrowserExtensionController.targets.count)
+
+        shortcut-runtime-status.json:
+        \(runtimeStatus)
+
+        logs:
+        \(logLines.joined(separator: "\n"))
+        """
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(report, forType: .string)
+        diagnosticsCopied = true
     }
 
     private var readinessRow: some View {
@@ -1095,7 +1231,24 @@ struct SettingsFeature: View {
             defer { isSigningIn = false }
             do {
                 try await authCoordinator.login()
-                authMessage = "Spotify Web API sign-in completed. Desktop Connect token is still required for handoff."
+                authMessage = "Spotify Web API sign-in completed."
+            } catch {
+                authMessage = error.localizedDescription
+            }
+            await reloadState()
+        }
+    }
+
+    private func startSpotifyDesktopSignIn() {
+        authMessage = nil
+        isSigningIn = true
+        let authCoordinator = self.authCoordinator
+
+        Task {
+            defer { isSigningIn = false }
+            do {
+                try await authCoordinator.loginDesktop()
+                authMessage = "Spotify sign-in for Sonos handoff completed."
             } catch {
                 authMessage = error.localizedDescription
             }
@@ -1204,7 +1357,7 @@ private struct ShortcutRecorderField: View {
                 // One combination drives one action: take it away from any other action.
                 for other in GlobalShortcutAction.allCases where other != action
                     && GlobalShortcut(storage: UserDefaults.standard.string(forKey: other.defaultsKey)) == shortcut {
-                    UserDefaults.standard.removeObject(forKey: other.defaultsKey)
+                    UserDefaults.standard.set("", forKey: other.defaultsKey)
                 }
                 storage = shortcut.storage
                 stopRecording()

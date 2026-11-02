@@ -94,7 +94,21 @@ final class MediaDesktopTransportAdapter {
         }
     }
 
+    nonisolated static func spotifyPlayerPosition() async -> Double? {
+        await withCheckedContinuation { continuation in
+            spotifyCommandQueue.async {
+                continuation.resume(
+                    returning: spotifyProperty("pPos", type: DescType(typeIEEE64BitFloatingPoint), empty: Double(0))
+                )
+            }
+        }
+    }
+
     nonisolated private static func spotifyPlaybackState() -> OSType? {
+        spotifyProperty("pPlS", type: DescType(typeEnumerated), empty: OSType(0))
+    }
+
+    nonisolated private static func spotifyProperty<Value: BitwiseCopyable>(_ code: String, type: DescType, empty: Value) -> Value? {
         var propertyRecord = AERecord()
         guard AECreateList(nil, 0, true, &propertyRecord) == noErr else {
             return nil
@@ -121,7 +135,7 @@ final class MediaDesktopTransportAdapter {
         ) == noErr else {
             return nil
         }
-        var keyData = fourCharCode("pPlS")
+        var keyData = fourCharCode(code)
         guard AEPutParamPtr(
             &propertyRecord,
             AEKeyword(keyAEKeyData),
@@ -194,22 +208,22 @@ final class MediaDesktopTransportAdapter {
         }
         defer { _ = AEDisposeDesc(&reply) }
 
-        var state: OSType = 0
+        var value = empty
         var actualType: DescType = 0
         var actualSize = 0
         guard AEGetParamPtr(
             &reply,
             AEKeyword(keyDirectObject),
-            DescType(typeEnumerated),
+            type,
             &actualType,
-            &state,
-            MemoryLayout<OSType>.size,
+            &value,
+            MemoryLayout<Value>.size,
             &actualSize
         ) == noErr,
-        actualSize == MemoryLayout<OSType>.size else {
+        actualSize == MemoryLayout<Value>.size else {
             return nil
         }
-        return state
+        return value
     }
 
     nonisolated private static func sendAppleEvent(

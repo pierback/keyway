@@ -1,7 +1,11 @@
 import Foundation
 
 enum SpotifyAuthCallbackRequest {
-    static func authorizationCode(from data: Data, expectedState: String) throws -> String {
+    static func authorizationCode(
+        from data: Data,
+        expectedState: String,
+        path: String = SpotifyAuthCallbackServer.path
+    ) throws -> String {
         guard
             let request = String(data: data, encoding: .utf8),
             let requestLine = request.components(separatedBy: "\r\n").first
@@ -25,7 +29,7 @@ enum SpotifyAuthCallbackRequest {
             throw SpotifyAuthError.missingAuthorizationCode
         }
 
-        guard components.path == SpotifyAuthCallbackServer.path else {
+        guard components.path == path else {
             throw SpotifyAuthError.missingAuthorizationCode
         }
 

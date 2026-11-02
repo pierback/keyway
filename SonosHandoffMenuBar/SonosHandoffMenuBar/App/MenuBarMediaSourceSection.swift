@@ -15,6 +15,7 @@ struct MenuBarMediaSourceSection: View {
     let progressTick: UInt64
     @State private var sessionTargets: [MediaRemoteTarget] = []
     @State private var sessionHasOpened = false
+    @State private var spotifyPosition: (targetID: String, elapsedTime: Double, sampledAt: Double)?
 
     private var freshTargets: [MediaRemoteTarget] {
         sortedTargets(mediaSourceStore.rows.map(\.target))
@@ -107,6 +108,9 @@ struct MenuBarMediaSourceSection: View {
             sessionTargets = []
             sessionHasOpened = false
         }
+        .task(id: progressTick) {
+            await refreshSpotifyPosition(displayTargets)
+        }
         .onReceive(mediaSourceStore.$rows) { rows in
             let sortedTargets = sortedTargets(rows.map(\.target))
             hydrateEmptySessionIfNeeded(with: sortedTargets)
@@ -125,6 +129,17 @@ struct MenuBarMediaSourceSection: View {
         sessionTargets = targets
     }
 
+    private func refreshSpotifyPosition(_ targets: [MediaRemoteTarget]) async {
+        guard let target = targets.first(where: \.isSpotify) else {
+            spotifyPosition = nil
+            return
+        }
+        guard let elapsedTime = await MediaDesktopTransportAdapter.spotifyPlayerPosition(), !Task.isCancelled else {
+            return
+        }
+        spotifyPosition = (target.id, elapsedTime, Date().timeIntervalSince1970)
+    }
+
     private func liveSessionTarget(
         _ sessionTarget: MediaRemoteTarget,
         latestTarget: MediaRemoteTarget?
@@ -138,12 +153,13 @@ struct MenuBarMediaSourceSection: View {
             parentBundleIdentifier: sessionTarget.parentBundleIdentifier,
             displayName: sessionTarget.displayName,
             pid: latestTarget.pid,
-            title: sessionTarget.title,
-            artist: sessionTarget.artist,
-            album: sessionTarget.album,
+            title: latestTarget.title.isEmpty ? sessionTarget.title : latestTarget.title,
+            artist: latestTarget.title.isEmpty ? sessionTarget.artist : latestTarget.artist,
+            album: latestTarget.title.isEmpty ? sessionTarget.album : latestTarget.album,
             playbackRate: latestTarget.playbackRate,
             mediaType: sessionTarget.mediaType,
-            artworkBase64: sessionTarget.artworkBase64,
+            artworkBase64: latestTarget.artworkBase64
+                ?? (latestTarget.title.isEmpty || latestTarget.title == sessionTarget.title ? sessionTarget.artworkBase64 : nil),
             duration: latestTarget.duration ?? sessionTarget.duration,
             elapsedTime: latestTarget.elapsedTime ?? sessionTarget.elapsedTime,
             elapsedTimestamp: latestTarget.elapsedTimestamp ?? sessionTarget.elapsedTimestamp,
@@ -214,8 +230,8 @@ struct MenuBarMediaSourceSection: View {
                 }
             }
 
-            if target.duration != nil {
-                progressBar(target, tick: progressTick)
+            if let duration = target.duration, duration > 0 {
+                progressBar(target, duration: duration, tick: progressTick)
             }
 
             if target.isSpotify {
@@ -490,21 +506,33 @@ struct MenuBarMediaSourceSection: View {
         }
     }
 
-    private func progressBar(_ target: MediaRemoteTarget, tick: UInt64) -> some View {
+    private func progressBar(_ target: MediaRemoteTarget, duration: Double, tick: UInt64) -> some View {
         let _ = tick
-        let fraction = target.playbackFraction
-
-        return GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(.white.opacity(0.10))
-                    .frame(height: 3)
-                Capsule()
-                    .fill(.white.opacity(0.55))
-                    .frame(width: max(0, geo.size.width * fraction), height: 3)
-            }
+        var target = target
+        if let spotifyPosition, spotifyPosition.targetID == target.id {
+            target.elapsedTime = spotifyPosition.elapsedTime
+            target.elapsedTimestamp = spotifyPosition.sampledAt
         }
-        .frame(height: 3)
+        let elapsed = min(duration, max(0, target.currentElapsedTime ?? 0))
+
+        return HStack(spacing: 7) {
+            Text(Duration.seconds(elapsed).formatted(.time(pattern: .minuteSecond)))
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(.white.opacity(0.10))
+                        .frame(height: 3)
+                    Capsule()
+                        .fill(.white.opacity(0.55))
+                        .frame(width: geo.size.width * elapsed / duration, height: 3)
+                }
+                .frame(maxHeight: .infinity)
+            }
+            Text(Duration.seconds(duration).formatted(.time(pattern: .minuteSecond)))
+        }
+        .font(.system(size: 9, weight: .medium).monospacedDigit())
+        .foregroundStyle(.white.opacity(0.48))
+        .frame(height: 11)
     }
 
     private func sourceBadge(_ title: String) -> some View {

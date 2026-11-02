@@ -293,8 +293,7 @@ final class PlaybackSyncController: ObservableObject {
     func refreshOutputs(
         showLoading: Bool = true,
         currentRoomName: String? = nil,
-        waitForBackgroundRefresh: Bool = false,
-        preserveMenuMessage: Bool = false
+        waitForBackgroundRefresh: Bool = false
     ) async {
         guard !Task.isCancelled else {
             return
@@ -320,9 +319,6 @@ final class PlaybackSyncController: ObservableObject {
             guard let ticket = operationGate.beginObservation() else {
                 return
             }
-            if !preserveMenuMessage {
-                clearMenuMessageIfAuthenticated()
-            }
 
             do {
                 let currentRoomName = refreshRoomName ?? preferredCurrentRoomName()
@@ -336,6 +332,7 @@ final class PlaybackSyncController: ObservableObject {
                     return
                 }
                 applyOutputRefresh(refresh)
+                clearMenuMessageIfAuthenticated(refresh.menuMessage)
             } catch {
                 guard operationGate.isCurrentObservation(ticket) else {
                     return

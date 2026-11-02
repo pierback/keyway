@@ -53,8 +53,8 @@ struct MediaRemoteTarget: Codable, Equatable, Identifiable, Sendable {
     let mediaType: String?
     let artworkBase64: String?
     let duration: Double?
-    let elapsedTime: Double?
-    let elapsedTimestamp: Double?
+    var elapsedTime: Double?
+    var elapsedTimestamp: Double?
     let supportedCommands: [MediaRemoteTransportCommand]?
     var muted: Bool? = nil
     let browserFamily: String?
@@ -110,20 +110,18 @@ struct MediaRemoteTarget: Codable, Equatable, Identifiable, Sendable {
         return image
     }
 
-    var playbackFraction: CGFloat {
-        guard let duration, duration > 0, let elapsedTime else {
-            return 0
+    var currentElapsedTime: Double? {
+        guard let elapsedTime else {
+            return nil
         }
-        var elapsed = elapsedTime
-        if let elapsedTimestamp, elapsedTimestamp > 0 {
-            let now = Date().timeIntervalSince1970
-            let delta = now - elapsedTimestamp
-            if delta > 0, delta < 600, playbackRate == "1" {
-                elapsed += delta
-            }
+        guard let elapsedTimestamp, elapsedTimestamp > 0, playbackRate == "1" else {
+            return elapsedTime
         }
-
-        return min(1, max(0, CGFloat(elapsed / duration)))
+        let delta = Date().timeIntervalSince1970 - elapsedTimestamp
+        guard delta > 0, delta < 600 else {
+            return elapsedTime
+        }
+        return elapsedTime + delta
     }
 
     var isCurrentlyPlaying: Bool {
