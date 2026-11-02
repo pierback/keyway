@@ -39,8 +39,8 @@ enum MediaTransportCommandRules {
 
     static let recentlyPausedInterval: TimeInterval = 15 * 60
 
-    /// Tiers: playing, paused within `recentlyPausedInterval`, idle. Within a tier the most recent of
-    /// "started/stopped playing" and "picked in Keyway" wins; unresponsive rows sink; idle apps rank above idle tabs.
+    /// Tiers: playing, paused within `recentlyPausedInterval`, idle. Playing Spotify always leads. Within a tier the
+    /// most recent of "started/stopped playing" and "picked in Keyway" wins; unresponsive rows sink; idle apps rank above idle tabs.
     static func sortedTargets(
         _ rows: [SourceRow],
         recentTargetID: String?,
@@ -65,6 +65,9 @@ enum MediaTransportCommandRules {
         return rows.sorted { lhs, rhs in
             if tier(lhs) != tier(rhs) {
                 return tier(lhs) < tier(rhs)
+            }
+            if tier(lhs) == 0, lhs.target.isSpotify != rhs.target.isSpotify {
+                return lhs.target.isSpotify
             }
             if lhs.reachability.isSuspect != rhs.reachability.isSuspect {
                 return !lhs.reachability.isSuspect

@@ -46,6 +46,10 @@ struct MediaRemoteTarget: Equatable, Identifiable {
     let playbackFreshness: Double
     var isBrowserLike = false
 
+    var isSpotify: Bool {
+        appName == "Spotify"
+    }
+
     func matchesRoutingIdentity(_ identity: String?) -> Bool {
         id == identity
     }
@@ -109,18 +113,24 @@ struct CommandRuleSemantics {
         let spotifyStartedEarly = SourceRow(target: target(id: "spotify", name: "Spotify", playing: true), playbackStartedAt: now - 600)
         let heliumStartedLate = SourceRow(target: target(id: "helium", name: "Helium", playing: true, browser: true), playbackStartedAt: now - 30)
         expectEqual(
-            ranked([spotifyStartedEarly, heliumStartedLate]),
-            ["helium", "spotify"],
-            "Among playing sources the most recently started ranks first"
+            ranked([heliumStartedLate, spotifyStartedEarly], picked: "helium", pickedAt: now - 1),
+            ["spotify", "helium"],
+            "Playing Spotify always leads, even against a newer start or pick"
+        )
+        let arcStartedEarly = SourceRow(target: target(id: "arc", name: "Arc", playing: true, browser: true), playbackStartedAt: now - 600)
+        expectEqual(
+            ranked([arcStartedEarly, heliumStartedLate]),
+            ["helium", "arc"],
+            "Among other playing sources the most recently started ranks first"
         )
         expectEqual(
-            ranked([spotifyStartedEarly, heliumStartedLate], picked: "spotify", pickedAt: now - 5),
-            ["spotify", "helium"],
+            ranked([arcStartedEarly, heliumStartedLate], picked: "arc", pickedAt: now - 5),
+            ["arc", "helium"],
             "A pick in Keyway newer than the other source's start wins"
         )
         expectEqual(
-            ranked([spotifyStartedEarly, heliumStartedLate], picked: "spotify", pickedAt: now - 900),
-            ["helium", "spotify"],
+            ranked([arcStartedEarly, heliumStartedLate], picked: "arc", pickedAt: now - 900),
+            ["helium", "arc"],
             "An older pick must not beat a newer playback start"
         )
 
@@ -135,7 +145,7 @@ struct CommandRuleSemantics {
         )
 
         let suspectPlaying = SourceRow(
-            target: target(id: "suspect", name: "Arc", playing: true),
+            target: target(id: "suspect", name: "Brave", playing: true),
             reachability: .suspect(reason: "command_failed", since: now),
             playbackStartedAt: now - 1
         )
