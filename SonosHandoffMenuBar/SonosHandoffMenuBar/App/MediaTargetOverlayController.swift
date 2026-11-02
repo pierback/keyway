@@ -250,35 +250,11 @@ final class MediaTargetOverlayController {
                 self?.model.select(index: index)
                 self?.refreshAudioSnapshot()
             },
-            onSonosVolume: { [weak self] direction in
-                self?.audioController.adjustSonosVolume(direction: direction)
-                self?.refreshAudioSnapshot(delay: 0.35)
+            onVolume: { [weak self] direction in
+                self?.adjustSelectedExpandedVolume(direction: direction)
             },
-            onSonosMute: { [weak self] in
-                self?.audioController.toggleSonosMute()
-                self?.refreshAudioSnapshot(delay: 0.35)
-            },
-            onSpotifyVolume: { [weak self] direction in
-                self?.audioController.adjustSpotifyVolume(direction: direction)
-                self?.refreshAudioSnapshot(delay: 0.35)
-            },
-            onBrowserVolume: { [weak self] direction in
-                guard let self,
-                      let target = self.model.selectedTarget
-                else {
-                    return
-                }
-                self.audioController.adjustBrowserVolume(direction: direction, target: target)
-                self.refreshAudioSnapshot(delay: 0.35)
-            },
-            onBrowserMute: { [weak self] in
-                guard let self,
-                      let target = self.model.selectedTarget
-                else {
-                    return
-                }
-                self.audioController.toggleBrowserMute(target: target)
-                self.refreshAudioSnapshot(delay: 0.35)
+            onMute: { [weak self] in
+                self?.toggleSelectedExpandedMute()
             }
         ))
         self.panel = panel
@@ -311,6 +287,9 @@ final class MediaTargetOverlayController {
             return true
         case .adjustExpandedVolume(let direction):
             adjustSelectedExpandedVolume(direction: direction)
+            return true
+        case .toggleExpandedMute:
+            toggleSelectedExpandedMute()
             return true
         case .routeSelected:
             if let target = model.selectedTarget {
@@ -387,11 +366,20 @@ final class MediaTargetOverlayController {
         } else if target.isBrowserLike {
             audioController.adjustBrowserVolume(direction: direction, target: target)
         } else {
-            StatusHUD.shared.finish(
-                title: "Volume Unsupported",
-                message: "\(target.appName) does not expose a Keyway volume backend.",
-                dismissAfter: 2.2
-            )
+            audioController.adjustSonosVolume(direction: direction)
+        }
+        refreshAudioSnapshot(delay: 0.35)
+    }
+
+    private func toggleSelectedExpandedMute() {
+        guard let target = model.selectedTarget, !target.isSpotify else {
+            return
+        }
+
+        if target.isBrowserLike {
+            audioController.toggleBrowserMute(target: target)
+        } else {
+            audioController.toggleSonosMute()
         }
         refreshAudioSnapshot(delay: 0.35)
     }
@@ -474,21 +462,10 @@ final class MediaTargetOverlayController {
     }
 
     private func panelSize() -> NSSize {
-        let visibleRows = min(model.rows.count, 6)
-        let rowHeight: CGFloat = 52
-        let rowSpacing: CGFloat = 3
-        let topPad: CGFloat = 14
-        let bottomPad: CGFloat = model.expanded ? 0 : 8
-        let listHeight = topPad
-            + CGFloat(max(1, visibleRows)) * rowHeight
-            + CGFloat(max(0, visibleRows - 1)) * rowSpacing
-            + bottomPad
-        let expandedHeight: CGFloat = model.expanded ? 120 : 0
-        let commandHeaderHeight: CGFloat = 53
-        let footerHeight: CGFloat = 36
-        let height = min(600, commandHeaderHeight + listHeight + expandedHeight + footerHeight)
-
-        return NSSize(width: 680, height: height)
+        NSSize(
+            width: MediaTargetOverlayView.width,
+            height: MediaTargetOverlayView.height(rowCount: model.rows.count, expanded: model.expanded)
+        )
     }
 
     private func screenContainingMouse() -> NSScreen? {

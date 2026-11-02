@@ -335,6 +335,7 @@ final class StatusHUD {
 
     func showMute(roomName: String, muted: Bool, dismissAfter: TimeInterval = 3.0) {}
     func showVolume(roomName: String, volume: Int, dismissAfter: TimeInterval = 3.0) {}
+    func showStatus(title: String, message: String, symbol: String, dismissAfter: TimeInterval = 1.6) {}
 }
 
 struct VolumeService: SpeakerVolumeAdjusting {}
