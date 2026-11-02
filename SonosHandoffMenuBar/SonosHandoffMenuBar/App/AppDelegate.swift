@@ -1,5 +1,6 @@
 import AppKit
 import os
+import Sparkle
 import UserNotifications
 
 import SonosHandoffCore
@@ -13,6 +14,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var permissionOnboardingController: PermissionOnboardingWindowController?
     private var browserExtensionSetupController: BrowserExtensionSetupWindowController?
     private var refreshHotkeysObserver: NSObjectProtocol?
+    private let updaterController = SPUStandardUpdaterController(
+        startingUpdater: true,
+        updaterDelegate: nil,
+        userDriverDelegate: nil
+    )
 
     func configure(
         runtime: AppRuntime,
@@ -39,6 +45,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             },
             presentPermissionOnboarding: { [weak self] in
                 _ = self?.permissionOnboardingController?.present()
+            },
+            checkForUpdates: { [weak self] in
+                self?.checkForUpdates()
             }
         )
         globalShortcutController = GlobalShortcutController { [weak self] action in
@@ -76,6 +85,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 _ = self?.browserExtensionSetupController?.presentIfNeeded()
             }
         )
+    }
+
+    func checkForUpdates() {
+        NSApp.activate(ignoringOtherApps: true)
+        updaterController.checkForUpdates(nil)
     }
 
     func presentBrowserExtensionSetup() {

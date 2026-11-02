@@ -2,7 +2,7 @@
 import Carbon.HIToolbox
 import os
 
-/// Actions the user can bind to a global shortcut in Settings → Shortcuts. Unset by default.
+/// Actions the user can bind to a global shortcut in Settings → Shortcuts. Only the source chooser has a default.
 enum GlobalShortcutAction: String, CaseIterable, Identifiable {
     case openPlayingSource
     case showSourceChooser
@@ -12,6 +12,15 @@ enum GlobalShortcutAction: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 
     var defaultsKey: String { "shortcuts.\(rawValue)" }
+
+    var defaultShortcut: GlobalShortcut? {
+        switch self {
+        case .showSourceChooser:
+            return GlobalShortcut(storage: "\(kVK_ANSI_P):\(controlKey | optionKey | cmdKey):⌃⌥⌘P")
+        case .openPlayingSource, .sendSpotifyToHeadphones, .openKeywayMenu:
+            return nil
+        }
+    }
 
     var title: String {
         switch self {
@@ -108,6 +117,9 @@ final class GlobalShortcutController {
     }
 
     func start() {
+        UserDefaults.standard.register(defaults: Dictionary(uniqueKeysWithValues: GlobalShortcutAction.allCases.compactMap { action in
+            action.defaultShortcut.map { (action.defaultsKey, $0.storage) }
+        }))
         var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
         let status = InstallEventHandler(
             GetApplicationEventTarget(),

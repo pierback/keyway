@@ -320,8 +320,8 @@ if "CGPreflightListenEventAccess()" not in refresh or "AXIsProcessTrusted()" not
 
 input_settings = section(
     settings,
-    '                        Text("Input Monitoring")',
-    '                        Text("Speaker suggestions")',
+    '                Text("Lets Keyway intercept keyboard events.")',
+    '                Text("Input Monitoring")',
 )
 if "CGRequestListenEventAccess()" not in input_settings:
     fail("Settings Input Monitoring action must explicitly request access")

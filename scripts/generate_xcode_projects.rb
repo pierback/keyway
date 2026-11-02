@@ -250,6 +250,7 @@ def build_menu_bar_project
     settings = config.build_settings
     settings['ASSETCATALOG_COMPILER_APPICON_NAME'] = 'AppIcon'
     settings['SWIFT_EMIT_LOC_STRINGS'] = 'NO'
+    settings['SPARKLE_PUBLIC_ED_KEY'] = 'WMy03IhgPTC1Pgw2YQZRcVnDY9o7gWcm8WYmPqppKFs='
   end
 
   menu_bar_source_root = File.join(ROOT, 'SonosHandoffMenuBar', 'SonosHandoffMenuBar')
@@ -272,6 +273,13 @@ def build_menu_bar_project
     'https://github.com/pierback/PermissionCompanionKit.git',
     '0.2.0',
     'PermissionCompanionKit'
+  )
+  add_remote_package_dependency(
+    project,
+    target,
+    'https://github.com/sparkle-project/Sparkle',
+    '2.9.6',
+    'Sparkle'
   )
 
   normalize_system_framework_refs(project, 'Cocoa.framework')

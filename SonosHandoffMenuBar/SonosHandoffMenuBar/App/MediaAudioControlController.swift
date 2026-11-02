@@ -256,10 +256,10 @@ final class MediaAudioControlController: ObservableObject {
         guard let sent = chromiumBrowserExtensionController.submit(audioCommand: command, target: target, onResult: { [mediaSourceStore] result in
             mediaSourceStore?.recordCommandResult(result)
             if result.ok {
-                StatusHUD.shared.finish(
-                    title: "\(target.appName) \(command.displayName)",
-                    message: result.message,
-                    dismissAfter: 1.6
+                StatusHUD.shared.showStatus(
+                    title: target.appName,
+                    message: command.displayName,
+                    symbol: "speaker.wave.2.fill"
                 )
             } else {
                 StatusHUD.shared.finish(
@@ -405,11 +405,7 @@ final class MediaAudioControlController: ObservableObject {
             }
             pending.timeoutTask?.cancel()
             pendingBrowserMutesByTargetID.removeValue(forKey: row.id)
-            StatusHUD.shared.finish(
-                title: "\(pending.appName) Mute",
-                message: pending.expectedMuted ? "Muted" : "Unmuted",
-                dismissAfter: 1.6
-            )
+            StatusHUD.shared.showMute(roomName: pending.appName, muted: pending.expectedMuted, dismissAfter: 1.6)
         }
     }
 

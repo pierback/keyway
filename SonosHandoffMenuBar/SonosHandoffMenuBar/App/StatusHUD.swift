@@ -32,21 +32,24 @@ final class StatusHUD {
         volumeHUD.show(roomName: roomName, volume: volume, dismissAfter: seconds)
     }
 
+    func showStatus(title: String, message: String, symbol: String, dismissAfter seconds: TimeInterval = 1.6) {
+        volumeHUD.show(title: title, message: message, symbol: symbol, level: nil, dismissAfter: seconds)
+    }
+
     func setVolumeAnchorProvider(_ provider: @escaping () -> NSRect?) {
         volumeHUD.setAnchorFrameProvider(provider)
     }
 
     func showMutePending(roomName: String) {
-        deliver(title: roomName, message: "Toggling mute...", identifier: Self.pendingStatusIdentifier)
+        showStatus(title: roomName, message: "Toggling mute…", symbol: "speaker.fill", dismissAfter: 3.0)
     }
 
     func showMute(roomName: String, muted: Bool, dismissAfter seconds: TimeInterval = 3.0) {
-        clearPendingStatusNotification()
-
-        deliver(
+        showStatus(
             title: roomName,
             message: muted ? "Muted" : "Unmuted",
-            identifier: "keyway.mute.\(roomName)"
+            symbol: muted ? "speaker.slash.fill" : "speaker.wave.2.fill",
+            dismissAfter: seconds
         )
     }
 
@@ -112,8 +115,16 @@ private final class VolumeHUDController {
     }
 
     func show(roomName: String, volume: Int, dismissAfter seconds: TimeInterval) {
-        model.roomName = roomName
-        model.volume = min(max(volume, 0), 100)
+        let level = min(max(volume, 0), 100)
+        let symbol = level == 0 ? "speaker.slash.fill" : level < 35 ? "speaker.wave.1.fill" : level < 70 ? "speaker.wave.2.fill" : "speaker.wave.3.fill"
+        show(title: roomName, message: "\(level)%", symbol: symbol, level: level, dismissAfter: seconds)
+    }
+
+    func show(title: String, message: String, symbol: String, level: Int?, dismissAfter seconds: TimeInterval) {
+        model.title = title
+        model.message = message
+        model.symbol = symbol
+        model.level = level
 
         let panel = ensurePanel()
         position(panel)
@@ -151,7 +162,7 @@ private final class VolumeHUDController {
         panel.hidesOnDeactivate = false
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = true
+        panel.hasShadow = false
         panel.ignoresMouseEvents = true
         panel.contentView = NSHostingView(rootView: VolumeHUDView(model: model))
         self.panel = panel
@@ -159,7 +170,7 @@ private final class VolumeHUDController {
     }
 
     private func position(_ panel: NSPanel) {
-        let size = VolumeHUDView.size
+        let size = NSSize(width: VolumeHUDView.size.width, height: model.level == nil ? VolumeHUDView.compactHeight : VolumeHUDView.size.height)
         if let anchorFrame = anchorFrameProvider?(),
            let screen = screen(containing: anchorFrame)
         {
@@ -218,94 +229,54 @@ private final class VolumeHUDController {
 
 @MainActor
 private final class VolumeHUDModel: ObservableObject {
-    @Published var roomName = ""
-    @Published var volume = 0
+    @Published var title = ""
+    @Published var message = ""
+    @Published var symbol = "speaker.wave.2.fill"
+    @Published var level: Int?
 }
 
 @MainActor
 private struct VolumeHUDView: View {
-    static let size = NSSize(width: 292, height: 63)
+    static let size = NSSize(width: 300, height: 70)
+    static let compactHeight: CGFloat = 56
 
     @ObservedObject var model: VolumeHUDModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(model.roomName)
-                .font(.system(size: 13, weight: .semibold))
-                .lineLimit(1)
-                .foregroundStyle(.white.opacity(0.96))
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Image(systemName: model.symbol)
+                    .font(.system(size: 14, weight: .semibold))
+                    .frame(width: 30, height: 30)
+                    .background(Color.primary.opacity(0.1), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
 
-            HStack(spacing: 7) {
-                Image(systemName: leadingIconName)
-                    .font(.system(size: 12, weight: .semibold))
-                    .frame(width: 14)
-                    .foregroundStyle(.white.opacity(0.94))
-
-                VolumeHUDSlider(volume: model.volume)
-
-                Image(systemName: "speaker.wave.3.fill")
-                    .font(.system(size: 15, weight: .semibold))
-                    .frame(width: 18)
-                    .foregroundStyle(.white.opacity(0.94))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(model.title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .lineLimit(1)
+                    Text(model.message)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
             }
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 10)
-        .padding(.bottom, 9)
-        .frame(width: Self.size.width, height: Self.size.height)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(.white.opacity(0.24), lineWidth: 1)
-        }
-        .environment(\.colorScheme, .dark)
-    }
 
-    private var leadingIconName: String {
-        if model.volume == 0 {
-            return "speaker.slash.fill"
-        }
-        if model.volume < 35 {
-            return "speaker.wave.1.fill"
-        }
-        if model.volume < 70 {
-            return "speaker.wave.2.fill"
-        }
-        return "speaker.wave.3.fill"
-    }
-}
-
-private struct VolumeHUDSlider: View {
-    let volume: Int
-
-    var body: some View {
-        GeometryReader { proxy in
-            let width = max(proxy.size.width, 1)
-            let progress = CGFloat(volume) / 100
-
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(.white.opacity(0.24))
-                    .frame(height: 4)
-
-                Capsule()
-                    .fill(.white.opacity(0.92))
-                    .frame(width: width * progress, height: 4)
-
-                HStack {
-                    ForEach(0 ..< 13, id: \.self) { _ in
-                        Circle()
-                            .fill(.black.opacity(0.22))
-                            .frame(width: 2, height: 2)
-                        Spacer(minLength: 0)
+            if let level = model.level {
+                GeometryReader { geometry in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.primary.opacity(0.15))
+                        Capsule()
+                            .fill(Color.primary.opacity(0.85))
+                            .frame(width: geometry.size.width * CGFloat(level) / 100)
                     }
                 }
-                .padding(.horizontal, 4)
-                .offset(y: 8)
+                .frame(height: 4)
             }
-            .frame(height: 13)
         }
-        .frame(height: 13)
+        .padding(.horizontal, 14)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .keywayGlass(cornerRadius: 18)
     }
 }
 

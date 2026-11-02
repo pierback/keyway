@@ -579,7 +579,7 @@ expect(overlay, "self?.focus(target)", "overlay view focus actions must use the 
 expect(overlay_view, "let onFocus: (MediaRemoteTarget) -> Void", "overlay rows must expose a separate focus action")
 expect(overlay_view, "modifiers.contains(.command)", "Command-click must be distinguished from normal row clicks")
 expect(overlay_view, "onFocus(target)", "Command-click must focus the selected source")
-expect(overlay_view, 'footerHint("⌘click / ⌘↵", "Open")', "overlay footer must advertise both direct-open gestures")
+expect(overlay_view, 'footerHint("⌘↵", "Open app")', "overlay footer must advertise direct open")
 focus_case = overlay[overlay.index("case .focusSelected:"):overlay.index("case .close:", overlay.index("case .focusSelected:"))]
 if "focus(target)" not in focus_case or "choose(" in focus_case:
     fail("Command+Enter must focus the selected target without routing a media command")

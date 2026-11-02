@@ -3,6 +3,7 @@ import Foundation
 enum MediaTargetOverlayKeyboardAction: Equatable {
     case moveSelection(Int)
     case adjustExpandedVolume(MediaAudioVolumeDirection)
+    case toggleExpandedMute
     case routeSelected
     case focusSelected
     case close
@@ -25,6 +26,15 @@ enum MediaTargetOverlayKeyboardInterpreter {
         }
         if expanded, commandDown, keyCode == 125 {
             return .adjustExpandedVolume(.down)
+        }
+        if expanded, keyCode == 124 {
+            return .adjustExpandedVolume(.up)
+        }
+        if expanded, keyCode == 123 {
+            return .adjustExpandedVolume(.down)
+        }
+        if expanded, characters == "m" {
+            return .toggleExpandedMute
         }
 
         switch keyCode {

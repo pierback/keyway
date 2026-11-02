@@ -5,42 +5,28 @@ struct MenuBarVolumeControl: View {
     @ObservedObject var playback: PlaybackSyncController
 
     var body: some View {
-        HStack(spacing: 5) {
-            Button {
-                playback.toggleMute()
-            } label: {
-                Image(systemName: playback.volumeState.muted ? "speaker.slash.fill" : "speaker.fill")
-                    .font(.system(size: 11, weight: .regular))
-                    .frame(width: 14, height: 18)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary.opacity(0.9))
-            .opacity(playback.canControlVolume ? 1 : 0.45)
-            .animation(MenuBarMotion.selection, value: playback.canControlVolume)
-            .disabled(!playback.canControlVolume)
-
+        HStack(spacing: 10) {
             NativeVolumeSlider(playback: playback)
                 .disabled(!playback.canControlVolume || playback.volumeState.outputFixed)
                 .opacity(playback.canControlVolume && !playback.volumeState.outputFixed ? 1 : 0.45)
-                .animation(MenuBarMotion.selection, value: playback.canControlVolume)
-                .animation(MenuBarMotion.selection, value: playback.volumeState.outputFixed)
 
             Button {
-                playback.adjustVolume(.up)
+                playback.toggleMute()
             } label: {
-                Image(systemName: "speaker.wave.3.fill")
-                    .font(.system(size: 16, weight: .regular))
-                    .frame(width: 21, height: 18)
+                Image(systemName: playback.volumeState.muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(playback.volumeState.muted ? Color.accentColor : Color.secondary)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .foregroundStyle(.secondary.opacity(0.9))
+            .disabled(!playback.canControlVolume)
             .opacity(playback.canControlVolume ? 1 : 0.45)
-            .animation(MenuBarMotion.selection, value: playback.canControlVolume)
-            .disabled(!playback.canControlVolume || playback.volumeState.outputFixed)
+            .help(playback.volumeState.muted ? "Unmute" : "Mute")
+            .accessibilityLabel(playback.volumeState.muted ? "Unmute" : "Mute")
         }
-        .frame(height: 18)
-        .padding(.horizontal, 9)
-        .padding(.bottom, 7)
+        .frame(height: 22)
+        .animation(MenuBarMotion.selection, value: playback.canControlVolume)
     }
 }
 
@@ -52,7 +38,7 @@ private struct NativeVolumeSlider: View {
         GeometryReader { proxy in
             track(width: proxy.size.width)
         }
-        .frame(height: 18)
+        .frame(height: 22)
         .contentShape(Rectangle())
         .accessibilityLabel("Volume")
         .accessibilityIdentifier("sonos-volume-slider")
@@ -73,20 +59,20 @@ private struct NativeVolumeSlider: View {
         let trackWidth = max(width, 1)
         let clampedVolume = min(max(playback.volumeState.value, 0), 100)
         let progress = CGFloat(clampedVolume / 100)
-        let knobSize: CGFloat = 17
+        let knobSize: CGFloat = 14
         let knobOffset = min(max((trackWidth * progress) - (knobSize / 2), 0), max(trackWidth - knobSize, 0))
 
         return ZStack(alignment: .leading) {
             Capsule()
-                .fill(Color.white.opacity(0.22))
+                .fill(Color.primary.opacity(0.15))
                 .frame(height: 4)
 
             Capsule()
-                .fill(Color.white.opacity(0.92))
+                .fill(Color.primary.opacity(0.8))
                 .frame(width: max(trackWidth * progress, knobSize / 2), height: 4)
 
             Circle()
-                .fill(Color.white.opacity(0.96))
+                .fill(Color.white)
                 .frame(width: knobSize, height: knobSize)
                 .offset(x: knobOffset)
                 .shadow(color: .black.opacity(0.22), radius: 0.75, y: 0.5)

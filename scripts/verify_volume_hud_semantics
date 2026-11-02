@@ -17,7 +17,7 @@ grep -Fq 'private let volumeHUD = VolumeHUDController()' "$status_hud" \
 grep -Fq 'volumeHUD.show(roomName: roomName, volume: volume, dismissAfter: seconds)' "$status_hud" \
   || fail "showVolume must render the Keyway HUD instead of posting a notification"
 
-grep -Fq 'static let size = NSSize(width: 292, height: 63)' "$status_hud" \
+grep -Fq 'static let size = NSSize(width: 300, height: 70)' "$status_hud" \
   || fail "volume HUD must stay compact and system-overlay sized"
 
 grep -Fq 'func setVolumeAnchorProvider(_ provider: @escaping () -> NSRect?)' "$status_hud" \

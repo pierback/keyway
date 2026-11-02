@@ -40,13 +40,10 @@ source_line="$(grep -n 'MenuBarMediaSourceSection(' "$status_controller" | head 
 sonos_line="$(grep -n 'sonosTile' "$status_controller" | head -1 | cut -d: -f1)"
 [[ -n "$source_line" && -n "$sonos_line" && "$source_line" -lt "$sonos_line" ]] \
   || fail "$status_controller must render media sources before the speakers tile"
-expect_contains "$status_controller" 'Text("Speakers")'
-expect_contains "$status_controller" 'MenuBarVolumeControl(playback: playback)'
-expect_contains "$status_controller" "if hasOutput {"
-expect_contains "$status_controller" 'return "Looking on this network"'
-expect_contains "$status_controller" 'return "Unavailable on this network"'
-expect_contains "$status_controller" "Text(headerStatusTitle)"
-expect_contains "$status_controller" "private var headerStatusTitle: String"
+expect_contains "$status_controller" 'MenuBarOutputSection('
+expect_contains "$output_section" 'MenuBarVolumeControl(playback: playback)'
+expect_contains "$status_controller" "if let problem = headerStatusTitle {"
+expect_contains "$status_controller" "private var headerStatusTitle: String?"
 expect_contains "$status_controller" "private var isBrowserOnlyRoutingAvailable: Bool"
 expect_contains "$status_controller" "private var postPopoverCloseAction: (@MainActor () -> Void)?"
 expect_contains "$status_controller" "postPopoverCloseAction = { [weak self] in"
@@ -55,7 +52,9 @@ expect_contains "$status_controller" "let action = postPopoverCloseAction"
 expect_contains "$status_controller" "postPopoverCloseAction = nil"
 expect_contains "$status_controller" "action?()"
 expect_contains "$status_controller" "case .failed, .stopped:"
-expect_contains "$status_controller" 'return "Browser only"'
+expect_contains "$status_controller" 'isBrowserOnlyRoutingAvailable ? "App media is unavailable"'
+expect_contains "$status_controller" 'case .starting, .running:'
+expect_absent "$status_controller" '.environment(\\.colorScheme, .dark)'
 expect_contains "$status_controller" "chromiumBrowserExtensionController.hasRoutableTargets"
 expect_absent "$status_controller" "nowPlayingCard"
 expect_absent "$status_controller" '"Fallback room"'
@@ -113,7 +112,11 @@ if close_positions != sorted(close_positions):
     fail("popoverDidClose must clear and run the deferred chooser action after the popover closes")
 PY
 
-expect_contains "$source_section" 'Text("Active Sources")'
+expect_contains "$source_section" 'Text("Other Sources")'
+expect_contains "$source_section" 'primaryCard(primary)'
+expect_contains "$source_section" 'spotifyOutputMenu(for: target)'
+expect_contains "$source_section" 'playback.transferSpotifyPlayback(source: target, to: row)'
+expect_absent "$source_section" 'Color.white'
 expect_contains "$source_section" "@ObservedObject var mediaSourceStore: MediaSourceStore"
 expect_contains "$source_section" "mediaSourceStore.rows.map(\\.target)"
 expect_contains "$source_section" "private var targetIDs: [String]"
@@ -131,7 +134,9 @@ expect_contains "$source_section" "if ChromiumBrowserExtensionTransport.isTarget
 expect_contains "$source_section" "return resolvedTargets + latestTargets.filter { !usedTargetIDs.contains(\$0.id) }"
 expect_contains "$source_section" "private func liveSessionTarget("
 expect_contains "$source_section" "displayName: sessionTarget.displayName"
-expect_contains "$source_section" "title: sessionTarget.title"
+expect_contains "$source_section" "title: latestTarget.title.isEmpty ? sessionTarget.title : latestTarget.title"
+expect_absent "$source_section" "title: sessionTarget.title,"
+expect_contains "$source_section" "await MediaDesktopTransportAdapter.spotifyPlayerPosition()"
 expect_contains "$source_section" "playbackRate: latestTarget.playbackRate"
 expect_contains "$source_section" "duration: latestTarget.duration ?? sessionTarget.duration"
 expect_contains "$source_section" "elapsedTime: latestTarget.elapsedTime ?? sessionTarget.elapsedTime"
@@ -150,11 +155,11 @@ expect_contains "$source_section" ".animation(MenuBarMotion.rowUpdate, value: ta
 expect_absent "$source_section" ".animation(MenuBarMotion.rowUpdate, value: targets)"
 expect_absent "$source_section" ".animation(MenuBarMotion.rowUpdate, value: playback.outputRows)"
 expect_absent "$source_section" ".animation(MenuBarMotion.rowUpdate, value: playback.selectedRoomName)"
-expect_contains "$source_section" "ForEach(displayTargets)"
+expect_contains "$source_section" "ForEach(displayTargets.dropFirst())"
 expect_contains "$source_section" 'Text("No media sources")'
 expect_contains "$source_section" "idleSpotifyConnectButton(row)"
 expect_contains "$source_section" "playback.connectSpotify(to: row)"
-expect_contains "$source_section" 'Text(selected ? "\(row.displayName) connected" : "Connect to \(row.displayName)")'
+expect_contains "$source_section" 'Toggle(row.displayName, isOn: Binding('
 expect_contains "$source_section" 'accessibilityIdentifier("source-empty-connect-spotify-to-\(row.coordinator.roomName)")'
 expect_absent "$source_section" "if displayTargets.isEmpty, mediaRemoteController.isRefreshingSnapshot"
 expect_absent "$source_section" 'Text(mediaRemoteController.isRefreshingSnapshot ? "Refreshing..." : "No active media sources")'
@@ -171,11 +176,10 @@ expect_contains "$source_section" "private func sourceIdentityButton("
 expect_contains "$source_section" '.help("Open \(target.appName)")'
 expect_contains "$source_section" '.accessibilityIdentifier("source-\(target.id)-open")'
 expect_contains "$source_section" '.accessibilityHint("Opens the app or browser tab")'
-expect_contains "$source_section" "Text(target.detailText)"
+expect_contains "$source_section" 'Text(target.title.isEmpty ? target.appName : target.title)'
 expect_absent "$source_section" "private func sourceDetail("
 expect_absent "$source_section" 'arrow.up.backward.and.arrow.down.forward'
 expect_contains "$source_section" "if target.isSpotify"
-expect_contains "$source_section" "playback.transferSpotifyPlayback(source: source, to: row)"
 expect_contains "$source_section" "playback.hasActiveSpotifyConnection(to: row)"
 expect_contains "$source_section" "ChromiumBrowserExtensionTransport.supports(command: command, target: target)"
 expect_contains "$source_section" "if target.isChromiumBrowserLike"

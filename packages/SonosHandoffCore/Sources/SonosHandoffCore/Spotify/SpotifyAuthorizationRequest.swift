@@ -38,7 +38,8 @@ struct SpotifyAuthorizationRequest: Sendable {
         clientID: String,
         redirectURI: String,
         state: String,
-        codeVerifier: String
+        codeVerifier: String,
+        scopes: [String] = SpotifyScopes.required
     ) -> URL {
         var components = URLComponents(url: SpotifyEndpoints.authorizeURL, resolvingAgainstBaseURL: false)
         components?.queryItems = [
@@ -48,7 +49,7 @@ struct SpotifyAuthorizationRequest: Sendable {
             URLQueryItem(name: "code_challenge_method", value: "S256"),
             URLQueryItem(name: "code_challenge", value: codeChallenge(for: codeVerifier)),
             URLQueryItem(name: "state", value: state),
-            URLQueryItem(name: "scope", value: SpotifyScopes.required.joined(separator: " ")),
+            URLQueryItem(name: "scope", value: scopes.joined(separator: " ")),
             URLQueryItem(name: "show_dialog", value: "true"),
         ]
 

@@ -28,6 +28,7 @@ xcodebuild \
   -configuration Release \
   -destination 'generic/platform=macOS' \
   -archivePath "$ARCHIVE_PATH" \
+  -clonedSourcePackagesDirPath "$OUTPUT_DIR/SourcePackages" \
   -allowProvisioningUpdates \
   archive
 
@@ -84,7 +85,17 @@ rm -f "$EXTENSION_ZIP_PATH"
   /usr/bin/zip -q "$EXTENSION_ZIP_PATH" manifest.json service_worker.js document_authority.js media_source_selection.js content_script.js
 )
 
-printf 'notarized_app=%s\nrelease_zip=%s\nchrome_extension_zip=%s\n' \
+APPCAST_DIR="$OUTPUT_DIR/appcast"
+rm -rf "$APPCAST_DIR"
+mkdir -p "$APPCAST_DIR"
+cp "$ZIP_PATH" "$APPCAST_DIR/"
+"$OUTPUT_DIR/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_appcast" \
+  --account keyway \
+  --download-url-prefix "https://github.com/pierback/keyway/releases/download/v$VERSION/" \
+  "$APPCAST_DIR"
+
+printf 'notarized_app=%s\nrelease_zip=%s\nchrome_extension_zip=%s\nappcast=%s\n' \
   "$APP_PATH" \
   "$ZIP_PATH" \
-  "$EXTENSION_ZIP_PATH"
+  "$EXTENSION_ZIP_PATH" \
+  "$APPCAST_DIR/appcast.xml"
