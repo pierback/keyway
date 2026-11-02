@@ -128,7 +128,7 @@ if "No Media Target" in route_body:
     fail("zero-target routed input must not use the old no-target HUD copy")
 
 show_start = text.index("    private func showChooserOverlay(")
-show_end = text.index("\n    private func sortedTargets", show_start)
+show_end = text.index("\n    func sortedTargets", show_start)
 show_body = text[show_start:show_end]
 for needle in [
     "rowUpdates: overlayRowUpdates()",

@@ -540,7 +540,7 @@ final class MediaTransportActionController {
         )
     }
 
-    private func sortedTargets(_ targets: [MediaRemoteTarget]) -> [MediaRemoteTarget] {
+    func sortedTargets(_ targets: [MediaRemoteTarget]) -> [MediaRemoteTarget] {
         targetResolver.sortedTargets(
             targets,
             preferredTargetID: targetSelectionMemory.recentTargetID

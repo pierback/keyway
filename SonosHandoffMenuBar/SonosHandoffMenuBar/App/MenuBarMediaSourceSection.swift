@@ -18,7 +18,7 @@ struct MenuBarMediaSourceSection: View {
     @State private var pendingPlaying: [String: Bool] = [:]
 
     private var freshTargets: [MediaRemoteTarget] {
-        sortedTargets(mediaSourceStore.rows.map(\.target))
+        mediaTransportActions.sortedTargets(mediaSourceStore.rows.map(\.target))
     }
 
     private var displayTargets: [MediaRemoteTarget] {
@@ -47,13 +47,6 @@ struct MenuBarMediaSourceSection: View {
 
     private var openingTargets: [MediaRemoteTarget] {
         freshTargets
-    }
-
-    private func sortedTargets(_ targets: [MediaRemoteTarget]) -> [MediaRemoteTarget] {
-        MediaTransportCommandRules.sortedTargets(
-            targets,
-            preferredTargetID: mediaRemoteController.activeTargetID
-        )
     }
 
     private var targetIDs: [String] {
@@ -98,7 +91,7 @@ struct MenuBarMediaSourceSection: View {
             for row in rows where pendingPlaying[row.id] == row.target.isCurrentlyPlaying {
                 pendingPlaying[row.id] = nil
             }
-            let sortedTargets = sortedTargets(rows.map(\.target))
+            let sortedTargets = mediaTransportActions.sortedTargets(rows.map(\.target))
             hydrateEmptySessionIfNeeded(with: sortedTargets)
         }
     }

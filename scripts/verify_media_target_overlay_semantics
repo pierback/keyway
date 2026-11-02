@@ -186,7 +186,7 @@ if "panel.resignKey()" in controller:
     )
 
 chooser_show_start = transport.index("        let chooserID = chooserSession.begin(command: command)")
-chooser_show_end = transport.index("\n    private func sortedTargets(", chooser_show_start)
+chooser_show_end = transport.index("\n    func sortedTargets(", chooser_show_start)
 chooser_show = transport[chooser_show_start:chooser_show_end]
 for required in (
     "let previousRouteConfirmation = routeConfirmationPresentation.flatMap",

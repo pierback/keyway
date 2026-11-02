@@ -156,6 +156,9 @@ expect_absent "$source_section" ".animation(MenuBarMotion.rowUpdate, value: targ
 expect_absent "$source_section" ".animation(MenuBarMotion.rowUpdate, value: playback.outputRows)"
 expect_absent "$source_section" ".animation(MenuBarMotion.rowUpdate, value: playback.selectedRoomName)"
 expect_contains "$source_section" "ForEach(displayTargets.dropFirst())"
+expect_contains "$source_section" "mediaTransportActions.sortedTargets(mediaSourceStore.rows.map(\\.target))"
+expect_absent "$source_section" "preferredTargetID: mediaRemoteController.activeTargetID"
+expect_contains "$repo_root/SonosHandoffMenuBar/SonosHandoffMenuBar/App/ChromiumBrowserExtensionMessages.swift" 'playbackRate: playing && tabAudible != false ? "1" : "0"'
 expect_contains "$source_section" 'Text("No media sources")'
 expect_contains "$source_section" "idleSpotifyConnectButton(row)"
 expect_contains "$source_section" "playback.connectSpotify(to: row)"

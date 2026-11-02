@@ -81,6 +81,7 @@ struct ChromiumBrowserExtensionTargetPayload: Decodable {
     let album: String?
     let playing: Bool
     let muted: Bool?
+    let tabAudible: Bool?
     let duration: Double?
     let elapsedTime: Double?
     let supportedCommands: [String]
@@ -98,7 +99,7 @@ struct ChromiumBrowserExtensionTargetPayload: Decodable {
             title: title.isEmpty ? pageTitle : title,
             artist: artist.isEmpty ? url : artist,
             album: album ?? pageTitle,
-            playbackRate: playing ? "1" : "0",
+            playbackRate: playing && tabAudible != false ? "1" : "0",
             mediaType: ChromiumBrowserExtensionTransport.mediaType,
             artworkBase64: nil,
             duration: duration,

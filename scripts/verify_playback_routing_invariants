@@ -81,7 +81,7 @@ import sys
 
 text = pathlib.Path(sys.argv[1]).read_text()
 start = text.index("    private var displayTargets: [MediaRemoteTarget] {")
-end = text.index("    private func sortedTargets", start)
+end = text.index("    private var targetIDs: [String]", start)
 body = text[start:end]
 guarded_fallback = """if mediaRemoteController.isRefreshingSnapshot {
                 return sessionTarget
@@ -170,7 +170,7 @@ show_chooser_immediately = text[
 ]
 show_chooser_overlay = text[
     text.index("    private func showChooserOverlay("):
-    text.index("    private func sortedTargets(")
+    text.index("    func sortedTargets(")
 ]
 for required in (
     "overlayController.isAwaitingSelection || chooserSession.isActive",
