@@ -440,6 +440,7 @@ private struct KeywayControlCenterPopoverView: View {
             }
             .padding(12)
         }
+        .focusEffectDisabled()
         .frame(width: 340)
         .frame(maxHeight: 560)
         .fixedSize(horizontal: false, vertical: true)

@@ -259,7 +259,7 @@ struct MenuBarMediaSourceSection: View {
                             Circle()
                                 .fill(target.isCurrentlyPlaying ? Color.green : Color.secondary)
                                 .frame(width: 6, height: 6)
-                            Text(target.appName.uppercased())
+                            Text((target.browserDisplayName ?? target.appName).uppercased())
                                 .font(.system(size: 10, weight: .semibold))
                                 .tracking(0.6)
                                 .foregroundStyle(.tertiary)
@@ -281,7 +281,7 @@ struct MenuBarMediaSourceSection: View {
                         .font(.system(size: primary ? 15 : 13, weight: primary ? .semibold : .medium))
                         .lineLimit(1)
                     HStack(spacing: 6) {
-                        Text(primary ? target.artist : [target.appName, target.title.isEmpty ? "" : target.artist].filter { !$0.isEmpty }.joined(separator: " · "))
+                        Text(primary ? target.artist : [target.browserDisplayName ?? target.appName, target.title.isEmpty ? "" : target.artist].filter { !$0.isEmpty }.joined(separator: " · "))
                             .font(.system(size: primary ? 12 : 11))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)

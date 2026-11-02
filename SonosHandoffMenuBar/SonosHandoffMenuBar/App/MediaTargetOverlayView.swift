@@ -155,7 +155,7 @@ struct MediaTargetOverlayView: View {
         let confirming = routeConfirmation && selected
         let suspect = row.reachability.isSuspect
         let subtitle = [
-            target.appName,
+            target.browserDisplayName ?? target.appName,
             target.title.isEmpty ? "" : target.artist,
             target.routeSourceLabel == "Extension required" ? "Extension required" : "",
         ].filter { !$0.isEmpty }.joined(separator: " · ")
