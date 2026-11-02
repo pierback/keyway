@@ -8,11 +8,10 @@ import SwiftUI
 
 @MainActor
 struct SettingsFeature: View {
-    private static let preferredWindowSize = CGSize(width: 720, height: 520)
+    private static let preferredWindowSize = CGSize(width: 780, height: 560)
     private static let callbackURLText = SpotifyAuthCoordinator.callbackPorts
         .map { "http://\(SpotifyAuthCoordinator.callbackHost):\($0)\(SpotifyAuthCoordinator.callbackPath)" }
         .joined(separator: "\n")
-    private static let panelCornerRadius: CGFloat = 9
     private let accessibilitySettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
     private let inputMonitoringSettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!
     private let notificationSettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.notifications")!
@@ -38,7 +37,6 @@ struct SettingsFeature: View {
     @State private var authMessage: String?
     @State private var isSigningIn = false
     @State private var hasCheckedSpotifyAuthentication = false
-    @State private var showSpotifyAdvanced = false
 
     @State private var accessibilityGranted = false
     @State private var listenEventGranted = false
@@ -89,18 +87,40 @@ struct SettingsFeature: View {
         _chromiumBrowserExtensionController = ObservedObject(wrappedValue: chromiumBrowserExtensionController)
     }
 
+    @State private var selectedPane: SettingsPane = .general
+
     var body: some View {
-        TabView {
-            settingsTab { generalSection; transportRoutingSection; overlaySection }
-                .tabItem { Label("General", systemImage: "gearshape") }
-            settingsTab { shortcutsSection }
-                .tabItem { Label("Shortcuts", systemImage: "keyboard") }
-            settingsTab { spotifySection; sonosSection; audioControlsSection; browserSetupSection }
-                .tabItem { Label("Sources", systemImage: "dot.radiowaves.left.and.right") }
-            settingsTab { permissionsSection }
-                .tabItem { Label("Permissions", systemImage: "lock.shield") }
-            settingsTab { helperStatusSection; browserMaintenanceSection; diagnosticsSection; migrationSection }
-                .tabItem { Label("Advanced", systemImage: "wrench.and.screwdriver") }
+        NavigationSplitView {
+            List(SettingsPane.allCases, selection: $selectedPane) { pane in
+                Label {
+                    Text(pane.rawValue)
+                } icon: {
+                    Image(systemName: pane.symbol)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 22, height: 22)
+                        .background(pane.tint.gradient, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                }
+                .tag(pane)
+                .accessibilityIdentifier("settings.sidebar.\(pane.rawValue.lowercased())")
+            }
+            .listStyle(.sidebar)
+            .navigationSplitViewColumnWidth(200)
+            .toolbar(removing: .sidebarToggle)
+        } detail: {
+            Form {
+                switch selectedPane {
+                case .general: generalPane
+                case .shortcuts: shortcutsPane
+                case .spotify: spotifyPane
+                case .sonos: sonosPane
+                case .browsers: browsersPane
+                case .permissions: permissionsPane
+                case .advanced: advancedPane
+                }
+            }
+            .formStyle(.grouped)
+            .navigationTitle(selectedPane.rawValue)
         }
         .frame(width: Self.preferredWindowSize.width, height: Self.preferredWindowSize.height)
         .task {
@@ -119,55 +139,9 @@ struct SettingsFeature: View {
         }
     }
 
-    private func settingsTab<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        ScrollView {
-            VStack(spacing: 18) {
-                content()
-            }
-            .padding(24)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
-        }
-    }
-
-    private var migrationSection: some View {
-        settingsPanel(title: "Migration") {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .top, spacing: 10) {
-                    StatusBadge(
-                        title: configImportBadgeTitle,
-                        available: configImportBadgeAvailable
-                    )
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Local app state")
-                            .font(.system(size: 13, weight: .medium))
-                        Text(configImportSummary)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(3)
-                    }
-                    .layoutPriority(1)
-                }
-
-                VStack(alignment: .leading, spacing: 5) {
-                    settingsPathRow(title: "Keyway", url: ConfigPaths.applicationSupportDirectory)
-                    settingsPathRow(title: "Legacy", url: ConfigPaths.legacyApplicationSupportDirectory)
-                }
-
-                HStack {
-                    Spacer()
-                    Button("Import Existing Settings") {
-                        runConfigImport()
-                    }
-                    .controlSize(.small)
-                    .fixedSize()
-                }
-            }
-        }
-    }
-
-    private var generalSection: some View {
-        settingsPanel(title: "General") {
+    @ViewBuilder
+    private var generalPane: some View {
+        Section {
             Toggle(isOn: Binding(
                 get: { launchAtLoginStatus == .enabled || launchAtLoginStatus == .requiresApproval },
                 set: { enabled in
@@ -179,16 +153,13 @@ struct SettingsFeature: View {
                     launchAtLoginStatus = SMAppService.mainApp.status
                 }
             )) {
-                settingsToggleLabel(
-                    title: "Launch at login",
-                    detail: launchAtLoginStatus == .requiresApproval
-                        ? "Approve Keyway in System Settings → General → Login Items."
-                        : "Start Keyway when you log in."
-                )
+                Text("Launch at login")
+                Text(launchAtLoginStatus == .requiresApproval
+                    ? "Approve Keyway in System Settings → General → Login Items."
+                    : "Start Keyway when you log in.")
             }
-            .toggleStyle(.switch)
-            .controlSize(.small)
             .accessibilityIdentifier("settings.general.launchAtLogin")
+
             Toggle(isOn: Binding(
                 get: { !mediaKeysPaused },
                 set: { enabled in
@@ -196,310 +167,142 @@ struct SettingsFeature: View {
                     NotificationCenter.default.post(name: .sonosHandoffRefreshHotkeys, object: nil)
                 }
             )) {
-                settingsToggleLabel(
-                    title: "Route media keys",
-                    detail: "Turn off to leave Play/Pause, Next and Previous to macOS, e.g. for games or presentations."
+                Text("Route media keys")
+                Text("Turn off to leave Play/Pause, Next and Previous to macOS, e.g. for games or presentations.")
+            }
+            .accessibilityIdentifier("settings.general.routeMediaKeys")
+        }
+
+        Section("Status") {
+            LabeledContent("Media keys") {
+                StatusLabel(
+                    text: mediaKeysPaused
+                        ? "Paused"
+                        : !accessibilityGranted ? "Accessibility required"
+                        : !listenEventGranted ? "Input Monitoring required" : "Ready",
+                    available: !mediaKeysPaused && accessibilityGranted && listenEventGranted
                 )
             }
-            .toggleStyle(.switch)
-            .controlSize(.small)
-            .accessibilityIdentifier("settings.general.routeMediaKeys")
-            HStack {
-                settingsToggleLabel(
-                    title: "Updates",
-                    detail: "Keyway \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as! String) checks for updates daily."
+            LabeledContent("Browser extension") {
+                StatusLabel(
+                    text: chromiumBrowserExtensionController.connected ? chromiumExtensionStatusText : "Disconnected",
+                    available: chromiumBrowserExtensionController.connected
                 )
+            }
+        }
+
+        Section {
+            LabeledContent("Send the command", value: "↵ or click")
+            LabeledContent("Pick a row directly", value: "1 – 9")
+            LabeledContent("Open the app or tab", value: "⌘↵ or ⌘-click")
+            LabeledContent("Volume controls", value: "⇥, then ←→ and M")
+        } header: {
+            Text("Source Chooser")
+        } footer: {
+            Text("Command-click or Command-Enter opens the selected app or browser tab.")
+        }
+
+        Section {
+            LabeledContent("Version", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as! String)
+            LabeledContent("Keyway checks for updates daily.") {
                 Button("Check for Updates…", action: checkForUpdates)
-                    .controlSize(.small)
                     .accessibilityIdentifier("settings.general.checkForUpdates")
             }
         }
     }
 
-    private func settingsToggleLabel(title: String, detail: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.primary.opacity(0.9))
-            Text(detail)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var transportRoutingSection: some View {
-        settingsPanel(title: "Media Control") {
-            serviceStatusRow(
-                title: "Media keys",
-                available: !mediaKeysPaused && accessibilityGranted && listenEventGranted,
-                availableText: "Play/Pause, Next, Previous",
-                missingText: mediaKeysPaused
-                    ? "Paused"
-                    : accessibilityGranted ? "Input Monitoring required" : "Accessibility required"
-            )
-            serviceStatusRow(
-                title: "Chromium extension",
-                available: chromiumBrowserExtensionController.connected,
-                availableText: chromiumExtensionStatusText,
-                missingText: "Disconnected"
-            )
-        }
-    }
-
-    private var browserSetupSection: some View {
-        settingsPanel(title: "Browsers") {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .center, spacing: 8) {
-                    StatusDot(available: chromiumBrowserExtensionController.connected, size: 7)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Chromium native bridge")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.primary.opacity(0.9))
-                        Text(
-                            chromiumBrowserExtensionController.profileConnections.isEmpty
-                                ? "No browser profiles connected"
-                                : "\(chromiumBrowserExtensionController.profileConnections.count) browser \(chromiumBrowserExtensionController.profileConnections.count == 1 ? "profile" : "profiles") connected"
-                        )
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        if let chromiumBridgeMessage {
-                            Text(chromiumBridgeMessage)
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
-                        }
-                    }
-                    Spacer()
-                }
-
-                let installedBrowsers = chromiumBrowserInstallationAdapter.installedApplicationURLsByBundleIdentifier()
-                ForEach(ChromiumBrowserDefinition.supported.filter { installedBrowsers[$0.bundleIdentifier] != nil }, id: \.bundleIdentifier) { browser in
-                    let profileCount = chromiumBrowserExtensionController.profileConnections
-                        .filter { $0.browserBundleIdentifier == browser.bundleIdentifier }
-                        .count
-                    HStack(spacing: 8) {
-                        Circle()
-                            .fill(profileCount > 0 ? Color.green : Color.secondary.opacity(0.4))
-                            .frame(width: 7, height: 7)
-                            .accessibilityHidden(true)
-                        Text(browser.displayName)
-                            .font(.system(size: 12))
-                        Spacer()
-                        if profileCount == 0 {
-                            Button("Connect…", action: presentBrowserExtensionSetup)
-                                .buttonStyle(.borderedProminent)
-                                .controlSize(.small)
-                        } else {
-                            Text("\(profileCount) \(profileCount == 1 ? "profile" : "profiles") connected")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .padding(.leading, 15)
-                    .accessibilityElement(children: .contain)
-                    .accessibilityIdentifier("settings.browserExtension.browser.\(browser.bundleIdentifier)")
-                }
-
-                Button("Set Up Browsers…", action: presentBrowserExtensionSetup)
-                    .controlSize(.small)
-                    .accessibilityIdentifier("settings.browserExtension.setup")
-            }
-        }
-    }
-
-    private var browserMaintenanceSection: some View {
-        settingsPanel(title: "Browser Bridge") {
-            HStack(spacing: 8) {
-                Text("Reinstall the native bridge or locate the unpacked extension.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button("Repair Bridge") {
-                    installChromiumNativeBridge()
-                }
-                .controlSize(.small)
-                Button("Reveal Extension") {
-                    revealChromiumExtension()
-                }
-                .controlSize(.small)
-                Button("Open Extensions") {
-                    openChromiumExtensionsPage()
-                }
-                .controlSize(.small)
-            }
-        }
-    }
-
-    private var shortcutsSection: some View {
-        settingsPanel(title: "Shortcuts") {
-            Text("Global shortcuts work from any app. Click a field and press the keys; Esc cancels, Delete clears.")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
+    private var shortcutsPane: some View {
+        Section {
             ForEach(GlobalShortcutAction.allCases) { action in
-                HStack(alignment: .center, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(action.title)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.primary.opacity(0.9))
-                        Text(action.detail)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
+                LabeledContent {
                     ShortcutRecorderField(action: action)
+                } label: {
+                    Text(action.title)
+                    Text(action.detail)
                 }
             }
+        } footer: {
+            Text("Global shortcuts work from any app. Click a field and press the keys; Esc cancels, Delete clears.")
         }
     }
 
-    private var overlaySection: some View {
-        settingsPanel(title: "Source Chooser") {
-            Text("Click or press Enter to send the command; 1–9 picks a row directly. Command-click or Command-Enter opens the selected app or browser tab. Tab shows volume controls: ←→ adjusts, M mutes.")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private var audioControlsSection: some View {
-        settingsPanel(title: "Audio Controls") {
-            VStack(alignment: .leading, spacing: 7) {
-                serviceStatusRow(
-                    title: "Spotify",
-                    available: spotifyAuthCheckError == nil && webAPITokenAvailable,
-                    availableText: "Active Device Volume",
-                    missingText: spotifyAuthCheckError == nil ? "Sign in required" : "Status check failed"
-                )
-                serviceStatusRow(title: "Browser", available: chromiumBrowserExtensionController.connected, availableText: chromiumBrowserAudioStatusText, missingText: "Extension disconnected")
+    @ViewBuilder
+    private var spotifyPane: some View {
+        Section {
+            LabeledContent {
+                spotifyAuthActionButton
+            } label: {
+                Label {
+                    Text(spotifyAuthStatusText)
+                    Text(spotifyAuthDetailText)
+                } icon: {
+                    StatusLabel(text: "", available: spotifyAuthCheckError == nil && desktopTokenAvailable && webAPITokenAvailable)
+                }
+            }
+        } footer: {
+            if let authMessage {
+                Text(authMessage)
             }
         }
-    }
 
-    private var sonosSection: some View {
-        settingsPanel(title: "Sonos") {
-            VStack(alignment: .leading, spacing: 7) {
-                serviceStatusRow(
-                    title: "Send to speakers",
-                    available: spotifyAuthCheckError == nil && desktopTokenAvailable && webAPITokenAvailable,
-                    availableText: "Ready",
-                    missingText: spotifyAuthCheckError == nil ? "Spotify sign-in required" : "Status check failed"
-                )
-                Text("Discovery, volume, and mute become available when Keyway finds a speaker on your local network.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private var spotifySection: some View {
-        settingsPanel(title: "Spotify") {
-            VStack(alignment: .leading, spacing: 12) {
-                readinessRow
-
-                HStack(spacing: 8) {
-                    Button("Refresh Status") {
-                        Task {
-                            await reloadSpotifyAuthState()
-                        }
-                    }
-                    .controlSize(.small)
-                    .disabled(isSigningIn)
-
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.18)) {
-                            showSpotifyAdvanced.toggle()
-                        }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text("Advanced")
-                            Image(systemName: showSpotifyAdvanced ? "chevron.up" : "chevron.down")
-                                .font(.system(size: 9, weight: .semibold))
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.secondary)
-
-                    Spacer()
-
-                    spotifyAuthActionButton
-                }
-
-                if showSpotifyAdvanced {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Client ID")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.secondary)
-
-                        HStack(spacing: 8) {
-                            TextField("Spotify Client ID", text: $spotifyClientID)
-                                .font(.system(size: 12, design: .monospaced))
-                                .textFieldStyle(.plain)
-                                .padding(.horizontal, 10)
-                                .frame(height: 30)
-                                .accessibilityIdentifier("settings.spotify.clientID")
-                                .background {
-                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        .fill(Color.primary.opacity(0.06))
-                                }
-                                .overlay {
-                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-                                }
-
-                            Button("Save") {
-                                _ = saveSpotifyClientID(showMessage: true)
-                            }
-                            .controlSize(.small)
-                            .disabled(isSigningIn)
-                            .accessibilityIdentifier("settings.spotify.saveClientID")
-                        }
-
-                        HStack(spacing: 5) {
-                            Image(systemName: "arrow.turn.down.left")
-                                .font(.system(size: 10, weight: .medium))
-                            Text(Self.callbackURLText)
-                                .font(.system(size: 11, design: .monospaced))
-                                .lineLimit(5)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                    }
-                    .padding(.top, 2)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-                }
-
-                VStack(alignment: .leading, spacing: 7) {
-                    HStack(spacing: 8) {
-                        serviceStatusRow(
-                            title: "Sonos handoff",
-                            available: spotifyAuthCheckError == nil && desktopTokenAvailable,
-                            availableText: "Signed in",
-                            missingText: spotifyAuthCheckError == nil ? "Sign-in required" : "Check failed"
-                        )
-                        Button(desktopTokenAvailable ? "Sign In Again" : "Sign In") {
-                            startSpotifyDesktopSignIn()
-                        }
-                        .controlSize(.small)
-                        .disabled(isSigningIn)
-                        .help("Signs in through the Spotify desktop client, which Sonos handoff requires. Not an official Spotify integration.")
-                        .accessibilityIdentifier("settings.spotify.desktopSignIn")
-                    }
-                    serviceStatusRow(
-                        title: "Web API",
-                        available: spotifyAuthCheckError == nil && webAPITokenAvailable,
-                        availableText: "Sign-in valid",
-                        missingText: spotifyAuthCheckError == nil ? "Sign in again" : "Check failed"
+        Section("Connections") {
+            LabeledContent {
+                HStack(spacing: 10) {
+                    StatusLabel(
+                        text: spotifyAuthCheckError != nil ? "Check failed" : desktopTokenAvailable ? "Signed in" : "Sign-in required",
+                        available: spotifyAuthCheckError == nil && desktopTokenAvailable
                     )
+                    Button(desktopTokenAvailable ? "Sign In Again" : "Sign In") {
+                        startSpotifyDesktopSignIn()
+                    }
+                    .disabled(isSigningIn)
+                    .help("Signs in through the Spotify desktop client, which Sonos handoff requires. Not an official Spotify integration.")
+                    .accessibilityIdentifier("settings.spotify.desktopSignIn")
                 }
+            } label: {
+                Text("Sonos handoff")
+                Text("Desktop Connect token")
+            }
+            LabeledContent {
+                StatusLabel(
+                    text: spotifyAuthCheckError != nil ? "Check failed" : webAPITokenAvailable ? "Sign-in valid" : "Sign in again",
+                    available: spotifyAuthCheckError == nil && webAPITokenAvailable
+                )
+            } label: {
+                Text("Web API")
+                Text("Playback state and device volume")
+            }
+            LabeledContent("Status") {
+                Button("Refresh") {
+                    Task {
+                        await reloadSpotifyAuthState()
+                    }
+                }
+                .disabled(isSigningIn)
+            }
+        }
 
-                if let authMessage {
-                    Text(authMessage)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
+        Section {
+            DisclosureGroup("Developer") {
+                LabeledContent("Client ID") {
+                    HStack(spacing: 8) {
+                        TextField("Client ID", text: $spotifyClientID, prompt: Text("Spotify Client ID"))
+                            .labelsHidden()
+                            .font(.system(size: 12, design: .monospaced))
+                            .frame(width: 260)
+                            .accessibilityIdentifier("settings.spotify.clientID")
+                        Button("Save") {
+                            _ = saveSpotifyClientID(showMessage: true)
+                        }
+                        .disabled(isSigningIn)
+                        .accessibilityIdentifier("settings.spotify.saveClientID")
+                    }
+                }
+                LabeledContent("Redirect URIs") {
+                    Text(Self.callbackURLText)
+                        .font(.system(size: 11, design: .monospaced))
+                        .multilineTextAlignment(.trailing)
+                        .textSelection(.enabled)
                 }
             }
         }
@@ -511,167 +314,233 @@ struct SettingsFeature: View {
             Button("Sign Out") {
                 signOutSpotify()
             }
-            .controlSize(.small)
             .disabled(isSigningIn)
         } else {
             Button(isSigningIn ? "Signing In..." : "Sign In to Web API") {
                 startSpotifySignIn()
             }
             .buttonStyle(.borderedProminent)
-            .controlSize(.small)
             .disabled(isSigningIn)
         }
     }
 
-    private var permissionsSection: some View {
-        settingsPanel(title: "Permissions") {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .center, spacing: 10) {
-                    StatusBadge(
-                        title: accessibilityGranted ? "Enabled" : "Required",
-                        available: accessibilityGranted
-                    )
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Accessibility")
-                            .font(.system(size: 13, weight: .medium))
-                        Text(accessibilityGranted ? "Keyway can intercept keyboard events." : "Enable Accessibility for Keyway in System Settings.")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
+    private var sonosPane: some View {
+        Section {
+            LabeledContent {
+                StatusLabel(
+                    text: spotifyAuthCheckError != nil ? "Status check failed" : desktopTokenAvailable && webAPITokenAvailable ? "Ready" : "Spotify sign-in required",
+                    available: spotifyAuthCheckError == nil && desktopTokenAvailable && webAPITokenAvailable
+                )
+            } label: {
+                Text("Send Spotify to speakers")
+                Text("Hands playback between this Mac and Sonos")
+            }
+        } footer: {
+            Text("Discovery, volume, and mute become available when Keyway finds a speaker on your local network.")
+        }
+    }
+
+    @ViewBuilder
+    private var browsersPane: some View {
+        Section {
+            LabeledContent {
+                StatusLabel(
+                    text: chromiumBrowserExtensionController.profileConnections.isEmpty
+                        ? "No profiles connected"
+                        : "\(chromiumBrowserExtensionController.profileConnections.count) \(chromiumBrowserExtensionController.profileConnections.count == 1 ? "profile" : "profiles") connected",
+                    available: chromiumBrowserExtensionController.connected
+                )
+            } label: {
+                Text("Browser extension")
+                Text("Controls tabs in Chromium-family browsers")
+            }
+            LabeledContent("Tab audio") {
+                StatusLabel(
+                    text: chromiumBrowserExtensionController.connected ? chromiumBrowserAudioStatusText : "Extension disconnected",
+                    available: chromiumBrowserExtensionController.connected
+                )
+            }
+        } footer: {
+            if let chromiumBridgeMessage {
+                Text(chromiumBridgeMessage)
+            }
+        }
+
+        Section {
+            let installedBrowsers = chromiumBrowserInstallationAdapter.installedApplicationURLsByBundleIdentifier()
+            ForEach(ChromiumBrowserDefinition.supported.filter { installedBrowsers[$0.bundleIdentifier] != nil }, id: \.bundleIdentifier) { browser in
+                let profileCount = chromiumBrowserExtensionController.profileConnections
+                    .filter { $0.browserBundleIdentifier == browser.bundleIdentifier }
+                    .count
+                LabeledContent {
+                    if profileCount == 0 {
+                        Button("Connect…", action: presentBrowserExtensionSetup)
+                    } else {
+                        StatusLabel(text: "\(profileCount) \(profileCount == 1 ? "profile" : "profiles")", available: true)
                     }
-                    Spacer()
-                    Button("Open Settings") {
-                        AccessibilityPermission.requestPrompt()
-                        refreshShortcutState()
-                        NSWorkspace.shared.open(accessibilitySettingsURL)
+                } label: {
+                    Label {
+                        Text(browser.displayName)
+                    } icon: {
+                        Image(nsImage: NSWorkspace.shared.icon(forFile: installedBrowsers[browser.bundleIdentifier]!.path))
+                            .resizable()
+                            .frame(width: 20, height: 20)
                     }
-                    .controlSize(.small)
                 }
+                .accessibilityIdentifier("settings.browserExtension.browser.\(browser.bundleIdentifier)")
+            }
+        } header: {
+            Text("Installed Browsers")
+        } footer: {
+            HStack {
+                Spacer()
+                Button("Set Up Browsers…", action: presentBrowserExtensionSetup)
+                    .accessibilityIdentifier("settings.browserExtension.setup")
+            }
+        }
+    }
 
-                HStack(alignment: .center, spacing: 10) {
-                    StatusBadge(
-                        title: listenEventGranted ? "Enabled" : "Required",
-                        available: listenEventGranted
-                    )
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Input Monitoring")
-                            .font(.system(size: 13, weight: .medium))
-                        Text(listenEventGranted ? "Keyway can receive media-key events." : "Enable Input Monitoring for media-key routing.")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
+    @ViewBuilder
+    private var permissionsPane: some View {
+        Section {
+            LabeledContent {
+                HStack(spacing: 10) {
+                    StatusLabel(text: accessibilityGranted ? "Enabled" : "Required", available: accessibilityGranted)
+                    if !accessibilityGranted {
+                        Button("Open Settings") {
+                            AccessibilityPermission.requestPrompt()
+                            refreshShortcutState()
+                            NSWorkspace.shared.open(accessibilitySettingsURL)
+                        }
                     }
-                    Spacer()
-                    Button("Open Settings") {
-                        _ = CGRequestListenEventAccess()
-                        refreshShortcutState()
-                        NSWorkspace.shared.open(inputMonitoringSettingsURL)
-                    }
-                    .controlSize(.small)
                 }
+            } label: {
+                Text("Accessibility")
+                Text("Lets Keyway intercept keyboard events.")
+            }
 
-                HStack(alignment: .center, spacing: 10) {
-                    StatusBadge(
-                        title: notificationBadgeTitle,
-                        available: notificationsEnabled
-                    )
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Speaker suggestions")
-                            .font(.system(size: 13, weight: .medium))
-                        Text(notificationDetailText)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
+            LabeledContent {
+                HStack(spacing: 10) {
+                    StatusLabel(text: listenEventGranted ? "Enabled" : "Required", available: listenEventGranted)
+                    if !listenEventGranted {
+                        Button("Open Settings") {
+                            _ = CGRequestListenEventAccess()
+                            refreshShortcutState()
+                            NSWorkspace.shared.open(inputMonitoringSettingsURL)
+                        }
                     }
-                    .layoutPriority(1)
+                }
+            } label: {
+                Text("Input Monitoring")
+                Text("Lets Keyway receive media-key events.")
+            }
+        } header: {
+            Text("Required")
+        }
 
-                    Spacer()
-
-                    Button("Refresh") {
-                        refreshNotificationState()
-                    }
-                    .controlSize(.small)
-                    .disabled(isRequestingNotifications)
-
+        Section {
+            LabeledContent {
+                HStack(spacing: 10) {
+                    StatusLabel(text: notificationBadgeTitle, available: notificationsEnabled)
                     if showsNotificationAction {
                         Button(notificationActionTitle) {
                             handleNotificationAction()
                         }
-                        .controlSize(.small)
+                        .disabled(isRequestingNotifications)
+                    } else {
+                        Button("Refresh") {
+                            refreshNotificationState()
+                        }
                         .disabled(isRequestingNotifications)
                     }
                 }
-
-                if let notificationMessage {
-                    Text(notificationMessage)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
+            } label: {
+                Text("Speaker suggestions")
+                Text(notificationDetailText)
+            }
+        } header: {
+            Text("Optional")
+        } footer: {
+            if let notificationMessage {
+                Text(notificationMessage)
             }
         }
     }
 
-    private var helperStatusSection: some View {
-        settingsPanel(title: "Helper Status") {
-            HStack(alignment: .top, spacing: 10) {
-                StatusBadge(
-                    title: mediaRemoteController.health.badgeTitle,
-                    available: mediaRemoteController.health.isHealthy
-                )
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("MediaRemote helper")
-                        .font(.system(size: 13, weight: .medium))
-                    Text(mediaRemoteController.health.message)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                    Text(helperStatusDetail)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                }
-                .layoutPriority(1)
-
-                Spacer()
-
-                Button("Restart") {
-                    mediaRemoteController.restart()
-                }
-                .controlSize(.small)
-            }
-        }
-    }
-
-    private var diagnosticsSection: some View {
-        settingsPanel(title: "Diagnostics") {
-            VStack(alignment: .leading, spacing: 7) {
-                if let configImportReport {
-                    ForEach(configImportReport.fileResults, id: \.file.rawValue) { result in
-                        settingsDiagnosticRow(title: result.file.fileName, detail: fileStatusText(result.status))
+    @ViewBuilder
+    private var advancedPane: some View {
+        Section("Media Helper") {
+            LabeledContent {
+                HStack(spacing: 10) {
+                    StatusLabel(text: mediaRemoteController.health.badgeTitle, available: mediaRemoteController.health.isHealthy)
+                    Button("Restart") {
+                        mediaRemoteController.restart()
                     }
-                    settingsDiagnosticRow(title: "spotify keychain", detail: keychainStatusText(configImportReport.keychainStatus))
-                    settingsDiagnosticRow(title: "media targets", detail: "\(mediaRemoteController.targets.count)")
-                    settingsDiagnosticRow(title: "chromium targets", detail: "\(chromiumBrowserExtensionController.targets.count)")
                 }
-                if let chromiumBridgeMessage {
-                    settingsDiagnosticRow(title: "chromium bridge", detail: chromiumBridgeMessage)
+            } label: {
+                Text(mediaRemoteController.health.message)
+                Text(helperStatusDetail)
+                    .font(.system(size: 11, design: .monospaced))
+            }
+        }
+
+        Section("Browser Bridge") {
+            LabeledContent("Reinstall the native messaging host") {
+                Button("Repair Bridge") {
+                    installChromiumNativeBridge()
                 }
-                if configImportReport == nil && chromiumBridgeMessage == nil {
-                    Text("No diagnostics recorded yet.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                }
+            }
+            LabeledContent("Unpacked extension folder") {
                 HStack {
-                    Text("Copies app state and the last 15 minutes of Keyway logs for a bug report.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button(isCopyingDiagnostics ? "Copying…" : diagnosticsCopied ? "Copied" : "Copy Diagnostics") {
-                        Task { await copyDiagnostics() }
+                    Button("Reveal Extension") {
+                        revealChromiumExtension()
                     }
-                    .controlSize(.small)
-                    .disabled(isCopyingDiagnostics)
-                    .accessibilityIdentifier("settings.diagnostics.copy")
+                    Button("Open Extensions") {
+                        openChromiumExtensionsPage()
+                    }
                 }
             }
+        }
+
+        Section {
+            if let configImportReport {
+                ForEach(configImportReport.fileResults, id: \.file.rawValue) { result in
+                    settingsDiagnosticRow(title: result.file.fileName, detail: fileStatusText(result.status))
+                }
+                settingsDiagnosticRow(title: "spotify keychain", detail: keychainStatusText(configImportReport.keychainStatus))
+                settingsDiagnosticRow(title: "media targets", detail: "\(mediaRemoteController.targets.count)")
+                settingsDiagnosticRow(title: "chromium targets", detail: "\(chromiumBrowserExtensionController.targets.count)")
+            }
+            if let chromiumBridgeMessage {
+                settingsDiagnosticRow(title: "chromium bridge", detail: chromiumBridgeMessage)
+            }
+            LabeledContent("App state and the last 15 minutes of logs") {
+                Button(isCopyingDiagnostics ? "Copying…" : diagnosticsCopied ? "Copied" : "Copy Diagnostics") {
+                    Task { await copyDiagnostics() }
+                }
+                .disabled(isCopyingDiagnostics)
+                .accessibilityIdentifier("settings.diagnostics.copy")
+            }
+        } header: {
+            Text("Diagnostics")
+        }
+
+        Section {
+            LabeledContent {
+                StatusLabel(text: configImportBadgeTitle, available: configImportBadgeAvailable)
+            } label: {
+                Text("Sonos Handoff settings")
+                Text(configImportSummary)
+            }
+            settingsPathRow(title: "Keyway", url: ConfigPaths.applicationSupportDirectory)
+            settingsPathRow(title: "Legacy", url: ConfigPaths.legacyApplicationSupportDirectory)
+            LabeledContent("Copy config and tokens from the old app") {
+                Button("Import Existing Settings") {
+                    runConfigImport()
+                }
+            }
+        } header: {
+            Text("Migration")
         }
     }
 
@@ -716,72 +585,10 @@ struct SettingsFeature: View {
         diagnosticsCopied = true
     }
 
-    private var readinessRow: some View {
-        HStack(alignment: .top, spacing: 10) {
-            StatusIcon(available: spotifyAuthCheckError == nil && desktopTokenAvailable && webAPITokenAvailable)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(spotifyAuthStatusText)
-                    .font(.system(size: 14, weight: .semibold))
-                Text(spotifyAuthDetailText)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(3)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func settingsPanel<Content: View>(
-        title: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .padding(.leading, 2)
-
-            VStack(alignment: .leading, spacing: 12) {
-                content()
-            }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: Self.panelCornerRadius, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: Self.panelCornerRadius, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
-            }
-        }
-    }
-
-    private func serviceStatusRow(
-        title: String,
-        available: Bool,
-        availableText: String,
-        missingText: String
-    ) -> some View {
-        HStack(spacing: 8) {
-            StatusDot(available: available, size: 7)
-            Text(title)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.primary.opacity(0.9))
-            Spacer()
-            Text(available ? availableText : missingText)
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-        }
-    }
-
     private func settingsPathRow(title: String, url: URL) -> some View {
-        HStack(spacing: 8) {
-            Text(title)
-                .font(.system(size: 11, weight: .medium))
-                .frame(width: 48, alignment: .leading)
+        LabeledContent(title) {
             Text(url.path)
                 .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .textSelection(.enabled)
@@ -789,15 +596,7 @@ struct SettingsFeature: View {
     }
 
     private func settingsDiagnosticRow(title: String, detail: String) -> some View {
-        HStack(spacing: 8) {
-            Text(title)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.primary.opacity(0.9))
-            Spacer()
-            Text(detail)
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-        }
+        LabeledContent(title, value: detail)
     }
 
     private var spotifyAuthStatusText: String {
@@ -1321,48 +1120,55 @@ private struct ShortcutRecorderField: View {
     }
 }
 
-private struct StatusDot: View {
-    let available: Bool
-    var size: CGFloat = 9
+private enum SettingsPane: String, CaseIterable, Identifiable {
+    case general = "General"
+    case shortcuts = "Shortcuts"
+    case spotify = "Spotify"
+    case sonos = "Sonos"
+    case browsers = "Browsers"
+    case permissions = "Permissions"
+    case advanced = "Advanced"
 
-    var body: some View {
-        Circle()
-            .fill(available ? Color.green : Color.orange)
-            .frame(width: size, height: size)
-            .accessibilityHidden(true)
+    var id: Self { self }
+
+    var symbol: String {
+        switch self {
+        case .general: "gearshape.fill"
+        case .shortcuts: "command"
+        case .spotify: "music.note"
+        case .sonos: "hifispeaker.2.fill"
+        case .browsers: "globe"
+        case .permissions: "hand.raised.fill"
+        case .advanced: "wrench.and.screwdriver.fill"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .general: .gray
+        case .shortcuts: .blue
+        case .spotify: .green
+        case .sonos: .orange
+        case .browsers: .indigo
+        case .permissions: .blue
+        case .advanced: .gray
+        }
     }
 }
 
-private struct StatusIcon: View {
-    let available: Bool
-
-    var body: some View {
-        Image(systemName: available ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-            .font(.system(size: 18, weight: .semibold))
-            .symbolRenderingMode(.hierarchical)
-            .foregroundStyle(available ? Color.green : Color.orange)
-            .frame(width: 22, height: 22)
-            .accessibilityHidden(true)
-    }
-}
-
-private struct StatusBadge: View {
-    let title: String
+private struct StatusLabel: View {
+    let text: String
     let available: Bool
 
     var body: some View {
         HStack(spacing: 5) {
-            StatusDot(available: available, size: 7)
-            Text(title)
-                .font(.system(size: 11, weight: .medium))
+            Image(systemName: available ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                .foregroundStyle(available ? Color.green : Color.orange)
+            if !text.isEmpty {
+                Text(text)
+                    .foregroundStyle(.secondary)
+            }
         }
-        .padding(.horizontal, 8)
-        .frame(height: 24)
-        .background {
-            Capsule(style: .continuous)
-                .fill((available ? Color.green : Color.orange).opacity(0.12))
-        }
-        .foregroundStyle(available ? Color.green : Color.orange)
-        .fixedSize(horizontal: true, vertical: false)
+        .accessibilityElement(children: .combine)
     }
 }

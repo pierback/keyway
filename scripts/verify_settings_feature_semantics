@@ -142,10 +142,13 @@ schedule_relaunch = controller[controller.index("    private func scheduleRelaun
 if "relaunchDelayNanoseconds" not in schedule_relaunch:
     raise SystemExit("verify_settings_feature_semantics: helper recovery must use the capped relaunch schedule")
 
-for tab in ('Label("General"', 'Label("Shortcuts"', 'Label("Sources"', 'Label("Permissions"', 'Label("Advanced"'):
-    if tab not in text:
-        raise SystemExit(f"verify_settings_feature_semantics: Settings must use the five native toolbar tabs: {tab}")
-if "sidebarSections" in text:
+for pane in ('case general = "General"', 'case shortcuts = "Shortcuts"', 'case spotify = "Spotify"', 'case sonos = "Sonos"', 'case browsers = "Browsers"', 'case permissions = "Permissions"', 'case advanced = "Advanced"'):
+    if pane not in text:
+        raise SystemExit(f"verify_settings_feature_semantics: Settings must expose the System Settings style panes: {pane}")
+for required in ("NavigationSplitView {", ".listStyle(.sidebar)", ".formStyle(.grouped)"):
+    if required not in text:
+        raise SystemExit(f"verify_settings_feature_semantics: Settings must use the native sidebar and grouped form: {required}")
+if "sidebarSections" in text or "TabView {" in text:
     raise SystemExit("verify_settings_feature_semantics: Settings must not hand-roll a sidebar")
 if 'Command-click or Command-Enter opens the selected app or browser tab.' not in text:
     raise SystemExit("verify_settings_feature_semantics: Source Chooser guidance must explain both direct open gestures")

@@ -162,7 +162,7 @@ private final class VolumeHUDController {
         panel.hidesOnDeactivate = false
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = true
+        panel.hasShadow = false
         panel.ignoresMouseEvents = true
         panel.contentView = NSHostingView(rootView: VolumeHUDView(model: model))
         self.panel = panel
@@ -276,12 +276,7 @@ private struct VolumeHUDView: View {
         }
         .padding(.horizontal, 14)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(KeywayVisualEffect(material: .popover))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
-        }
+        .keywayGlass(cornerRadius: 18)
     }
 }
 

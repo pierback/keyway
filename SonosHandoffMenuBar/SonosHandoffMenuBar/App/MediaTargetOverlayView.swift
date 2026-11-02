@@ -39,12 +39,7 @@ struct MediaTargetOverlayView: View {
             footer
         }
         .frame(width: Self.width)
-        .background(KeywayVisualEffect(material: .popover))
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
-        }
+        .keywayGlass(cornerRadius: 22)
         .animation(accessibilityReduceMotion ? nil : .snappy(duration: 0.28), value: model.routeConfirmationSequence)
     }
 
@@ -386,5 +381,21 @@ struct KeywayVisualEffect: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
         nsView.material = material
+    }
+}
+
+extension View {
+    @ViewBuilder
+    func keywayGlass(cornerRadius: CGFloat) -> some View {
+        if #available(macOS 26.0, *) {
+            glassEffect(.regular, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        } else {
+            background(KeywayVisualEffect(material: .popover))
+                .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+                }
+        }
     }
 }

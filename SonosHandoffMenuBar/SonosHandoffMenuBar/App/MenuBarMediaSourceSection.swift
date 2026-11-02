@@ -199,7 +199,7 @@ struct MenuBarMediaSourceSection: View {
             }
         }
         .padding(12)
-        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .keywayGlass(cornerRadius: 16)
         .accessibilityIdentifier("source-row-empty")
     }
 
@@ -227,7 +227,7 @@ struct MenuBarMediaSourceSection: View {
             }
         }
         .padding(12)
-        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .keywayGlass(cornerRadius: 16)
         .accessibilityIdentifier("source-row-\(target.id)")
     }
 
