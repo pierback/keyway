@@ -187,7 +187,7 @@ private final class VolumeHUDController {
                 min: visibleFrame.minY + edgeInset,
                 max: visibleFrame.maxY - size.height - edgeInset
             )
-            panel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
+            panel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height).insetBy(dx: -VolumeHUDView.shadowMargin, dy: -VolumeHUDView.shadowMargin), display: true)
             return
         }
 
@@ -207,7 +207,7 @@ private final class VolumeHUDController {
                 y: frame.maxY - size.height - 16,
                 width: size.width,
                 height: size.height
-            ),
+            ).insetBy(dx: -VolumeHUDView.shadowMargin, dy: -VolumeHUDView.shadowMargin),
             display: true
         )
     }
@@ -239,6 +239,7 @@ private final class VolumeHUDModel: ObservableObject {
 private struct VolumeHUDView: View {
     static let size = NSSize(width: 300, height: 70)
     static let compactHeight: CGFloat = 56
+    static let shadowMargin: CGFloat = 24
 
     @ObservedObject var model: VolumeHUDModel
 
@@ -277,6 +278,7 @@ private struct VolumeHUDView: View {
         .padding(.horizontal, 14)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .keywayGlass(cornerRadius: 18)
+        .padding(Self.shadowMargin)
     }
 }
 

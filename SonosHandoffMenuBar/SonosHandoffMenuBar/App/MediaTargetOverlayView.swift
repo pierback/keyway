@@ -10,6 +10,7 @@ struct MediaTargetOverlayView: View {
     static let volumePanelHeight: CGFloat = 92
     static let footerHeight: CGFloat = 40
     static let maxVisibleRows = 6
+    static let shadowMargin: CGFloat = 32
 
     static func height(rowCount: Int, expanded: Bool) -> CGFloat {
         let visibleRows = CGFloat(max(1, min(rowCount, maxVisibleRows)))
@@ -40,6 +41,7 @@ struct MediaTargetOverlayView: View {
         }
         .frame(width: Self.width)
         .keywayGlass(cornerRadius: 22)
+        .padding(Self.shadowMargin)
         .animation(accessibilityReduceMotion ? nil : .snappy(duration: 0.28), value: model.routeConfirmationSequence)
     }
 

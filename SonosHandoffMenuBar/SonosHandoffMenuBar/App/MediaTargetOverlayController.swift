@@ -231,7 +231,7 @@ final class MediaTargetOverlayController {
         panel.hidesOnDeactivate = true
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = true
+        panel.hasShadow = false
         panel.onKeyDown = { [weak self] event in
             self?.handleKeyDown(event) ?? false
         }
@@ -463,8 +463,9 @@ final class MediaTargetOverlayController {
 
     private func panelSize() -> NSSize {
         NSSize(
-            width: MediaTargetOverlayView.width,
+            width: MediaTargetOverlayView.width + MediaTargetOverlayView.shadowMargin * 2,
             height: MediaTargetOverlayView.height(rowCount: model.rows.count, expanded: model.expanded)
+                + MediaTargetOverlayView.shadowMargin * 2
         )
     }
 
