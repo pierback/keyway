@@ -25,31 +25,26 @@ struct MenuBarOutputSection: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text(groupEditingActive ? "Group" : "Speakers")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
 
                 Spacer()
 
                 if canToggleGroupEditing {
-                    Button {
+                    Button(groupEditingActive ? "Done" : "Edit Group") {
                         withAnimation(MenuBarMotion.modeSwitch) {
                             forceGroupEditing.toggle()
                         }
-                    } label: {
-                        Image(systemName: groupEditingActive ? "checklist.checked" : "checklist")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(groupEditingActive ? Self.accentColor : .secondary.opacity(0.85))
-                            .frame(width: 22, height: 22)
-                            .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 4))
                     }
                     .buttonStyle(.plain)
-                    .help(groupEditingActive ? "Exit Grouping Mode" : "Enter Grouping Mode")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Color.accentColor)
+                    .help("Hold ⌥ to edit the group temporarily")
                     .accessibilityIdentifier("toggle-group-editing")
                     .accessibilityLabel(groupEditingActive ? "Hide Grouping" : "Show Grouping")
                 }
             }
-            .padding(.horizontal, 8)
-            .padding(.top, 6)
+            .padding(.horizontal, 4)
             .padding(.bottom, 4)
             .contentTransition(.opacity)
             .animation(MenuBarMotion.modeSwitch, value: groupEditingActive)
@@ -165,6 +160,12 @@ struct MenuBarOutputSection: View {
                         playback.memberVolumeController.loadMemberVolumes(for: row)
                     }
                 }
+
+            if selected {
+                MenuBarVolumeControl(playback: playback)
+                    .padding(.leading, 33)
+                    .padding(.top, 4)
+            }
 
             if mixerExpanded {
                 ForEach(playback.memberVolumeController.memberVolumeRows.filter { $0.groupID == row.id }) { memberRow in
@@ -368,7 +369,7 @@ struct MenuBarOutputSection: View {
             HStack(spacing: 13) {
                 ZStack {
                     Circle()
-                        .fill(row.isInGroup ? Self.accentColor : Color.white.opacity(0.075))
+                        .fill(row.isInGroup ? Self.accentColor : Color.primary.opacity(0.08))
 
                     Image(systemName: groupIconName(for: row))
                         .font(.system(size: 12, weight: .regular))
@@ -480,11 +481,11 @@ struct MenuBarOutputSection: View {
     }
 
     private func outputIconBackground(selected: Bool) -> Color {
-        selected ? Self.accentColor : Color.white.opacity(0.075)
+        selected ? Self.accentColor : Color.primary.opacity(0.08)
     }
 
     private func outputIconForeground(selected: Bool) -> Color {
-        selected ? Color.white.opacity(0.96) : Color.secondary.opacity(0.85)
+        selected ? Color.white : Color.secondary.opacity(0.85)
     }
 
     private func isMixerExpanded(_ row: PlaybackOutputRow, selected: Bool) -> Bool {
@@ -528,7 +529,7 @@ struct MenuBarOutputSection: View {
             return Color.secondary.opacity(0.55)
         }
 
-        return row.isInGroup ? Color.white.opacity(0.96) : Color.secondary.opacity(0.85)
+        return row.isInGroup ? Color.white : Color.secondary.opacity(0.85)
     }
 
     private func groupStatusForeground(for row: PlaybackGroupEditRow) -> Color {
@@ -579,15 +580,15 @@ private struct MemberVolumeSlider: View {
 
         return ZStack(alignment: .leading) {
             Capsule()
-                .fill(Color.white.opacity(0.18))
+                .fill(Color.primary.opacity(0.15))
                 .frame(height: 3)
 
             Capsule()
-                .fill(Color.white.opacity(0.76))
+                .fill(Color.primary.opacity(0.7))
                 .frame(width: max(trackWidth * progress, knobSize / 2), height: 3)
 
             Circle()
-                .fill(Color.white.opacity(0.94))
+                .fill(Color.white)
                 .frame(width: knobSize, height: knobSize)
                 .offset(x: knobOffset)
                 .shadow(color: .black.opacity(0.2), radius: 0.6, y: 0.4)

@@ -5,7 +5,6 @@ import SwiftUI
 @MainActor
 struct MenuBarMediaSourceSection: View {
     private static let accentColor = Color(nsColor: .controlAccentColor)
-    private static let routeButtonHeight: CGFloat = 22
 
     @ObservedObject var mediaRemoteController: MediaRemoteController
     @ObservedObject var mediaSourceStore: MediaSourceStore
@@ -63,43 +62,26 @@ struct MenuBarMediaSourceSection: View {
     var body: some View {
         let displayTargets = self.displayTargets
 
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Active Sources")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.62))
-                Spacer()
-            }
-
-            if displayTargets.isEmpty {
-                emptyRow
-            } else {
-                ForEach(displayTargets) { target in
-                    let displayTarget = target
-                    sourceRow(displayTarget)
-                    if displayTarget.id != displayTargets.last?.id {
-                        Divider()
-                            .background(.white.opacity(0.08))
+        VStack(alignment: .leading, spacing: 12) {
+            if let primary = displayTargets.first {
+                primaryCard(primary)
+                if displayTargets.count > 1 {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Other Sources")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 4)
+                            .padding(.bottom, 2)
+                        ForEach(displayTargets.dropFirst()) { target in
+                            sourceRow(target)
+                        }
                     }
                 }
+            } else {
+                emptyRow
             }
         }
-        .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background {
-            RoundedRectangle(cornerRadius: 15, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [.white.opacity(0.06), .white.opacity(0.035)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 15, style: .continuous)
-                .stroke(.white.opacity(0.09), lineWidth: 0.5)
-        }
         .animation(MenuBarMotion.rowUpdate, value: targetIDs)
         .onAppear {
             openTargetSession()
@@ -172,20 +154,19 @@ struct MenuBarMediaSourceSection: View {
     }
 
     private var emptyRow: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 9) {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
                 Image(systemName: "play.rectangle")
                     .font(.system(size: 16, weight: .regular))
-                    .foregroundStyle(.white.opacity(0.38))
-                    .frame(width: 26, height: 26)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28, height: 28)
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text("No media sources")
                         .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.82))
                     Text("Start Spotify, browser media, or QuickTime playback.")
-                        .font(.system(size: 11, weight: .regular))
-                        .foregroundStyle(.white.opacity(0.48))
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
             }
@@ -193,82 +174,124 @@ struct MenuBarMediaSourceSection: View {
             if !mediaRemoteController.health.isHealthy {
                 Text(transportDiagnosticText)
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.48))
+                    .foregroundStyle(.secondary)
             }
 
             if !playback.outputRows.isEmpty || playback.headphoneOutput != nil {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        if let output = playback.headphoneOutput {
-                            spotifyHeadphoneRouteButton(output)
-                        }
-                        ForEach(playback.outputRows) { row in
-                            idleSpotifyConnectButton(row)
+                Menu {
+                    if let output = playback.headphoneOutput {
+                        Button(output.name) {
+                            playback.transferSpotifyPlaybackToMac(output: output)
                         }
                     }
+                    ForEach(playback.outputRows) { row in
+                        idleSpotifyConnectButton(row)
+                    }
+                } label: {
+                    outputMenuLabel("Play Spotify on…", loading: playback.loadingRoomName != nil || playback.macTransferOutputID != nil)
                 }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .disabled(outputTransferBlocked)
+                .accessibilityIdentifier("source-empty-spotify-output")
             }
         }
-        .frame(minHeight: 34)
+        .padding(12)
+        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .accessibilityIdentifier("source-row-empty")
     }
 
-    private func sourceRow(_ target: MediaRemoteTarget) -> some View {
+    private func primaryCard(_ target: MediaRemoteTarget) -> some View {
         let suspect = sourceReachability(target).isSuspect
 
-        return VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 9) {
-                sourceIdentityButton(target, suspect: suspect)
-
-                HStack(spacing: 7) {
-                    sourceTransportButton(.previous, target: target)
-                    sourceTransportButton(target.isCurrentlyPlaying ? .pause : .play, target: target, emphasized: true)
-                    sourceTransportButton(.next, target: target)
-                    if ChromiumBrowserExtensionTransport.isTarget(target) {
-                        browserMuteButton(target)
-                    }
-                }
-            }
+        return VStack(alignment: .leading, spacing: 12) {
+            sourceIdentityButton(target, suspect: suspect, artworkSize: 56, primary: true)
 
             if let duration = target.duration, duration > 0 {
                 progressBar(target, duration: duration, tick: progressTick)
             }
 
-            if target.isSpotify {
-                spotifyRouteRow(for: target)
+            HStack(spacing: 6) {
+                if target.isSpotify {
+                    spotifyOutputMenu(for: target)
+                }
+                Spacer(minLength: 0)
+                if ChromiumBrowserExtensionTransport.isTarget(target) {
+                    browserMuteButton(target)
+                }
+                sourceTransportButton(.previous, target: target)
+                sourceTransportButton(target.isCurrentlyPlaying ? .pause : .play, target: target, emphasized: true)
+                sourceTransportButton(.next, target: target)
             }
         }
-        .padding(.vertical, 2)
+        .padding(12)
+        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .accessibilityIdentifier("source-row-\(target.id)")
     }
 
-    private func sourceIdentityButton(_ target: MediaRemoteTarget, suspect: Bool) -> some View {
+    private func sourceRow(_ target: MediaRemoteTarget) -> some View {
+        let suspect = sourceReachability(target).isSuspect
+
+        return HStack(spacing: 8) {
+            sourceIdentityButton(target, suspect: suspect, artworkSize: 28, primary: false)
+            if ChromiumBrowserExtensionTransport.isTarget(target) {
+                browserMuteButton(target)
+            }
+            sourceTransportButton(target.isCurrentlyPlaying ? .pause : .play, target: target)
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 4)
+        .accessibilityIdentifier("source-row-\(target.id)")
+    }
+
+    private func sourceIdentityButton(_ target: MediaRemoteTarget, suspect: Bool, artworkSize: CGFloat, primary: Bool) -> some View {
         Button {
             mediaTransportActions.focus(target: target)
         } label: {
-            HStack(spacing: 9) {
-                artworkView(target, size: 32)
+            HStack(spacing: primary ? 12 : 10) {
+                artworkView(target, size: artworkSize)
 
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 6) {
-                        Text(target.appName)
-                            .font(.system(size: 13, weight: .semibold))
-                            .lineLimit(1)
-
-                        if let label = target.routeSourceLabel {
-                            sourceBadge(label)
+                VStack(alignment: .leading, spacing: primary ? 2 : 1) {
+                    if primary {
+                        HStack(spacing: 5) {
+                            Circle()
+                                .fill(target.isCurrentlyPlaying ? Color.green : Color.secondary)
+                                .frame(width: 6, height: 6)
+                            Text(target.appName.uppercased())
+                                .font(.system(size: 10, weight: .semibold))
+                                .tracking(0.6)
+                                .foregroundStyle(.tertiary)
+                                .lineLimit(1)
+                            if target.routeSourceLabel == "Extension required" {
+                                Text("· Extension required")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(.orange)
+                            }
+                            if suspect {
+                                Text("not responding")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(.orange)
+                                    .lineLimit(1)
+                            }
                         }
-                        if suspect {
+                    }
+                    Text(target.title.isEmpty ? target.appName : target.title)
+                        .font(.system(size: primary ? 15 : 13, weight: primary ? .semibold : .medium))
+                        .lineLimit(1)
+                    HStack(spacing: 6) {
+                        Text(primary ? target.artist : [target.appName, target.title.isEmpty ? "" : target.artist].filter { !$0.isEmpty }.joined(separator: " · "))
+                            .font(.system(size: primary ? 12 : 11))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        if suspect, !primary {
                             Text("not responding")
                                 .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(.white.opacity(0.46))
+                                .foregroundStyle(.orange)
                                 .lineLimit(1)
                         }
                     }
-                    Text(target.detailText)
-                        .font(.system(size: 11, weight: .regular))
-                        .foregroundStyle(.white.opacity(0.52))
-                        .lineLimit(1)
                 }
                 .opacity(suspect ? 0.58 : 1)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -298,17 +321,20 @@ struct MenuBarMediaSourceSection: View {
         emphasized: Bool = false
     ) -> some View {
         let enabled = supports(command, target: target)
+        let size: CGFloat = emphasized ? 36 : 28
 
         return Button {
             mediaTransportActions.route(command: command, to: target)
         } label: {
             Image(systemName: command.symbolName)
-                .font(.system(size: emphasized ? 12 : 10, weight: .semibold))
-                .frame(width: 22, height: 22)
+                .font(.system(size: emphasized ? 14 : 12, weight: .semibold))
+                .foregroundStyle(emphasized ? Color(nsColor: .windowBackgroundColor) : Color.primary)
+                .frame(width: size, height: size)
+                .background(emphasized ? Color.primary : Color.primary.opacity(0.08), in: Circle())
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.white.opacity(enabled ? (emphasized ? 0.90 : 0.65) : 0.22))
+        .opacity(enabled ? 1 : 0.35)
         .disabled(!enabled)
         .help(enabled ? command.displayName : "\(command.displayName) is not supported for \(target.appName)")
         .accessibilityIdentifier("source-\(target.id)-transport-\(command.rawValue)")
@@ -324,151 +350,90 @@ struct MenuBarMediaSourceSection: View {
             mediaAudioControlController.toggleBrowserMute(target: target)
         } label: {
             Image(systemName: muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                .font(.system(size: 10, weight: .semibold))
-                .frame(width: 22, height: 22)
+                .font(.system(size: 11, weight: .semibold))
+                .frame(width: 28, height: 28)
+                .background(Color.primary.opacity(muted ? 0.16 : 0.08), in: Circle())
                 .contentShape(Circle())
-                .overlay {
-                    if state?.isPending == true {
-                        Circle()
-                            .stroke(.white.opacity(0.34), lineWidth: 1)
-                            .frame(width: 18, height: 18)
-                    }
-                }
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.white.opacity(disabled ? 0.24 : muted ? 0.82 : 0.50))
+        .opacity(disabled ? 0.35 : 1)
         .disabled(disabled)
         .help(state?.isPending == true ? "Mute pending" : muted ? "Unmute tab" : "Mute tab")
         .accessibilityIdentifier("source-\(target.id)-browser-mute")
         .accessibilityLabel(muted ? "Unmute \(target.appName)" : "Mute \(target.appName)")
     }
 
-    private func spotifyRouteRow(for target: MediaRemoteTarget) -> some View {
-        Group {
-            if playback.outputRows.isEmpty, playback.headphoneOutput == nil {
-                Text(playback.isRefreshingOutputs ? "Searching for speakers" : "No Spotify Connect speakers")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.42))
-            } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        if let output = playback.headphoneOutput {
-                            spotifyHeadphoneRouteButton(output)
-                        }
-                        ForEach(playback.outputRows) { row in
-                            spotifyRouteButton(row, source: target)
-                        }
-                    }
-                }
-            }
-        }
-        .accessibilityIdentifier("source-\(target.id)-spotify-routes")
-    }
-
-    private func spotifyHeadphoneRouteButton(_ output: MacAudioOutputDevice) -> some View {
-        let selected = playback.isSpotifyPlayingOnMac
-        let loading = playback.macTransferOutputID == output.id
-        let disabled = playback.loadingRoomName != nil
+    private var outputTransferBlocked: Bool {
+        playback.loadingRoomName != nil
             || playback.groupLoadingRoomName != nil
             || playback.volumeState.isBusy
             || playback.macTransferOutputID != nil
-
-        return Button {
-            playback.transferSpotifyPlaybackToMac(output: output)
-        } label: {
-            HStack(spacing: 4) {
-                if loading {
-                    ProgressView()
-                        .controlSize(.small)
-                        .scaleEffect(0.50)
-                } else {
-                    Image(systemName: selected ? "checkmark.circle.fill" : output.name.localizedCaseInsensitiveContains("airpods") ? "airpods" : "headphones")
-                        .font(.system(size: 10, weight: .semibold))
-                }
-                Text(selected ? "\(output.name) connected" : "Send to \(output.name)")
-                    .lineLimit(1)
-            }
-            .font(.system(size: 10, weight: .semibold))
-            .padding(.horizontal, 7)
-            .frame(height: Self.routeButtonHeight)
-            .background(selected ? Self.accentColor.opacity(0.28) : .white.opacity(0.08), in: Capsule())
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(.white.opacity(disabled ? 0.34 : 0.78))
-        .disabled(disabled)
-        .help("Play Spotify on this Mac through \(output.name)")
-        .accessibilityIdentifier("spotify-output-mac-\(output.id)")
-        .accessibilityLabel(selected ? "\(output.name), selected Spotify output" : "Send Spotify to \(output.name)")
     }
 
-    private func spotifyRouteButton(_ row: PlaybackOutputRow, source: MediaRemoteTarget) -> some View {
-        let selected = playback.hasActiveSpotifyConnection(to: row)
-        let loading = row.coordinator.roomName == playback.loadingRoomName
-        let disabled = playback.loadingRoomName != nil
-            || playback.groupLoadingRoomName != nil
-            || playback.volumeState.isBusy
+    private func spotifyOutputMenu(for target: MediaRemoteTarget) -> some View {
+        let activeRow = playback.outputRows.first { playback.hasActiveSpotifyConnection(to: $0) }
+        let title = playback.isSpotifyPlayingOnMac
+            ? playback.headphoneOutput?.name ?? "This Mac"
+            : activeRow?.displayName ?? "Choose speaker"
 
-        return Button {
-            playback.transferSpotifyPlayback(source: source, to: row)
-        } label: {
-            HStack(spacing: 4) {
-                if loading {
-                    ProgressView()
-                        .controlSize(.small)
-                        .scaleEffect(0.50)
-                } else {
-                    Image(systemName: selected ? "checkmark.circle.fill" : "hifispeaker")
-                        .font(.system(size: 10, weight: .semibold))
-                }
-                Text(selected ? "\(row.displayName) connected" : "Send to \(row.displayName)")
-                    .lineLimit(1)
+        return Menu {
+            if playback.outputRows.isEmpty, playback.headphoneOutput == nil {
+                Text(playback.isRefreshingOutputs ? "Searching for speakers" : "No Spotify Connect speakers")
             }
-            .font(.system(size: 10, weight: .semibold))
-            .padding(.horizontal, 7)
-            .frame(height: Self.routeButtonHeight)
-            .background(selected ? Self.accentColor.opacity(0.28) : .white.opacity(0.08), in: Capsule())
+            if let output = playback.headphoneOutput {
+                Toggle(output.name, isOn: Binding(
+                    get: { playback.isSpotifyPlayingOnMac },
+                    set: { _ in playback.transferSpotifyPlaybackToMac(output: output) }
+                ))
+            }
+            ForEach(playback.outputRows) { row in
+                Toggle(row.displayName, isOn: Binding(
+                    get: { playback.hasActiveSpotifyConnection(to: row) },
+                    set: { _ in playback.transferSpotifyPlayback(source: target, to: row) }
+                ))
+            }
+        } label: {
+            outputMenuLabel(title, loading: playback.loadingRoomName != nil || playback.macTransferOutputID != nil)
         }
+        .menuStyle(.button)
         .buttonStyle(.plain)
-        .foregroundStyle(.white.opacity(disabled ? 0.34 : 0.78))
-        .disabled(disabled)
-        .help("Send Spotify playback to \(row.displayName)")
-        .accessibilityIdentifier("source-\(source.id)-route-spotify-to-\(row.coordinator.roomName)")
-        .accessibilityLabel("Send Spotify to \(row.displayName)")
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .disabled(outputTransferBlocked)
+        .help("Choose where Spotify plays")
+        .accessibilityIdentifier("source-\(target.id)-spotify-output")
+        .accessibilityLabel("Spotify playing on \(title)")
+    }
+
+    private func outputMenuLabel(_ title: String, loading: Bool) -> some View {
+        HStack(spacing: 6) {
+            if loading {
+                ProgressView()
+                    .controlSize(.mini)
+            } else {
+                Image(systemName: "hifispeaker.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+            }
+            Text(loading ? "Sending…" : title)
+                .font(.system(size: 12, weight: .semibold))
+                .lineLimit(1)
+            Image(systemName: "chevron.up.chevron.down")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 28)
+        .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .contentShape(Rectangle())
     }
 
     private func idleSpotifyConnectButton(_ row: PlaybackOutputRow) -> some View {
-        let selected = playback.hasActiveSpotifyConnection(to: row)
-        let loading = row.coordinator.roomName == playback.loadingRoomName
-        let disabled = playback.loadingRoomName != nil
-            || playback.groupLoadingRoomName != nil
-            || playback.volumeState.isBusy
-
-        return Button {
-            playback.connectSpotify(to: row)
-        } label: {
-            HStack(spacing: 4) {
-                if loading {
-                    ProgressView()
-                        .controlSize(.small)
-                        .scaleEffect(0.50)
-                } else {
-                    Image(systemName: selected ? "checkmark.circle.fill" : "hifispeaker")
-                        .font(.system(size: 10, weight: .semibold))
-                }
-                Text(selected ? "\(row.displayName) connected" : "Connect to \(row.displayName)")
-                    .lineLimit(1)
-            }
-            .font(.system(size: 10, weight: .semibold))
-            .padding(.horizontal, 7)
-            .frame(height: Self.routeButtonHeight)
-            .background(selected ? Self.accentColor.opacity(0.28) : .white.opacity(0.08), in: Capsule())
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(.white.opacity(disabled ? 0.34 : 0.78))
-        .disabled(disabled)
-        .help("Connect Spotify to \(row.displayName)")
+        Toggle(row.displayName, isOn: Binding(
+            get: { playback.hasActiveSpotifyConnection(to: row) },
+            set: { _ in playback.connectSpotify(to: row) }
+        ))
         .accessibilityIdentifier("source-empty-connect-spotify-to-\(row.coordinator.roomName)")
-        .accessibilityLabel("Connect Spotify to \(row.displayName)")
     }
 
     private func supports(_ command: MediaRemoteTransportCommand, target: MediaRemoteTarget) -> Bool {
@@ -485,25 +450,12 @@ struct MenuBarMediaSourceSection: View {
     }
 
     private func artworkView(_ target: MediaRemoteTarget, size: CGFloat) -> some View {
-        Group {
-            if let artworkImage = target.artworkImage {
-                Image(nsImage: artworkImage)
-                    .resizable()
-                    .interpolation(.high)
-                    .scaledToFill()
-            } else {
-                Image(nsImage: target.appIcon)
-                    .resizable()
-                    .interpolation(.high)
-                    .scaledToFill()
-            }
-        }
-        .frame(width: size, height: size)
-        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .stroke(.white.opacity(0.10), lineWidth: 0.5)
-        }
+        Image(nsImage: target.artworkImage ?? target.appIcon)
+            .resizable()
+            .interpolation(.high)
+            .scaledToFill()
+            .frame(width: size, height: size)
+            .clipShape(RoundedRectangle(cornerRadius: size > 40 ? 8 : 6, style: .continuous))
     }
 
     private func progressBar(_ target: MediaRemoteTarget, duration: Double, tick: UInt64) -> some View {
@@ -520,10 +472,10 @@ struct MenuBarMediaSourceSection: View {
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule()
-                        .fill(.white.opacity(0.10))
+                        .fill(Color.primary.opacity(0.12))
                         .frame(height: 3)
                     Capsule()
-                        .fill(.white.opacity(0.55))
+                        .fill(Color.primary.opacity(0.55))
                         .frame(width: geo.size.width * elapsed / duration, height: 3)
                 }
                 .frame(maxHeight: .infinity)
@@ -531,16 +483,7 @@ struct MenuBarMediaSourceSection: View {
             Text(Duration.seconds(duration).formatted(.time(pattern: .minuteSecond)))
         }
         .font(.system(size: 9, weight: .medium).monospacedDigit())
-        .foregroundStyle(.white.opacity(0.48))
+        .foregroundStyle(.secondary)
         .frame(height: 11)
-    }
-
-    private func sourceBadge(_ title: String) -> some View {
-        Text(title)
-            .font(.system(size: 9, weight: .semibold))
-            .foregroundStyle(.white.opacity(0.54))
-            .padding(.horizontal, 5)
-            .frame(height: 15)
-            .background(.white.opacity(0.08), in: Capsule())
     }
 }

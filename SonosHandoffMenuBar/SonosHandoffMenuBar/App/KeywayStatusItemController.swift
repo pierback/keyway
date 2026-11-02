@@ -270,9 +270,7 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
                 quit: { NSApp.terminate(nil) }
             )
         )
-        hostingController.view.wantsLayer = true
-        hostingController.view.layer?.backgroundColor = NSColor.clear.cgColor
-        hostingController.view.layer?.isOpaque = false
+        hostingController.sizingOptions = [.preferredContentSize]
         popover.contentViewController = hostingController
         return popover
     }
@@ -361,14 +359,6 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
         return frame.contains(screenPoint)
     }
 
-    func popoverDidShow(_ notification: Notification) {
-        guard let window = popover.contentViewController?.view.window else {
-            return
-        }
-        window.isOpaque = false
-        window.backgroundColor = .clear
-    }
-
     func popoverDidClose(_ notification: Notification) {
         stopPopoverDismissMonitors()
         let action = postPopoverCloseAction
@@ -379,15 +369,6 @@ final class KeywayStatusItemController: NSObject, NSPopoverDelegate {
 
 @MainActor
 private struct KeywayControlCenterPopoverView: View {
-    private enum Metrics {
-        static let outerCornerRadius: CGFloat = 22
-        static let cardCornerRadius: CGFloat = 15
-        static let primaryIconSize: CGFloat = 34
-        static let tileEyebrowFont = Font.system(size: 11, weight: .semibold)
-        static let tileTitleFont = Font.system(size: 15, weight: .semibold)
-        static let tileDetailFont = Font.system(size: 12, weight: .regular)
-    }
-
     @ObservedObject private var playback: PlaybackSyncController
     @ObservedObject private var mediaRemoteController: MediaRemoteController
     @ObservedObject private var chromiumBrowserExtensionController: ChromiumBrowserExtensionController
@@ -401,7 +382,6 @@ private struct KeywayControlCenterPopoverView: View {
     private let openSettings: @MainActor () -> Void
     private let restartMediaRemoteHelper: @MainActor () -> Void
     private let quit: @MainActor () -> Void
-    @State private var showSpeakersList = true
     @State private var optionKeyPressed = false
     @State private var localModifierMonitor: Any?
     @State private var globalModifierMonitor: Any?
@@ -438,8 +418,10 @@ private struct KeywayControlCenterPopoverView: View {
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: false) {
-            VStack(spacing: 8) {
-                header
+            VStack(alignment: .leading, spacing: 14) {
+                if let problem = headerStatusTitle {
+                    problemBanner(problem)
+                }
                 MenuBarMediaSourceSection(
                     mediaRemoteController: mediaRemoteController,
                     mediaSourceStore: mediaSourceStore,
@@ -453,30 +435,14 @@ private struct KeywayControlCenterPopoverView: View {
                 } else {
                     sonosSetupTile
                 }
+                Divider()
+                footer
             }
             .padding(12)
         }
         .frame(width: 340)
-        .frame(maxHeight: 460)
-        .background {
-            RoundedRectangle(cornerRadius: Metrics.outerCornerRadius, style: .continuous)
-                .fill(.clear)
-                .background {
-                    KeywayPopoverMaterial()
-                        .clipShape(RoundedRectangle(cornerRadius: Metrics.outerCornerRadius, style: .continuous))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: Metrics.outerCornerRadius, style: .continuous)
-                                .fill(Color.black.opacity(0.10))
-                        }
-                }
-                .overlay {
-                    RoundedRectangle(cornerRadius: Metrics.outerCornerRadius, style: .continuous)
-                        .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
-                }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: Metrics.outerCornerRadius, style: .continuous))
-        .foregroundStyle(.white)
-        .environment(\.colorScheme, .dark)
+        .frame(maxHeight: 560)
+        .fixedSize(horizontal: false, vertical: true)
         .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
             progressTick &+= 1
         }
@@ -489,7 +455,6 @@ private struct KeywayControlCenterPopoverView: View {
         }
         .onDisappear {
             playback.disappear()
-            showSpeakersList = true
             stopModifierMonitor()
         }
     }
@@ -541,253 +506,115 @@ private struct KeywayControlCenterPopoverView: View {
         }
     }
 
-    private var header: some View {
-        HStack(spacing: 8) {
-            helperDot
-
-            Text("Keyway")
+    private func problemBanner(_ title: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.88))
+                .foregroundStyle(.orange)
 
-            Text(headerStatusTitle)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.white.opacity(0.50))
-                .lineLimit(1)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+                Text(isBrowserOnlyRoutingAvailable ? "Browser tabs still work." : "Media keys can't reach apps right now.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
-            Spacer(minLength: 0)
+            Button("Restart", action: restartMediaRemoteHelper)
+                .controlSize(.small)
+                .accessibilityIdentifier("restart-media-helper")
+        }
+        .padding(10)
+        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.orange.opacity(0.35), lineWidth: 1)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("helper-status")
+    }
 
-            Button {
-                openChooser()
-            } label: {
-                Image(systemName: "rectangle.stack.badge.play")
-                    .font(.system(size: 13, weight: .semibold))
-                    .frame(width: 28, height: 28)
-                    .contentShape(Circle())
+    private var footer: some View {
+        HStack(spacing: 8) {
+            Button(action: openChooser) {
+                HStack(spacing: 6) {
+                    Image(systemName: "list.bullet.rectangle")
+                    Text("Open Chooser")
+                }
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .foregroundStyle(.white.opacity(0.65))
-            .background(.white.opacity(0.06), in: Circle())
             .accessibilityIdentifier("open-media-target-chooser")
             .accessibilityLabel("Open Media Target Chooser")
 
+            Spacer(minLength: 0)
+
             Menu {
                 Button("Settings...", action: openSettings)
-                Button("Restart MediaRemote Helper", action: restartMediaRemoteHelper)
                 Divider()
                 Button("Quit Keyway", action: quit)
             } label: {
                 Image(systemName: "gearshape")
-                    .font(.system(size: 13, weight: .semibold))
-                    .frame(width: 28, height: 28)
-                    .contentShape(Circle())
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
             }
             .menuStyle(.button)
             .buttonStyle(.plain)
-            .foregroundStyle(.white.opacity(0.65))
-            .background(.white.opacity(0.06), in: Circle())
+            .menuIndicator(.hidden)
+            .fixedSize()
             .accessibilityIdentifier("keyway-utility-menu")
             .accessibilityLabel("Keyway Utilities")
         }
-        .frame(height: 28)
-        .padding(.horizontal, 2)
+        .padding(.horizontal, 4)
     }
 
     private var sonosSetupTile: some View {
-        card(cornerRadius: Metrics.cardCornerRadius, padding: 10) {
-            HStack(spacing: 9) {
-                Image(systemName: "hifispeaker.2")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.42))
-                    .frame(width: Metrics.primaryIconSize, height: Metrics.primaryIconSize)
-                    .background(.white.opacity(0.085), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        HStack(spacing: 10) {
+            Image(systemName: "hifispeaker.2")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 28, height: 28)
+                .background(Color.primary.opacity(0.08), in: Circle())
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Speakers")
-                        .font(Metrics.tileEyebrowFont)
-                        .foregroundStyle(.white.opacity(0.62))
-                    Text("Sonos is not enabled")
-                        .font(Metrics.tileTitleFont)
-                    Text("Allow Local Network access to discover speakers.")
-                        .font(Metrics.tileDetailFont)
-                        .foregroundStyle(.white.opacity(0.56))
-                        .lineLimit(1)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                Button("Set Up", action: openSonosSetup)
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .accessibilityIdentifier("setup-sonos")
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Sonos speakers")
+                    .font(.system(size: 13, weight: .medium))
+                Text("Allow Local Network access to find them.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button("Set Up", action: openSonosSetup)
+                .controlSize(.small)
+                .accessibilityIdentifier("setup-sonos")
         }
+        .padding(.horizontal, 4)
     }
 
     private var sonosTile: some View {
-        let row = selectedOutputRow
-        let hasOutput = row != nil
-        let roomName = playback.selectedRoomName
-            ?? row?.coordinator.roomName
-            ?? (playback.isRefreshingOutputs ? "Searching for speakers" : "No Sonos speakers")
-        let statusText = sonosStatusText(row: row)
-
-        return card(cornerRadius: Metrics.cardCornerRadius, padding: 10) {
-            VStack(alignment: .leading, spacing: 9) {
-                HStack(spacing: 9) {
-                    Image(systemName: hasOutput ? "hifispeaker.2.fill" : "hifispeaker.slash.fill")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(hasOutput ? .white : .white.opacity(0.42))
-                        .frame(width: Metrics.primaryIconSize, height: Metrics.primaryIconSize)
-                        .background(.white.opacity(0.085), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Speakers")
-                            .font(Metrics.tileEyebrowFont)
-                            .foregroundStyle(.white.opacity(0.62))
-                        Text(roomName)
-                            .font(Metrics.tileTitleFont)
-                            .lineLimit(1)
-                        Text(statusText)
-                            .font(Metrics.tileDetailFont)
-                            .foregroundStyle(.white.opacity(0.56))
-                            .lineLimit(1)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                    Spacer()
-
-                    HStack(spacing: 8) {
-                        Button {
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
-                                showSpeakersList.toggle()
-                            }
-                        } label: {
-                            Image(systemName: "chevron.down")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(.white.opacity(0.60))
-                                .rotationEffect(.degrees(showSpeakersList ? 180 : 0))
-                                .frame(width: 28, height: 28)
-                                .background(.white.opacity(0.06), in: Circle())
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityIdentifier("toggle-sonos-controls")
-                        .accessibilityLabel(showSpeakersList ? "Hide Sonos controls" : "Show Sonos controls")
-                    }
-                }
-
-                if hasOutput {
-                    MenuBarVolumeControl(playback: playback)
-                        .padding(.horizontal, -3)
-                }
-
-                if showSpeakersList {
-                    Divider()
-                        .background(.white.opacity(0.12))
-                        .padding(.vertical, 2)
-
-                    ScrollView(.vertical, showsIndicators: false) {
-                        MenuBarOutputSection(
-                            playback: playback,
-                            groupEditing: optionKeyPressed
-                        )
-                    }
-                    .frame(maxHeight: 118)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-                }
-            }
-        }
+        MenuBarOutputSection(
+            playback: playback,
+            groupEditing: optionKeyPressed
+        )
     }
 
-    private var selectedOutputRow: PlaybackOutputRow? {
-        if let selectedRoomName = playback.selectedRoomName,
-           let selected = playback.outputRows.first(where: { $0.contains(roomName: selectedRoomName) }) {
-            return selected
-        }
-
-        return playback.outputRows.first
-    }
-
-    private func sonosStatusText(row: PlaybackOutputRow?) -> String {
-        if playback.isRefreshingOutputs {
-            return "Looking on this network"
-        }
-        guard row != nil else {
-            return "Unavailable on this network"
-        }
-        if playback.volumeState.outputFixed {
-            return "Fixed output"
-        }
-        if playback.volumeState.hasStatus {
-            return playback.volumeState.muted ? "Muted" : "Volume \(playback.volumeState.roundedValue)%"
-        }
-        return "Volume unavailable"
-    }
-
-    private var helperDot: some View {
-        Circle()
-            .fill(transportsHealthy ? Color.green : Color.orange)
-            .frame(width: 8, height: 8)
-            .accessibilityIdentifier("helper-status")
-    }
-
-    private var transportsHealthy: Bool {
-        mediaRemoteController.health.isHealthy
-    }
-
-    private var headerStatusTitle: String {
+    private var headerStatusTitle: String? {
         switch mediaRemoteController.health.state {
         case .failed, .stopped:
-            if isBrowserOnlyRoutingAvailable {
-                return "Browser only"
-            }
-            return mediaRemoteController.health.badgeTitle
+            return isBrowserOnlyRoutingAvailable ? "App media is unavailable" : "Media helper \(mediaRemoteController.health.badgeTitle.lowercased())"
         case .starting, .running:
-            return mediaRemoteController.health.badgeTitle
+            return nil
         }
     }
 
     private var isBrowserOnlyRoutingAvailable: Bool {
         chromiumBrowserExtensionController.hasRoutableTargets
-    }
-
-    private func card<Content: View>(
-        cornerRadius: CGFloat,
-        padding: CGFloat,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        content()
-            .padding(padding)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background {
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [.white.opacity(0.06), .white.opacity(0.035)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(.white.opacity(0.09), lineWidth: 0.5)
-            }
-    }
-}
-
-private struct KeywayPopoverMaterial: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = .hudWindow
-        view.blendingMode = .behindWindow
-        view.state = .active
-        view.isEmphasized = true
-        return view
-    }
-
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
-        nsView.material = .hudWindow
-        nsView.blendingMode = .behindWindow
-        nsView.state = .active
-        nsView.isEmphasized = true
     }
 }

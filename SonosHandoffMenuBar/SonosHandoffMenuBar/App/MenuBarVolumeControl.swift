@@ -73,20 +73,20 @@ private struct NativeVolumeSlider: View {
         let trackWidth = max(width, 1)
         let clampedVolume = min(max(playback.volumeState.value, 0), 100)
         let progress = CGFloat(clampedVolume / 100)
-        let knobSize: CGFloat = 17
+        let knobSize: CGFloat = 14
         let knobOffset = min(max((trackWidth * progress) - (knobSize / 2), 0), max(trackWidth - knobSize, 0))
 
         return ZStack(alignment: .leading) {
             Capsule()
-                .fill(Color.white.opacity(0.22))
+                .fill(Color.primary.opacity(0.15))
                 .frame(height: 4)
 
             Capsule()
-                .fill(Color.white.opacity(0.92))
+                .fill(Color.primary.opacity(0.8))
                 .frame(width: max(trackWidth * progress, knobSize / 2), height: 4)
 
             Circle()
-                .fill(Color.white.opacity(0.96))
+                .fill(Color.white)
                 .frame(width: knobSize, height: knobSize)
                 .offset(x: knobOffset)
                 .shadow(color: .black.opacity(0.22), radius: 0.75, y: 0.5)

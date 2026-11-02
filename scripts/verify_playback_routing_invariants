@@ -1628,7 +1628,7 @@ if grep -q 'hasFreshSnapshot(maxAge: 1.5)' "$status_item"; then
   fail "playback UI must not blank controls behind a 1.5s snapshot freshness delay"
 fi
 
-grep -q 'let displayTarget = target' "$menu_bar_media_sources" \
+grep -q 'if mediaRemoteController.isRefreshingSnapshot' "$menu_bar_media_sources" \
   || fail "status menu playback controls must keep the cached target visible during refresh"
 
 ! grep -q 'cachedTargets' "$menu_bar_media_sources" \
