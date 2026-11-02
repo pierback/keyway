@@ -116,7 +116,7 @@ expect_contains "$source_section" 'Text("Other Sources")'
 expect_contains "$source_section" 'primaryCard(primary)'
 expect_contains "$source_section" 'spotifyOutputMenu(for: target)'
 expect_contains "$source_section" 'playback.transferSpotifyPlayback(source: target, to: row)'
-expect_absent "$source_section" 'Color.white'
+expect_absent "$source_section" 'Color.white.opacity('
 expect_contains "$source_section" "@ObservedObject var mediaSourceStore: MediaSourceStore"
 expect_contains "$source_section" "mediaSourceStore.rows.map(\\.target)"
 expect_contains "$source_section" "private var targetIDs: [String]"

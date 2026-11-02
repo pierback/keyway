@@ -15,6 +15,7 @@ struct MenuBarMediaSourceSection: View {
     @State private var sessionTargets: [MediaRemoteTarget] = []
     @State private var sessionHasOpened = false
     @State private var spotifyPosition: (targetID: String, elapsedTime: Double, sampledAt: Double)?
+    @State private var pendingPlaying: [String: Bool] = [:]
 
     private var freshTargets: [MediaRemoteTarget] {
         sortedTargets(mediaSourceStore.rows.map(\.target))
@@ -94,6 +95,9 @@ struct MenuBarMediaSourceSection: View {
             await refreshSpotifyPosition(displayTargets)
         }
         .onReceive(mediaSourceStore.$rows) { rows in
+            for row in rows where pendingPlaying[row.id] == row.target.isCurrentlyPlaying {
+                pendingPlaying[row.id] = nil
+            }
             let sortedTargets = sortedTargets(rows.map(\.target))
             hydrateEmptySessionIfNeeded(with: sortedTargets)
         }
@@ -222,7 +226,7 @@ struct MenuBarMediaSourceSection: View {
                     browserMuteButton(target)
                 }
                 sourceTransportButton(.previous, target: target)
-                sourceTransportButton(target.isCurrentlyPlaying ? .pause : .play, target: target, emphasized: true)
+                sourceTransportButton(pendingPlaying[target.id] ?? target.isCurrentlyPlaying ? .pause : .play, target: target, emphasized: true)
                 sourceTransportButton(.next, target: target)
             }
         }
@@ -239,7 +243,7 @@ struct MenuBarMediaSourceSection: View {
             if ChromiumBrowserExtensionTransport.isTarget(target) {
                 browserMuteButton(target)
             }
-            sourceTransportButton(target.isCurrentlyPlaying ? .pause : .play, target: target)
+            sourceTransportButton(pendingPlaying[target.id] ?? target.isCurrentlyPlaying ? .pause : .play, target: target)
         }
         .padding(.horizontal, 4)
         .padding(.vertical, 4)
@@ -257,7 +261,7 @@ struct MenuBarMediaSourceSection: View {
                     if primary {
                         HStack(spacing: 5) {
                             Circle()
-                                .fill(target.isCurrentlyPlaying ? Color.green : Color.secondary)
+                                .fill(pendingPlaying[target.id] ?? target.isCurrentlyPlaying ? Color.green : Color.secondary)
                                 .frame(width: 6, height: 6)
                             Text((target.browserDisplayName ?? target.appName).uppercased())
                                 .font(.system(size: 10, weight: .semibold))
@@ -324,13 +328,20 @@ struct MenuBarMediaSourceSection: View {
         let size: CGFloat = emphasized ? 36 : 28
 
         return Button {
+            if command == .play || command == .pause {
+                pendingPlaying[target.id] = command == .play
+                Task {
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    pendingPlaying[target.id] = nil
+                }
+            }
             mediaTransportActions.route(command: command, to: target)
         } label: {
             Image(systemName: command.symbolName)
                 .font(.system(size: emphasized ? 14 : 12, weight: .semibold))
-                .foregroundStyle(emphasized ? Color(nsColor: .windowBackgroundColor) : Color.primary)
+                .foregroundStyle(emphasized ? Color.white : Color.primary)
                 .frame(width: size, height: size)
-                .background(emphasized ? Color.primary : Color.primary.opacity(0.08), in: Circle())
+                .background(emphasized ? Color.accentColor : Color.primary.opacity(0.1), in: Circle())
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
