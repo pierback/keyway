@@ -60,6 +60,10 @@ _Avoid_: Audio source, output stream
 The only actively playing Media Target when exactly one target is playing, used for automatic routing before focus or recent fallback.
 _Avoid_: Default player, active app
 
+**Source Ranking**:
+The single order used by the Menu Bar Item, the Media Target Chooser preselection, and its row order: playing targets, then targets paused within 15 minutes, then idle targets. Within a tier the most recent of "started or stopped playing" and "picked in Keyway" wins; unresponsive targets sink within their tier, and idle apps rank above idle browser tabs. A browser tab only counts as playing while the browser reports it audible.
+_Avoid_: Priority, alphabetical order
+
 **Focused Target**:
 The Media Target most likely intended by the user because its app or window currently has foreground attention.
 _Avoid_: Frontmost media app, active screen app

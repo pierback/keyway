@@ -5,9 +5,11 @@ import os
 @MainActor
 final class MediaTargetSelectionMemory {
     private(set) var recentTargetID: String?
+    private(set) var recentPickedAt: Date?
 
     func remember(_ target: MediaRemoteTarget) {
         recentTargetID = target.id
+        recentPickedAt = Date()
     }
 }
 

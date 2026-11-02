@@ -18,12 +18,21 @@ enum MediaSourceReachability: Equatable, Sendable {
 struct SourceRow: Equatable, Identifiable, Sendable {
     let target: MediaRemoteTarget
     let reachability: MediaSourceReachability
+    let playbackStartedAt: Date?
+    let playbackStoppedAt: Date?
 
     var id: String { target.id }
 
-    init(target: MediaRemoteTarget, reachability: MediaSourceReachability = .live) {
+    init(
+        target: MediaRemoteTarget,
+        reachability: MediaSourceReachability = .live,
+        playbackStartedAt: Date? = nil,
+        playbackStoppedAt: Date? = nil
+    ) {
         self.target = target
         self.reachability = reachability
+        self.playbackStartedAt = playbackStartedAt
+        self.playbackStoppedAt = playbackStoppedAt
     }
 }
 
@@ -40,6 +49,8 @@ final class MediaSourceStore: ObservableObject {
     private var chromiumSilentSubscription: AnyCancellable?
     private var chromiumSilentSuspectSinceByID: [String: Date] = [:]
     private var commandFailedSinceByID: [String: Date] = [:]
+    private var playbackStartedAtByID: [String: Date] = [:]
+    private var playbackStoppedAtByID: [String: Date] = [:]
     private var helperDegradedSince: Date?
     private var helperRecoveryGraceTask: Task<Void, Never>?
     private var latestMediaRemoteTargets: [MediaRemoteTarget] = []
@@ -140,8 +151,21 @@ final class MediaSourceStore: ObservableObject {
     }
 
     private func rebuildRows() {
+        let now = now()
+        let wasPlayingByID = Dictionary(rows.map { ($0.id, $0.target.isCurrentlyPlaying) }, uniquingKeysWith: { _, new in new })
         let updatedRows = rowTargets().map { target in
-            SourceRow(target: target, reachability: reachability(for: target))
+            let wasPlaying = wasPlayingByID[target.id]
+            if target.isCurrentlyPlaying, wasPlaying != true {
+                playbackStartedAtByID[target.id] = now
+            } else if !target.isCurrentlyPlaying, wasPlaying == true {
+                playbackStoppedAtByID[target.id] = now
+            }
+            return SourceRow(
+                target: target,
+                reachability: reachability(for: target),
+                playbackStartedAt: playbackStartedAtByID[target.id],
+                playbackStoppedAt: playbackStoppedAtByID[target.id]
+            )
         }
         guard updatedRows != rows else {
             publishTargets()

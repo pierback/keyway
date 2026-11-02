@@ -541,9 +541,15 @@ final class MediaTransportActionController {
     }
 
     func sortedTargets(_ targets: [MediaRemoteTarget]) -> [MediaRemoteTarget] {
-        targetResolver.sortedTargets(
-            targets,
-            preferredTargetID: targetSelectionMemory.recentTargetID
+        let rowsByID = Dictionary(mediaSourceStore.rows.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
+        return MediaTransportCommandRules.sortedTargets(
+            targets.map { target in
+                rowsByID[target.id].map { SourceRow(target: target, reachability: $0.reachability, playbackStartedAt: $0.playbackStartedAt, playbackStoppedAt: $0.playbackStoppedAt) }
+                    ?? SourceRow(target: target)
+            },
+            recentTargetID: targetSelectionMemory.recentTargetID,
+            recentPickedAt: targetSelectionMemory.recentPickedAt,
+            now: Date()
         )
     }
 

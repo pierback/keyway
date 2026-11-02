@@ -1,13 +1,6 @@
 import AppKit
 
 struct MediaTransportTargetResolver {
-    func sortedTargets(_ targets: [MediaRemoteTarget], preferredTargetID: String?) -> [MediaRemoteTarget] {
-        MediaTransportCommandRules.sortedTargets(
-            targets,
-            preferredTargetID: preferredTargetID
-        )
-    }
-
     func automaticTarget(
         command: MediaRemoteTransportCommand,
         from targets: [MediaRemoteTarget],

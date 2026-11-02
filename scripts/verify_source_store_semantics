@@ -137,6 +137,10 @@ struct MediaRemoteTarget: Equatable, Identifiable, Sendable {
     let elapsedTimestamp: Double?
     let supportedCommands: [MediaRemoteTransportCommand]?
     var muted: Bool? = nil
+
+    var isCurrentlyPlaying: Bool {
+        playbackRate == "1"
+    }
 }
 
 enum ChromiumBrowserExtensionTransport {
@@ -236,6 +240,9 @@ struct SourceStoreSemantics {
         expectEqual(store.rows.map(\.target), [spotify, chromium], "store must aggregate initial MediaRemote and Chromium targets")
         expectEqual(store.rows.map(\.id), [spotify.id, chromium.id], "source row IDs must match the canonical aggregate")
         assertAllLive(store.rows, "initial rows")
+        let initialStart = store.rows.first { $0.id == spotify.id }?.playbackStartedAt
+        expectEqual(initialStart, currentDate, "a source seen playing must record when playback started")
+        expectEqual(store.rows.first { $0.id == chromium.id }?.playbackStartedAt, nil, "a source never seen playing has no start time")
 
         var unchangedRowPublicationCount = 0
         let unchangedRowsSubscription = store.$rows.dropFirst().sink { _ in
@@ -364,6 +371,17 @@ struct SourceStoreSemantics {
         }
         expectEqual(store.rows.map(\.id), [chromium.id], "retained MediaRemote rows must drop after helper recovery grace expires")
         assertLive(store.rows.first { $0.id == chromium.id }, "Chromium rows must stay live after MediaRemote retention expiry")
+
+        let pausedSpotify = target(id: "spotify:ranking", title: "Song", playbackRate: "1", supportedCommands: [.playPause])
+        controller.replaceTargets([pausedSpotify])
+        drainMainQueue()
+        let startedAt = currentDate
+        currentDate = currentDate.addingTimeInterval(30)
+        controller.replaceTargets([target(id: "spotify:ranking", title: "Song", playbackRate: "0", supportedCommands: [.playPause])])
+        drainMainQueue()
+        let pausedRow = store.rows.first { $0.id == "spotify:ranking" }
+        expectEqual(pausedRow?.playbackStartedAt, startedAt, "pausing must keep the playback start time")
+        expectEqual(pausedRow?.playbackStoppedAt, currentDate, "a playing to paused transition must record when playback stopped")
 
         print("verify_source_store_semantics=ok")
     }

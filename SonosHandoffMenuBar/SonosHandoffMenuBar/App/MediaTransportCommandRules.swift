@@ -37,29 +37,55 @@ enum MediaTransportCommandRules {
         return target.isCurrentlyPlaying ? .pause : .play
     }
 
+    static let recentlyPausedInterval: TimeInterval = 15 * 60
+
+    /// Tiers: playing, paused within `recentlyPausedInterval`, idle. Within a tier the most recent of
+    /// "started/stopped playing" and "picked in Keyway" wins; unresponsive rows sink; idle apps rank above idle tabs.
     static func sortedTargets(
-        _ targets: [MediaRemoteTarget],
-        preferredTargetID: String?
+        _ rows: [SourceRow],
+        recentTargetID: String?,
+        recentPickedAt: Date?,
+        now: Date
     ) -> [MediaRemoteTarget] {
-        targets.sorted { lhs, rhs in
-            if lhs.isCurrentlyPlaying != rhs.isCurrentlyPlaying {
-                return lhs.isCurrentlyPlaying
+        func tier(_ row: SourceRow) -> Int {
+            if row.target.isCurrentlyPlaying {
+                return 0
             }
-            let lhsPreferred = lhs.id == preferredTargetID
-            let rhsPreferred = rhs.id == preferredTargetID
-            if lhsPreferred != rhsPreferred {
-                return lhsPreferred
+            if let stoppedAt = row.playbackStoppedAt, now.timeIntervalSince(stoppedAt) <= recentlyPausedInterval {
+                return 1
             }
-            let appOrder = lhs.appName.localizedStandardCompare(rhs.appName)
+            return 2
+        }
+        func lastActivity(_ row: SourceRow) -> Date {
+            let playback = row.target.isCurrentlyPlaying ? row.playbackStartedAt : row.playbackStoppedAt
+            let picked = row.id == recentTargetID ? recentPickedAt : nil
+            return max(playback ?? .distantPast, picked ?? .distantPast)
+        }
+
+        return rows.sorted { lhs, rhs in
+            if tier(lhs) != tier(rhs) {
+                return tier(lhs) < tier(rhs)
+            }
+            if lhs.reachability.isSuspect != rhs.reachability.isSuspect {
+                return !lhs.reachability.isSuspect
+            }
+            if lastActivity(lhs) != lastActivity(rhs) {
+                return lastActivity(lhs) > lastActivity(rhs)
+            }
+            if lhs.target.isBrowserLike != rhs.target.isBrowserLike {
+                return !lhs.target.isBrowserLike
+            }
+            let appOrder = lhs.target.appName.localizedStandardCompare(rhs.target.appName)
             if appOrder != .orderedSame {
                 return appOrder == .orderedAscending
             }
-            let titleOrder = lhs.title.localizedStandardCompare(rhs.title)
+            let titleOrder = lhs.target.title.localizedStandardCompare(rhs.target.title)
             if titleOrder != .orderedSame {
                 return titleOrder == .orderedAscending
             }
             return lhs.id.localizedStandardCompare(rhs.id) == .orderedAscending
         }
+        .map(\.target)
     }
 
     static func targetLogSummary(_ targets: [MediaRemoteTarget]) -> String {

@@ -23,6 +23,19 @@ enum MediaRemoteTransportCommand: String, Equatable {
 enum MediaSourceReachability: Equatable {
     case live
     case suspect(reason: String, since: Date)
+
+    var isSuspect: Bool {
+        self != .live
+    }
+}
+
+struct SourceRow {
+    let target: MediaRemoteTarget
+    var reachability: MediaSourceReachability = .live
+    var playbackStartedAt: Date?
+    var playbackStoppedAt: Date?
+
+    var id: String { target.id }
 }
 
 struct MediaRemoteTarget: Equatable, Identifiable {
@@ -31,6 +44,7 @@ struct MediaRemoteTarget: Equatable, Identifiable {
     let title: String
     let isCurrentlyPlaying: Bool
     let playbackFreshness: Double
+    var isBrowserLike = false
 
     func matchesRoutingIdentity(_ identity: String?) -> Bool {
         id == identity
@@ -87,36 +101,56 @@ struct CommandRuleSemantics {
             "Explicit suspect-row dispatch remains allowed and row scoped"
         )
 
-        let newerSpotify = target(id: "spotify", name: "Spotify", playing: true, freshness: 300)
-        let olderArc = target(id: "arc", name: "Arc", playing: true, freshness: 100)
-        let stoppedNewerHelium = target(id: "helium", name: "Helium", playing: false, freshness: 500)
+        let now = Date(timeIntervalSince1970: 10_000)
+        func ranked(_ rows: [SourceRow], picked: String? = nil, pickedAt: Date? = nil) -> [String] {
+            MediaTransportCommandRules.sortedTargets(rows, recentTargetID: picked, recentPickedAt: pickedAt, now: now).map(\.id)
+        }
+
+        let spotifyStartedEarly = SourceRow(target: target(id: "spotify", name: "Spotify", playing: true), playbackStartedAt: now - 600)
+        let heliumStartedLate = SourceRow(target: target(id: "helium", name: "Helium", playing: true, browser: true), playbackStartedAt: now - 30)
         expectEqual(
-            MediaTransportCommandRules.sortedTargets(
-                [newerSpotify, stoppedNewerHelium, olderArc],
-                preferredTargetID: newerSpotify.id
-            ).map(\.id),
-            ["spotify", "arc", "helium"],
-            "Chooser ordering must be stable: playing targets first, then recent selected target, then app name, ignoring freshness churn"
+            ranked([spotifyStartedEarly, heliumStartedLate]),
+            ["helium", "spotify"],
+            "Among playing sources the most recently started ranks first"
+        )
+        expectEqual(
+            ranked([spotifyStartedEarly, heliumStartedLate], picked: "spotify", pickedAt: now - 5),
+            ["spotify", "helium"],
+            "A pick in Keyway newer than the other source's start wins"
+        )
+        expectEqual(
+            ranked([spotifyStartedEarly, heliumStartedLate], picked: "spotify", pickedAt: now - 900),
+            ["helium", "spotify"],
+            "An older pick must not beat a newer playback start"
         )
 
-        let beta = target(id: "beta", name: "Arc", title: "Beta", playing: true, freshness: 300)
-        let alpha = target(id: "alpha", name: "Arc", title: "Alpha", playing: true, freshness: 300)
+        let pausedRecently = SourceRow(target: target(id: "music", name: "Music", playing: false), playbackStoppedAt: now - 120)
+        let pausedLongAgo = SourceRow(target: target(id: "quicktime", name: "QuickTime", playing: false), playbackStoppedAt: now - 3_600)
+        let idleTab = SourceRow(target: target(id: "x-tab", name: "Arc", playing: false, browser: true))
+        let idleApp = SourceRow(target: target(id: "vlc", name: "VLC", playing: false))
         expectEqual(
-            MediaTransportCommandRules.sortedTargets(
-                [beta, alpha],
-                preferredTargetID: nil
-            ).map(\.id),
+            ranked([idleTab, pausedLongAgo, idleApp, pausedRecently, spotifyStartedEarly]),
+            ["spotify", "music", "quicktime", "vlc", "x-tab"],
+            "Tiers: playing, recently paused, idle; idle ordered by last activity, then apps above tabs"
+        )
+
+        let suspectPlaying = SourceRow(
+            target: target(id: "suspect", name: "Arc", playing: true),
+            reachability: .suspect(reason: "command_failed", since: now),
+            playbackStartedAt: now - 1
+        )
+        expectEqual(
+            ranked([suspectPlaying, spotifyStartedEarly, pausedRecently]),
+            ["spotify", "suspect", "music"],
+            "Unresponsive sources sink to the bottom of their tier but stay above lower tiers"
+        )
+
+        let beta = SourceRow(target: target(id: "beta", name: "Arc", title: "Beta", playing: true))
+        let alpha = SourceRow(target: target(id: "alpha", name: "Arc", title: "Alpha", playing: true))
+        expectEqual(
+            ranked([beta, alpha]),
             ["alpha", "beta"],
-            "Rows with the same app name must use title and id tie-breakers so order cannot depend on helper array order"
-        )
-
-        expectEqual(
-            MediaTransportCommandRules.sortedTargets(
-                [newerSpotify, stoppedNewerHelium, olderArc],
-                preferredTargetID: stoppedNewerHelium.id
-            ).map(\.id),
-            ["arc", "spotify", "helium"],
-            "Playing targets must stay above the recent selected target"
+            "Ties must use app name, title and id so order cannot depend on helper array order"
         )
 
         print("verify_media_transport_command_rules_semantics=ok")
@@ -127,14 +161,16 @@ struct CommandRuleSemantics {
         name: String = "App",
         title: String = "Title",
         playing: Bool,
-        freshness: Double = 0
+        freshness: Double = 0,
+        browser: Bool = false
     ) -> MediaRemoteTarget {
         MediaRemoteTarget(
             id: id,
             appName: name,
             title: title,
             isCurrentlyPlaying: playing,
-            playbackFreshness: freshness
+            playbackFreshness: freshness,
+            isBrowserLike: browser
         )
     }
 
