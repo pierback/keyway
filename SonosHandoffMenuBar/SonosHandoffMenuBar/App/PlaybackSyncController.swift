@@ -404,13 +404,12 @@ final class PlaybackSyncController: ObservableObject {
                 return
             }
 
+            activeSpotifyRoomName = roomName
             guard status.isPlaying else {
-                activeSpotifyRoomName = nil
                 clearSpotifyAuthRequired()
                 return
             }
 
-            activeSpotifyRoomName = roomName
             clearSpotifyAuthRequired()
             if let observedRoomName = selectedRoomName(forActiveSpotifyRoomName: roomName) {
                 selectRoomName(observedRoomName, source: .activePlaybackObservation)
