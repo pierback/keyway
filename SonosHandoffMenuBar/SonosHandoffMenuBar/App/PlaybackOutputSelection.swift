@@ -8,7 +8,16 @@ final class PlaybackOutputSelection: ObservableObject {
 
     @Published private(set) var roomName: String?
     @Published private(set) var selectedGroup: SonosSpeakerGroup?
+    @Published private(set) var spotifyRoomName: String?
     private var policy = PlaybackOutputSelectionPolicy()
+
+    func noteSpotifyRoomName(_ roomName: String?) {
+        let normalizedRoomName = SonosRoomName.normalized(roomName)
+        guard normalizedRoomName != spotifyRoomName else {
+            return
+        }
+        spotifyRoomName = normalizedRoomName
+    }
 
     func update(roomName: String?, group: SonosSpeakerGroup?, source: UpdateSource) {
         guard policy.update(roomName: roomName, source: source) else {

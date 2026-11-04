@@ -218,6 +218,7 @@ final class PlaybackBackgroundSync {
                 guard isCurrentObservation(ticket) else {
                     return
                 }
+                outputSelection.noteSpotifyRoomName(nil)
                 hasShownAuthPrompt = false
                 clearSuggestions(currentHeadphoneOutputID: nil)
                 await refreshOutputCacheWithoutPlayback(
@@ -231,6 +232,7 @@ final class PlaybackBackgroundSync {
                 return
             }
             guard status.isPlaying else {
+                outputSelection.noteSpotifyRoomName(nil)
                 hasShownAuthPrompt = false
                 clearSuggestions(currentHeadphoneOutputID: nil)
                 await refreshOutputCacheWithoutPlayback(
@@ -240,6 +242,7 @@ final class PlaybackBackgroundSync {
                 return
             }
 
+            outputSelection.noteSpotifyRoomName(activeRoomName)
             let refresh = try await outputRefresh(
                 currentRoomName: activeRoomName,
                 forceRefresh: discoveryRefreshStarted

@@ -37,6 +37,7 @@ final class PlaybackSyncController: ObservableObject {
     private let shortcutLogger = os.Logger(subsystem: "com.fpieringer.Keyway", category: "Shortcuts")
     private var monitorCancellable: AnyCancellable?
     private var outputSelectionCancellable: AnyCancellable?
+    private var spotifyRoomNameCancellable: AnyCancellable?
     private var outputRefreshCancellable: AnyCancellable?
     private var cachedOutputRefreshCancellable: AnyCancellable?
     private var headphoneOutputCancellable: AnyCancellable?
@@ -49,7 +50,7 @@ final class PlaybackSyncController: ObservableObject {
     private var pendingOutputRefreshRoomName: String?
     private let sliderCommitter = PlaybackSliderCommitter()
     private let operationGate: PlaybackOperationGate
-    private var activeSpotifyRoomName: String?
+    @Published private var activeSpotifyRoomName: String?
     private var currentGroupState = SonosGroupState.empty
 
     init(
@@ -101,6 +102,9 @@ final class PlaybackSyncController: ObservableObject {
                 return
             }
             self.applyMonitoredVolume(snapshot)
+        }
+        self.spotifyRoomNameCancellable = outputSelection.$spotifyRoomName.dropFirst().sink { [weak self] roomName in
+            self?.activeSpotifyRoomName = roomName
         }
         self.outputSelectionCancellable = outputSelection.$roomName.sink { [weak self] roomName in
             guard let self else {
