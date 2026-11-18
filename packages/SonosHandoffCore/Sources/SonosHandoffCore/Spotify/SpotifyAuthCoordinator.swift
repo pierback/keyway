@@ -206,16 +206,29 @@ public final class SpotifyAuthCoordinator: SpotifyAuthCoordinating, @unchecked S
     private func accountProfile(accessToken: String) async throws -> SpotifyAccountProfile {
         var request = URLRequest(url: URL(string: "https://api.spotify.com/v1/me")!)
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        let (data, response) = try await urlSession.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw SpotifyAuthError.tokenExchangeFailed("Unexpected account response.")
-        }
-        guard 200 ..< 300 ~= httpResponse.statusCode else {
-            throw SpotifyAuthError.tokenExchangeFailed("Spotify account check returned HTTP \(httpResponse.statusCode).")
-        }
 
-        return try JSONDecoder().decode(SpotifyAccountProfile.self, from: data)
+        for attempt in 0 ... Self.maxRateLimitRetries {
+            let (data, response) = try await urlSession.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw SpotifyAuthError.tokenExchangeFailed("Unexpected account response.")
+            }
+            if httpResponse.statusCode == 429, attempt < Self.maxRateLimitRetries {
+                let retryAfter = httpResponse.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init) ?? 1
+                logger.log(.info, "Spotify account check rate limited; retrying after \(retryAfter)s.")
+                try await Task.sleep(nanoseconds: UInt64(min(retryAfter, 5) * 1_000_000_000))
+                continue
+            }
+            guard 200 ..< 300 ~= httpResponse.statusCode else {
+                let retryAfter = httpResponse.value(forHTTPHeaderField: "Retry-After") ?? "none"
+                throw SpotifyAuthError.tokenExchangeFailed("Spotify account check returned HTTP \(httpResponse.statusCode) (Retry-After: \(retryAfter)).")
+            }
+
+            return try JSONDecoder().decode(SpotifyAccountProfile.self, from: data)
+        }
+        preconditionFailure("Retry loop exits through return or throw.")
     }
+
+    private static let maxRateLimitRetries = 2
 
     private static func formEncodedBody(_ parameters: [String: String]) -> Data {
         let value = parameters.map { key, value in
