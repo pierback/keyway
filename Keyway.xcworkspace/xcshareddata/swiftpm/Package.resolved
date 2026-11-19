@@ -6,7 +6,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/pierback/PermissionCompanionKit.git",
       "state" : {
-        "revision" : "e685c36c06fe6fd3d27cf641eb727a1ae64daf71",
+        "revision" : "6c669dd893906408c54333f197d6e250bf4ae599",
         "version" : "0.4.1"
       }
     },

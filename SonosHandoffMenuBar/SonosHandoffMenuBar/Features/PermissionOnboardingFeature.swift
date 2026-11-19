@@ -78,11 +78,22 @@ struct PermissionOnboardingFeature: View {
         VStack(alignment: .leading, spacing: 22) {
             HStack(alignment: .center, spacing: 16) {
                 Image(systemName: "keyboard")
-                    .font(.system(size: 30, weight: .medium))
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(Color.accentColor)
+                    .font(.system(size: 28, weight: .semibold))
+                    .foregroundStyle(.white)
                     .frame(width: 58, height: 58)
-                    .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 15))
+                    .background(
+                        LinearGradient(
+                            colors: [Color.accentColor, Color.accentColor.opacity(0.6)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    )
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .strokeBorder(.white.opacity(0.35), lineWidth: 1)
+                    }
+                    .shadow(color: Color.accentColor.opacity(0.5), radius: 14, y: 4)
 
                 VStack(alignment: .leading, spacing: 5) {
                     Text("Finish setting up Keyway")
@@ -170,6 +181,8 @@ struct PermissionOnboardingFeature: View {
 
                     Button("Reopen Keyway", action: reopenForPermissionRestart)
                         .buttonStyle(.borderedProminent)
+                        .buttonBorderShape(.capsule)
+                        .controlSize(.large)
                         .keyboardShortcut(.defaultAction)
                 } else if requiredSetupComplete {
                     Label("Core setup ready", systemImage: "checkmark.circle.fill")
@@ -178,6 +191,8 @@ struct PermissionOnboardingFeature: View {
 
                     Button("Finish Setup", action: finish)
                         .buttonStyle(.borderedProminent)
+                        .buttonBorderShape(.capsule)
+                        .controlSize(.large)
                         .disabled(!requiredSetupComplete)
                         .keyboardShortcut(.defaultAction)
                         .accessibilityIdentifier("onboarding.finish")
@@ -188,6 +203,8 @@ struct PermissionOnboardingFeature: View {
 
                     Button("Finish Setup", action: finish)
                         .buttonStyle(.borderedProminent)
+                        .buttonBorderShape(.capsule)
+                        .controlSize(.large)
                         .disabled(!requiredSetupComplete)
                         .keyboardShortcut(.defaultAction)
                         .accessibilityIdentifier("onboarding.finish")
@@ -198,6 +215,18 @@ struct PermissionOnboardingFeature: View {
         .padding(.top, 36)
         .padding(.bottom, 24)
         .frame(width: Self.preferredWindowSize.width, height: Self.preferredWindowSize.height)
+        .background {
+            ZStack {
+                PermissionOnboardingGlass()
+                RadialGradient(
+                    colors: [Color.accentColor.opacity(0.22), .clear],
+                    center: .topLeading,
+                    startRadius: 0,
+                    endRadius: 520
+                )
+            }
+            .ignoresSafeArea()
+        }
         .task {
             refreshNotificationState()
         }
@@ -309,6 +338,18 @@ struct PermissionOnboardingFeature: View {
     }
 }
 
+private struct PermissionOnboardingGlass: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .underWindowBackground
+        view.blendingMode = .behindWindow
+        view.state = .active
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
+}
+
 private struct PermissionOnboardingRow: View {
     let systemImage: String
     let title: String
@@ -320,28 +361,43 @@ private struct PermissionOnboardingRow: View {
     let actionDisabled: Bool
     let action: () -> Void
 
+    @Environment(\.colorScheme) private var colorScheme
+
     var body: some View {
+        let tint = granted ? Color.green : Color.accentColor
+        let dark = colorScheme == .dark
+        let card = RoundedRectangle(cornerRadius: 16, style: .continuous)
+
         HStack(alignment: .center, spacing: 14) {
             Image(systemName: systemImage)
-                .font(.system(size: 18, weight: .medium))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(granted ? Color.green : Color.accentColor)
-                .frame(width: 38, height: 38)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 40, height: 40)
                 .background(
-                    (granted ? Color.green : Color.accentColor).opacity(0.10),
-                    in: RoundedRectangle(cornerRadius: 10)
+                    LinearGradient(
+                        colors: [tint, tint.opacity(0.6)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    in: RoundedRectangle(cornerRadius: 11, style: .continuous)
                 )
+                .overlay {
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .strokeBorder(.white.opacity(0.3), lineWidth: 0.75)
+                }
+                .shadow(color: tint.opacity(0.45), radius: 8, y: 2)
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 7) {
                     Text(title)
                         .font(.system(size: 14, weight: .semibold))
                     Text(requirement)
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.secondary)
-                        .padding(.horizontal, 6)
+                        .padding(.horizontal, 7)
                         .padding(.vertical, 2)
-                        .background(Color.primary.opacity(0.06), in: Capsule())
+                        .background(.white.opacity(dark ? 0.08 : 0.6), in: Capsule())
+                        .overlay(Capsule().strokeBorder(.white.opacity(dark ? 0.12 : 0.8), lineWidth: 0.5))
                 }
                 Text(detail)
                     .font(.system(size: 12))
@@ -351,25 +407,42 @@ private struct PermissionOnboardingRow: View {
 
             Spacer(minLength: 12)
 
-            VStack(alignment: .trailing, spacing: 7) {
+            VStack(alignment: .trailing, spacing: 8) {
                 Label(
                     statusTitle ?? (granted ? "Enabled" : "Not enabled"),
-                    systemImage: granted ? "checkmark.circle.fill" : "circle"
+                    systemImage: granted ? "checkmark.circle.fill" : "circle.dashed"
                 )
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(granted ? Color.green : Color.secondary)
-                Button(actionTitle, action: action)
-                    .controlSize(.small)
-                    .disabled(actionDisabled)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4)
+                    .background((granted ? Color.green : Color.primary).opacity(granted ? 0.14 : 0.06), in: Capsule())
+                if !granted {
+                    Button(actionTitle, action: action)
+                        .buttonStyle(.borderedProminent)
+                        .buttonBorderShape(.capsule)
+                        .controlSize(.regular)
+                        .disabled(actionDisabled)
+                }
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 13)
         .frame(maxWidth: .infinity, minHeight: 91, alignment: .leading)
-        .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+        .background {
+            card
+                .fill(.white.opacity(dark ? 0.06 : 0.55))
+                .shadow(color: .black.opacity(dark ? 0.25 : 0.06), radius: 10, y: 3)
+        }
         .overlay {
-            RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .stroke(Color.primary.opacity(0.07), lineWidth: 0.5)
+            card.strokeBorder(
+                LinearGradient(
+                    colors: [.white.opacity(dark ? 0.20 : 0.95), .white.opacity(dark ? 0.04 : 0.35)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                ),
+                lineWidth: 1
+            )
         }
     }
 }
