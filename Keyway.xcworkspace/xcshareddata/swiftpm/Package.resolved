@@ -1,13 +1,13 @@
 {
-  "originHash" : "db3ce982f91f3acd3d34c8005ddba0834ef7ac1b1207278bee17c62d7e3e750e",
+  "originHash" : "0f9a7e89a857df38aec20dcdda69fa2146a766adc605abdb55467c4c51b824a3",
   "pins" : [
     {
       "identity" : "permissioncompanionkit",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/pierback/PermissionCompanionKit.git",
       "state" : {
-        "revision" : "d2a06f9add4adfeb94a33a31d1c9bc03e410c5a2",
-        "version" : "0.2.0"
+        "revision" : "b48582d5e3ac6234383fd674e0b664b2a96e328f",
+        "version" : "0.3.0"
       }
     },
     {

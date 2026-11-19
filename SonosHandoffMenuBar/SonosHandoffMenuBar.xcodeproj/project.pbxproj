@@ -757,7 +757,7 @@
 			repositoryURL = "https://github.com/pierback/PermissionCompanionKit.git";
 			requirement = {
 				kind = exactVersion;
-				version = 0.2.0;
+				version = 0.3.0;
 			};
 		};
 		7AC1FAE1069EFFF3F839520D449DE2AE /* XCRemoteSwiftPackageReference "Sparkle" */ = {

@@ -20,6 +20,17 @@ enum PermissionOnboardingCompanionPermission {
         }
     }
 
+    var privacyService: PermissionCompanionPrivacyService? {
+        switch self {
+        case .accessibility:
+            .accessibility
+        case .inputMonitoring:
+            .inputMonitoring
+        case .notifications:
+            nil
+        }
+    }
+
     var supportsAppDrop: Bool {
         switch self {
         case .accessibility, .inputMonitoring:
@@ -55,6 +66,12 @@ final class PermissionOnboardingWindowController: NSObject, NSWindowDelegate {
     }
 
     func presentIfNeeded() -> Bool {
+        if AccessibilityPermission.isGranted() {
+            PermissionCompanionGrantRecord(service: .accessibility).recordGrant()
+        }
+        if CGPreflightListenEventAccess() {
+            PermissionCompanionGrantRecord(service: .inputMonitoring).recordGrant()
+        }
         let defaults = UserDefaults.standard
         let setupNeedsAttention = defaults.integer(forKey: Self.completionKey) < Self.schemaVersion
             || defaults.bool(forKey: Self.restartPendingKey)
@@ -163,9 +180,11 @@ final class PermissionOnboardingWindowController: NSObject, NSWindowDelegate {
                 applicationName: "Keyway",
                 applicationURL: Bundle.main.bundleURL,
                 permissionName: permission.displayName,
-                interaction: permission.supportsAppDrop ? .dragApplication : .informational
+                interaction: permission.supportsAppDrop ? .dragApplication : .informational,
+                privacyService: permission.privacyService
             ),
             beneath: .systemSettings,
+            alongside: window,
             onReturnToApplication: { [weak self] in
                 self?.returnToPermissionWizard()
             }
