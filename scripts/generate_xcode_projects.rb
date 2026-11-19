@@ -271,7 +271,7 @@ def build_menu_bar_project
     project,
     target,
     'https://github.com/pierback/PermissionCompanionKit.git',
-    '0.4.0',
+    '0.4.1',
     'PermissionCompanionKit'
   )
   add_remote_package_dependency(
