@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import os
+import PermissionCompanionKit
 import SonosHandoffCore
 import SwiftUI
 @preconcurrency import UserNotifications
@@ -12,6 +13,7 @@ struct KeywayApp: App {
     private let runtime: AppRuntime
 
     init() {
+        PermissionCompanionPrivacyService.resetStaleEntries()
         let environment = AppEnvironment.live()
         let runtime = AppRuntime(
             chromiumNativeMessagingHostInstaller: environment.chromiumNativeMessagingHostInstaller,
