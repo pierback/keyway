@@ -66,12 +66,6 @@ final class PermissionOnboardingWindowController: NSObject, NSWindowDelegate {
     }
 
     func presentIfNeeded() -> Bool {
-        if AccessibilityPermission.isGranted() {
-            PermissionCompanionGrantRecord(service: .accessibility).recordGrant()
-        }
-        if CGPreflightListenEventAccess() {
-            PermissionCompanionGrantRecord(service: .inputMonitoring).recordGrant()
-        }
         let defaults = UserDefaults.standard
         let setupNeedsAttention = defaults.integer(forKey: Self.completionKey) < Self.schemaVersion
             || defaults.bool(forKey: Self.restartPendingKey)

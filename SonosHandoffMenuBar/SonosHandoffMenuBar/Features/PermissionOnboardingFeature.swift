@@ -232,19 +232,13 @@ struct PermissionOnboardingFeature: View {
 
     private func requestAccessibility() {
         showPermissionCompanion(.accessibility)
-        AccessibilityPermission.requestPrompt()
-        if !AccessibilityPermission.isGranted() {
-            NSWorkspace.shared.open(Self.accessibilitySettingsURL)
-        }
+        NSWorkspace.shared.open(Self.accessibilitySettingsURL)
         refreshMediaPermissionState()
     }
 
     private func requestInputMonitoring() {
         showPermissionCompanion(.inputMonitoring)
-        _ = CGRequestListenEventAccess()
-        if !CGPreflightListenEventAccess() {
-            NSWorkspace.shared.open(Self.inputMonitoringSettingsURL)
-        }
+        NSWorkspace.shared.open(Self.inputMonitoringSettingsURL)
         refreshMediaPermissionState()
     }
 

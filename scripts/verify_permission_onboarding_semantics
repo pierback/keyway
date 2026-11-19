@@ -205,9 +205,14 @@ for forbidden in (
     if forbidden in window_controller:
         fail(f"Keyway must not duplicate shared permission-companion UI: found {forbidden}")
 
-for required in (
+for forbidden in (
     "AccessibilityPermission.requestPrompt()",
     "CGRequestListenEventAccess()",
+):
+    if forbidden in onboarding:
+        fail(f"wizard must not raise the system permission alert over the companion: found {forbidden}")
+
+for required in (
     "PlaybackSuggestionNotificationAuthorization.requestFromSettings(",
     "startLocalNetworkFeatures()",
     "localNetworkRequested = true",
