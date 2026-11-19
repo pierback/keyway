@@ -87,11 +87,14 @@ final class PermissionOnboardingWindowController: NSObject, NSWindowDelegate {
             || defaults.integer(forKey: Self.completionKey) > 0
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: PermissionOnboardingFeature.preferredWindowSize),
-            styleMask: [.titled, .closable],
+            styleMask: [.titled, .closable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         window.title = "Set Up Keyway"
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.isMovableByWindowBackground = true
         window.contentMinSize = PermissionOnboardingFeature.preferredWindowSize
         window.contentMaxSize = PermissionOnboardingFeature.preferredWindowSize
         window.isReleasedWhenClosed = false

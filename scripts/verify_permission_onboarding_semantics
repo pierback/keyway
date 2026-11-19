@@ -180,21 +180,14 @@ for required in (
         fail(f"permission companion must use the shared app-bundle helper: missing {required}")
 
 for required in (
-    "styleMask: [.titled, .closable]",
+    "styleMask: [.titled, .closable, .fullSizeContentView]",
+    "window.titleVisibility = .hidden",
+    "window.titlebarAppearsTransparent = true",
     "window.contentMinSize = PermissionOnboardingFeature.preferredWindowSize",
     "window.contentMaxSize = PermissionOnboardingFeature.preferredWindowSize",
 ):
     if required not in window_controller:
-        fail(f"permission onboarding must use stable conventional window geometry: missing {required}")
-
-for forbidden in (
-    ".fullSizeContentView",
-    "window.titleVisibility = .hidden",
-    "window.titlebarAppearsTransparent = true",
-    "window.isMovableByWindowBackground = true",
-):
-    if forbidden in window_controller:
-        fail(f"permission onboarding must not use custom titlebar geometry: found {forbidden}")
+        fail(f"permission onboarding must use a stable full-size glass window: missing {required}")
 
 for forbidden in (
     "private var permissionCompanionPanel: NSPanel?",
