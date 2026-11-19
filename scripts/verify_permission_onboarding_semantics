@@ -180,14 +180,11 @@ for required in (
         fail(f"permission companion must use the shared app-bundle helper: missing {required}")
 
 for required in (
-    "styleMask: [.titled, .closable, .fullSizeContentView]",
-    "window.titleVisibility = .hidden",
-    "window.titlebarAppearsTransparent = true",
-    "window.contentMinSize = PermissionOnboardingFeature.preferredWindowSize",
-    "window.contentMaxSize = PermissionOnboardingFeature.preferredWindowSize",
+    "let window = PermissionSetupWindow(",
+    "contentSize: PermissionOnboardingFeature.preferredWindowSize",
 ):
     if required not in window_controller:
-        fail(f"permission onboarding must use a stable full-size glass window: missing {required}")
+        fail(f"permission onboarding must use the shared PermissionSetupWindow: missing {required}")
 
 for forbidden in (
     "private var permissionCompanionPanel: NSPanel?",
@@ -213,10 +210,11 @@ for required in (
     "requireRestart()",
     "static let mediaPermissionRefreshInterval: TimeInterval = 0.2",
     "Timer.publish(every: Self.mediaPermissionRefreshInterval, on: .main, in: .default).autoconnect()",
-    'Button("Reopen Keyway", action: reopenForPermissionRestart)',
+    'primaryTitle: restartRequired ? "Reopen Keyway" : "Finish Setup"',
+    "primaryAction: restartRequired ? reopenForPermissionRestart : finish",
+    "primaryEnabled: restartRequired || requiredSetupComplete",
+    "later: skip",
     "NSApplication.didBecomeActiveNotification",
-    '.disabled(!requiredSetupComplete)',
-    '"Set Up Later"',
 ):
     if required not in onboarding:
         fail(f"wizard must guide and verify explicit user-driven requests: missing {required}")

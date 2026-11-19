@@ -85,23 +85,8 @@ final class PermissionOnboardingWindowController: NSObject, NSWindowDelegate {
         let defaults = UserDefaults.standard
         let localNetworkAlreadyRequested = defaults.bool(forKey: Self.localNetworkRequestedKey)
             || defaults.integer(forKey: Self.completionKey) > 0
-        let window = NSWindow(
-            contentRect: NSRect(origin: .zero, size: PermissionOnboardingFeature.preferredWindowSize),
-            styleMask: [.titled, .closable, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = "Set Up Keyway"
-        window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = true
-        window.isMovableByWindowBackground = true
-        window.contentMinSize = PermissionOnboardingFeature.preferredWindowSize
-        window.contentMaxSize = PermissionOnboardingFeature.preferredWindowSize
-        window.isReleasedWhenClosed = false
-        window.delegate = self
-        window.standardWindowButton(.miniaturizeButton)?.isHidden = true
-        window.standardWindowButton(.zoomButton)?.isHidden = true
-        window.contentViewController = NSHostingController(
+        let window = PermissionSetupWindow(
+            contentSize: PermissionOnboardingFeature.preferredWindowSize,
             rootView: PermissionOnboardingFeature(
                 refreshMediaPermissions: refreshMediaPermissions,
                 showPermissionCompanion: { [weak self] permission in
@@ -129,6 +114,8 @@ final class PermissionOnboardingWindowController: NSObject, NSWindowDelegate {
                 }
             )
         )
+        window.title = "Set Up Keyway"
+        window.delegate = self
         window.center()
         self.window = window
 
