@@ -79,9 +79,10 @@ struct PermissionOnboardingFeature: View {
             VStack(spacing: 8) {
                 Image(nsImage: NSApp.applicationIconImage)
                     .resizable()
-                    .frame(width: 72, height: 72)
+                    .frame(width: 76, height: 76)
+                    .shadow(color: .black.opacity(0.35), radius: 12, y: 6)
                 Text("Set Up Keyway")
-                    .font(.system(size: 22, weight: .bold))
+                    .font(.system(size: 24, weight: .bold))
                 Text("Keyway needs a few permissions to control playback with your media keys. It notices each one as soon as you allow it in System Settings.")
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
@@ -105,7 +106,7 @@ struct PermissionOnboardingFeature: View {
                 )
                 .accessibilityIdentifier("onboarding.permission.accessibility")
 
-                Divider().padding(.leading, 52)
+                Rectangle().fill(.white.opacity(0.08)).frame(height: 1).padding(.leading, 56)
 
                 PermissionOnboardingRow(
                     systemImage: "keyboard",
@@ -119,7 +120,7 @@ struct PermissionOnboardingFeature: View {
                 )
                 .accessibilityIdentifier("onboarding.permission.input-monitoring")
 
-                Divider().padding(.leading, 52)
+                Rectangle().fill(.white.opacity(0.08)).frame(height: 1).padding(.leading, 56)
 
                 PermissionOnboardingRow(
                     systemImage: "network",
@@ -134,7 +135,7 @@ struct PermissionOnboardingFeature: View {
                 )
                 .accessibilityIdentifier("onboarding.permission.local-network")
 
-                Divider().padding(.leading, 52)
+                Rectangle().fill(.white.opacity(0.08)).frame(height: 1).padding(.leading, 56)
 
                 PermissionOnboardingRow(
                     systemImage: "bell.badge.fill",
@@ -151,11 +152,19 @@ struct PermissionOnboardingFeature: View {
                 )
                 .accessibilityIdentifier("onboarding.permission.notifications")
             }
-            .background(.quinary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [.white.opacity(0.40), .white.opacity(0.05)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        ),
+                        lineWidth: 1
+                    )
             }
+            .shadow(color: .black.opacity(0.30), radius: 20, y: 10)
 
             Text("Spotify sign-in is configured separately when you first use its connected features.")
                 .font(.system(size: 11))
@@ -180,7 +189,7 @@ struct PermissionOnboardingFeature: View {
                         .foregroundStyle(.orange)
 
                     Button("Reopen Keyway", action: reopenForPermissionRestart)
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(PermissionOnboardingGlassButtonStyle(prominent: true))
                         .keyboardShortcut(.defaultAction)
                 } else if requiredSetupComplete {
                     Label("Core setup ready", systemImage: "checkmark.circle.fill")
@@ -188,7 +197,7 @@ struct PermissionOnboardingFeature: View {
                         .foregroundStyle(.green)
 
                     Button("Finish Setup", action: finish)
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(PermissionOnboardingGlassButtonStyle(prominent: true))
                         .disabled(!requiredSetupComplete)
                         .keyboardShortcut(.defaultAction)
                         .accessibilityIdentifier("onboarding.finish")
@@ -198,7 +207,7 @@ struct PermissionOnboardingFeature: View {
                         .foregroundStyle(.secondary)
 
                     Button("Finish Setup", action: finish)
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(PermissionOnboardingGlassButtonStyle(prominent: true))
                         .disabled(!requiredSetupComplete)
                         .keyboardShortcut(.defaultAction)
                         .accessibilityIdentifier("onboarding.finish")
@@ -208,7 +217,15 @@ struct PermissionOnboardingFeature: View {
         .padding(.horizontal, 24)
         .padding(.bottom, 20)
         .frame(width: Self.preferredWindowSize.width, height: Self.preferredWindowSize.height)
-        .background(PermissionOnboardingGlass().ignoresSafeArea())
+        .background {
+            ZStack {
+                PermissionOnboardingGlass()
+                Circle().fill(Color.blue).frame(width: 340).blur(radius: 90).opacity(0.55).offset(x: -220, y: -170)
+                Circle().fill(Color.purple).frame(width: 300).blur(radius: 100).opacity(0.45).offset(x: 230, y: 40)
+                Circle().fill(Color.teal).frame(width: 260).blur(radius: 90).opacity(0.35).offset(x: -120, y: 260)
+            }
+            .ignoresSafeArea()
+        }
         .task {
             refreshNotificationState()
         }
@@ -323,13 +340,42 @@ struct PermissionOnboardingFeature: View {
 private struct PermissionOnboardingGlass: NSViewRepresentable {
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
-        view.material = .sidebar
+        view.material = .hudWindow
         view.blendingMode = .behindWindow
         view.state = .active
         return view
     }
 
     func updateNSView(_ view: NSVisualEffectView, context: Context) {}
+}
+
+private struct PermissionOnboardingGlassButtonStyle: ButtonStyle {
+    var prominent = false
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 7)
+            .background {
+                Capsule().fill(prominent ? Color.accentColor.opacity(0.85) : .white.opacity(0.10))
+            }
+            .background(.ultraThinMaterial, in: Capsule())
+            .overlay {
+                Capsule().strokeBorder(
+                    LinearGradient(
+                        colors: [.white.opacity(0.55), .white.opacity(0.08)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ),
+                    lineWidth: 1
+                )
+            }
+            .shadow(color: (prominent ? Color.accentColor : .black).opacity(0.35), radius: 8, y: 3)
+            .opacity(isEnabled ? (configuration.isPressed ? 0.8 : 1) : 0.45)
+    }
 }
 
 private struct PermissionOnboardingRow: View {
@@ -347,15 +393,22 @@ private struct PermissionOnboardingRow: View {
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: systemImage)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(.white)
-                .frame(width: 28, height: 28)
-                .background(tint.gradient, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .frame(width: 30, height: 30)
+                .background(tint.gradient, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(
+                            LinearGradient(colors: [.white.opacity(0.6), .clear], startPoint: .top, endPoint: .center),
+                            lineWidth: 0.75
+                        )
+                }
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(title)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.system(size: 13, weight: .semibold))
                     if optional {
                         Text("Optional")
                             .font(.system(size: 11))
@@ -364,7 +417,7 @@ private struct PermissionOnboardingRow: View {
                 }
                 Text(detail)
                     .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.primary.opacity(0.65))
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -372,15 +425,15 @@ private struct PermissionOnboardingRow: View {
 
             if granted {
                 Label(statusTitle, systemImage: "checkmark.circle.fill")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .symbolRenderingMode(.multicolor)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.green)
             } else {
                 Button(actionTitle, action: action)
+                    .buttonStyle(PermissionOnboardingGlassButtonStyle())
                     .disabled(actionDisabled)
             }
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 14)
         .padding(.vertical, 12)
     }
 }
