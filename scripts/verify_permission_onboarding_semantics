@@ -166,18 +166,18 @@ for required in (
 
 for required in (
     "import PermissionCompanionKit",
-    "private let permissionCompanion = PermissionCompanionController()",
-    "PermissionCompanionConfiguration(",
-    'applicationName: "Keyway"',
-    "applicationURL: Bundle.main.bundleURL",
-    "permissionName: permission.displayName",
-    "interaction: permission.supportsAppDrop ? .dragApplication : .informational",
-    "permissionCompanion.present(",
-    "beneath: .systemSettings",
-    "permissionCompanion.dismiss()",
+    "private var window: PermissionSetupWindow?",
+    "self?.window?.arrange(beside: .systemSettings)",
 ):
     if required not in window_controller:
-        fail(f"permission companion must use the shared app-bundle helper: missing {required}")
+        fail(f"setup window must place itself beside System Settings: missing {required}")
+
+for required in (
+    "privacyService: .accessibility",
+    "privacyService: .inputMonitoring",
+):
+    if required not in onboarding:
+        fail(f"drag-in permissions must offer the app icon and stale-entry reset: missing {required}")
 
 for required in (
     "let window = PermissionSetupWindow(",
@@ -243,12 +243,11 @@ if "quitForPermissionRestart" in window_controller:
     fail("window lifecycle must hard-cut over from quit to reopen")
 
 for required in (
-    "showPermissionCompanion(.accessibility)",
-    "showPermissionCompanion(.inputMonitoring)",
-    "showPermissionCompanion(.notifications)",
+    "private func requestAccessibility() {\n        arrangeBesideSystemSettings()",
+    "private func requestInputMonitoring() {\n        arrangeBesideSystemSettings()",
 ):
     if required not in onboarding:
-        fail(f"every wizard permission must expose the shared companion: missing {required}")
+        fail(f"every System Settings step must arrange the setup window beside it: missing {required}")
 
 for required in (
     "private var runtime: AppRuntime?",

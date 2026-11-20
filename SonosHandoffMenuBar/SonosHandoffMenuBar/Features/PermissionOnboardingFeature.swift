@@ -7,7 +7,7 @@ import SwiftUI
 
 @MainActor
 struct PermissionOnboardingFeature: View {
-    static let preferredWindowSize = CGSize(width: 620, height: 520)
+    static let preferredWindowSize = CGSize(width: 620, height: 640)
     private static let mediaPermissionRefreshInterval: TimeInterval = 0.2
 
     private static let accessibilitySettingsURL = URL(
@@ -22,8 +22,7 @@ struct PermissionOnboardingFeature: View {
     private static let logger = Logger(subsystem: "com.fpieringer.Keyway", category: "Onboarding")
 
     let refreshMediaPermissions: @MainActor () -> Void
-    let showPermissionCompanion: @MainActor (PermissionOnboardingCompanionPermission) -> Void
-    let hidePermissionCompanion: @MainActor () -> Void
+    let arrangeBesideSystemSettings: @MainActor () -> Void
     let startLocalNetworkFeatures: @MainActor () -> Void
     let requireRestart: @MainActor () -> Void
     let reopenForPermissionRestart: @MainActor () -> Void
@@ -44,8 +43,7 @@ struct PermissionOnboardingFeature: View {
 
     init(
         refreshMediaPermissions: @escaping @MainActor () -> Void,
-        showPermissionCompanion: @escaping @MainActor (PermissionOnboardingCompanionPermission) -> Void,
-        hidePermissionCompanion: @escaping @MainActor () -> Void,
+        arrangeBesideSystemSettings: @escaping @MainActor () -> Void,
         startLocalNetworkFeatures: @escaping @MainActor () -> Void,
         localNetworkAlreadyRequested: Bool,
         requireRestart: @escaping @MainActor () -> Void,
@@ -54,8 +52,7 @@ struct PermissionOnboardingFeature: View {
         skip: @escaping @MainActor () -> Void
     ) {
         self.refreshMediaPermissions = refreshMediaPermissions
-        self.showPermissionCompanion = showPermissionCompanion
-        self.hidePermissionCompanion = hidePermissionCompanion
+        self.arrangeBesideSystemSettings = arrangeBesideSystemSettings
         self.startLocalNetworkFeatures = startLocalNetworkFeatures
         self.requireRestart = requireRestart
         self.reopenForPermissionRestart = reopenForPermissionRestart
@@ -81,8 +78,9 @@ struct PermissionOnboardingFeature: View {
                 PermissionSetupStep(
                     systemImage: "accessibility",
                     title: "Accessibility",
-                    detail: "Keyway intercepts media keys before the app in front handles them. System Settings opens with a helper that shows where to drag Keyway.",
+                    detail: "Keyway intercepts media keys before the app in front handles them.",
                     actionTitle: "Open System Settings",
+                    privacyService: .accessibility,
                     isComplete: accessibilityGranted,
                     action: requestAccessibility
                 ),
@@ -91,6 +89,7 @@ struct PermissionOnboardingFeature: View {
                     title: "Input Monitoring",
                     detail: "Keyway receives media-key events. macOS may ask Keyway to reopen after you allow it.",
                     actionTitle: "Open System Settings",
+                    privacyService: .inputMonitoring,
                     isComplete: inputMonitoringGranted,
                     action: requestInputMonitoring
                 ),
@@ -156,19 +155,18 @@ struct PermissionOnboardingFeature: View {
     }
 
     private func requestAccessibility() {
-        showPermissionCompanion(.accessibility)
+        arrangeBesideSystemSettings()
         NSWorkspace.shared.open(Self.accessibilitySettingsURL)
         refreshMediaPermissionState()
     }
 
     private func requestInputMonitoring() {
-        showPermissionCompanion(.inputMonitoring)
+        arrangeBesideSystemSettings()
         NSWorkspace.shared.open(Self.inputMonitoringSettingsURL)
         refreshMediaPermissionState()
     }
 
     private func requestLocalNetwork() {
-        hidePermissionCompanion()
         localNetworkRequested = true
         startLocalNetworkFeatures()
     }
@@ -183,22 +181,20 @@ struct PermissionOnboardingFeature: View {
             ) { granted in
                 Task { @MainActor in
                     isRequestingNotifications = false
-                    if granted {
-                        hidePermissionCompanion()
-                    } else {
-                        showPermissionCompanion(.notifications)
+                    if !granted {
+                        arrangeBesideSystemSettings()
                         NSWorkspace.shared.open(Self.notificationSettingsURL)
                     }
                     refreshNotificationState()
                 }
             }
         case .denied:
-            showPermissionCompanion(.notifications)
+            arrangeBesideSystemSettings()
             NSWorkspace.shared.open(Self.notificationSettingsURL)
         case .authorized, .provisional, .ephemeral:
             break
         @unknown default:
-            showPermissionCompanion(.notifications)
+            arrangeBesideSystemSettings()
             NSWorkspace.shared.open(Self.notificationSettingsURL)
         }
     }
@@ -216,7 +212,6 @@ struct PermissionOnboardingFeature: View {
         {
             restartRequired = true
             requireRestart()
-            hidePermissionCompanion()
         }
         if !wasReady, requiredSetupComplete {
             refreshMediaPermissions()

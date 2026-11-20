@@ -4,43 +4,6 @@ import PermissionCompanionKit
 import SonosHandoffCore
 import SwiftUI
 
-enum PermissionOnboardingCompanionPermission {
-    case accessibility
-    case inputMonitoring
-    case notifications
-
-    var displayName: String {
-        switch self {
-        case .accessibility:
-            "Accessibility"
-        case .inputMonitoring:
-            "Input Monitoring"
-        case .notifications:
-            "Notifications"
-        }
-    }
-
-    var privacyService: PermissionCompanionPrivacyService? {
-        switch self {
-        case .accessibility:
-            .accessibility
-        case .inputMonitoring:
-            .inputMonitoring
-        case .notifications:
-            nil
-        }
-    }
-
-    var supportsAppDrop: Bool {
-        switch self {
-        case .accessibility, .inputMonitoring:
-            true
-        case .notifications:
-            false
-        }
-    }
-}
-
 @MainActor
 final class PermissionOnboardingWindowController: NSObject, NSWindowDelegate {
     static let schemaVersion = 3
@@ -51,8 +14,7 @@ final class PermissionOnboardingWindowController: NSObject, NSWindowDelegate {
     private let refreshMediaPermissions: @MainActor () -> Void
     private let startLocalNetworkFeatures: @MainActor () -> Void
     private let didComplete: @MainActor () -> Void
-    private let permissionCompanion = PermissionCompanionController()
-    private var window: NSWindow?
+    private var window: PermissionSetupWindow?
 
     init(
         refreshMediaPermissions: @escaping @MainActor () -> Void,
@@ -89,11 +51,8 @@ final class PermissionOnboardingWindowController: NSObject, NSWindowDelegate {
             contentSize: PermissionOnboardingFeature.preferredWindowSize,
             rootView: PermissionOnboardingFeature(
                 refreshMediaPermissions: refreshMediaPermissions,
-                showPermissionCompanion: { [weak self] permission in
-                    self?.showPermissionCompanion(for: permission)
-                },
-                hidePermissionCompanion: { [weak self] in
-                    self?.hidePermissionCompanion()
+                arrangeBesideSystemSettings: { [weak self] in
+                    self?.window?.arrange(beside: .systemSettings)
                 },
                 startLocalNetworkFeatures: { [weak self] in
                     UserDefaults.standard.set(true, forKey: Self.localNetworkRequestedKey)
@@ -152,37 +111,8 @@ final class PermissionOnboardingWindowController: NSObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
-        hidePermissionCompanion()
         window = nil
         refreshMediaPermissions()
         _ = NSApp.setActivationPolicy(.accessory)
-    }
-
-    private func showPermissionCompanion(for permission: PermissionOnboardingCompanionPermission) {
-        permissionCompanion.present(
-            PermissionCompanionConfiguration(
-                applicationName: "Keyway",
-                applicationURL: Bundle.main.bundleURL,
-                permissionName: permission.displayName,
-                interaction: permission.supportsAppDrop ? .dragApplication : .informational,
-                privacyService: permission.privacyService
-            ),
-            beneath: .systemSettings,
-            alongside: window,
-            onReturnToApplication: { [weak self] in
-                self?.returnToPermissionWizard()
-            }
-        )
-    }
-
-    private func returnToPermissionWizard() {
-        _ = NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
-        window?.makeKeyAndOrderFront(nil)
-        refreshMediaPermissions()
-    }
-
-    private func hidePermissionCompanion() {
-        permissionCompanion.dismiss()
     }
 }
